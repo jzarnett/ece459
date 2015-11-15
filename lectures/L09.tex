@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{9 --- Dependencies }{\term}{Patrick Lam}
+\lecture{9 --- Dependencies and Speculation }{\term}{Patrick Lam}
 
 
 We talked about C++11 atomics. Someone asked about whether
@@ -338,6 +338,62 @@ while the speculative code takes time
 speculation as shown above. There are two cases: $T_1 > T_2$ and $T_1
 < T_2$. (You can ignore $T_1 = T_2$.)
 
+
+\subsection*{Value Speculation}
+The other kind of speculation is value speculation. In this case,
+there is a (true) dependency between the result of a computation 
+and its successor:
+% note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
+
+{\small \begin{verbatim}
+  void doWork(int x, int y) {
+    int value = longCalculation(x, y);
+    return secondLongCalculation(value);
+  }
+\end{verbatim} }
+If the result of {\tt value} is predictable, then we can speculatively
+execute {\tt secondLongCalculation} based on the predicted value.
+(Most values in programs are indeed predictable).
+{\small \begin{verbatim}
+void doWork(int x, int y) {
+    thread_t t1, t2;
+    point p(x,y);
+    int v1, v2, last_value;
+    thread_create(&t1, NULL, &longCalculation, &p);
+    thread_create(&t2, NULL, &secondLongCalculation,
+                  &last_value);
+    thread_join(t1, &v1);
+    thread_join(t2, &v2);
+    if (v1 == last_value) {
+      return v2;
+    } else {
+      last_value = v1;
+      return secondLongCalculation(v1);
+    }
+}
+\end{verbatim}
+}
+Note that this is somewhat similar to memoization, except with 
+parallelization thrown in. In this case, the original running time is
+\[ T = T_1 + T_2, \]
+while the speculatively parallelized code takes time
+\[ T_s = \max(T_1, T_2) + S + pT_2,\]
+where $S$ is still the synchronization overhead, and $p$ is the probability that
+\verb+v1 != last_value+.
+
+\paragraph{Exercise.} Do the same computation as for speculative execution.
+
+\subsection*{When can we speculate?}
+Speculation isn't always safe. We need the following conditions:
+  \begin{itemize}
+    \item {\tt longCalculation} and {\tt secondLongCalculation} must not call
+      each other.
+    \item {\tt secondLongCalculation} must not depend on
+      any values set or modified by {\tt longCalculation}.
+    \item The return value of {\tt longCalculation} must be deterministic.
+  \end{itemize}
+
+As a general warning: Consider the \emph{side effects} of function calls.
 
 TODO L09: Bibliography  
 \input{bibliography.tex}
