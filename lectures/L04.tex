@@ -154,6 +154,234 @@ likelihood of priority inversion (which you've seen in Operating
 Systems).  This method is used by modern Windows threads.
 
 
+\section*{Multicore Processors}
+As I've alluded to earlier, multicore processors came about because
+clock speeds just aren't going up anymore. We'll discuss technical
+details today.
+
+Each processor \emph{core} executes instructions; a processor with
+more than one core can therefore simultaneously execute multiple
+(unrelated) instructions. 
+
+\paragraph{Chips and cores.} Multiprocessor (usually SMP, or symmetric
+multiprocessor) systems have been around for a while. Such systems
+contain more than one CPU. We can count the number of CPUs by
+physically looking at the board; each CPU is a discrete physical thing.
+
+Cores, on the other hand, are harder to count. In fact, they look just
+like distinct CPUs to the operating system:
+
+{\scriptsize \begin{verbatim}
+plam@plym:~/courses/p4p/lectures$ cat /proc/cpuinfo
+processor	: 0
+vendor_id	: GenuineIntel
+cpu family	: 6
+model		: 23
+model name	: Pentium(R) Dual-Core  CPU      E6300  @ 2.80GHz
+...
+processor	: 1
+vendor_id	: GenuineIntel
+cpu family	: 6
+model		: 23
+model name	: Pentium(R) Dual-Core  CPU      E6300  @ 2.80GHz
+\end{verbatim}
+}
+\vspace*{-1em}
+%$ 
+If you actually opened my computer, though, you'd only find one chip.
+The chip is pretending to have two \emph{virtual CPUs}, and the
+operating system can schedule work on each of these CPUs. In general,
+you can't look at the chip and figure out how many cores it contains.
+
+\vspace*{-1em}
+\paragraph{Hardware Designs for Multicores.}
+In terms of the hardware design, cores might share a cache, as in this picture:
+
+\vspace*{-1em}
+\begin{center}
+\begin{tikzpicture}
+\draw (-0.5, -0.5) rectangle ++(0.9, 0.9);
+\draw (-0.05, 0.05) node {\small Core};
+
+\draw (-0.5, -1.5) rectangle ++(0.9, 0.9);
+\draw (-0.05, -1.05) node {\small Core};
+
+\draw (0.5, -1.5) rectangle ++(1.2, 1.9);
+\draw (1.1, -.55) node {\small Cache};
+
+\draw (-0.6, -1.6) rectangle ++(2.45, 2.1);
+
+\draw (2.2, -1.6) rectangle ++(2.7, 2.1);
+\draw (3.6, -0.55) node {\small Rest of system};
+
+\draw[<->] (1.9, -0.55) -- (2.15, -0.55);
+\end{tikzpicture}
+\end{center}
+\vspace*{-1em}
+\hfill (credit: \emph{Multicore Application Programming}, p. 5)
+
+This above Symmetric Multithreading (SMP) design is especially good for the 1:1 threading model. In
+this case, the design of the cores don't need to change much, but they
+still need to communicate with each other and the rest of the system.
+
+Or, we can have a design that works well for the N:1 model:
+\begin{center}
+\begin{tikzpicture}
+\draw (-1.4, -1.5) rectangle ++(1.7, 1.9);
+\draw (-0.55, 0.05) node {\small Thread 1};
+\draw (-0.55, -1.05) node {\small Thread 2};
+\draw (-0.55, -0.5) node {\small Core};
+
+\draw (0.5, -1.5) rectangle ++(1.05, 1.9);
+\draw (1.05, -.55) node {\small Cache};
+
+\draw (-1.5, -1.6) rectangle ++(3.15, 2.1);
+
+\draw (2.2, -1.6) rectangle ++(2.7, 2.1);
+\draw (3.6, -0.55) node {\small Rest of system};
+
+\draw[<->] (1.7, -0.55) -- (2.15, -0.55);
+\end{tikzpicture}
+\end{center}
+
+One would expect that executing two threads on one core might
+mean that each thread would run more slowly. It depends on the instruction
+mix. If the threads are trying to access the same resource, then each
+thread would run more slowly. If they're doing different things, there's 
+potential for speedup.
+
+Finally, it's possible to both use multiple cores and put multiple threads
+onto one core, as in the M:N model:
+
+\begin{center}
+\begin{tikzpicture}
+
+ \draw (-1.4, -1.5) rectangle +(1.7, 1.9);
+ \draw (-1.4, -3.5) rectangle +(1.7, 1.9);
+
+\foreach \y in {-2, 0}
+{
+ \draw (-0.55, 0.05) + (0, \y) node {\small Thread 1};
+ \draw (-0.55, -1.05) + (0, \y) node {\small Thread 2};
+ \draw (-0.55, -0.5) + (0, \y) node {\small Core};
+}
+
+\draw (0.5, -3.5) rectangle ++(1.05, 3.9);
+\draw (1.05, -1.55) node {\small Cache};
+
+\draw (-1.5, -3.6) rectangle ++(3.15, 4.1);
+
+\draw (2.2, -3.6) rectangle ++(2.7, 4.1);
+\draw (3.6, -1.55) node {\small Rest of system};
+
+\draw[<->] (1.7, -1.55) -- (2.15, -1.55);
+\end{tikzpicture}
+\end{center}
+Here we have four hardware threads; pairs of threads share hardware
+resources. One example of a processor which supports chip multi-threading
+(CMT) is the UltraSPARC T2, which has 8 cores, each of which supports 8 
+threads. All of the cores share a common level 2 cache.
+
+\paragraph{Non-SMP systems.} The designs we've seen above have been
+more or less SMP designs; all of the cores are mostly alike.
+A very non-Smp system is the Cell, which contains a PowerPC main core
+(the PPE) and 7 Synergistic Processing Elements (SPEs), which are
+small vector computers.
+
+
+\paragraph{Non-Uniform Memory Access.}
+In SMP systems, all CPUs have approximately the same access time for resources
+(subject to cache misses). There are also NUMA, or Non-Uniform Memory Access,
+systems out there. In that case, CPUs can access different resources at different
+speeds. (Resources goes beyond just memory).
+
+In this case, the operating system should schedule tasks on CPUs which
+can access resources faster.  Since memory is commonly the bottleneck,
+each CPU has its own memory bank.
+
+\paragraph{Using CMT effectively.} Typically, a CPU will expose its
+hardware threads using virtual CPUs.
+In current hardware designs, each of the hardware threads has the same
+performance. 
+
+However, performance varies depending on context. In the above
+example, two threads running on the same core will most probably run
+more slowly than two threads running on separate cores, since they'd
+contend for the same core's resources. Task switches between cores (or
+CPUs!) are also slow, as they may involve reloading caches.
+
+Solaris ``processor sets''
+enable that operating system to assign processes to specific virtual CPUs,
+while Linux's ``affinity'' keeps a process running on the same virtual CPU.
+Both of these features reduce the number of task switches, and processor
+sets can help reduce resource contention, along with Solaris's locality
+groups\footnote{Gove suggests that locality groups help reduce contention
+for core resources, but they seem to help more with memory.}
+
+\section*{Processes versus Threads}
+The first design decision that you need to solve when parallelizing programs
+is whether you should use threads or processes.
+
+  \begin{itemize}
+    \item Threads are basically light-weight processes which piggy-back on
+          processes' address space.
+  \end{itemize}
+
+Traditionally (pre-Linux 2.6) you had to use {\tt
+  fork}~(for~processes) and {\tt clone} (for threads). But {\tt clone}
+is not POSIX compliant, and its man page says that it's
+Linux-specific---FreeBSD uses {\tt rfork()}. (POSIX is the standard
+for Unix-like operating systems).
+
+\paragraph{When processes are better.} {\tt fork} is safer and more secure than threads.
+
+  \begin{enumerate}
+    \item Each process has its own virtual address space:
+      \begin{itemize}
+        \item Memory pages are not copied, they are copy-on-write. Therefore, processes use less memory than you would expect.
+      \end{itemize}
+    \item Buffer overruns or other security holes do not expose other~processes.
+    \item If a process crashes, the others can continue.
+  \end{enumerate}
+
+{\bf Example:} In the Chrome browser, each tab is a separate
+process. Scott McCloud explained this:
+\url{http://uncivilsociety.org/2008/09/google-chrome-comic-by-scott-m.html}.
+
+\paragraph{When threads are better.} Threads are easier and faster.
+
+  \begin{enumerate}
+    \item Interprocess communication (IPC) is more complicated and slower than interthread
+          communication; must use operating system utilities (pipes, semaphores, shared
+              memory, etc) instead of thread library (or just memory reads and writes).
+    \item Processes have much higher startup, shutdown and synchronization costs than threads.
+    \item Pthreads fix the issues of {\tt clone} and provide a
+          uniform interface for most systems. (You'll work with them in Assignment 1.)
+  \end{enumerate}
+
+\paragraph{How to choose?}
+  If your application is like this:
+  \begin{itemize}
+    \item mostly independent tasks, with little or no communication;
+    \item task startup and shutdown costs are negligible compared to overall runtime; and
+    \item want to be safer against bugs and security holes,
+  \end{itemize}
+then processes are the way to go. If it's the opposite of this, then use threads.
+
+For performance reasons, along with ease and consistency across systems, we'll use threads. We will describe both Pthreads and C++ 11 threads, in particular.
+
+\paragraph{Overhead of Processes vs Threads.} The common wisdom is that processes are
+expensive, threads are cheap. Let's verify this with a benchmark on a
+laptop (included in the live-coding directory) which creates and destroys 50,000 threads:
+  \begin{lstlisting}[basicstyle=\scriptsize]
+jon@riker examples master % time ./create_fork 
+0.18s user 4.14s system 34% cpu 12.484 total
+jon@riker examples master % time ./create_pthread 
+0.73s user 1.29s system 107% cpu 1.887 total
+  \end{lstlisting}
+
+Clearly Pthreads incur much lower overhead than {\tt fork}. Pthreads
+offer a speedup of 6.5 over processes in terms of startup and teardown costs.
 
 %\paragraph{Live Coding Example.} We can write a program to determine
 %whether we are in a user-level threading model vs. the other two models.
