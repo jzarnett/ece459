@@ -1,0 +1,245 @@
+\include{header}
+
+\begin{document}
+
+\lecture{15 --- Memory Consistency}{\term}{Patrick Lam}
+
+\section*{Memory Consistency, Memory Barriers, and Reordering}
+Today we'll talk a bit more about memory consistency, memory barriers
+and reordering in general. We'll start with instruction reordering by
+the CPU and move on to reordering initiated by the compiler.  I'll
+also touch on some CPU instructions for atomic operations.
+
+\paragraph{Memory Consistency.} In a sequential program, you expect
+things to happen in the order that you wrote them. So, consider this code,
+where variables are initialized to 0:
+
+\begin{center}
+\begin{verbatim}
+    T1: x = 1; r1 = y;
+    T2: y = 1; r2 = x;
+\end{verbatim}
+\end{center}
+We would expect that we would always query the memory and get a state
+where some subset of these partially-ordered statements would have executed.
+This is the \emph{sequentially consistent} memory model.
+
+\begin{quote}
+``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
+\end{quote}
+
+{\sf What are the possible values for the variables?}\\[3em]
+
+Another view of sequential consistency:
+\begin{itemize}
+      \item each thread induces an \emph{execution trace}.
+      \item always, the program has executed some prefix of each thread's
+        trace.
+\end{itemize}
+
+
+It turns out that sequential consistency is too expensive to implement.
+(Why?) So most systems actually implement weaker memory models,
+such that both {\tt r1} and {\tt r2} might end up unchanged. Recall the 
+{\bf flush} example from last time.
+
+\paragraph{Reordering.} Compilers and processors may reorder 
+non-interfering memory operations within a thread. For instance, the
+two statements in {\tt T1} appear to be independent, so it's OK to
+execute them---or, equivalently, to publish their results to other
+threads---in either order. Reordering is one of the major tools that
+compilers use to speed up code.
+
+{\sf When is reordering a problem?}\\[2em]
+% spin locks, as we'll see below.
+
+\subsection*{Memory Consistency Models}
+
+Here are some flavours of memory consistency models:
+
+\begin{itemize}
+\item Sequential consistency: no reordering of loads/stores.
+\item Sequential consistency for datarace-free programs: if your program
+  has no data races, then sequential consistency.
+\item Relaxed consistency (only some types of reorderings):
+\begin{itemize}
+        \item Loads can be reordered after loads/stores; and
+        \item Stores can be reordered after loads/stores.
+\end{itemize}
+\item     Weak consistency: any reordering is possible.
+\end{itemize}
+
+In any case, {\bf reorderings} only allowed if they look safe in
+current context (i.e. they reorder independent memory addresses).
+That can still be problematic, though.
+
+\paragraph{Compilers and reordering.}
+When it can prove that a reordering is safe with respect to the
+programming language semantics, the {\bf compiler} may reorder instructions (so it's not just the hardware).
+
+For example, say we want thread 1 to print value set in thread 2.
+  \begin{verbatim}
+                            f = 0
+
+/* thread 1 */                          /* thread 2 */
+while (f == 0) /* spin */;              x = 42;
+printf("%d", x);                        f = 1;
+  \end{verbatim}
+
+If thread 2 reorders its instructions, will we get our intended
+result? \emph{No!}
+
+\subsection*{Memory Barriers} We previously talked about OpenMP barriers: 
+at a {\tt \#pragma omp barrier}, all threads pause, until all of the
+threads reach the barrier. Lots of OpenMP directives come with implicit barriers
+unless you add {\tt nowait}.
+
+A rather different type of barrier is a \emph{memory barrier} or
+\emph{fence}. This type of barrier prevents reordering, or,
+equivalently, ensures that memory operations become visible in the
+right order. A memory barrier ensures that no access occuring after
+the barrier becomes visible to the system, or takes effect, until
+after all accesses before the barrier become visible.
+
+
+The x86 architecture defines the following types of memory 
+barriers:
+
+\begin{itemize}
+\item {\tt mfence.} All loads and stores before the barrier become
+visible before any loads and stores after the barrier become visible.
+\item {\tt sfence.} All stores before the barrier become visible before
+all stores after the barrier become visible.
+\item {\tt lfence.} All loads before the barrier become visible before
+all loads after the barrier become visible.
+\end{itemize}
+
+Note, however, that while an {\tt sfence} makes the stores visible,
+another CPU will have to execute an {\tt lfence} or {\tt mfence} to
+read the stores in the right order.
+
+Consider the example again:
+  \begin{verbatim}
+                         f = 0
+
+/* thread 1 */                     /* thread 2 */
+while (f == 0) /* spin */;         x = 42;
+// memory fence                    // memory fence
+printf("%d", x);                   f = 1;
+  \end{verbatim}
+This now prevents reordering, and we get the expected result.
+
+You can use the {\tt mfence} instruction to implement \emph{acquire
+  barriers} and \emph{release barriers}.  An acquire barrier ensures
+that memory operations after a thread obtains the mutex doesn't become
+visible until after the thread actually obtains the mutex.
+The release barrier similarly ensures that accesses before the mutex
+release don't get reordered to after the mutex release. Note that
+it is safe to reorder accesses after the mutex release and put them
+before the release.
+
+\paragraph{Preventing Memory Reordering in Programs: Compiler Barriers.}
+First: Don't use volatile in C/C++ on variables~\footnote{\tiny \url{http://stackoverflow.com/questions/78172/using-c-pthreads-do-shared-variables-need-to-be-volatile}.}. However, you can prevent reordering using compiler-specific calls.
+
+\begin{itemize}
+  \item Microsoft Visual Studio C++ Compiler:
+  \begin{verbatim}
+_ReadWriteBarrier()
+  \end{verbatim}
+  \item Intel Compiler:
+  \begin{verbatim}
+    __memory_barrier()
+  \end{verbatim}
+  \item GNU Compiler:
+  \begin{verbatim}
+__asm__ __volatile__ ("" ::: "memory");
+  \end{verbatim}
+\end{itemize}
+
+The compiler also shouldn't reorder across e.g. Pthreads mutex calls.
+
+\paragraph{Aside: {\tt gcc} Inline Assembly.}
+Just as an aside, here's {\tt gcc}'s inline assembly format
+
+  \begin{verbatim}
+__asm__ ( assembler template 
+       : output operands                  /* optional */
+       : input operands                   /* optional */
+       : list of clobbered registers      /* optional */
+       );
+  \end{verbatim}
+
+Note that we've just seen {\bf \_\_volatile\_\_} with  \_\_asm\_\_. This isn't the same as the normal C volatile. It means:
+\begin{itemize}
+    \item The compiler may not reorder this assembly code and put it somewhere
+      else in the program.
+\end{itemize}
+
+\paragraph{Back to Memory Reordering in Programs.}
+    Fortunately, an OpenMP {\bf flush} (or, better yet, mutexes) also preserve the order of variable accesses.
+    Stops reordering from both the compiler and hardware.
+    For GNU, flush is implemented as
+      {\tt \_\_sync\_synchronize();}
+
+\paragraph{{\tt volatile}.} This qualifier ensures that the
+code does an actual read from a variable every time it asks for one
+(i.e. the compiler can't optimize away the read). It does not prevent
+re-ordering nor does it protect against races.
+
+{\bf Note:} proper use of memory fences makes {\tt volatile} not very
+useful (again, {\tt volatile} is not meant to help with threading, and
+will have a different behaviour for threading on different
+compilers/hardware).
+
+\section*{Atomic Operations}
+ We saw the {\bf atomic} directive in OpenMP as well as C++11 atomics. Most OpenMP atomic expressions map to atomic hardware instructions.
+However, other atomic instructions exist, and we've seen the C++11 ones earlier as well.
+
+\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86).
+Here's some pseudocode for it.
+  \begin{verbatim}
+int compare_and_swap (int* reg, int oldval, int newval) 
+{
+  int old_reg_val = *reg;
+  if (old_reg_val == oldval) 
+     *reg = newval;
+  return old_reg_val;
+}
+  \end{verbatim}
+
+Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it.
+
+
+\paragraph{Implementing a Spinlock.}
+You can use compare-and-swap to implement spinlock:
+  \begin{verbatim}
+void spinlock_init(int* lock) { *lock = 0; }
+
+void spinlock_lock(int* lock) {
+    while(compare_and_swap(lock, 0, 1) != 0) {}
+    __asm__ ("mfence");
+}
+
+void spinlock_unlock(int* lock) {
+    __asm__ ("mfence");
+    *lock = 0;  
+}
+  \end{verbatim}
+You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
+
+\section*{ABA Problem}
+Sometimes you'll read a location twice.
+If the value is the same both times, nothing has changed, right?\\[1em]
+
+\emph{No.} This is an {\bf ABA problem}.\\[1em]
+
+You can combat this by ``tagging'': modify value with nonce upon each
+write.  You can also keep the value separately from the nonce; double
+compare and swap atomically swaps both value and nonce.
+
+Just something to be aware of. ``Not on exam''.
+
+
+\input{bibliography.tex}
+
+\end{document}
