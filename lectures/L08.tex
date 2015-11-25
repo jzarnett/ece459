@@ -123,9 +123,7 @@ From the Valgrind FAQ, how to read the leak summary:
 	\item \textbf{Suppressed} - you can configure the tool to ignore things and those will appear in the suppressed category.
 \end{itemize}
 
-\subsection*{Cachegrind}
 
-TODO: Fill in cache grind
 
 \subsection*{Helgrind}  
 Dynamic and static tools exist. They can help you find data races in
@@ -158,8 +156,117 @@ information ({\tt -g} flag for {\tt gcc}).
 ==5036==    by 0x4005AE: main (in datarace.c:19)
 \end{verbatim}
 
+\subsection*{Cachegrind}
 
-  
+Cachegrind is another tool in the package and this one is much more performance oriented than the other two tools. Yes, Valgrind's memcheck and Helgrind look for errors in your program that are likely to lead to slowdowns (memory leaks) or make it easier to parallelize (spawn threads) without introducing errors. Cachegrind, however, does a simulation of how your program interacts with cache and evaluates how your program does on branch prediction. As we discussed earlier, cache misses and branch mispredicts have a huge impact on performance.
+
+Recall that a miss from the fastest cache results in a small penalty (perhaps, 10 cycles); a miss that requires going to memory requires about 200 cycles. A mispredicted branch costs somewhere between 10-30 cycles. All figures \& estimates from the cachegrind manual~\cite{cachegrind}.
+
+Cachegrind reports data about:
+\begin{itemize}
+	\item The First Level Instruction Cache (I1) [L1 Instruction Cache]
+	\item The First Level Data Cache (D1) [L1 Data Cache]
+	\item The Last Level Cache (LL) [L3 Cache].
+\end{itemize}
+
+Unlike the normal Valgrind operation, you probably want to turn optimizations on (\texttt{-O2} or perhaps \texttt{-O3} in \texttt{gcc}). You still want debugging symbols, of course, but enabling optimizations will tell you more about 
+
+If I instruct cachegrind to run on the search example (same one from above), using the \texttt{--branch-sim=yes} option because by default it won't show it:
+
+\begin{verbatim}
+jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
+==16559== Cachegrind, a cache and branch-prediction profiler
+==16559== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
+==16559== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
+==16559== Command: ./search
+==16559== 
+--16559-- warning: L3 cache found, using its data for the LL simulation.
+Found at 11 by thread 1 
+Found at 22 by thread 3 
+==16559== 
+==16559== I   refs:      310,670
+==16559== I1  misses:      1,700
+==16559== LLi misses:      1,292
+==16559== I1  miss rate:    0.54%
+==16559== LLi miss rate:    0.41%
+==16559== 
+==16559== D   refs:      114,078  (77,789 rd   + 36,289 wr)
+==16559== D1  misses:      4,398  ( 3,360 rd   +  1,038 wr)
+==16559== LLd misses:      3,252  ( 2,337 rd   +    915 wr)
+==16559== D1  miss rate:     3.8% (   4.3%     +    2.8%  )
+==16559== LLd miss rate:     2.8% (   3.0%     +    2.5%  )
+==16559== 
+==16559== LL refs:         6,098  ( 5,060 rd   +  1,038 wr)
+==16559== LL misses:       4,544  ( 3,629 rd   +    915 wr)
+==16559== LL miss rate:      1.0% (   0.9%     +    2.5%  )
+==16559== 
+==16559== Branches:       66,622  (65,097 cond +  1,525 ind)
+==16559== Mispredicts:     7,202  ( 6,699 cond +    503 ind)
+==16559== Mispred rate:     10.8% (  10.2%     +   32.9%   )
+
+\end{verbatim}
+
+So we see a breakdown of the instruction accesses, data accesses, and how well the last level of cache (L3 here) does. 
+
+Why did I say enable optimization? Well, here's the output of the search program if I compile with the \texttt{-O2} option:
+
+\begin{verbatim}
+jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
+==16618== Cachegrind, a cache and branch-prediction profiler
+==16618== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
+==16618== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
+==16618== Command: ./search
+==16618== 
+--16618-- warning: L3 cache found, using its data for the LL simulation.
+Found at 11 by thread 1 
+Found at 22 by thread 3 
+==16618== 
+==16618== I   refs:      306,169
+==16618== I1  misses:      1,652
+==16618== LLi misses:      1,286
+==16618== I1  miss rate:    0.53%
+==16618== LLi miss rate:    0.42%
+==16618== 
+==16618== D   refs:      112,015  (76,522 rd   + 35,493 wr)
+==16618== D1  misses:      4,328  ( 3,353 rd   +    975 wr)
+==16618== LLd misses:      3,201  ( 2,337 rd   +    864 wr)
+==16618== D1  miss rate:     3.8% (   4.3%     +    2.7%  )
+==16618== LLd miss rate:     2.8% (   3.0%     +    2.4%  )
+==16618== 
+==16618== LL refs:         5,980  ( 5,005 rd   +    975 wr)
+==16618== LL misses:       4,487  ( 3,623 rd   +    864 wr)
+==16618== LL miss rate:      1.0% (   0.9%     +    2.4%  )
+==16618== 
+==16618== Branches:       65,827  (64,352 cond +  1,475 ind)
+==16618== Mispredicts:     7,109  ( 6,596 cond +    513 ind)
+==16618== Mispred rate:     10.7% (  10.2%     +   34.7%   )
+\end{verbatim}
+
+Interesting results: our data and instruction miss rates went down marginally but the branch mispredict rates went up! Well sort of - there were fewer branches and thus fewer we got wrong as well as fewer we got right. So the total cycles lost to mispredicts went down. Is this an overall win for the code? Yes. 
+
+In some cases it's not so clear cut, and we could do a small calculation. If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400; a decrease of 11~400 cycles. Repeat for each of the measures and sum them up to determine if things got better overall and by how much.
+
+Cachegrind also produces a more detailed output file, titled cachegrind.out.<pid> (the PID in the example is 16618). This file is not especially human-readable, but we can ask the associated tool \texttt{cg\_annotate} to break it down for us, and if we have the source code available, so much the better, because it will give you line by line information. That's way too much to show even in the notes, so it's the sort of thing I can show in class (or you can create for yourself) but here's a small excerpt from the \texttt{search.c} example:
+
+
+
+{\scriptsize
+\begin{verbatim}
+--------------------------------------------------------------------------------
+-- Auto-annotated source: /home/jz/ece254/search.c
+--------------------------------------------------------------------------------
+ Ir I1mr ILmr Dr D1mr DLmr Dw D1mw DLmw Bc Bcm Bi Bim 
+127    1    1 96    3    0  4    0    0 23  11  0   0      for ( int i = arg->startIndex; i < arg->endIndex; ++i ) {
+147    0    0 84    3    2  0    0    0 21   9  0   0          if ( array[i] == arg->searchValue ) {
+  6    0    0  4    0    0  2    0    0  0   0  0   0              *result = i;
+  2    0    0  0    0    0  0    0    0  0   0  0   0              break;
+  .    .    .  .    .    .  .    .    .  .   .  .   .          }
+  .    .    .  .    .    .  .    .    .  .   .  .   .      }
+\end{verbatim}
+}
+
+Cachegrind is very... verbose... and it can be very hard to come up with useful changes based on what you see... assuming your eyes don't glaze over when you see the numbers. Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). They have the highest penalty. You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints about what the likelihood of branch prediction is~\cite{cachegrind}. Of course, to learn more about how Cachegrind actually does what it does and how it runs the simulation, the manual is worth digging into...
+
 \input{bibliography.tex}
 
 \end{document}
