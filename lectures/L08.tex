@@ -126,35 +126,155 @@ From the Valgrind FAQ, how to read the leak summary:
 
 
 \subsection*{Helgrind}  
-Dynamic and static tools exist. They can help you find data races in
-your program. {\tt helgrind} is one such tool. It runs your program 
-and analyzes it (and causes a large slowdown).
+The purpose of Helgrind is to detect errors in the use of POSIX pthreads. In a way, Helgrind is a pretty neat tool for improving performance, even though it doesn't actually directly speed anything up. When we take single-threaded program and split it off into a multithreaded program, we may introduce a lot of errors (or at least, introduce the possibility of a lot of errors). Truthfully, humans are not very good at parallel thinking; we are very much sequential. But a program that is fast and wrong is probably less useful than one that is slow and correct. But can we make it faster and still have it be correct? That's the goal of Helgrind: after you parallelize your code, it will do some automatic checking of the code to determine where, if anywhere, there are concurrency problems. It can't prove that your program is correct (if only) but it can at least catch some of the common problems you might introduce when writing a parallel program. Helgrind will categories errors into three basic categories:
 
-Run with {\tt valgrind --tool=helgrind <prog>}.
+\begin{enumerate}
+	\item Misuses of the pthreads API
+	\item Lock ordering problems
+	\item Data races
+\end{enumerate}
 
-It will warn you of possible data races along with locations. For
-useful debugging information, compile your program with debugging
-information ({\tt -g} flag for {\tt gcc}).
+The first category does not require much explanation these are just some programming errors related to the pthread API calls. Some examples from~\cite{helgrind}
 
-\paragraph{Helgrind Output for Example.}
+\begin{itemize}
+	\item Unlocking a mutex that is unlocked
+	\item Deallocation of memory with a locked mutex in it
+	\item Thread exit while holding a locked lock
+\end{itemize}
+... and many more.
+
+A quick example of an error message from Helgrind, also from~\cite{helgrind}:
+
 \begin{verbatim}
-==5036== Possible data race during read of size 4 at
-         0x53F2040 by thread #3
-==5036== Locks held: none
-==5036==    at 0x400710: run2 (in datarace.c:14)
-...
-==5036== 
-==5036== This conflicts with a previous write of size 4 by
-         thread #2
-==5036== Locks held: none
-==5036==    at 0x400700: run1 (in datarace.c:8)
-...
-==5036== 
-==5036== Address 0x53F2040 is 0 bytes inside a block of size
-         4 alloc'd
-...
-==5036==    by 0x4005AE: main (in datarace.c:19)
+Thread #1 unlocked a not-locked lock at 0x7FEFFFA90
+   at 0x4C2408D: pthread_mutex_unlock (hg_intercepts.c:492)
+   by 0x40073A: nearly_main (tc09_bad_unlock.c:27)
+   by 0x40079B: main (tc09_bad_unlock.c:50)
+  Lock at 0x7FEFFFA90 was first observed
+   at 0x4C25D01: pthread_mutex_init (hg_intercepts.c:326)
+   by 0x40071F: nearly_main (tc09_bad_unlock.c:23)
+   by 0x40079B: main (tc09_bad_unlock.c:50)
 \end{verbatim}
+
+
+
+The second category of errors should be familiar to you from your operating systems class as a source of potential deadlock.
+
+\begin{multicols}{2}
+\textbf{Thread P}\vspace{-2em}
+  \begin{verbatim}
+	 1. wait( a ) 
+	 2. wait( b )
+	 3. [critical section]
+	 4. signal( a )
+	 5. signal( b )
+  \end{verbatim}
+\columnbreak
+\textbf{Thread Q}\vspace{-2em}
+  \begin{verbatim}
+	 1. wait( b ) 
+	 2. wait( a )
+	 3. [critical section]
+	 4. signal( b )
+	 5. signal( a )
+  \end{verbatim}
+\end{multicols}
+\vspace{-2em}
+
+In this case, if the interleaving of these happens to work out in a couple of particular ways, then we get deadlock because thread P holds mutex \texttt{a} and thread Q holds mutex \texttt{b} and each waits for the mutex that the other one has. The example is slightly silly, of course, because it's super easy to see; in normal code they would probably be separated by some number of lines, and the mutexes will probably not be called \texttt{a} and \texttt{b} (isn't using meaningful variable names one of those things you were supposed to learn to do in introductory programming?!) and there therefore will not necessarily be an obvious (alphabetical) order.
+
+Helgrind builds a directed graph of lock acquisitions, so that when a thread acquires a lock, the graph is checked to see if a cycle exists. If that is the case, then there is potential for a deadlock~\cite{helgrind}. It will report as an error the initial order (the first order seen is the one viewed as ``correct'') and the the ``incorrect'' order that is the source of the potential problem. Really, though, all that matters is consistency: following the same order; you may change either of the acquisition orders to match the other. See the example below~\cite{helgrind}:
+
+\begin{verbatim}
+Thread #1: lock order "0x7FF0006D0 before 0x7FF0006A0" violated
+
+Observed (incorrect) order is: acquisition of lock at 0x7FF0006A0
+   at 0x4C2BC62: pthread_mutex_lock (hg_intercepts.c:494)
+   by 0x400825: main (tc13_laog1.c:23)
+
+ followed by a later acquisition of lock at 0x7FF0006D0
+   at 0x4C2BC62: pthread_mutex_lock (hg_intercepts.c:494)
+   by 0x400853: main (tc13_laog1.c:24)
+
+Required order was established by acquisition of lock at 0x7FF0006D0
+   at 0x4C2BC62: pthread_mutex_lock (hg_intercepts.c:494)
+   by 0x40076D: main (tc13_laog1.c:17)
+
+ followed by a later acquisition of lock at 0x7FF0006A0
+   at 0x4C2BC62: pthread_mutex_lock (hg_intercepts.c:494)
+   by 0x40079B: main (tc13_laog1.c:18)
+\end{verbatim}
+
+The third category we have discussed already. Recall the earlier definition of a race condition. This is a difficult problem to find sometimes; what Helgrind will do is examine the code for where multiple threads are accessing shared memory without the use of locks. Let's cut to the chase and see it in action:
+
+
+\begin{verbatim}
+z@Loki:~/ece459$ valgrind --tool=helgrind ./datarace
+==10389== Helgrind, a thread error detector
+==10389== Copyright (C) 2007-2013, and GNU GPL'd, by OpenWorks LLP et al.
+==10389== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
+==10389== Command: ./datarace
+==10389== 
+==10389== ---Thread-Announcement------------------------------------------
+==10389== 
+==10389== Thread #1 is the program's root thread
+==10389== 
+==10389== ---Thread-Announcement------------------------------------------
+==10389== 
+==10389== Thread #2 was created
+==10389==    at 0x515543E: clone (clone.S:74)
+==10389==    by 0x4E44199: do_clone.constprop.3 (createthread.c:75)
+==10389==    by 0x4E458BA: pthread_create@@GLIBC_2.2.5 (createthread.c:245)
+==10389==    by 0x4C30C90: ??? (in /usr/lib/valgrind/vgpreload_helgrind-amd64-linux.so)
+==10389==    by 0x40068D: main (datarace.c:12)
+==10389== 
+==10389== ----------------------------------------------------------------
+==10389== 
+==10389== Possible data race during read of size 4 at 0x60104C by thread #1
+==10389== Locks held: none
+==10389==    at 0x40068E: main (datarace.c:13)
+==10389== 
+==10389== This conflicts with a previous write of size 4 by thread #2
+==10389== Locks held: none
+==10389==    at 0x40065E: child_fn (datarace.c:6)
+==10389==    by 0x4C30E26: ??? (in /usr/lib/valgrind/vgpreload_helgrind-amd64-linux.so)
+==10389==    by 0x4E45181: start_thread (pthread_create.c:312)
+==10389==    by 0x515547C: clone (clone.S:111)
+==10389== 
+==10389== ----------------------------------------------------------------
+==10389== 
+==10389== Possible data race during write of size 4 at 0x60104C by thread #1
+==10389== Locks held: none
+==10389==    at 0x400697: main (datarace.c:13)
+==10389== 
+==10389== This conflicts with a previous write of size 4 by thread #2
+==10389== Locks held: none
+==10389==    at 0x40065E: child_fn (datarace.c:6)
+==10389==    by 0x4C30E26: ??? (in /usr/lib/valgrind/vgpreload_helgrind-amd64-linux.so)
+==10389==    by 0x4E45181: start_thread (pthread_create.c:312)
+==10389==    by 0x515547C: clone (clone.S:111)
+==10389== 
+==10389== 
+==10389== For counts of detected and suppressed errors, rerun with: -v
+==10389== Use --history-level=approx or =none to gain increased speed, at
+==10389== the cost of reduced accuracy of conflicting-access information
+==10389== ERROR SUMMARY: 2 errors from 2 contexts (suppressed: 0 from 0)
+\end{verbatim}
+
+Note that we get two stack traces here: we have a read after write, and a write after write. Why? Because the operation in question is \texttt{var++} which necessitates fetching the current value of \texttt{var} (reading it) and incrementing it (then writing it back).
+
+How does Helgrind work? It examines the use of the standard threading primitives - lock, unlock, signal/post, wait, etc. Anything that implies there might be an ordering between events is taken and added to a directed acyclic graph that represents these dependencies. If memory is accessed from two different threads and there is no path through this directed acyclic graph that indicates an ordering, then a race is reported~\cite{helgrind}. Although obviously at least one of these accesses must be a write (there is no read after read dependency, remember).
+
+Also cool: you can ask Helgrind to try to tell you about variable names (if it can) with the command line option \texttt{--read-var-info=yes}. Then it will tell you something interesting like:
+
+\begin{verbatim}
+==10454== Location 0x60104c is 0 bytes inside global var "var"
+==10454== declared at datarace.c:3
+\end{verbatim}
+
+These will give you indications of where you need to introduce synchronization of some kind (semaphore, mutex, condition variable, etc). The authors of Helgrind assume that if it tells you where the problem is, you will figure out what variables are affected and how to properly prevent data races. You might find this frustrating, in the sense of a serial complainer who thinks that he or she can just moan about what's wrong without bringing forward any suggestions about how to fix the problems. 
+
+A note about Helgrind for later, since we're going to dive into OpenMP. Helgrind + OpenMP + Linux can cause the occasional problem in GCC 4.2 and 4.3 (not sure about later or if this is fixed in newer versions of Helgrind). But the ``futex'' system call in Linux is not visible to Helgrind so it won't figure things out. You can rebuild GCC with the option \texttt{--disable-linux-futex} and that will hopefully work it out.
 
 \subsection*{Cachegrind}
 
@@ -265,7 +385,7 @@ Cachegrind also produces a more detailed output file, titled cachegrind.out.<pid
 \end{verbatim}
 }
 
-Cachegrind is very... verbose... and it can be very hard to come up with useful changes based on what you see... assuming your eyes don't glaze over when you see the numbers. Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). They have the highest penalty. You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints about what the likelihood of branch prediction is~\cite{cachegrind}. Of course, to learn more about how Cachegrind actually does what it does and how it runs the simulation, the manual is worth digging into...
+Cachegrind is very... verbose... and it can be very hard to come up with useful changes based on what you see... assuming your eyes don't glaze over when you see the numbers. Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). They have the highest penalty. You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints about what the likelihood of branch prediction is~\cite{cachegrind}. Of course, to learn more about how Cachegrind actually does what it does and how it runs the simulation, the manual is worth reading. Not that anybody reads manuals anymore... Just give it a shot, when you get stuck, google the problem, click the first stack overflow link result...
 
 \input{bibliography.tex}
 
