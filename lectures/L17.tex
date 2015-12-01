@@ -2,234 +2,243 @@
 
 \begin{document}
 
-\lecture{17 --- Cache Coherency}{\term}{Patrick Lam}
+\lecture{17 --- Memory Consistency}{\term}{Patrick Lam}
 
-\section*{Cache Coherency}
+\section*{Memory Consistency, Memory Barriers, and Reordering}
+Today we'll talk a bit more about memory consistency, memory barriers
+and reordering in general. We'll start with instruction reordering by
+the CPU and move on to reordering initiated by the compiler.  I'll
+also touch on some CPU instructions for atomic operations.
 
-\begin{center}
-    \includegraphics[scale=0.7]{images/coherency}
-
-\hfill ---Wikipedia
-\end{center}
-
-We talked about memory ordering and fences last time.  Today we'll
-look at what support the architecture provides for memory ordering, in
-particular in the form of cache coherence. Since this isn't an
-architecture course, we'll look at this material more from the point
-of view of a user, not an implementer.
-
-Cache coherency means that:
-  \begin{itemize}
-    \item the values in all caches are consistent; and
-    \item to some extent, the system behaves as if all CPUs are using shared memory.
-  \end{itemize}
-
-\paragraph{Cache Coherence Example.} We will use this example to illustrate
-different cache coherence algorithms and how they handle the same situation.
-
-Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache.
-    \item {\tt CPU3} reads x, puts the value in its cache.
-    \item {\tt CPU3} modifies {\tt x := 42}
-    \item {\tt CPU1} reads x \ldots ~from its cache?
-    \item {\tt CPU2} reads x. Which value does it get?
-  \end{enumerate}
-
-Unless we do something, {\tt CPU1} is going to read invalid data.
-
-\paragraph{High-Level Explanation of Snoopy Caches.} The simplest way to ``do something''
-is to use snoopy caches. The setup is as follows:
-
-  \begin{itemize}
-    \item Each CPU is connected to a simple bus.
-    \item Each CPU ``snoops'' to observe if a memory location is read or written
-      by another CPU.
-    \item We need a cache controller for every CPU.
-  \end{itemize}
-
-Then:
-  \begin{itemize}
-    \item Each CPU reads the bus to see if any memory operation is relevant. If
-      it is, the controller takes appropriate action.
-  \end{itemize}
-
-\subsection*{Write-Through Caches}
-Let's put that into practice using write-through caches, the simplest type of
-cache coherence.
-  \begin{itemize}
-    \item All cache writes are done to main memory.
-    \item All cache writes also appear on the bus.
-    \item If another CPU snoops and sees it has the same location in
-      its cache, it will either {\it invalidate} or {\it update} the
-      data.\\ \qquad (We'll be looking at invalidating.)
-  \end{itemize}
-Normally, when you write to an invalidated location, you bypass the
-cache and go directly to memory (aka {\bf write no-allocate}).
-
-\paragraph{Write-Through Protocol.}
-The protocol for implementing such caches looks like this.
-There are two possible states, {\bf valid} and {\bf invalid}, for each cached memory location.
-Events are either from a processor ({\bf Pr}) or the {\bf Bus}.
-We then implement the following state machine.
-
-  \begin{center}
-    \begin{tabular}{llll}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
-      Valid   & PrRd  &       & Valid\\
-      Valid   & PrWr  & BusWr & Valid\\
-      Valid   & BusWr &       & Invalid\\
-      Invalid & PrWr  & BusWr & Invalid\\
-      Invalid & PrRd  & BusRd & Valid\\
-    \end{tabular}
-  \end{center}
-
-\paragraph{Example.} For simplicity (this isn't an architecture course), assume all cache
-      reads/writes are atomic. Using the same example as before:
-
-Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache. {(valid)}
-    \item {\tt CPU3} reads x, puts the value in its cache. {(valid)}
-    \item {\tt CPU3} modifies {\tt x := 42}. {(write to memory)}
-      \begin{itemize}
-        \item {{\tt CPU1} snoops and marks data as invalid.}
-      \end{itemize}
-    \item {\tt CPU1} reads x, {from main memory. (valid)}
-    \item {\tt CPU2} reads x, {from main memory. (valid)}
-  \end{enumerate}
-
-\subsection*{Write-Back Caches}
-Let's try to improve performance. What if, in our example, {\tt CPU3} writes to {\tt x} 3 times?
-
-\paragraph{Main goal.} Delay the write to memory as long as possible. 
-At minimum, we have to add a ``dirty'' bit, which indicates the our data has not yet been written to memory.
-Let's do that.
-
-\paragraph{Write-Back Implementation.}
-     The simplest type of write-back protocol (MSI) uses 3 states instead of 2:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; 
-          main memory is {\bf out-of-date}.
-        \item {\bf Shared}---location is unmodified, 
-           up-to-date with main
-          memory; 
-          \quad may be present in other caches (also up-to-date).
-        \item {\bf Invalid}---same as before.
-      \end{itemize}
-      
-The initial state for a memory location, upon its first read, is ``shared''.
-The implementation will only write the data to memory if another
-processor requests it.
-During write-back, a processor may read the data from the bus.
-
-\paragraph{MSI Protocol.} Here, bus write-back (or flush) is {\bf BusWB}.
-Exclusive read on the bus is {\bf BusRdX}.
+\paragraph{Memory Consistency.} In a sequential program, you expect
+things to happen in the order that you wrote them. So, consider this code,
+where variables are initialized to 0:
 
 \begin{center}
-    \begin{tabular}{llll}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
-      Modified   & PrRd   &        & Modified\\
-      Modified   & PrWr   &        & Modified\\
-      Modified   & BusRd  & BusWB  & Shared\\
-      Modified   & BusRdX & BusWB  & Invalid\\
-      Shared     & PrRd   &        & Shared\\
-      Shared     & BusRd  &        & Shared\\
-      Shared     & BusRdX &        & Invalid\\
-      Shared     & PrWr   & BusRdX & Modified\\
-      Invalid    & PrRd   & BusRd  & Shared\\
-      Invalid    & PrWr   & BusRdX & Modified\\
-    \end{tabular}
+\begin{verbatim}
+    T1: x = 1; r1 = y;
+    T2: y = 1; r2 = x;
+\end{verbatim}
 \end{center}
-
-\paragraph{MSI Example.} Using the same example as before:
-
-Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x from memory. {(BusRd, shared)}
-    \item {\tt CPU3} reads x from memory. {(BusRd, shared)}
-    \item {\tt CPU3} modifies {\tt x = 42}:
-      \begin{itemize}
-        \item {Generates a BusRdX.}
-        \item {{\tt CPU1} snoops and invalidates x.}
-      \end{itemize}
-    \item {\tt CPU1} reads x:
-      \begin{itemize}
-        \item {Generates a BusRd.}
-        \item {{\tt CPU3} writes back the data and sets x to shared.}
-        \item {{\tt CPU1} reads the new value from the bus as shared.}
-      \end{itemize}
-    \item {\tt CPU2} reads x from memory. {(BusRd, shared)}
-  \end{enumerate}
-
-\subsection*{An Extension to MSI: MESI}
-    The most common protocol for cache coherence is MESI.
-    This protocol adds yet another state:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; 
- main memory is {\bf out-of-date}.
-        \item {\bf Exclusive}---only this cache has a valid copy; 
- main memory is {\bf up-to-date}.
-        \item {\bf Shared}---same as before.
-        \item {\bf Invalid}---same as before.
-      \end{itemize}
-
-    MESI allows a processor to modify data exclusive to it, without
-    having to communicate with the bus.  MESI is safe. The key is that
-    if memory is in the E state, no other processor has the data.
-
-\subsection*{MSEIF: Even More States!}
-
-    MESIF (used in latest i7 processors):
-      \begin{itemize}
-        \item {\bf Forward}---basically a shared state; but, current
-          cache is the only one that will respond to a request to
-          transfer the data.
-      \end{itemize}
-
-    Hence: a processor requesting data that is already shared or exclusive will
-      only get one response transferring the data. This permits more efficient usage of the bus.
-
-\subsection*{Cache coherence vs flush}
+We would expect that we would always query the memory and get a state
+where some subset of these partially-ordered statements would have executed.
+This is the \emph{sequentially consistent} memory model.
 
 \begin{quote}
-Cache coherency seems to make sure my data is consistent. Why do I have
-to have something like flush or fence?
+``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
 \end{quote}
 
-Sadly, no. Cache coherence isn't enough. Writes may be to registers rather than
-memory, and those won't be coherent. Use fences or flushes.
+{\sf What are the possible values for the variables?}\\[3em]
 
-\begin{quote}
-Well, I read that {\tt volatile} variables aren't stored in registers,
-    so then am I okay?
-\end{quote}
+Another view of sequential consistency:
+\begin{itemize}
+      \item each thread induces an \emph{execution trace}.
+      \item always, the program has executed some prefix of each thread's
+        trace.
+\end{itemize}
 
-Again, sadly, no. Recall that {\tt volatile} in C was only designed to:
-      \begin{itemize}
-        \item Allow access to memory mapped devices.
-        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
-        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
-      \end{itemize}
 
-Remember, things can also be reordered by the compiler, and {\tt
-  volatile} doesn't prevent reordering. Also, it's likely your
-variables could be in registers the majority of the time, except in
-critical areas.
+It turns out that sequential consistency is too expensive to implement.
+(Why?) So most systems actually implement weaker memory models,
+such that both {\tt r1} and {\tt r2} might end up unchanged. Recall the 
+{\bf flush} example from last time.
 
-\paragraph{Coherence summary.}
-We saw four cache coherence protocols, from MSI through MESIF. There
-are many other protocols for cache coherence, each with their own
-trade-offs.
+\paragraph{Reordering.} Compilers and processors may reorder 
+non-interfering memory operations within a thread. For instance, the
+two statements in {\tt T1} appear to be independent, so it's OK to
+execute them---or, equivalently, to publish their results to other
+threads---in either order. Reordering is one of the major tools that
+compilers use to speed up code.
 
-Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
-      compiler and hardware don't reorder reads and writes.
-    \begin{itemize}
-     \item Neither cache coherence nor {\tt volatile} will save you.
-    \end{itemize}
+{\sf When is reordering a problem?}\\[2em]
+% spin locks, as we'll see below.
+
+\subsection*{Memory Consistency Models}
+
+Here are some flavours of memory consistency models:
+
+\begin{itemize}
+\item Sequential consistency: no reordering of loads/stores.
+\item Sequential consistency for datarace-free programs: if your program
+  has no data races, then sequential consistency.
+\item Relaxed consistency (only some types of reorderings):
+\begin{itemize}
+        \item Loads can be reordered after loads/stores; and
+        \item Stores can be reordered after loads/stores.
+\end{itemize}
+\item     Weak consistency: any reordering is possible.
+\end{itemize}
+
+In any case, {\bf reorderings} only allowed if they look safe in
+current context (i.e. they reorder independent memory addresses).
+That can still be problematic, though.
+
+\paragraph{Compilers and reordering.}
+When it can prove that a reordering is safe with respect to the
+programming language semantics, the {\bf compiler} may reorder instructions (so it's not just the hardware).
+
+For example, say we want thread 1 to print value set in thread 2.
+  \begin{verbatim}
+                            f = 0
+
+/* thread 1 */                          /* thread 2 */
+while (f == 0) /* spin */;              x = 42;
+printf("%d", x);                        f = 1;
+  \end{verbatim}
+
+If thread 2 reorders its instructions, will we get our intended
+result? \emph{No!}
+
+\subsection*{Memory Barriers} We previously talked about OpenMP barriers: 
+at a {\tt \#pragma omp barrier}, all threads pause, until all of the
+threads reach the barrier. Lots of OpenMP directives come with implicit barriers
+unless you add {\tt nowait}.
+
+A rather different type of barrier is a \emph{memory barrier} or
+\emph{fence}. This type of barrier prevents reordering, or,
+equivalently, ensures that memory operations become visible in the
+right order. A memory barrier ensures that no access occuring after
+the barrier becomes visible to the system, or takes effect, until
+after all accesses before the barrier become visible.
+
+
+The x86 architecture defines the following types of memory 
+barriers:
+
+\begin{itemize}
+\item {\tt mfence.} All loads and stores before the barrier become
+visible before any loads and stores after the barrier become visible.
+\item {\tt sfence.} All stores before the barrier become visible before
+all stores after the barrier become visible.
+\item {\tt lfence.} All loads before the barrier become visible before
+all loads after the barrier become visible.
+\end{itemize}
+
+Note, however, that while an {\tt sfence} makes the stores visible,
+another CPU will have to execute an {\tt lfence} or {\tt mfence} to
+read the stores in the right order.
+
+Consider the example again:
+  \begin{verbatim}
+                         f = 0
+
+/* thread 1 */                     /* thread 2 */
+while (f == 0) /* spin */;         x = 42;
+// memory fence                    // memory fence
+printf("%d", x);                   f = 1;
+  \end{verbatim}
+This now prevents reordering, and we get the expected result.
+
+You can use the {\tt mfence} instruction to implement \emph{acquire
+  barriers} and \emph{release barriers}.  An acquire barrier ensures
+that memory operations after a thread obtains the mutex doesn't become
+visible until after the thread actually obtains the mutex.
+The release barrier similarly ensures that accesses before the mutex
+release don't get reordered to after the mutex release. Note that
+it is safe to reorder accesses after the mutex release and put them
+before the release.
+
+\paragraph{Preventing Memory Reordering in Programs: Compiler Barriers.}
+First: Don't use volatile in C/C++ on variables~\footnote{\tiny \url{http://stackoverflow.com/questions/78172/using-c-pthreads-do-shared-variables-need-to-be-volatile}.}. However, you can prevent reordering using compiler-specific calls.
+
+\begin{itemize}
+  \item Microsoft Visual Studio C++ Compiler:
+  \begin{verbatim}
+_ReadWriteBarrier()
+  \end{verbatim}
+  \item Intel Compiler:
+  \begin{verbatim}
+    __memory_barrier()
+  \end{verbatim}
+  \item GNU Compiler:
+  \begin{verbatim}
+__asm__ __volatile__ ("" ::: "memory");
+  \end{verbatim}
+\end{itemize}
+
+The compiler also shouldn't reorder across e.g. Pthreads mutex calls.
+
+\paragraph{Aside: {\tt gcc} Inline Assembly.}
+Just as an aside, here's {\tt gcc}'s inline assembly format
+
+  \begin{verbatim}
+__asm__ ( assembler template 
+       : output operands                  /* optional */
+       : input operands                   /* optional */
+       : list of clobbered registers      /* optional */
+       );
+  \end{verbatim}
+
+Note that we've just seen {\bf \_\_volatile\_\_} with  \_\_asm\_\_. This isn't the same as the normal C volatile. It means:
+\begin{itemize}
+    \item The compiler may not reorder this assembly code and put it somewhere
+      else in the program.
+\end{itemize}
+
+\paragraph{Back to Memory Reordering in Programs.}
+    Fortunately, an OpenMP {\bf flush} (or, better yet, mutexes) also preserve the order of variable accesses.
+    Stops reordering from both the compiler and hardware.
+    For GNU, flush is implemented as
+      {\tt \_\_sync\_synchronize();}
+
+\paragraph{{\tt volatile}.} This qualifier ensures that the
+code does an actual read from a variable every time it asks for one
+(i.e. the compiler can't optimize away the read). It does not prevent
+re-ordering nor does it protect against races.
+
+{\bf Note:} proper use of memory fences makes {\tt volatile} not very
+useful (again, {\tt volatile} is not meant to help with threading, and
+will have a different behaviour for threading on different
+compilers/hardware).
+
+\section*{Atomic Operations}
+ We saw the {\bf atomic} directive in OpenMP as well as C++11 atomics. Most OpenMP atomic expressions map to atomic hardware instructions.
+However, other atomic instructions exist, and we've seen the C++11 ones earlier as well.
+
+\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86).
+Here's some pseudocode for it.
+  \begin{verbatim}
+int compare_and_swap (int* reg, int oldval, int newval) 
+{
+  int old_reg_val = *reg;
+  if (old_reg_val == oldval) 
+     *reg = newval;
+  return old_reg_val;
+}
+  \end{verbatim}
+
+Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it.
+
+
+\paragraph{Implementing a Spinlock.}
+You can use compare-and-swap to implement spinlock:
+  \begin{verbatim}
+void spinlock_init(int* lock) { *lock = 0; }
+
+void spinlock_lock(int* lock) {
+    while(compare_and_swap(lock, 0, 1) != 0) {}
+    __asm__ ("mfence");
+}
+
+void spinlock_unlock(int* lock) {
+    __asm__ ("mfence");
+    *lock = 0;  
+}
+  \end{verbatim}
+You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
+
+\section*{ABA Problem}
+Sometimes you'll read a location twice.
+If the value is the same both times, nothing has changed, right?\\[1em]
+
+\emph{No.} This is an {\bf ABA problem}.\\[1em]
+
+You can combat this by ``tagging'': modify value with nonce upon each
+write.  You can also keep the value separately from the nonce; double
+compare and swap atomically swaps both value and nonce.
+
+Just something to be aware of. ``Not on exam''.
+
 
 \input{bibliography.tex}
 

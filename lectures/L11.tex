@@ -2,284 +2,297 @@
 
 \begin{document}
 
-\lecture{11 --- Autoparallelization }{\term}{Patrick Lam}
+\lecture{11 --- Critical Paths, Data \& Task Parallelism}{\term}{Patrick Lam}
 
-\section*{Automatic Parallelization}
+\section*{Critical Paths}
+You should be familiar with the concept of a critical path from previous
+courses; it is the minimum amount of time to complete the task, taking
+dependencies into account, and without speculating.
 
-We'll now talk about automatic parallelization. The vision is to take
-your standard sequential C program and convert it into a parallel C
-program which leverages multiple cores, CPUs, machines, etc.  This was
-an active area of research in the 1990s, then tapered off in the 2000s
-(because it's a hard problem!); it is enjoying renewed interest now (but
-it's still hard!)
+Consider the following diagram, which illustrates dependencies between
+tasks (shown on the arrows). 
+Note that B depends on A, and D depends on B and C, but C does
+not depend on anything, so it could be done in parallel with
+everything else. You can also compute expected execution times
+for different strategies.
+\begin{center}
+\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
+                    semithick,initial text=]
+  \node[initial,block] (s0) {Start};
+  \node[block] (s1) [right=of s0] {S1};
+  \node[block] (s2) [right=of s1] {S2};
+  \node[bw] (s3) [right=of s2] {Finish};
 
-\paragraph{What can we parallelize?} The
-easiest kind of program to parallelize is the classic Fortran program
-which performs a computation over a huge array. C code---if it's the
-right kind---is a bit worse, but still tractable, given enough hints
-to the compiler. For us, the right kind of code is going to be array
-codes. Some production compilers, like the non-free Intel C compiler
-{\tt icc}, the free-as-in-beer Solaris Studio
-compiler~\cite{solarisstudio}
-and the free GNU C compiler {\tt gcc}, include support for
-parallelization, with different maturity levels.
+  \path (s0) edge node {A} (s1)
+        (s1) edge node {B} (s2)
+        (s2) edge node {D} (s3)
+        (s0) edge[bend left=30] node {C} (s2);
+\end{tikzpicture}
+\end{center}
 
+\section*{Data and Task Parallelism}
+There are two broad categories of paralellism: data parallelism and
+task parallelism. An analogy to data parallelism is hiring a call
+center to (incompetently) handle large volumes of support calls,
+\emph{all in the same way}. Assembly lines are an analogy to task
+parallelism: each worker does a \emph{different} thing.
 
-Following Gove, we'll parallelize the following code:
+More precisely, in data parallelism, multiple threads perform the
+\emph{same} operation on separate data items. For instance, you have a
+big array and want to double all of the elements. Assign part of the
+array to each thread. Each thread does the same thing: double array
+elements.
 
-\begin{verbatim}
-#include <stdlib.h>
+In task parallelism, multiple threads perform \emph{different}
+operations on separate data items. So you might have a thread that
+renders frames and a thread that compresses frames and combines them
+into a single movie file.
 
-void setup(double *vector, int length) {
-    int i;
-    for (i = 0; i < length; i++) {
-        vector[i] += 1.0;
-    }
-}
+We'll continue by looking at a number of parallelization patterns,
+examples of how to apply them, and situations where they might apply.
 
-int main() {
-    double *vector;
-    vector = (double*) malloc (sizeof (double) * 1024 * 1024);
-    for (int i = 0; i < 1000; i++) {
-        setup (vector, 1024*1024);
-    }
-}
-\end{verbatim}
+\subsection*{Data Parallelism with SIMD}
+We'll talk about single-instruction multiple-data (SIMD) later on in
+this course, but here's a quick look. Each SIMD
+instruction operates on an entire vector of data. These instructions
+originated with supercomputers in the 70s. More recently, GPUs; the
+x86 SSE instructions; the SPARC VIS instructions; and the
+Power/PowerPC AltiVec instructions all implement SIMD.
 
-
-\paragraph{Automatic Parallelization.} Let's first see what compilers can do automatically.
-The Solaris Studio compiler yields the following output:
-{\small 
-\begin{verbatim}
-$ cc -O3 -xloopinfo -xautopar omp_vector.c 
-"omp_vector.c", line 5: PARALLELIZED, and serial version generated
-"omp_vector.c", line 15: not parallelized, call may be unsafe
-\end{verbatim}
-} 
-
-{\bf Note:} The Solaris compiler generates two versions of the code,
-and decides, at runtime, if the parallel code would be faster, depending on
-whether the loop bounds, at runtime, are large enough to justify spawning
-threads.
-
-Under the hood, most parallelization frameworks use {\tt OpenMP},
-which we'll see next time. For now, you can control the number of
-threads with the {\tt OMP\_NUM\_THREADS} environment variable.
-
-\paragraph{Autoparallelization in {\tt gcc}.} 
-{\tt gcc} 4.3+ can also parallelize loops, but there are a couple of
-problems: 1) the loop parallelization doesn't seem very stable yet; 2)
-I can't figure out how to make {\tt gcc} tell you what it did in a comprehensible
-way (you can try {\tt -fdump-tree-parloops-details}); and,
-perhaps most importantly for performance, 3) {\tt gcc} doesn't have
-many heuristics yet for guessing which loops are profitable (since 4.8, it can
-use profiling data and tries to infer the number of loop iterations
-happen)\footnote{\url{https://gcc.gnu.org/wiki/AutoParInGCC}}.
-
-{\tt clang} also has the {\tt polly} parallelization framework, but I couldn't
-figure out how to try it.
-
-One way to inspect {\tt gcc}'s output is by giving it the {\tt
-  -S} option and looking at the resulting assembly code yourself. This
-is obviously not practical for production software.
-\begin{verbatim}
-$ gcc -std=c99 omp_vector.c -O2 -floop-parallelize-all -ftree-parallelize-loops=2 -S           
-\end{verbatim}
-
-The resulting {\tt .s} file contains the following code:
+\paragraph{Code.} Let's look at an application of SIMD instructions.
 
 \begin{verbatim}
-        call    GOMP_parallel_start
-        movl    %edi, (%esp)
-        call    setup._loopfn.0
-        call    GOMP_parallel_end
-\end{verbatim}
-{\tt gcc} code appears to ignore \verb+OMP_NUM_THREADS+.  Here's
-some potential output from a parallelized program:
-\begin{verbatim}
-        $ export OMP_NUM_THREADS=2
-        $ time ./a.out
-        real    0m5.167s
-        user    0m7.872s
-        sys    0m0.016s
-\end{verbatim}
-
-
-(When you use multiple (virtual) CPUs, CPU usage can increase beyond
-100\% in {\tt top}, and real time can be less than user time in
-the {\tt time} output, since user time counts the time used by all CPUs.)
-
-Let's look at some gcc examples from: \url{http://gcc.gnu.org/wiki/AutoparRelated}.
-
-\paragraph{Loops That gcc's Automatic Parallelization Can Handle.}~\\
-
-  Single loop:
-  \begin{verbatim}
-for (i = 0; i < 1000; i++)
-    x[i] = i + 3;
-  \end{verbatim}
-
-  Nested loops with simple dependency:
-  \begin{verbatim}
-for (i = 0; i < 100; i++)
-    for (j = 0; j < 100; j++)
-        X[i][j] = X[i][j] + Y[i-1][j];
-  \end{verbatim}
-
-  Single loop with not-very-simple dependency:
-  \begin{verbatim}
-for (i = 0; i < 10; i++)
-    X[2*i+1] = X[2*i];
-  \end{verbatim}
-
-\paragraph{Loops That gcc's Automatic Parallelization Can't Handle.}~\\
-
-  Single loop with if statement:
-  \begin{verbatim}
-for (j = 0; j <= 10; j++)
-    if (j > 5) X[i] = i + 3;
-  \end{verbatim}
-
-  Triangle loop:
-  \begin{verbatim}
-for (i = 0; i < 100; i++)
-    for (j = i; j < 100; j++)
-        X[i][j] = 5;
-  \end{verbatim}
-
-\paragraph{Manual Parallelization.} Let's first think about how we could 
-manually parallelize this code.
-\begin{itemize}
-\item {\bf Option 1:} horizontal, \begin{minipage}{7em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage} \\
-Create 4 threads; each thread does 1000 iterations on its own sub-array.
-
-\item {\bf Option 2:} bad horizontal, \begin{minipage}{7em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage} \\
-1000 times, create 4 threads which each operate once on the sub-array.
-
-\item {\bf Option 3:} vertical $ \quad \: \qquad \mid \mid \mid\mid \:\: \mid \mid \mid \mid \:\: \mid \mid \mid \mid\:\: \mid \mid \mid \mid$\\
-Create 4 threads; for each element, the owning thread does 1000 iterations on that element.
-\end{itemize}
-We can try these and empirically see which works better. As you might expect, bad horizontal
-does the worst. Horizontal does best. See L11 notes for benchmark results and further discussion.
-
-\subsection*{Case study: Multiplying a Matrix by a Vector.}
-Next, we'll see how automatic parallelization does on a more complicated
-program. We will progressively remove barriers to parallelization for
-this program:
-
-\begin{verbatim}
-void matVec (double **mat, double *vec, double *out,
-             int *row, int *col) 
-{
-  int i, j;
-  for (i = 0; i < *row; i++)
-  {
-    out[i] = 0;
-    for (j = 0; j < *col; j++)
-    {
-      out[i] += mat[i][j] * vec[j];
-    }
-  }
+void vadd(double * restrict a, double * restrict b, int count) {
+  for (int i = 0; i < count; i++)
+    a[i] += b[i];
 }
 \end{verbatim}
 
-The Solaris C compiler refuses to parallelize this code:
-{\small 
+Compiling this without SIMD on a 32-bit x86 ({\tt gcc -m32 -march=i386 -S}) might give this:
 \begin{verbatim}
-$ cc -O3 -xloopinfo -xautopar fploop.c 
-"fploop.c", line 5: not parallelized, not a recognized for loop
-"fploop.c", line 8: not parallelized, not a recognized for loop
-\end{verbatim} 
-}
-For definitive documentation about Sun's automatic parallelization, see
-Chapter 10 of their \emph{Fortran Programming Guide} and do the analogy to C:
-
-\url{http://download.oracle.com/docs/cd/E19205-01/819-5262/index.html}
-
-In this case, the loop bounds are not constant, and the write to {\tt
-  out} might overwrite either {\tt row} or {\tt col}. So, let's modify
-the code and make the loop bounds {\tt int}s rather than {\tt int *}s.
-
-\begin{verbatim}
-void matVec (double **mat, double *vec, double *out,
-             int row, int col) 
-{
-  int i, j;
-  for (i = 0; i < row; i++)
-  {
-    out[i] = 0;
-    for (j = 0; j < col; j++)
-    {
-      out[i] += mat[i][j] * vec[j];
-    }
-  }
-}
+loop:
+  fldl  (%edx)
+  faddl (%ecx)
+  fstpl (%edx)
+  addl  8, %edx
+  addl  8, %ecx
+  addl  1, %esi
+  cmp   %eax, %esi
+  jle   loop
 \end{verbatim}
- This changes the error message:
 
-
+We can instead compile to SIMD instructions ({\tt gcc -m32 -march=prescott -mfpmath=sse})
+and get something like this:
 \begin{verbatim}
-$ cc -O3 -xloopinfo -xautopar fploop1.c 
-"fploop1.c", line 5: not parallelized, unsafe dependence
-"fploop1.c", line 8: not parallelized, unsafe dependence
-\end{verbatim} 
-
-Now the problem is that {\tt out} might alias {\tt mat} or {\tt vec};
-as I've mentioned previously, parallelizing
-in the presence of aliases could change the run-time behaviour.
-
-\paragraph{{\tt restrict} qualifier.} 
-Recall that the {\tt restrict} qualifier on pointer {\tt p} tells
-the compiler\footnote{\url{http://cellperformance.beyond3d.com/articles/2006/05/demystifying-the-restrict-keyword.html}} that it may assume that, in the scope of {\tt p},
-the program will not use any other pointer {\tt q} to access the
-data at {\tt *p}.
-
-{
-\begin{verbatim}
-void matVec (double **mat, double *vec, double * restrict out,
-             int row, int col) 
-{
-  int i, j;
-  for (i = 0; i < row; i++)
-  {
-    out[i] = 0;
-    for (j = 0; j < col; j++)
-    {
-      out[i] += mat[i][j] * vec[j];
-    }
-  }
-}
+loop:
+  movupd (%edx),%xmm0
+  movupd (%ecx),%xmm1
+  addpd  %xmm1,%xmm0
+  movpd  %xmm0,(%edx)
+  addl   16,%edx
+  addl   16,%ecx
+  addl   2,%esi
+  cmp    %eax,%esi
+  jle    loop
 \end{verbatim}
-}
+The \emph{packed} operations ({\tt p}) operate on multiple data
+elements at a time (what kind of parallelism is this?)
+The implication is that the loop only needs to loop half as many times.
+Also, the instructions themselves are more efficient, because they're
+not stack-based x87 instructions.
 
-Now Solaris {\tt cc} is happy to parallelize the outer loop:
-
-{\small 
-\begin{verbatim}
-$ cc -O3 -xloopinfo -xautopar fploop2.c 
-"fploop2.c", line 5: PARALLELIZED, and serial version generated
-"fploop2.c", line 8: not parallelized, unsafe dependence
-\end{verbatim} 
-}
-
-There's still a dependence in the inner loop. This dependence is because
-all inner loop iterations write to the same location, {\tt out[i]}. We'll
-discuss that problem below.
-
-In any case, the outer loop is the one that can actually improve performance,
-since parallelizing it imposes much less barrier synchronization cost 
-waiting for all threads to finish. So, even if we tell the compiler to ignore
-the reduction issue, it will generally refuse to parallelize inner loops:
-{\small 
-\begin{verbatim}
-$ cc -g -O3 -xloopinfo -xautopar -xreduction fploop2.c 
-"fploop2.c", line 5: PARALLELIZED, and serial version generated
-"fploop2.c", line 8: not parallelized, not profitable
-\end{verbatim} 
-}
+SIMD is different from the other types of parallelization we're
+looking at, since there aren't multiple threads working at once.
+It is complementary to using threads, and good for cases
+where loops operate over vectors of data. These loops could also be
+parallelized; multicore chips can do both, achieving high throughput.
+SIMD instructions also work well on small data sets, where thread startup
+cost is too high, while registers are just there to use.
 
 
+\subsection*{Parallelization using Threads or Processes}
+We'll be looking at thread-based or process-based parallelization for the
+next bit. We don't care about the distinction between threads and processes
+for the moment. In fact, we could even distribute work over multiple systems.
 
+\paragraph{Pattern 1: Multiple Independent Tasks.} If you're just trying to maximize
+system utilization, you can use one system to run a number of independent
+tasks; for instance, you can put both a web server and database on
+one machine. If the web server happens to be memory-bound while the
+database is I/O-bound, then both can use system resources. If the web
+server isn't talking to the database (rare these days!), then the tasks
+would not get in each others' way.
+
+Most services probably ought to be run under virtualization these
+days, unless they're trivial or not mission-critical.
+
+A more relevant example of multiple independent tasks occurs in
+cluster/grid/cloud computing: the cloud might run a number of
+independent tasks, and each node would run some of the tasks. The
+cloud can retry a task (on a different node, perhaps) if it fails on
+some node. Note that the performance ought to increase linearly with
+the number of threads, since there shouldn't be communication between
+the tasks.
+
+\paragraph{Pattern 2: Multiple Loosely-Coupled Tasks.} Some applications contain
+tasks which aren't quite independent (so there is some inter-task
+communication), but not much.  In this case, the tasks may be
+different from each other. The communication might be from the tasks
+to a controller or status monitor; it would usually be asynchronous or
+be limited to exceptional situations.
+
+Refactoring an application this way can help with latency: if you 
+split off the CPU-intensive computations into a sub-thread, then
+the main thread can respond to user input more quickly.
+
+Here's an example. Assume that an application needs to receive and
+forward network packets, and also must log packet activity to disk.
+Then the two tasks are clear: receive/forward, and log. Since logging
+to disk is a high-latency event, a single-threaded application might
+incur latency while writing to disk. Splitting into subtasks allows
+the receive/forward to run without waiting for previous packets to be
+logged, thus increasing the throughput of the system.
+
+\paragraph{Pattern 3: Multiple Copies of the Same Task.} A common variant of
+multiple independent tasks is multiple copies of the same task
+(presumably on different data). In this case, we'd require there to be
+no communication between the different copies, which would enable
+linear speedup. An example is a rendering application running on
+multiple distinct animations. We gain throughput, but need to wait
+just as long for each task to complete.
+
+\paragraph{Pattern 4: Single Task, Multiple Threads.} This is the classic
+vision of ``parallelization'': for instance, distribute array
+processing over multiple threads, and let each thread compute the
+results for a subset of the array.
+
+This pattern, unlike many of the others before it, can actually
+decrease the time needed to complete a unit of work, since it gets
+multiple threads involved in doing the single unit simultaneously.
+The result is improved latency and therefore increased throughput.
+Communication can be a problem, if the data is not nicely
+array-structured, or has dependencies between different array parts.
+
+Other names and variations for this pattern include ``fork-join'',
+where the main process forks its execution and gives work to all of
+the threads, with the join synchronizing threads and combining the
+results; and ``divide-and-conquer'', where a thread spawns subthreads
+to compute smaller and smaller parts of the solution.
+
+\paragraph{Pattern 5: Pipeline of Tasks.} We've seen pipelining in the context of
+computer architecture. It can also work for software. For instance,
+you can use pipelining for packet-handling software, where multiple
+threads, as above, might confound the order. If you use a three-stage
+pipeline, then you can have three packets in-flight at the same time,
+and you can improve throughput by a factor of 3 (given appropriate
+hardware).  Latency would tend to remain the same or be worse (due to
+communication overhead).
+
+Some notes and variations on the pipeline: 1) if a stage is
+particularly slow, then it can limit the performance of the entire
+pipeline, if all of the work has to go through that stage; and 2) you
+can duplicate pipeline stages, if you know that a particular stage is
+going to be the bottleneck.
+
+\paragraph{Pattern 6: Client-Server.} Botnets work this way (as does \verb+SETI@Home+,
+etc). To execute some large computation, a server is ready to tell
+clients what to do.  Clients ask the server for some work, and the
+server gives work to the clients, who report back the results. Note
+that the server doesn't need to know the identity of the clients for
+this to work.
+
+A single-machine example is a GUI application where the server part
+does the backend, while the client part contains the user interface.
+One could imagine symbolic algebra software being designed that way.
+Window redraws are an obvious candidate for tasks to run on clients.
+
+Note that the single server can arbitrate access to shared resources.
+For instance, the clients might all need to perform network access.
+The server can store all of the requests and send them out in an
+orderly fashion.
+
+The client-server pattern enables different threads to share work
+which can somehow be parcelled up, potentially improving
+throughput. Typically, the parallelism is somewhere between single
+task, multiple threads and multiple loosely-coupled tasks. It's also a
+design pattern that's easy to reason about.
+
+\paragraph{Pattern 7: Producer-Consumer.} The producer-consumer is 
+a variant on the pipeline and client-server models. In this case, the
+producer generates work, and the consumer performs work. An example is
+a producer which generates rendered frames, and a consumer which
+orders these frames and writes them to disk. There can be any number
+of producers and consumers. This approach can improve throughput
+and also reduces design complexity.
+
+\paragraph{Combining Strategies.} If one of the patterns suffices,
+then you're done. Otherwise, you may need to combine strategies.
+For instance, you might often start with a pipeline, and then 
+use multiple threads in a particular pipeline stage to handle one
+piece of data. Or, as I alluded to earlier, you can replicate
+pipeline stages to handle different data items simultaneously.
+
+Note also that you can get synergies between different patterns.
+For instance, consider a task which takes 100 seconds. First, you
+take 80 seconds and parallelize it 4 ways (so, 20 seconds). This
+reduces the runtime to 40 seconds. Then, you can take the serial 
+20 seconds and split it into two threads. This further reduces 
+runtime to 30 seconds. You get a $2.5\times$ speedup from the
+first transformation and $1.3\times$ from the second, if you do it
+after the first. But, if you only did the second parallelization,
+you'd only get a $1.1\times$ speedup.
+
+\subsection*{How to Parallelize Code}
+Here's a four-step outline of what you need to do.
+\begin{enumerate}
+\item Profile the code.
+\item Find dependencies in hotspots. For each dependency chain in
+a hotspot, figure out if you can execute the chain as
+multiple parallel tasks or a loop over multiple parallel iterations.
+Think about changing the algorithm, if that would help.
+\item Estimate benefits. 
+\item If they're not good enough (e.g. far from linear speedup),
+step back and see if you can parallelize something else up the
+call chain, or at a higher level of absraction.
+(Think Mandelbrot sets and computing different points in parallel).
+\end{enumerate}
+Try to reduce the amuont of synchronization that you have to do
+(waiting for parallel tasks to finish), because that always slows
+you down.
+
+\section*{Thread Pools} We talked about ``single task, multiple threads''
+last week. The idea behind a \emph{thread pool} is that it's relatively
+expensive to start a thread; it costs resources to keep the threads
+running at the operating system level; and the threads won't run
+optimally anyway, because they'll spend too much time swapping state
+in and out of the cache.  Instead, you start an appropriate number of
+threads, which each grab work from a work queue, do the work,
+and report the results back. Web servers are a good application of
+thread pools\footnote{Apache does this: \url{http://httpd.apache.org/docs/2.0/mod/worker.html}. Also see an assignment where the students write thread-pooled web servers: \url{http://www.cse.nd.edu/~dthain/courses/cse30341/spring2009/project4/project4.html}.}.
+
+A key question is: how many threads should you create?  This depends
+on which resources your threads use; if you are writing
+computationally-intensive threads, then you probably want to have
+fewer threads than the number of virtual CPUs. You can also use
+Amdahl's Law to estimate the maximum useful number of threads, as
+discussed previously.
+
+Here's a longer discussion of thread pools:
+
+\begin{center}
+\url{http://www.ibm.com/developerworks/library/j-jtp0730.html}
+\end{center}
+
+Modern languages provide thread pools; Java's
+\url{java.util.concurrent.ThreadPoolExecutor}~\cite{java:threadpoolexecutor}, C\#'s
+\url{System.Threading.ThreadPool}~\cite{csharp:threadpool}, and GLib's {\tt GThreadPool}~\cite{gnome:threadpool} all implement thread pools. 
+
+\paragraph{GLib.} 
+GLib is a C library developed by the GTK team. It provides many useful
+features that you might otherwise have to implement yourself in C.
+Consider using GLib's thread pool in your assignment 2, unless you
+want to implement the work queue yourself.  (I see no reason to do
+that!)
 
 \input{bibliography.tex}
 
