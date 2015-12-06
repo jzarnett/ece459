@@ -24,7 +24,14 @@ This definition is a little bit strict. We could also say that there is a race c
 When there's a race, the final state may not be the same as running
 one access to completion and then the other. But it ``usually'' is. It's nondeterministic. The fact that the output is often ``12'' and only very occasionally ``21'' may make it very difficult to track down the source of the problem. Furthermore, if we end up adding additional logging statements or use the debugger or anything to that effect, we will change the timing and possibly suppress (cover up) the behaviour of the bug.
 
+In other situations (e.g., processor design) these are sometimes referred to as data hazards or dependencies. The problem there is that we have something that needs to wait for something else. There are four basic possibilities to consider:
 
+\begin{enumerate}
+	\item \textbf{RAW} (Read After Write) - The classic form of dependency. The read has to take place after the write, otherwise there's nothing to read, or an incorrect value will be read.
+	\item \textbf{WAR} (Write After Read) - A write cannot take place until the read has happened, to ensure the read takes the correct value.
+	\item \textbf{WAW} (Write After Write) - A write cannot take place because an earlier write needs to happen first. If we do them out of order, the final value may be out of date or otherwise incorrect.
+	\item \textbf{RAR} (Read After Read) - No such hazard! 
+\end{enumerate}
 
 
 Race conditions typically arise between variables which are shared
@@ -284,7 +291,7 @@ implement them in an operating systems course. Here's how to use them.
  For background on implementing mutual exclusion, see
  \url{http://en.wikipedia.org/wiki/Lamport\%27s_bakery_algorithm}
       {Lamport's bakery algorithm}. Implementation details are not in
-      scope for this course.
+      scope for this course. You did take ECE 254, right?
 
 Key idea: locks protect resources; only one thread
 can hold a lock at a time. A second thread trying to obtain the lock
@@ -304,7 +311,9 @@ just interested in $B$ still has acquire $\ell$, which requires it to
 wait for any other thread working with $A$. (The Linux kernel used to
 rely on a Big Kernel Lock protecting lots of resources in the 2.0 era,
 and Linux 2.2 improved performance on SMPs by cutting down on the use
-of the BKL.)
+of the BKL.) Mac OS also used to have problems with this, using the
+big and small kernel locks (but this is something they got from using
+the Mach microkernel, which is a whole other story.).
 
 Note: in Windows, the term ``mutex'' refers to an inter-process
 communication mechanism. ``Critical sections'' are the mutexes we're
@@ -319,6 +328,8 @@ for a long time consumes lots of CPU resources. Many lock
 implementations use both sleeping and spinlocks: spin for a bit,
 then sleep for longer. At some point, we saw a live coding example
 comparing spinlocks to normal mutexes.
+
+When would we ever want to use a spinlock? After all, we spend so much time talking about how we would never ever want to wait in a busy loop. Well. What we normally expect is to block until the lock becomes available. But that means a process switch, and then a switch back in the future when the lock is available. This takes nonzero time so it's optimal to use a spinlock if the amount of time we expect to wait for the lock is less than the amount of time it would take to do two process switches. As long as we have a multicore system.
 
 \paragraph{Reader/Writer Locks.} Recall that data races only happen when
 one of the concurrent accesses is a write. So, if you have read-only
@@ -502,6 +513,8 @@ Note that the variable will not actually be {\tt volatile} in the
 critical section; most of the time, it only prevents useful
 optimizations. {\tt volatile} is usually wrong unless there is a
 \emph{very} good reason for it.
+
+The ``typical'' use case for volatile is having some variable like \texttt{quit} as the condition of your infinite loop (\texttt{while (!quit)}... ) and when something happens, say, you catch the Ctrl-C signal, you change the value of \texttt{quit} so your infinite loop will exit and the program will clean itself up nicely. The compiler doesn't necessarily notice that some other thread or signal handler or what have you will make changes to the value of \texttt{quit} and so it will probably conclude that it can optimize something like \texttt{!quit} to \texttt{true}, which is right the vast majority of the time, but wrong in that important scenario...
 
   
 \input{bibliography.tex}
