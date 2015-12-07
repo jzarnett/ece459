@@ -2,25 +2,37 @@
 
 \begin{document}
 
-\lecture{9 --- C++ Atomics, Compiler Hints, Restrict}{\term}{Patrick Lam}
+\lecture{9 --- C++ Atomics, Compiler Hints, Restrict}{\term}{Patrick Lam and Jeff Zarnett}
 
 \section*{C++ Atomics}
 We've talked about locks. Atomics are a lower-overhead alternative to
-locks as long as you're doing suitable operations.
+locks as long as you're doing suitable operations. Remember that what we wanted sometimes with locks and muteness and all that is that operations are indivisible: an update to a variable doesn't get interfered with by another update. Remember the key idea is: an t\textit{atomic operation} is indivisible. Other threads see state before or after the operation; nothing in between.
 
-We are only going to talk about atomics with sequential consistency.
-If you use
-the default {\tt std::memory\_order}, that's what you get.
 
-{\bf Don't use relaxed atomics unless you're an expert!\footnote{\url{http://stackoverflow.com/questions/9553591/c-stdatomic-what-is-stdmemory-order-and-how-to-use-them}}}
+We are only going to talk about atomics with sequential consistency. If you use the default {\tt std::memory\_order}, that's what you get. What do I mean by that? Well, in the header file \texttt{atomic} (C++11 here) there is an enumeration of memory orders and I am suggesting that using the default is pretty nice, compared to the alternative which may or may not be a Lovecraftian Horror to understand (or prove correctness). If you'd like to know about all the options, take a look at~\cite{cppatomics}, but here's a quick summary from~\cite{bmref1} (which is much more concise than the C++ Atomics listing):
 
-\paragraph{Key idea.}
-An \emph{atomic operation} is indivisible.
-Other threads see state before or after the operation,
-nothing in between.
+\begin{center}
+	\begin{tabular}{l|p{12cm}}
+	\textbf{Value} & \textbf{Explanation} \\ \hline
+		\texttt{memory\_order\_acquire} &  Subsequent loads are not moved before the current load or any preceding loads.\\ \hline
+		\texttt{memory\_order\_release} &  Preceding stores are not moved past the current store or any subsequent stores. \\ \hline
+		\texttt{memory\_order\_acq\_rel} & Combine the acquire and release guarantees\\ \hline
+		\texttt{memory\_order\_consume} & A potentially weaker form of memory\_order\_acquire that enforces ordering of the current load before other operations that are data-dependent on it (for instance, when a load of a pointer is marked memory\_order\_consume, subsequent operations that dereference this pointer won't be moved before it (yes, even that is not guaranteed on all platforms!).\\ \hline
+	
+	\texttt{memory\_order\_relaxed} & All reordering are okay; only atomicity is required of this operation. \\ \hline
+\texttt{memory\_order\_seq\_cst} & Same as \texttt{memory\_order\_acq\_rel}, plus a single total order exists in which all threads observe all modifications in the same order.\\ 
+	\end{tabular}
 
-\paragraph{atomic flags.} The simplest form of C++11 atomic is the {\tt atomic\_flag}.
+\end{center}
+
+
+
+The C++11 standard includes both strong and weak atomics. The weak ones are the ones where you get to specify the the memory ordering of load and store operating in a way that is not sequentially consistent. But we care about the standard, sequentially consistent kind of operation. \textit{Don't} use relaxed atomics unless you're an expert! Basically, a value that is seen from a memory load may come from the past or from the future (it's all relative, of course). If you want to dig into the details about an example, I recommend~\cite{bmref2}, which goes into the details of just how difficult it is to prove correctness. If that doesn't talk you out of it, I'm not sure what will.
+
+
+\paragraph{Atomic Flags.} The simplest form of C++11 atomic is the {\tt atomic\_flag}.
 Not surprisingly, this represents a boolean flag. You can clear the flag and test-and-set it.
+
 
 \begin{verbatim}
 #include <atomic>
@@ -34,8 +46,7 @@ int foo() {
 }
 \end{verbatim}
 
-{\tt test\_and\_set} atomically sets the flag to true, and returns the previous value. 
-There is no assignment (=) operator for {\tt atomic\_flag}s.
+This returns the previous value. There is no assignment (=) operator for {\tt atomic\_flag}s. Although I guess in C++ you could define one if you wanted. This is kind of a dangerous thing about C++. If in C you see a line of code like \texttt{z = x + y;} you can have a pretty good idea about what it does and you can infer that there's some sort of natural meaning to the + operator there, like addition or concatenation. In C++, however, this same line of code tells you nothing, unless you know (1) the type of \texttt{x}, (2) the type of \texttt{y}, and (3) how the \texttt{+} operator is defined on those two operands \textit{in that order}. But I'm digressing.
 
 \paragraph{More general C++ atomics.} Boolean flags are nice, but we want more.
 C++11 supports arbitrary types as atomic. Here'a an example declaration:
@@ -45,10 +56,7 @@ C++11 supports arbitrary types as atomic. Here'a an example declaration:
 atomic<int> x;
 \end{verbatim}
 The C++11 library implements atomics using lock-free operations for small types
-and using mutexes for large types.
-
-The general types of operations that you can do with atomics are three: reads, writes, and
-RMW (read-modify-write) operations. C++ has syntax to make these all transparent.
+and using mutexes for large types. The general types of operations that you can do with atomics are three: reads, writes, and RMW (read-modify-write) operations. C++ has syntax to make these all transparent.
 
 \begin{verbatim}
 // atomic reads and writes
@@ -112,41 +120,19 @@ Three-address code is useful for reasoning about data races. It is
 also easier to read than assembly, as it separates out memory reads
 and writes.
 
-\paragraph{GIMPLE: gcc's three-address code.} To see the GIMPLE representation 
+\paragraph{GIMPLE: \texttt{gcc}'s three-address code.} To see the GIMPLE representation 
 of your code, pass {\tt gcc} the {\tt -fdump-tree-gimple} flag. You
 can also see all of the three address code generated by the compiler;
 use {\tt -fdump-tree-all}. You'll probably just be interested in the
 optimized version.  
 
 I suggest using GIMPLE to reason about your code at a low level
-without having to read assembly.
+without having to read assembly. Let's take a few minutes to look at an example.
 
-
-\subsection*{Branch Prediction}
-We've mentioned before that modern CPUs must rely on branch
-prediction to get the performance we're used to. We also had a
-live coding demo which demonstrated the impact of mis-prediction.
-Here's a bit more information about providing the compiler with
-branch prediction hints.
-
-The right thing to do most of the time is to not call it. Use
-profile-guided optimization whenever possible if you do want to use
-branch prediction. Nevertheless, providing branch prediction hints
-can be useful for error cases on slow processors.
-
-{\tt gcc} provides a builtin function:
-
-    \verb+     long __builtin_expect (long exp, long c)+
-
-\noindent
-When you call it, you are indicating that the expected result is that
-{\tt exp} equals {\tt c}. In response, the compiler will pass the prediction
-on to the CPU and reorder the code properly to take advantage of the
-(hopefully correct) hint.
 
 \subsection*{The {\tt restrict} qualifier} 
 The {\tt restrict} qualifier on pointer {\tt p} tells
-the compiler\footnote{\url{http://cellperformance.beyond3d.com/articles/2006/05/demystifying-the-restrict-keyword.html}} that it may assume that, in the scope of {\tt p},
+the compiler~\cite{cellperf} that it may assume that, in the scope of {\tt p},
 the program will not use any other pointer {\tt q} to access the
 data at {\tt *p}.
 
@@ -162,6 +148,18 @@ compiler that the pointer will never alias (another pointer will not
 point to the same data) for the lifetime of the pointer.  Hence, two
 pointers declared {\tt restrict} must never point to the same data.
 
+In fact~\cite{cellperf} includes a contract that goes with the use of restrict:
+
+\begin{quote}
+I, [insert your name], a PROFESSIONAL or AMATEUR [circle one] programmer recognize that there are limits to what a compiler can do. I certify that, to the best of my knowledge, there are no magic elves or monkeys in the compiler which through the forces of fairy dust can always make code faster. I understand that there are some problems for which there is not enough information to solve. I hereby declare that given the opportunity to provide the compiler with sufficient information, perhaps through some key word, I will gladly use said keyword and not bitch and moan about how "the compiler should be doing this for me."
+
+In this case, I promise that the pointer declared along with the restrict qualifier is not aliased. I certify that writes through this pointer will not effect the values read through any other pointer available in the same context which is also declared as restricted.
+
+* Your agreement to this contract is implied by use of the restrict keyword ;)
+\end{quote}
+
+Of course, I highly recommend that you have your personal legal expert review this contract before you sign it. As I would for any contract. Contracts are serious business.
+
 An example from Wikipedia:
 \begin{verbatim}
   void updatePtrs(int* ptrA, int* ptrB, int* val) {
@@ -173,7 +171,7 @@ Would declaring all these pointers as {\tt restrict} generate better code?
 
 Well, let's look at the GIMPLE.
 
-\begin{verbatim}[numbers=left]
+\begin{verbatim}
 void updatePtrs(int* ptrA, int* ptrB, int* val) {
  D.1609 = *ptrA;
  D.1610 = *val;
