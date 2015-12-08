@@ -2,22 +2,24 @@
 
 \begin{document}
 
-\lecture{10 --- Dependencies and Speculation }{\term}{Patrick Lam}
+\lecture{10 --- Dependencies and Speculation }{\term}{Patrick Lam and Jeff Zarnett}
 
 \section*{Dependencies}
-I've said that some computations appear to be ``inherently sequential''. We talked about a
-bunch of real-life analogies:
+Some computations appear to be ``inherently sequential''. There are plenty of real-life analogies:
 
 \begin{itemize}
 \item must extract bicycle from garage before closing garage door
  
 \item must close washing machine door before starting the cycle
  
-\item must be called on before answering questions? (sort of)
+\item must be called on before answering questions? (sort of, some people shout out...)
  
-\item students must submit assignment before course staff can mark the assignment
+\item students must submit assignment before course staff can mark the assignment (also sort of... I can assign you a grade of zero if you didn't submit an assignment!)
 \end{itemize}
 
+There are some prerequisite steps that need to be taken before a given step can take place. The problem is that we need some result or state from an earlier step before we can go on to the next step. Interestingly, in many of the analogies, sometimes if you fail to respect the dependency, nothing physically stops the next step from taking place, but the outcome might not be what you want (... you don't want zero on your assignment, right?).
+
+The same with dependencies in computation. If you need the result of the last step you will have to wait for it to be available before you can go on to the next. And if you jump the gun and try to do it early, you will get the wrong result (if any at all).
 
 Note that, in this lecture, we are going to assume that memory accesses follow the
 sequentially consistent memory model. For instance, if you declared all variables
@@ -242,8 +244,6 @@ at a finer granularity. There are
 (unsafe!) techniques for dealing with that too. We'll talk about that
 later.
 
-TODO L09: Refactor / Live Code Example?
-
 %What I did do in class was to actually live-code a parallelization
 %of the Mandelbrot code. I had to first refactor the code, creating
 %an array to hold the output. Then I added a struct to pass the offset and
@@ -255,6 +255,8 @@ TODO L09: Refactor / Live Code Example?
 %stride to the thread. Finally, I invoked pthread to create and join threads.
 
 \section*{Breaking Dependencies with Speculation}
+Let's go back to a real life analogy of speculation. Under normal circumstances, the coffee shop staff waits for you to place your order (``medium double double'') before they start making your order. Sensible. If you go to a certain coffee shop enough, then the staff start to know you and know your typical order and they might speculate about your order and start preparing it in advance, even before you get up to the counter. If they're right, time is saved: your order is ready sooner. If they're wrong, the staff did some unnecessary work and they'll throw away that result and start again with what you did order. If they can predict with high accuracy what you want, then most of the time this is a benefit, and that's what we want.
+
 Recall that computer architects often use speculation to predict branch
 targets: the direction of the branch depends on the condition codes
 when executing the branch code. To get around having to wait, the processor
@@ -378,9 +380,73 @@ Speculation isn't always safe. We need the following conditions:
     \item The return value of {\tt longCalculation} must be deterministic.
   \end{itemize}
 
-As a general warning: Consider the \emph{side effects} of function calls.
+As a general warning: Consider the \emph{side effects} of function calls. Oh, let's talk about side effects. Why not. They have a big impact on parallelism. Side effects are problematic, but why? For one thing they're kind of unpredictable (why does calling this function result in unexpected changes elsewhere?!). Side effects are changes in state that do not depend on the function input. Calling a function or expression has a side effect if it has some visible effect on the outside world. Some things necessarily have side effects, like printing to the console. Others are side effects which may be avoidable if we can help it, like modifying a global variable.
 
-TODO L09: Bibliography  
+Code that allows multiple concurrent invocations without affecting the outcome is called reentrant or ``pure'' (and the use of the word pure shouldn't imply any sort of moral judgement on the code). It is a desirable property to have code that is reentrant if we want to parallelize things. If a function is not reentrant, it may not be possible to make it thread safe. And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
+
+Side effects are sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's not what we want. Nevertheless, it should be obvious that when printing we can't have reentrant behaviour because two threads trying to write at the same time to the console would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
+
+The trivial example of a non-reentrant C function:
+
+\begin{verbatim}
+int tmp;
+
+void swap( int x, int y ) {
+    tmp = y;
+    y = x;
+    x = tmp;
+}
+\end{verbatim}
+
+Why is this non-reentrant? Because there is a global variable \texttt{tmp} and it is changed on every invocation of the function. We can make the code reentrant by moving the declaration of \texttt{tmp} inside the function, which would mean that every invocation is independent of every other. And thus it would be thread safe, too.
+
+Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted (or we're going to break off handling what we're doing and call the same ISR in the middle of the current one). Either way, if the code is not reentrant we will run into problems.
+
+Let us also draw a distinction between thread safe code and reentrant code. A thread safe operation is one that can be performed from more than one thread at the same time. On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. Or it can be re-started without affecting the outcome. See this code example from~\cite{tont:threadsafe}:
+
+\begin{verbatim}
+int length = 0;
+char *s = NULL;
+
+// Note: Since strings end with a 0, if we want to
+// add a 0, we encode it as "\0", and encode a
+// backslash as "\\".
+
+
+// WARNING! This code is buggy - do not use!
+
+
+void AddToString(int ch)
+{
+  EnterCriticalSection(&someCriticalSection);
+  // +1 for the character we're about to add
+  // +1 for the null terminator
+  char *newString = realloc(s, (length+1) * sizeof(char));
+  if (newString) {
+    if (ch == '\0' || ch == '\\') {
+      AddToString('\\'); // escape prefix
+    }
+    newString[length++] = ch;
+    newString[length] = '\0';
+    s = newString;
+  }
+  LeaveCriticalSection(&someCriticalSection);
+}
+\end{verbatim}
+
+Is it thread safe? Sure - there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
+
+
+Interestingly, functional programming languages (by which I do NOT mean procedural programming languages like C) such as Haskell and Scala and so on, lend themselves very nicely to being parallelized. Why? Because a purely functional program has no side effects and they are very easy to parallelize. Thus spake Joel\footnote{``Thus Spake Zarathustra'' is a book by Nietzsche, and this was not a spelling error.}:
+
+\begin{quote}
+\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}~\cite{joel:functional}
+\end{quote}
+
+This assumes of course that there is no data dependency between functions. Obviously, if we need a computation result, then we have to wait. But if 
+
+Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
+
 \input{bibliography.tex}
 
 \end{document}
