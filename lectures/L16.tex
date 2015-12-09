@@ -2,436 +2,244 @@
 
 \begin{document}
 
-\lecture{16 --- OpenMP Memory Model}{\term}{Patrick Lam}
+\lecture{16 --- Memory Consistency}{\term}{Patrick Lam}
 
-\section*{OpenMP Memory Model, Its Pitfalls, and How to Mitigate Them}
-OpenMP uses a {\bf relaxed-consistency, shared-memory} model. This doesn't 
-do what you want. Here are its properties:
+\section*{Memory Consistency, Memory Barriers, and Reordering}
+Today we'll talk a bit more about memory consistency, memory barriers
+and reordering in general. We'll start with instruction reordering by
+the CPU and move on to reordering initiated by the compiler.  I'll
+also touch on some CPU instructions for atomic operations.
 
-\begin{itemize}
-    \item All threads share a single store called
-      \emph{memory}---this store may not actually represent RAM.
-    \item Each thread can have its own {\it temporary} view of memory.
-    \item A thread's {\it temporary} view of memory is not required to be
-      consistent with memory.
-\end{itemize}
-
-We'll talk more about memory models later. Now we're going to talk about 
-the OpenMP model and why it's a problem.
-
-\paragraph{Memory Model Pitfall.} Consider this code.
-
-  \begin{verbatim}
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1) // [1]                atomic(a = 1) // [3]
-atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{verbatim}
-
-Does this code actually prevent simultaneous execution?
-Let's reason about possible states.
-
-  \begin{center}
-  \begin{tabular}{r r r r | r r}
-    \multicolumn{4}{c|}{Order} & t1 tmp & t2 tmp\\
-    \hline
-    1 & 2 & 3 & 4 & 0 & 1\\
-    1 & 3 & 2 & 4 & 1 & 1\\
-    1 & 3 & 4 & 2 & 1 & 1\\
-    3 & 4 & 1 & 2 & 1 & 0\\
-    3 & 1 & 2 & 4 & 1 & 1\\
-    3 & 1 & 4 & 2 & 1 & 1\\
-  \end{tabular}
-  \end{center}
-
-Looks like it (at least intuitively).
-
-Sorry! With OpenMP's memory model, no guarantees:
-the update from one thread may not be seen by the other.
-
-\paragraph{Restoring Sanity with Flush.} We do rely on 
-shared memory working ``properly'', but that's expensive.
-So OpenMP provides the {\bf flush} directive.
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf flush} {\it[(list)]}
-  \end{center}
-
-This directive makes the thread's temporary view of memory consistent with main
-      memory; it:
-\begin{itemize}
-    \item enforces an order on the memory operations of the variables.
-\end{itemize}
-
-The variables in the list are called the {\it flush-set}. 
-If you give no variables, the compiler will determine them for you.
-
-Enforcing an order on the memory operations means:
-\begin{itemize}
-    \item All read/write operations on the {\it flush-set} which happen
-      before the {\bf flush} complete before the flush executes.
-    \item All read/write operations on the {\it flush-set} which happen
-      after the {\bf flush} complete after the flush executes.
-    \item Flushes with overlapping {\it flush-sets} can not be reordered.
-\end{itemize}
-
-To show a consistent value for a variable between two threads, OpenMP
-must run statements in this order:
-
-  \begin{enumerate}
-    \item $t_1$ writes the value to $v$;
-    \item $t_1$ flushes $v$; 
-    \item $t_2$ flushes $v$ also;
-    \item $t_2$ reads the consistent value from $v$.
-  \end{enumerate}
-
-Let's revise the example again.
-  \begin{verbatim}
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1)                       atomic(a = 1)
-flush(b)                            flush(a)
-flush(a)                            flush(b)
-atomic(tmp = a)                     atomic(tmp = b)
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{verbatim}
-
-OK. Will this now prevent simultaneous access?
-
-Well, no.
-
-The compiler can reorder the {\tt flush(b)} in thread 1 or {\tt
-  flush(a)} in thread 2. If {\tt flush(b)} gets reordered to after the
-protected section, we will not get our intended operation.
-
-\paragraph{Correct Example.} We have to provide a list of variables
-to {\tt flush} to prevent re-ordering:
-  \begin{verbatim}
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1)                       atomic(a = 1)
-flush(a, b)                         flush(a, b)
-atomic(tmp = a)                     atomic(tmp = b)
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{verbatim}
-
-\paragraph{Where There's No Implicit Flush:}
-  \begin{itemize}
-    \item at entry to {\bf for};
-    \item at entry to, or exit from, {\bf master};
-    \item at entry to {\bf sections};
-    \item at entry to {\bf single};
-    \item at exit from {\bf for}, {\bf single} or {\bf sections} with a {\bf nowait}
-      \begin{itemize}
-        \item {\bf nowait} removes implicit flush along with the implicit barrier
-      \end{itemize}
-  \end{itemize}
-
-This is not true for OpenMP versions before 2.5, so be careful.
-
-\paragraph{Final thoughts on flush.} We've seen that it's very difficult to use flush properly. Really, you should be using mutexes or other synchronization instead of flush\footnote{\url{http://www.thinkingparallel.com/2007/02/19/please-dont-rely-on-memory-barriers-for-synchronization/}}, because you'll probably just get it wrong. But now you know what flush means.
-
-\section*{OpenMP Task Directive}
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf task} {\it [clause [[,] clause]*]}
-  \end{center}~\\
-
-Generates a task for a thread in the team to run.
-     When a thread enters the region it may:
-\begin{itemize}
-        \item immediately execute the task; or
-        \item defer its execution. (any other thread may be assigned the task)
-\end{itemize}
-
-  Allowed Clauses: {\bf if, final, untied, default, mergeable, private,
-  firstprivate, shared}
-
-\paragraph{{\tt if} and {\tt final} Clauses.}
-
-  \begin{center}
-  {\bf if} {\it(scalar-logical-expression)}
-  \end{center}
-
-    When expression is {\tt false}, generates an undeferred task---\\
-    the generating task region is suspended until execution of the
-      undeferred task finishes.\\[1em]
-
-  \begin{center}
-  {\bf final} {\it(scalar-logical-expression)}
-  \end{center}
-
-    When expression is {\tt true}, generates a final task.\\
-    All tasks within a final task are {\it included}.\\
-    Included tasks are undeferred and also execute immediately in the same thread.
-
-Let's look at some examples of these clauses.
-  \begin{verbatim}
-void foo () {
-    int i;
-    #pragma omp task if(0) // This task is undeferred
-    {
-        #pragma omp task
-        // This task is a regular task
-        for (i = 0; i < 3; i++) {
-            #pragma omp task
-            // This task is a regular task
-            bar();
-        }
-    }
-    #pragma omp task final(1) // This task is a regular task
-    {
-        #pragma omp task // This task is included
-        for (i = 0; i < 3; i++) {
-            #pragma omp task
-            // This task is also included
-            bar();
-        }
-    }
-}
-  \end{verbatim}
-
-\paragraph{{\tt untied} and {\tt mergeable} Clauses.}
+\paragraph{Memory Consistency.} In a sequential program, you expect
+things to happen in the order that you wrote them. So, consider this code,
+where variables are initialized to 0:
 
 \begin{center}
-  {\bf untied}
-\end{center}
-  \begin{itemize}
-    \item A suspended task can be resumed by any thread.
-    \item ``untied'' is ignored if used with {\bf final}.
-    \item Interacts poorly with thread-private variables and {\tt gettid()}.
-  \end{itemize}
-
-\begin{center}
-  {\bf mergeable}
-\end{center}
-
-  \begin{itemize}
-    \item For an undeferred or included task,
-    allows the implementation to generate a merged task instead.
-    \item In a merged task, the implementation may re-use the environment from its generating task (as if there was no task directive).
-  \end{itemize}
-
-  For more: \url{docs.oracle.com/cd/E24457_01/html/E21996/gljyr.html}
-
-\paragraph{Bad {\tt mergeable} Example.}
-
-  \begin{verbatim}
-#include <stdio.h>
-void foo () {
-    int x = 2;
-    #pragma omp task mergeable
-    {
-        x++; // x is by default firstprivate
-    }
-    #pragma omp taskwait
-    printf("%d\n",x); // prints 2 or 3
-}
-  \end{verbatim}
-  
-    This is an incorrect usage of {\bf mergeable}: the output depends
-      on whether or not the task got merged.
-    Merging tasks (when safe) produces more efficient code.
-
-\paragraph{Taskyield.}
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf taskyield}
-  \end{center}
-
-This directive specifies that the current task can be suspended in favour of another task.
-
-  Here's a good use of {\bf taskyield}.
-
-  \begin{verbatim}
-void foo (omp_lock_t * lock, int n) {
-    int i;
-    for ( i = 0; i < n; i++ )
-    #pragma omp task
-    {
-        something_useful();
-        while (!omp_test_lock(lock)) {
-            #pragma omp taskyield
-        }
-        something_critical();
-        omp_unset_lock(lock);
-    }
-}
-  \end{verbatim}
-
-\paragraph{Taskwait.}
-  \begin{center}
-    {\tt \#pragma omp }{\bf taskwait}
-  \end{center}~\\[1em]
-
-     Waits for the completeion of the current task's child tasks.
-
-\section*{OpenMP Examples}
-We are next going to look at a sequence of examples showing
-how to use OpenMP.
-
-\paragraph{Tree Traversal.}
-  \begin{verbatim}
-struct node {
-    struct node *left;
-    struct node *right;
-};
-extern void process(struct node *);
-
-void traverse(struct node *p) {
-    if (p->left)
-        #pragma omp task
-        // p is firstprivate by default
-        traverse(p->left);
-    if (p->right)
-        #pragma omp task
-        // p is firstprivate by default
-        traverse(p->right);
-    process(p);
-}    
-  \end{verbatim}
-
-If we want to guarantee a post-order traversal,
-we simply need to insert an explicit \verb+#pragma omp taskwait+
-after the two calls to {\tt traverse} and before the
-call to {\tt process}.
-
-
-\paragraph{Parallel Linked List Processing.} We can spawn 
-tasks to process linked list entries. It's hard to
-use two threads to traverse the list, though.
-
-  \begin{verbatim}
-// node struct with data and pointer to next
-extern void process(node* p);
-
-void increment_list_items(node* head) {
-    #pragma omp parallel
-    {
-        #pragma omp single
-        {
-            node * p = head;
-            while (p) {
-                #pragma omp task
-                {
-                    process(p);
-                }
-                p = p->next;
-            }
-        }
-    }
-}
-  \end{verbatim}
-
-\paragraph{Using Lots of Tasks.} Let's see what happens
-if we spawn lots of tasks in a {\tt single} directive.
-
-  \begin{verbatim}
-#define LARGE_NUMBER 10000000
-double item[LARGE_NUMBER];
-extern void process(double);
-
-int main() {
-    #pragma omp parallel
-    {
-        #pragma omp single
-        {
-            int i;
-            for (i=0; i<LARGE_NUMBER; i++)
-                #pragma omp task
-                // i is firstprivate, item is shared
-                process(item[i]);
-        }
-    }
-}
-  \end{verbatim}
-
-In this case, the main loop generates tasks, which are all assigned to the executing thread as it becomes available (because of {\tt single}).
-When too many tasks get generated, OpenMP suspends the main thread, runs some tasks, then resumes the loop in the main thread.
-
-\paragraph{Improved code.} It would be better to {\tt untied} the
-spawned tasks, enabling them to run on multiple threads. Surround
-the for loop with \verb+#pragma omp task untied+.
-
-\paragraph{About Nesting: Restrictions.}
-Let's consider nesting of parallel constructs.
-  \begin{itemize}
-    \item You cannot nest {\bf for} regions.
-    \item You cannot nest {\bf single} inside a {\bf for}.
-    \item You cannot nest {\bf barrier} inside a\\~~~~~ {\bf critical/single/master/for}.
-  \end{itemize}
-
-Here's something that OpenMP does allow:
-  \begin{verbatim}
-void good_nesting(int n)
-{
-    int i, j;
-    #pragma omp parallel default(shared)
-    {
-        #pragma omp for
-        for (i=0; i<n; i++) {
-            #pragma omp parallel shared(i, n)
-            {
-                #pragma omp for
-                for (j=0; j < n; j++)
-                    work(i, j);
-            }
-        }
-    }
-}
-  \end{verbatim}
-
-\section*{Why Your Code is Slow}
-Code too slow? Want it to run faster? Avoid these pitfalls:
-  \begin{enumerate}
-    \item Unnecessary flush directives.
-    \item Using critical sections or locks instead of atomic.
-    \item Unnecessary concurrent-memory-writing protection:
-      \begin{itemize}
-        \item No need to protect local thread variables.
-        \item No need to protect if only accessed in {\bf single} or
-          {\bf master}.
-      \end{itemize}
-    \item Too much work in a critical section.
-    \item Too many entries into critical sections.
-  \end{enumerate}
-
-\paragraph{Example: Too Many Entries into Critical Sections.}
-
-  \begin{verbatim}
-#pragma omp parallel for
-for (i = 0; i < N; ++i) { 
-    #pragma omp critical
-    {
-        if (arr[i] > max) max = arr[i];
-    } 
-}
-  \end{verbatim}
-
-would be better as:
-
-  \begin{verbatim}
-#pragma omp parallel for
-for (i = 0 ; i < N; ++i) { 
-    #pragma omp flush(max)
-    if (arr[i] > max) {
-          #pragma omp critical
-          {
-                if (arr[i] > max) max = arr[i];
-          }
-    }
-}
+\begin{verbatim}
+    T1: x = 1; r1 = y;
+    T2: y = 1; r2 = x;
 \end{verbatim}
+\end{center}
+We would expect that we would always query the memory and get a state
+where some subset of these partially-ordered statements would have executed.
+This is the \emph{sequentially consistent} memory model.
+
+\begin{quote}
+``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
+\end{quote}
+
+{\sf What are the possible values for the variables?}\\[3em]
+
+Another view of sequential consistency:
+\begin{itemize}
+      \item each thread induces an \emph{execution trace}.
+      \item always, the program has executed some prefix of each thread's
+        trace.
+\end{itemize}
+
+
+It turns out that sequential consistency is too expensive to implement.
+(Why?) So most systems actually implement weaker memory models,
+such that both {\tt r1} and {\tt r2} might end up unchanged. Recall the 
+{\bf flush} example from last time.
+
+\paragraph{Reordering.} Compilers and processors may reorder 
+non-interfering memory operations within a thread. For instance, the
+two statements in {\tt T1} appear to be independent, so it's OK to
+execute them---or, equivalently, to publish their results to other
+threads---in either order. Reordering is one of the major tools that
+compilers use to speed up code.
+
+{\sf When is reordering a problem?}\\[2em]
+% spin locks, as we'll see below.
+
+\subsection*{Memory Consistency Models}
+
+Here are some flavours of memory consistency models:
+
+\begin{itemize}
+\item Sequential consistency: no reordering of loads/stores.
+\item Sequential consistency for datarace-free programs: if your program
+  has no data races, then sequential consistency.
+\item Relaxed consistency (only some types of reorderings):
+\begin{itemize}
+        \item Loads can be reordered after loads/stores; and
+        \item Stores can be reordered after loads/stores.
+\end{itemize}
+\item     Weak consistency: any reordering is possible.
+\end{itemize}
+
+In any case, {\bf reorderings} only allowed if they look safe in
+current context (i.e. they reorder independent memory addresses).
+That can still be problematic, though.
+
+\paragraph{Compilers and reordering.}
+When it can prove that a reordering is safe with respect to the
+programming language semantics, the {\bf compiler} may reorder instructions (so it's not just the hardware).
+
+For example, say we want thread 1 to print value set in thread 2.
+  \begin{verbatim}
+                            f = 0
+
+/* thread 1 */                          /* thread 2 */
+while (f == 0) /* spin */;              x = 42;
+printf("%d", x);                        f = 1;
+  \end{verbatim}
+
+If thread 2 reorders its instructions, will we get our intended
+result? \emph{No!}
+
+\subsection*{Memory Barriers} We previously talked about OpenMP barriers: 
+at a {\tt \#pragma omp barrier}, all threads pause, until all of the
+threads reach the barrier. Lots of OpenMP directives come with implicit barriers
+unless you add {\tt nowait}.
+
+A rather different type of barrier is a \emph{memory barrier} or
+\emph{fence}. This type of barrier prevents reordering, or,
+equivalently, ensures that memory operations become visible in the
+right order. A memory barrier ensures that no access occuring after
+the barrier becomes visible to the system, or takes effect, until
+after all accesses before the barrier become visible.
+
+
+The x86 architecture defines the following types of memory 
+barriers:
+
+\begin{itemize}
+\item {\tt mfence.} All loads and stores before the barrier become
+visible before any loads and stores after the barrier become visible.
+\item {\tt sfence.} All stores before the barrier become visible before
+all stores after the barrier become visible.
+\item {\tt lfence.} All loads before the barrier become visible before
+all loads after the barrier become visible.
+\end{itemize}
+
+Note, however, that while an {\tt sfence} makes the stores visible,
+another CPU will have to execute an {\tt lfence} or {\tt mfence} to
+read the stores in the right order.
+
+Consider the example again:
+  \begin{verbatim}
+                         f = 0
+
+/* thread 1 */                     /* thread 2 */
+while (f == 0) /* spin */;         x = 42;
+// memory fence                    // memory fence
+printf("%d", x);                   f = 1;
+  \end{verbatim}
+This now prevents reordering, and we get the expected result.
+
+You can use the {\tt mfence} instruction to implement \emph{acquire
+  barriers} and \emph{release barriers}.  An acquire barrier ensures
+that memory operations after a thread obtains the mutex doesn't become
+visible until after the thread actually obtains the mutex.
+The release barrier similarly ensures that accesses before the mutex
+release don't get reordered to after the mutex release. Note that
+it is safe to reorder accesses after the mutex release and put them
+before the release.
+
+\paragraph{Preventing Memory Reordering in Programs: Compiler Barriers.}
+First: Don't use volatile in C/C++ on variables~\footnote{\tiny \url{http://stackoverflow.com/questions/78172/using-c-pthreads-do-shared-variables-need-to-be-volatile}.}. However, you can prevent reordering using compiler-specific calls.
+
+\begin{itemize}
+  \item Microsoft Visual Studio C++ Compiler:
+  \begin{verbatim}
+_ReadWriteBarrier()
+  \end{verbatim}
+  \item Intel Compiler:
+  \begin{verbatim}
+    __memory_barrier()
+  \end{verbatim}
+  \item GNU Compiler:
+  \begin{verbatim}
+__asm__ __volatile__ ("" ::: "memory");
+  \end{verbatim}
+\end{itemize}
+
+The compiler also shouldn't reorder across e.g. Pthreads mutex calls.
+
+\paragraph{Aside: {\tt gcc} Inline Assembly.}
+Just as an aside, here's {\tt gcc}'s inline assembly format
+
+  \begin{verbatim}
+__asm__ ( assembler template 
+       : output operands                  /* optional */
+       : input operands                   /* optional */
+       : list of clobbered registers      /* optional */
+       );
+  \end{verbatim}
+
+Note that we've just seen {\bf \_\_volatile\_\_} with  \_\_asm\_\_. This isn't the same as the normal C volatile. It means:
+\begin{itemize}
+    \item The compiler may not reorder this assembly code and put it somewhere
+      else in the program.
+\end{itemize}
+
+\paragraph{Back to Memory Reordering in Programs.}
+    Fortunately, an OpenMP {\bf flush} (or, better yet, mutexes) also preserve the order of variable accesses.
+    Stops reordering from both the compiler and hardware.
+    For GNU, flush is implemented as
+      {\tt \_\_sync\_synchronize();}
+
+\paragraph{{\tt volatile}.} This qualifier ensures that the
+code does an actual read from a variable every time it asks for one
+(i.e. the compiler can't optimize away the read). It does not prevent
+re-ordering nor does it protect against races.
+
+{\bf Note:} proper use of memory fences makes {\tt volatile} not very
+useful (again, {\tt volatile} is not meant to help with threading, and
+will have a different behaviour for threading on different
+compilers/hardware).
+
+\section*{Atomic Operations}
+ We saw the {\bf atomic} directive in OpenMP as well as C++11 atomics. Most OpenMP atomic expressions map to atomic hardware instructions.
+However, other atomic instructions exist, and we've seen the C++11 ones earlier as well.
+
+\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86).
+Here's some pseudocode for it.
+  \begin{verbatim}
+int compare_and_swap (int* reg, int oldval, int newval) 
+{
+  int old_reg_val = *reg;
+  if (old_reg_val == oldval) 
+     *reg = newval;
+  return old_reg_val;
+}
+  \end{verbatim}
+
+Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it.
+
+
+\paragraph{Implementing a Spinlock.}
+You can use compare-and-swap to implement spinlock:
+  \begin{verbatim}
+void spinlock_init(int* lock) { *lock = 0; }
+
+void spinlock_lock(int* lock) {
+    while(compare_and_swap(lock, 0, 1) != 0) {}
+    __asm__ ("mfence");
+}
+
+void spinlock_unlock(int* lock) {
+    __asm__ ("mfence");
+    *lock = 0;  
+}
+  \end{verbatim}
+You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
+
+\section*{ABA Problem}
+Sometimes you'll read a location twice.
+If the value is the same both times, nothing has changed, right?\\[1em]
+
+\emph{No.} This is an {\bf ABA problem}.\\[1em]
+
+You can combat this by ``tagging'': modify value with nonce upon each
+write.  You can also keep the value separately from the nonce; double
+compare and swap atomically swaps both value and nonce.
+
+Just something to be aware of. ``Not on exam''.
+
+
 \input{bibliography.tex}
 
 \end{document}

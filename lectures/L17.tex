@@ -2,243 +2,305 @@
 
 \begin{document}
 
-\lecture{17 --- Memory Consistency}{\term}{Patrick Lam}
+\lecture{17 --- C/C++11 Memory Model}{\term}{Patrick Lam}
 
-\section*{Memory Consistency, Memory Barriers, and Reordering}
-Today we'll talk a bit more about memory consistency, memory barriers
-and reordering in general. We'll start with instruction reordering by
-the CPU and move on to reordering initiated by the compiler.  I'll
-also touch on some CPU instructions for atomic operations.
+\section*{Cache Coherency}
 
-\paragraph{Memory Consistency.} In a sequential program, you expect
-things to happen in the order that you wrote them. So, consider this code,
-where variables are initialized to 0:
+We have talked about memory models in the context of OpenMP. Let's
+talk about the core languages now---that is, C and C++\footnote{\url{http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C}}\footnote{\url{http://rsim.cs.illinois.edu/Pubs/08PLDI.pdf}}---when
+not using OpenMP.
+
+What outputs are possible from this example?
+
+\begin{tabular}{ll}
+      \begin{minipage}{.2\textwidth}
+        Thread 1:
+        \begin{verbatim}
+  foo = 7;
+  bar = 42;
+        \end{verbatim}
+      \end{minipage} &
+      \begin{minipage}{.4\textwidth}
+        Thread 2:
+        \begin{verbatim}
+  printf("%d\n", foo);
+  printf("%d\n", bar);
+        \end{verbatim}
+      \end{minipage}
+\end{tabular}
+
+You might think ``undefined'', but actually it's worse than that. The 
+C11 and C++11 language definitions don't even say what a thread is.
+Of course, there is Pthreads, but that is a library, not the language itself.
+So you can't even ask this question when talking about pre-C11/C++11 versions
+of C and C++.
+
+C++11 (and C11) have improved the situation, though. There is actually
+a memory model (based on an abstract machine) and threading primitives
+such as mutexes, atomics, and memory barriers---the concepts that we
+have seen in this course.
+
+Now, we can ask the question about the behaviour of the above example.
+It does have undefined behaviour, since there is contended access to
+the variables {\tt foo} and {\tt bar}. How can we fix that?
+
+\paragraph{Atomics.}
+A good exam question: if {\tt foo} is atomic, what are the possible outputs? 
+    
+    \begin{tabular}{ll}
+      \begin{minipage}{.25\textwidth}
+        Thread 1:
+        \begin{verbatim}
+  foo.store(7);
+  bar.store(42);
+        \end{verbatim}
+      \end{minipage} &
+      \begin{minipage}{.45\textwidth}
+        Thread 2:
+        \begin{verbatim}
+  printf("%d\n", foo.load());
+  printf("%d\n", bar.load());
+        \end{verbatim}
+      \end{minipage}
+    \end{tabular}
+
+
+
+\section*{Good C++ Practice}
+Lots of people use postfix ({\tt i++}) out of habit, but prefix ({\tt ++i}) is better.
+
+In C, this isn't a problem. 
+In some languages (like C++), it can be.
+
+\paragraph{Why? Overloading.} In C++, you can overload the {\tt ++} and {\tt --} operators.
+
+  \begin{verbatim}
+class X {
+public:
+  X& operator++();
+  const X operator++(int);
+...
+};
+
+X x;
+++x; // x.operator++();
+x++; // x.operator++(0);
+  \end{verbatim}
+
+Prefix is also known as {\bf increment and fetch}, and might be implemented like this:
+  \begin{verbatim}
+X& X::operator++()
+{
+  *this += 1;
+  return *this;
+}
+  \end{verbatim}
+~\\[1em]
+
+  Postfix is also known as {\bf fetch and increment}. Note that you have to make a copy of
+the old value:
+  \begin{verbatim}
+const X X::operator++(int)
+{
+  const X old = *this;
+  ++(*this);
+  return old;
+}
+  \end{verbatim}
+
+So, if you're the least concerned about efficiency (and why else would you be
+taking programming for performance?), always use
+  \emph{prefix} increments/decrements instead of defaulting to postfix.
+
+Only use {\tt postfix} when you really mean it, to be on the safe side.
+
+\section*{Locking Granularity}
+
+Locks prevent data races.
+
+However, using locks involves a trade-off between coarse-grained
+locking, which can significantly reduce opportunities for parallelism,
+and fine-grained locking, which requires more careful design,
+increases locking overhead and is more prone to bugs.  Locks' extents
+constitute their {\bf granularity}. In coarse-grained locking, you
+lock large sections of your program with a big lock; in fine-grained
+locking, you divide the locks and protect smaller sections.
+
+We'll discuss three major concerns when using locks:
+  \begin{itemize}
+    \item overhead;
+    \item contention; and
+    \item deadlocks.
+  \end{itemize}
+We aren't even talking about under-locking (i.e. remaining race conditions).
+
+\paragraph{Lock Overhead.}
+  Using a lock isn't free. You pay:
+  \begin{itemize}
+    \item allocated memory for the locks;
+    \item initialization and destruction time; and
+    \item acquisition and release time.
+  \end{itemize}
+  These costs scale with the number of locks that you have.
+
+\paragraph{Lock Contention.}
+ Most locking time is wasted waiting for the lock to become available.
+We can fix this by:
+      \begin{itemize}
+        \item making the locking regions smaller (more granular); or
+        \item making more locks for independent sections.
+      \end{itemize}
+
+\paragraph{Deadlocks.} Finally, the more locks you have, the more you have to worry about deadlocks.
+
+As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding
+a lock held by process $X'$. ($X = X'$ is allowed).
+
+
+Consider, for instance, two processors trying to get two locks.
 
 \begin{center}
-\begin{verbatim}
-    T1: x = 1; r1 = y;
-    T2: y = 1; r2 = x;
-\end{verbatim}
+  \begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 1}
+
+      \verb+Get Lock 1+
+
+      \verb+Get Lock 2+
+
+      \verb+Release Lock 2+
+
+      \verb+Release Lock 1+
+\end{minipage} & 
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 2}
+
+      \verb+Get Lock 2+
+
+      \verb+Get Lock 1+
+
+      \verb+Release Lock 1+
+
+      \verb+Release Lock 2+
+\end{minipage}
+\end{tabular}
 \end{center}
-We would expect that we would always query the memory and get a state
-where some subset of these partially-ordered statements would have executed.
-This is the \emph{sequentially consistent} memory model.
 
-\begin{quote}
-``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
-\end{quote}
+ Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops! They
+ both wait for each other. (Deadlock!).
 
-{\sf What are the possible values for the variables?}\\[3em]
+To avoid deadlocks, always be careful if your code {\bf acquires a
+  lock while holding one}.  You have two choices: (1) ensure
+consistent ordering in acquiring locks; or (2) use trylock.
 
-Another view of sequential consistency:
-\begin{itemize}
-      \item each thread induces an \emph{execution trace}.
-      \item always, the program has executed some prefix of each thread's
-        trace.
-\end{itemize}
-
-
-It turns out that sequential consistency is too expensive to implement.
-(Why?) So most systems actually implement weaker memory models,
-such that both {\tt r1} and {\tt r2} might end up unchanged. Recall the 
-{\bf flush} example from last time.
-
-\paragraph{Reordering.} Compilers and processors may reorder 
-non-interfering memory operations within a thread. For instance, the
-two statements in {\tt T1} appear to be independent, so it's OK to
-execute them---or, equivalently, to publish their results to other
-threads---in either order. Reordering is one of the major tools that
-compilers use to speed up code.
-
-{\sf When is reordering a problem?}\\[2em]
-% spin locks, as we'll see below.
-
-\subsection*{Memory Consistency Models}
-
-Here are some flavours of memory consistency models:
-
-\begin{itemize}
-\item Sequential consistency: no reordering of loads/stores.
-\item Sequential consistency for datarace-free programs: if your program
-  has no data races, then sequential consistency.
-\item Relaxed consistency (only some types of reorderings):
-\begin{itemize}
-        \item Loads can be reordered after loads/stores; and
-        \item Stores can be reordered after loads/stores.
-\end{itemize}
-\item     Weak consistency: any reordering is possible.
-\end{itemize}
-
-In any case, {\bf reorderings} only allowed if they look safe in
-current context (i.e. they reorder independent memory addresses).
-That can still be problematic, though.
-
-\paragraph{Compilers and reordering.}
-When it can prove that a reordering is safe with respect to the
-programming language semantics, the {\bf compiler} may reorder instructions (so it's not just the hardware).
-
-For example, say we want thread 1 to print value set in thread 2.
+As an example of consistent ordering:
+\begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
   \begin{verbatim}
-                            f = 0
-
-/* thread 1 */                          /* thread 2 */
-while (f == 0) /* spin */;              x = 42;
-printf("%d", x);                        f = 1;
-  \end{verbatim}
-
-If thread 2 reorders its instructions, will we get our intended
-result? \emph{No!}
-
-\subsection*{Memory Barriers} We previously talked about OpenMP barriers: 
-at a {\tt \#pragma omp barrier}, all threads pause, until all of the
-threads reach the barrier. Lots of OpenMP directives come with implicit barriers
-unless you add {\tt nowait}.
-
-A rather different type of barrier is a \emph{memory barrier} or
-\emph{fence}. This type of barrier prevents reordering, or,
-equivalently, ensures that memory operations become visible in the
-right order. A memory barrier ensures that no access occuring after
-the barrier becomes visible to the system, or takes effect, until
-after all accesses before the barrier become visible.
-
-
-The x86 architecture defines the following types of memory 
-barriers:
-
-\begin{itemize}
-\item {\tt mfence.} All loads and stores before the barrier become
-visible before any loads and stores after the barrier become visible.
-\item {\tt sfence.} All stores before the barrier become visible before
-all stores after the barrier become visible.
-\item {\tt lfence.} All loads before the barrier become visible before
-all loads after the barrier become visible.
-\end{itemize}
-
-Note, however, that while an {\tt sfence} makes the stores visible,
-another CPU will have to execute an {\tt lfence} or {\tt mfence} to
-read the stores in the right order.
-
-Consider the example again:
-  \begin{verbatim}
-                         f = 0
-
-/* thread 1 */                     /* thread 2 */
-while (f == 0) /* spin */;         x = 42;
-// memory fence                    // memory fence
-printf("%d", x);                   f = 1;
-  \end{verbatim}
-This now prevents reordering, and we get the expected result.
-
-You can use the {\tt mfence} instruction to implement \emph{acquire
-  barriers} and \emph{release barriers}.  An acquire barrier ensures
-that memory operations after a thread obtains the mutex doesn't become
-visible until after the thread actually obtains the mutex.
-The release barrier similarly ensures that accesses before the mutex
-release don't get reordered to after the mutex release. Note that
-it is safe to reorder accesses after the mutex release and put them
-before the release.
-
-\paragraph{Preventing Memory Reordering in Programs: Compiler Barriers.}
-First: Don't use volatile in C/C++ on variables~\footnote{\tiny \url{http://stackoverflow.com/questions/78172/using-c-pthreads-do-shared-variables-need-to-be-volatile}.}. However, you can prevent reordering using compiler-specific calls.
-
-\begin{itemize}
-  \item Microsoft Visual Studio C++ Compiler:
-  \begin{verbatim}
-_ReadWriteBarrier()
-  \end{verbatim}
-  \item Intel Compiler:
-  \begin{verbatim}
-    __memory_barrier()
-  \end{verbatim}
-  \item GNU Compiler:
-  \begin{verbatim}
-__asm__ __volatile__ ("" ::: "memory");
-  \end{verbatim}
-\end{itemize}
-
-The compiler also shouldn't reorder across e.g. Pthreads mutex calls.
-
-\paragraph{Aside: {\tt gcc} Inline Assembly.}
-Just as an aside, here's {\tt gcc}'s inline assembly format
-
-  \begin{verbatim}
-__asm__ ( assembler template 
-       : output operands                  /* optional */
-       : input operands                   /* optional */
-       : list of clobbered registers      /* optional */
-       );
-  \end{verbatim}
-
-Note that we've just seen {\bf \_\_volatile\_\_} with  \_\_asm\_\_. This isn't the same as the normal C volatile. It means:
-\begin{itemize}
-    \item The compiler may not reorder this assembly code and put it somewhere
-      else in the program.
-\end{itemize}
-
-\paragraph{Back to Memory Reordering in Programs.}
-    Fortunately, an OpenMP {\bf flush} (or, better yet, mutexes) also preserve the order of variable accesses.
-    Stops reordering from both the compiler and hardware.
-    For GNU, flush is implemented as
-      {\tt \_\_sync\_synchronize();}
-
-\paragraph{{\tt volatile}.} This qualifier ensures that the
-code does an actual read from a variable every time it asks for one
-(i.e. the compiler can't optimize away the read). It does not prevent
-re-ordering nor does it protect against races.
-
-{\bf Note:} proper use of memory fences makes {\tt volatile} not very
-useful (again, {\tt volatile} is not meant to help with threading, and
-will have a different behaviour for threading on different
-compilers/hardware).
-
-\section*{Atomic Operations}
- We saw the {\bf atomic} directive in OpenMP as well as C++11 atomics. Most OpenMP atomic expressions map to atomic hardware instructions.
-However, other atomic instructions exist, and we've seen the C++11 ones earlier as well.
-
-\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86).
-Here's some pseudocode for it.
-  \begin{verbatim}
-int compare_and_swap (int* reg, int oldval, int newval) 
-{
-  int old_reg_val = *reg;
-  if (old_reg_val == oldval) 
-     *reg = newval;
-  return old_reg_val;
+void f1() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+\end{verbatim}
+\end{minipage}&
+\begin{minipage}{.4\textwidth}
+\begin{verbatim}
+void f2() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
 }
   \end{verbatim}
+\end{minipage}
+\end{tabular}
+\end{center}
+This code will not deadlock: you can only get {\bf l2} if you have
+{\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
+identity is not statically visible.
 
-Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it.
-
-
-\paragraph{Implementing a Spinlock.}
-You can use compare-and-swap to implement spinlock:
+Alternately, you can use trylock. Recall that Pthreads' {\tt trylock}
+returns 0 if it gets the lock.  So, this code also won't deadlock: it
+will give up {\bf l1} if it can't get {\bf l2}.
   \begin{verbatim}
-void spinlock_init(int* lock) { *lock = 0; }
-
-void spinlock_lock(int* lock) {
-    while(compare_and_swap(lock, 0, 1) != 0) {}
-    __asm__ ("mfence");
-}
-
-void spinlock_unlock(int* lock) {
-    __asm__ ("mfence");
-    *lock = 0;  
+void f1() {
+    lock(&l1);
+    while (trylock(&l2) != 0) {
+        unlock(&l1);
+        // wait
+        lock(&l1);
+    }
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
 }
   \end{verbatim}
-You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
+  (Incidentaly, using trylocks can also help you measure lock contention.)
 
-\section*{ABA Problem}
-Sometimes you'll read a location twice.
-If the value is the same both times, nothing has changed, right?\\[1em]
+\subsection*{Coarse-Grained Locking}
+One way of avoiding problems due to locking is to use few locks
+(perhaps just one!). This is \emph{coarse-grained locking}.
+It does have a couple of advantages:
+  \begin{itemize}
+    \item it is easier to implement;
+    \item with one lock, there is no chance of deadlocking; and
+    \item it has the lowest memory usage and setup time possible.
+  \end{itemize}
 
-\emph{No.} This is an {\bf ABA problem}.\\[1em]
+It also, however, has one big disadvantage in terms of programming for performance:
+  \begin{itemize}
+    \item your parallel program will quickly become sequential.
+  \end{itemize}
 
-You can combat this by ``tagging'': modify value with nonce upon each
-write.  You can also keep the value separately from the nonce; double
-compare and swap atomically swaps both value and nonce.
+\paragraph{Example: Python (and other interpreters).}
+Python puts a lock around the whole interpreter (known as the
+\emph{global interpreter lock}).  This is the main reason (most)
+scripting languages have poor parallel performance; Python's just an
+example.
 
-Just something to be aware of. ``Not on exam''.
+Two major implications:
+\begin{itemize}
+\item The only performance benefit you'll see from threading is if one of the threads is
+      waiting for IO.
+\item But: any non-I/O-bound threaded program will be {\bf slower} than the sequential
+      version (plus, the interpreter will slow down your system).
+\end{itemize}
 
+\subsection*{Fine-Grained Locking}
+On the other end of the spectrum is \emph{fine-grained locking}. The big
+advantage:
+  \begin{itemize}
+    \item it maximizes parallelization in your program.
+  \end{itemize}
+
+However, it also comes with a number of disadvantages:
+  \begin{itemize}
+    \item if your program isn't very parallel, it'll be mostly wasted memory and setup time;
+    \item plus, you're now prone to deadlocks; and
+    \item fine-grained locking is generally more error-prone (be sure you grab the right lock!)
+  \end{itemize}
+
+\paragraph{Examples.}
+    The Linux kernel used to have {\bf one big lock} that essentially
+    made the kernel sequential.  This worked fine for single-processor
+    systems!  The introduction of symmetric multiprocessor systems
+    (SMPs) required a more aggressive locking strategy, though, and
+    the kernel now uses finer-grained locks for performance.
+
+    Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
+
+    You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
+
+\paragraph{Live Coding Example.} I ran the code from the midterm (augmented with
+code to populate the tree) using 1) a coarse-grained lock; and 2)
+per-item fine-grained locks.
+
+Fine-grained locks were suspiciously fast.
 
 \input{bibliography.tex}
 

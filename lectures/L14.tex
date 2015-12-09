@@ -2,361 +2,436 @@
 
 \begin{document}
 
-\lecture{14 --- More OpenMP}{\term}{Patrick Lam}
+\lecture{14 --- OpenMP Memory Model}{\term}{Patrick Lam}
 
-\subsection*{Reductions}
-Recall that we introduced the concept of a reduction, e.g.
-{\small
-\begin{verbatim}
-  for (int i = 0; i < length; i++) total += array[i];
-\end{verbatim}
+\section*{OpenMP Memory Model, Its Pitfalls, and How to Mitigate Them}
+OpenMP uses a {\bf relaxed-consistency, shared-memory} model. This doesn't 
+do what you want. Here are its properties:
+
+\begin{itemize}
+    \item All threads share a single store called
+      \emph{memory}---this store may not actually represent RAM.
+    \item Each thread can have its own {\it temporary} view of memory.
+    \item A thread's {\it temporary} view of memory is not required to be
+      consistent with memory.
+\end{itemize}
+
+We'll talk more about memory models later. Now we're going to talk about 
+the OpenMP model and why it's a problem.
+
+\paragraph{Memory Model Pitfall.} Consider this code.
+
+  \begin{verbatim}
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1) // [1]                atomic(a = 1) // [3]
+atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{verbatim}
+
+Does this code actually prevent simultaneous execution?
+Let's reason about possible states.
+
+  \begin{center}
+  \begin{tabular}{r r r r | r r}
+    \multicolumn{4}{c|}{Order} & t1 tmp & t2 tmp\\
+    \hline
+    1 & 2 & 3 & 4 & 0 & 1\\
+    1 & 3 & 2 & 4 & 1 & 1\\
+    1 & 3 & 4 & 2 & 1 & 1\\
+    3 & 4 & 1 & 2 & 1 & 0\\
+    3 & 1 & 2 & 4 & 1 & 1\\
+    3 & 1 & 4 & 2 & 1 & 1\\
+  \end{tabular}
+  \end{center}
+
+Looks like it (at least intuitively).
+
+Sorry! With OpenMP's memory model, no guarantees:
+the update from one thread may not be seen by the other.
+
+\paragraph{Restoring Sanity with Flush.} We do rely on 
+shared memory working ``properly'', but that's expensive.
+So OpenMP provides the {\bf flush} directive.
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf flush} {\it[(list)]}
+  \end{center}
+
+This directive makes the thread's temporary view of memory consistent with main
+      memory; it:
+\begin{itemize}
+    \item enforces an order on the memory operations of the variables.
+\end{itemize}
+
+The variables in the list are called the {\it flush-set}. 
+If you give no variables, the compiler will determine them for you.
+
+Enforcing an order on the memory operations means:
+\begin{itemize}
+    \item All read/write operations on the {\it flush-set} which happen
+      before the {\bf flush} complete before the flush executes.
+    \item All read/write operations on the {\it flush-set} which happen
+      after the {\bf flush} complete after the flush executes.
+    \item Flushes with overlapping {\it flush-sets} can not be reordered.
+\end{itemize}
+
+To show a consistent value for a variable between two threads, OpenMP
+must run statements in this order:
+
+  \begin{enumerate}
+    \item $t_1$ writes the value to $v$;
+    \item $t_1$ flushes $v$; 
+    \item $t_2$ flushes $v$ also;
+    \item $t_2$ reads the consistent value from $v$.
+  \end{enumerate}
+
+Let's revise the example again.
+  \begin{verbatim}
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1)                       atomic(a = 1)
+flush(b)                            flush(a)
+flush(a)                            flush(b)
+atomic(tmp = a)                     atomic(tmp = b)
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{verbatim}
+
+OK. Will this now prevent simultaneous access?
+
+Well, no.
+
+The compiler can reorder the {\tt flush(b)} in thread 1 or {\tt
+  flush(a)} in thread 2. If {\tt flush(b)} gets reordered to after the
+protected section, we will not get our intended operation.
+
+\paragraph{Correct Example.} We have to provide a list of variables
+to {\tt flush} to prevent re-ordering:
+  \begin{verbatim}
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1)                       atomic(a = 1)
+flush(a, b)                         flush(a, b)
+atomic(tmp = a)                     atomic(tmp = b)
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{verbatim}
+
+\paragraph{Where There's No Implicit Flush:}
+  \begin{itemize}
+    \item at entry to {\bf for};
+    \item at entry to, or exit from, {\bf master};
+    \item at entry to {\bf sections};
+    \item at entry to {\bf single};
+    \item at exit from {\bf for}, {\bf single} or {\bf sections} with a {\bf nowait}
+      \begin{itemize}
+        \item {\bf nowait} removes implicit flush along with the implicit barrier
+      \end{itemize}
+  \end{itemize}
+
+This is not true for OpenMP versions before 2.5, so be careful.
+
+\paragraph{Final thoughts on flush.} We've seen that it's very difficult to use flush properly. Really, you should be using mutexes or other synchronization instead of flush\footnote{\url{http://www.thinkingparallel.com/2007/02/19/please-dont-rely-on-memory-barriers-for-synchronization/}}, because you'll probably just get it wrong. But now you know what flush means.
+
+\section*{OpenMP Task Directive}
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf task} {\it [clause [[,] clause]*]}
+  \end{center}~\\
+
+Generates a task for a thread in the team to run.
+     When a thread enters the region it may:
+\begin{itemize}
+        \item immediately execute the task; or
+        \item defer its execution. (any other thread may be assigned the task)
+\end{itemize}
+
+  Allowed Clauses: {\bf if, final, untied, default, mergeable, private,
+  firstprivate, shared}
+
+\paragraph{{\tt if} and {\tt final} Clauses.}
+
+  \begin{center}
+  {\bf if} {\it(scalar-logical-expression)}
+  \end{center}
+
+    When expression is {\tt false}, generates an undeferred task---\\
+    the generating task region is suspended until execution of the
+      undeferred task finishes.\\[1em]
+
+  \begin{center}
+  {\bf final} {\it(scalar-logical-expression)}
+  \end{center}
+
+    When expression is {\tt true}, generates a final task.\\
+    All tasks within a final task are {\it included}.\\
+    Included tasks are undeferred and also execute immediately in the same thread.
+
+Let's look at some examples of these clauses.
+  \begin{verbatim}
+void foo () {
+    int i;
+    #pragma omp task if(0) // This task is undeferred
+    {
+        #pragma omp task
+        // This task is a regular task
+        for (i = 0; i < 3; i++) {
+            #pragma omp task
+            // This task is a regular task
+            bar();
+        }
+    }
+    #pragma omp task final(1) // This task is a regular task
+    {
+        #pragma omp task // This task is included
+        for (i = 0; i < 3; i++) {
+            #pragma omp task
+            // This task is also included
+            bar();
+        }
+    }
 }
-What is the appropriate scope for {\tt total}? We want each thread
-to be able to write to it, but we don't want race conditions.
-Fortunately, OpenMP can deal with reductions as a special case:
+  \end{verbatim}
 
-\verb!   #pragma omp parallel for reduction (+:total)!
+\paragraph{{\tt untied} and {\tt mergeable} Clauses.}
 
-\noindent
-specifies that the {\tt total} variable is the accumulator for a
-reduction over {\tt +}. OpenMP will create local copies of {\tt total} and 
-combine them at the end of the parallel region.
+\begin{center}
+  {\bf untied}
+\end{center}
+  \begin{itemize}
+    \item A suspended task can be resumed by any thread.
+    \item ``untied'' is ignored if used with {\bf final}.
+    \item Interacts poorly with thread-private variables and {\tt gettid()}.
+  \end{itemize}
 
-\subsection*{Accessing Private Data outside a Parallel Region}
-A related problem with private variables is that sometimes you need 
-access to them outside their parallel region. Here's some contrived code.
+\begin{center}
+  {\bf mergeable}
+\end{center}
 
-{\small
-\begin{verbatim}
-  int data=1;
-  #pragma omp parallel for private(data)
-  for (int i = 0; i < 100; i++)
-    printf ("data=%d\n", data);
-\end{verbatim}
-}
-Since {\tt data} is private, OpenMP is not going to copy in the
-initial value {\tt 1} for it, so you'll get an undefined value.  To
-make OpenMP initialize private variables with the master thread's
-values for those variables, use {\tt firstprivate(data)}.  Conversely,
-to get a value out from the (sequentially) last iteration of the loop,
-use {\tt lastprivate(data)}.
+  \begin{itemize}
+    \item For an undeferred or included task,
+    allows the implementation to generate a merged task instead.
+    \item In a merged task, the implementation may re-use the environment from its generating task (as if there was no task directive).
+  \end{itemize}
 
-\paragraph{Thread-private Data.} A variant on {\tt private} is
-{\tt threadprivate}. Thread-private data is also local to each
-thread. The main difference is that {\tt private} is for transient
-data, typically local variables, declared at the start of a region,
-while {\tt threadprivate} is for persistent data, e.g. declared at
-file scope, which lives beyond a single parallel region. Instead of
-{\tt firstprivate(local)} for {\tt private(local)}, use {\tt
-  copyin(global)} for {\tt threadprivate(global)}.
+  For more: \url{docs.oracle.com/cd/E24457_01/html/E21996/gljyr.html}
 
-\begin{verbatim}
-#include <omp.h>
+\paragraph{Bad {\tt mergeable} Example.}
+
+  \begin{verbatim}
 #include <stdio.h>
-
-int tid, a, b;
-
-#pragma omp threadprivate(a)
-
-int main(int argc, char *argv[])
-{
-    printf("Parallel #1 Start\n");
-    #pragma omp parallel private(b, tid)
+void foo () {
+    int x = 2;
+    #pragma omp task mergeable
     {
-        tid = omp_get_thread_num();
-        a = tid;
-        b = tid;
-        printf("T%d: a=%d, b=%d\n", tid, a, b);
+        x++; // x is by default firstprivate
     }
+    #pragma omp taskwait
+    printf("%d\n",x); // prints 2 or 3
+}
+  \end{verbatim}
+  
+    This is an incorrect usage of {\bf mergeable}: the output depends
+      on whether or not the task got merged.
+    Merging tasks (when safe) produces more efficient code.
 
-    printf("Sequential code\n");
-    printf("Parallel #2 Start\n");
-    #pragma omp parallel private(tid)
+\paragraph{Taskyield.}
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf taskyield}
+  \end{center}
+
+This directive specifies that the current task can be suspended in favour of another task.
+
+  Here's a good use of {\bf taskyield}.
+
+  \begin{verbatim}
+void foo (omp_lock_t * lock, int n) {
+    int i;
+    for ( i = 0; i < n; i++ )
+    #pragma omp task
     {
-        tid = omp_get_thread_num();
-        printf("T%d: a=%d, b=%d\n", tid, a, b);
+        something_useful();
+        while (!omp_test_lock(lock)) {
+            #pragma omp taskyield
+        }
+        something_critical();
+        omp_unset_lock(lock);
     }
+}
+  \end{verbatim}
 
-    return 0;
+\paragraph{Taskwait.}
+  \begin{center}
+    {\tt \#pragma omp }{\bf taskwait}
+  \end{center}~\\[1em]
+
+     Waits for the completeion of the current task's child tasks.
+
+\section*{OpenMP Examples}
+We are next going to look at a sequence of examples showing
+how to use OpenMP.
+
+\paragraph{Tree Traversal.}
+  \begin{verbatim}
+struct node {
+    struct node *left;
+    struct node *right;
+};
+extern void process(struct node *);
+
+void traverse(struct node *p) {
+    if (p->left)
+        #pragma omp task
+        // p is firstprivate by default
+        traverse(p->left);
+    if (p->right)
+        #pragma omp task
+        // p is firstprivate by default
+        traverse(p->right);
+    process(p);
 }    
   \end{verbatim}
-This yields something like the following output:
-\begin{verbatim}
-% ./a.out
-Parallel #1 Start
-T6: a=6, b=6
-T1: a=1, b=1
-T0: a=0, b=0
-T4: a=4, b=4
-T2: a=2, b=2
-T3: a=3, b=3
-T5: a=5, b=5
-T7: a=7, b=7
-Sequential code
-Parallel #2 Start
-T0: a=0, b=0
-T6: a=6, b=0
-T1: a=1, b=0
-T2: a=2, b=0
-T5: a=5, b=0
-T7: a=7, b=0
-T3: a=3, b=0
-T4: a=4, b=0
-\end{verbatim}
 
-\paragraph{Collapsing Loops.}
-Usually, when you have nested loops, it's best to parallelize the
-outermost loop. {\sf Why?} \\[2em]
+If we want to guarantee a post-order traversal,
+we simply need to insert an explicit \verb+#pragma omp taskwait+
+after the two calls to {\tt traverse} and before the
+call to {\tt process}.
 
-Sometimes, however, that just doesn't work out. The main issue is that
-the outermost loop may have too low a trip count to be worth
-parallelizing. You could instead parallelize the inner loop by putting
-the pragma just before the inner loop, but then you pay more overhead
-than you need to. OpenMP therefore supports \emph{collapsing} loops,
-which creates a single loop performing all the iterations of the
-collapsed loops. Consider:
 
-{\small
-\begin{verbatim}
-  #include <math.h>
-  int main() {
-    double array[2][10000];
-    #pragma omp parallel for collapse(2)
-    for (int i = 0; i < 2; i++)
-      for (int j = 0; j < 10000; j++)
-        array[i][j] = sin(i+j);
-    return 0;
-  }
-\end{verbatim}
-}
+\paragraph{Parallel Linked List Processing.} We can spawn 
+tasks to process linked list entries. It's hard to
+use two threads to traverse the list, though.
 
-Parallelizing the outer loop only enables the use of 2 threads.
-Parallelizing both loops together enables the use of up to 20,000
-threads, although the loop body is too small for that to be
-worthwhile. 
-
-{\sf Where have you seen something like a manually collapsed loop?}\\[1em]
-
-\subsection*{Better Performance Through Scheduling}
-OpenMP tries to guess how many iterations to distribute to each thread
-in a team. The default mode is called \emph{static scheduling}; in
-this mode, OpenMP looks at the number of iterations it needs to run,
-assumes they all take the same amount of time, and distributes them
-evenly. So for 100 iterations and 2 threads, the first thread gets 50
-iterations and the second thread gets 50 iterations.
-
-This assumption doesn't always hold; consider, for instance, the 
-following (contrived) code:
-{\small
-\begin{verbatim}
-  double calc(int count) {
-    double d = 1.0;
-    for (int i = 0; i < count*count; i++) d += d;
-    return d;
-  }
-
-  int main() {
-    double data[200][100];
-    int i, j;
-    #pragma omp parallel for private(i, j) shared(data)
-    for (int i = 0; i < 200; i++) {
-      for (int j = 0; j < 200; j++) {
-        data[i][j] = calc(i+j);
-      }
-    }
-    return 0;
-  }
-\end{verbatim}
-}
-This code gives sublinear scaling, because the earlier iterations 
-finish faster than the later iterations, and the program needs to wait
-for all iterations to complete.
-
-Telling OpenMP to use a \emph{dynamic schedule} can enable better
-parallelization: the runtime distributes work to each thread in
-chunks, which results in less waiting. Just add {\tt
-  schedule(dynamic)} to the pragma. Of course, this has more overhead,
-since the threads need to solicit the work, and there is a potential
-serialization bottleneck in soliciting work from the single work
-queue. 
-
-The default chunk size is 1, but you can specify it yourself, either
-using a constant or a value computed at runtime, e.g. 
-{\tt schedule(dynamic, n/50)}. Static scheduling also accepts a
-chunk size.
-
-OpenMP has an even smarter work distribution mode, {\tt guided}, where
-it changes the chunk size according to the amount of work remaining.
-You can specify a minimum chunk size, which defaults to 1. There
-are also two meta-modes, {\tt auto}, which leaves it up to OpenMP, and
-{\tt runtime}, which leaves it up to the \verb+OMP_SCHEDULE+ environment
-variable.
-
-\section*{Beyond {\tt for} Loops: OpenMP parallel sections and tasks}
-The part of OpenMP we've seen so far has been strictly less powerful
-than pthreads (but harder to misuse): we have only parallelized
-specific forms of {\tt for} loops. This reflects OpenMP's
-scientific-computation heritage, where you have huge FORTRAN matrix
-calculations to parallelize. However, these days we also care about
-parallelism in more general settings, so OpenMP now provides
-more ways to parallelize.
-
-\paragraph{Parallel Sections.} The first mechanism, \emph{parallel sections},
-is a purely-static mechanism for specifying independent units of work
-which ought to be run in parallel. For instance, you can set up two 
-(and exactly two, in this example) linked lists simultaneously as follows:
-
-{\small
-\begin{verbatim}
-  #include <stdlib.h>
-
-  typedef struct s { struct s* next; } S;
-
-  void setuplist (S* current) {
-    for (int i = 0; i < 10000; i++) {
-      current->next = (S*) malloc (sizeof(S));
-      current = current->next;
-    }
-    current->next = NULL;
-  }
-
-  int main() {
-    S var1, var2;
-    #pragma omp parallel sections
-    {
-      #pragma omp section
-      { setuplist (&var1); }
-      #pragma omp section
-      { setuplist (&var2); }
-    }
-    return 0;
-  }
-\end{verbatim}
-}
-Note that the structure of the parallelism is explicitly visible in the
-structure of the code, and that you don't get to start an unbounded 
-number of threads with the parallel sections mechanism.
-
-{\sf What's another potential barrier to parallelism in the above code?}\\
-
-\paragraph{Nested Parallelism.} Instead of collapsing loops, we can
-specify nested parallelism; we might have, for instance, two parallel
-sections, each of which contain parallel for loops. To enable
-such nested parallelism, you have to call \verb+omp_set_nested+ with
-a non-zero value. The runtime might refuse; call \verb+omp_get_nested+ to
-find out if the runtime complied or not. You can also set the 
-\verb+OMP_NESTED+ environment variable to enable nesting.
-
-Here's an example of nested parallelism.
-{\small
-\begin{verbatim}
-  #include <stdlib.h>
-  #include <omp.h>
-
-  int main() {
-    double *array1, *array2;
-    omp_set_nested(1);
-    #pragma omp parallel sections shared(array1, array2)
-    {
-      #pragma omp section
-      {
-        array1 = (double*) malloc(sizeof (double)*1024*1024);
-        #pragma omp parallel for shared(array1)
-        for (int i = 0; i < 1024*1024; i++)
-          array1[i] = i;
-      }
-      #pragma omp section
-      {
-        array2 = (double*) malloc(sizeof (double)*1024*512);
-        #pragma omp parallel for shared(array2)
-        for (int i = 0; i < 1024*512; i++)
-          array2[i] = i;
-      }
-    }
-  }
-\end{verbatim}
-}
-
-\paragraph{Tasks: OpenMP's thread-like mechanism.}
-The main new feature in OpenMP 3.0 is the notion of \emph{tasks}. When
-the program executes a \verb+#pragma omp task+ statement, the code
-inside the task is split off as a task and scheduled to run sometime
-in the future. Tasks are more flexible than parallel sections, because
-parallel sections constrain exactly how many threads are supposed to
-run, and there is also always a join at the end of the parallel
-section.  On the other hand, the OpenMP runtime can assign any task to
-any thread that's running. Tasks therefore have lower overhead.
-
-Two examples which show off tasks,
-from~\cite{Ayguade:2009:DOT:1512157.1512430}, include a web server (with
-unstructured requests) and a user interface which allows users to
-start tasks that are to run in parallel.
-
-Here's pseudocode for the Boa webserver main loop from~\cite{Ayguade:2009:DOT:1512157.1512430}.
-{\small
-\begin{verbatim}
-#pragma omp parallel
-  /* a single thread manages the connections */
-  #pragma omp single nowait
-  while (!end) {
-    process any signals
-    foreach request from the blocked queue {
-      if (request dependencies are met) {
-        extract from the blocked queue
-        /* create a task for the request */
-        #pragma omp task untied
-          serve_request(request);
-      }
-    }
-    if (new connection) {
-      accept_connection();
-      /* create a task for the request */
-      #pragma omp task untied
-        serve_request(new connection);
-    }
-    select();
-  }
-\end{verbatim}
-}
-The {\tt untied} qualifier lifts restrictions on the task-to-thread mapping;
-we won't talk about that. The {\tt single} directive indicates that the
-runtime is only to use one thread to execute the next statement; otherwise,
-it could execute $N$ copies of the statement, which does belong to a
-OpenMP {\tt parallel} construct.
-
-\paragraph{More OpenMP features.} 
-Random fact: you can use the {\tt flush} directive to make sure that
-all values in registers or cache are written to memory. Usually, this
-isn't a problem for OpenMP programs, because of the way they're
-written. On a related note, the {\tt barrier} directive explicitly
-instructs the runtime to wait for all threads to complete; OpenMP also
-has implicit barriers at the end of parallel sections.  
-
-OpenMP also supports critical sections (one thread at a time), atomic
-sections, and typical mutex locks (\verb+omp_set_lock+,
-\verb+omp_unset_lock+).
-
-\paragraph{A Warning About Using OpenMP Directives.}
-  Write your code so that simply eliding OpenMP directives gives a valid program. For instance, this is wrong:
   \begin{verbatim}
-if (a != 0)
-    #pragma omp barrier // wrong!
-if (a != 0)
-    #pragma omp taskyield // wrong!
-  \end{lstlisting}
+// node struct with data and pointer to next
+extern void process(node* p);
 
-  Use this instead:
-  \begin{lstlisting}
-if (a != 0) {
-    #pragma omp barrier
-}
-if (a != 0) {
-    #pragma omp taskyield
+void increment_list_items(node* head) {
+    #pragma omp parallel
+    {
+        #pragma omp single
+        {
+            node * p = head;
+            while (p) {
+                #pragma omp task
+                {
+                    process(p);
+                }
+                p = p->next;
+            }
+        }
+    }
 }
   \end{verbatim}
 
+\paragraph{Using Lots of Tasks.} Let's see what happens
+if we spawn lots of tasks in a {\tt single} directive.
 
+  \begin{verbatim}
+#define LARGE_NUMBER 10000000
+double item[LARGE_NUMBER];
+extern void process(double);
 
+int main() {
+    #pragma omp parallel
+    {
+        #pragma omp single
+        {
+            int i;
+            for (i=0; i<LARGE_NUMBER; i++)
+                #pragma omp task
+                // i is firstprivate, item is shared
+                process(item[i]);
+        }
+    }
+}
+  \end{verbatim}
+
+In this case, the main loop generates tasks, which are all assigned to the executing thread as it becomes available (because of {\tt single}).
+When too many tasks get generated, OpenMP suspends the main thread, runs some tasks, then resumes the loop in the main thread.
+
+\paragraph{Improved code.} It would be better to {\tt untied} the
+spawned tasks, enabling them to run on multiple threads. Surround
+the for loop with \verb+#pragma omp task untied+.
+
+\paragraph{About Nesting: Restrictions.}
+Let's consider nesting of parallel constructs.
+  \begin{itemize}
+    \item You cannot nest {\bf for} regions.
+    \item You cannot nest {\bf single} inside a {\bf for}.
+    \item You cannot nest {\bf barrier} inside a\\~~~~~ {\bf critical/single/master/for}.
+  \end{itemize}
+
+Here's something that OpenMP does allow:
+  \begin{verbatim}
+void good_nesting(int n)
+{
+    int i, j;
+    #pragma omp parallel default(shared)
+    {
+        #pragma omp for
+        for (i=0; i<n; i++) {
+            #pragma omp parallel shared(i, n)
+            {
+                #pragma omp for
+                for (j=0; j < n; j++)
+                    work(i, j);
+            }
+        }
+    }
+}
+  \end{verbatim}
+
+\section*{Why Your Code is Slow}
+Code too slow? Want it to run faster? Avoid these pitfalls:
+  \begin{enumerate}
+    \item Unnecessary flush directives.
+    \item Using critical sections or locks instead of atomic.
+    \item Unnecessary concurrent-memory-writing protection:
+      \begin{itemize}
+        \item No need to protect local thread variables.
+        \item No need to protect if only accessed in {\bf single} or
+          {\bf master}.
+      \end{itemize}
+    \item Too much work in a critical section.
+    \item Too many entries into critical sections.
+  \end{enumerate}
+
+\paragraph{Example: Too Many Entries into Critical Sections.}
+
+  \begin{verbatim}
+#pragma omp parallel for
+for (i = 0; i < N; ++i) { 
+    #pragma omp critical
+    {
+        if (arr[i] > max) max = arr[i];
+    } 
+}
+  \end{verbatim}
+
+would be better as:
+
+  \begin{verbatim}
+#pragma omp parallel for
+for (i = 0 ; i < N; ++i) { 
+    #pragma omp flush(max)
+    if (arr[i] > max) {
+          #pragma omp critical
+          {
+                if (arr[i] > max) max = arr[i];
+          }
+    }
+}
+\end{verbatim}
 \input{bibliography.tex}
 
 \end{document}
