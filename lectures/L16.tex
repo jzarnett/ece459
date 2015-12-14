@@ -29,7 +29,7 @@ This is the \emph{sequentially consistent} memory model.
 \end{quote}
 
 {\sf What are the possible values for the variables?}\\[3em]
-
+?
 Another view of sequential consistency:
 \begin{itemize}
       \item each thread induces an \emph{execution trace}.
@@ -39,7 +39,7 @@ Another view of sequential consistency:
 
 
 It turns out that sequential consistency is too expensive to implement.
-(Why?) So most systems actually implement weaker memory models,
+(Think how much coordination is needed to get a few people to agree on where to go for lunch; now try to get a group of people to agree on what order things happened in. Right. Now imagine it's a disagreement between threads so they don't have the ability to negotiate.) So most systems actually implement weaker memory models,
 such that both {\tt r1} and {\tt r2} might end up unchanged. Recall the 
 {\bf flush} example from last time.
 
@@ -50,8 +50,7 @@ execute them---or, equivalently, to publish their results to other
 threads---in either order. Reordering is one of the major tools that
 compilers use to speed up code.
 
-{\sf When is reordering a problem?}\\[2em]
-% spin locks, as we'll see below.
+When is reordering a problem? Spin locks, as we'll see below.
 
 \subsection*{Memory Consistency Models}
 
@@ -139,7 +138,7 @@ it is safe to reorder accesses after the mutex release and put them
 before the release.
 
 \paragraph{Preventing Memory Reordering in Programs: Compiler Barriers.}
-First: Don't use volatile in C/C++ on variables~\footnote{\tiny \url{http://stackoverflow.com/questions/78172/using-c-pthreads-do-shared-variables-need-to-be-volatile}.}. However, you can prevent reordering using compiler-specific calls.
+First: Don't use volatile in C/C++ on variables~\cite{so:volatile}. Remember that the volatile keyword is supposed to tell the compiler not to put the value in a register. That does NOT make it a synchronization construct. If you use the correct synchronization primitives, you will get the behaviour you want. However, you can prevent reordering using compiler-specific calls.
 
 \begin{itemize}
   \item Microsoft Visual Studio C++ Compiler:
@@ -233,11 +232,20 @@ If the value is the same both times, nothing has changed, right?\\[1em]
 
 \emph{No.} This is an {\bf ABA problem}.\\[1em]
 
+The ABA problem is not any sort of acronym nor a reference to this~\cite{abba}. It's value that is A, then changed to B, then changed back to A. The ABA problem is a big mess for the designer of lock-free Compare-And-Swap routines. This table will give some example of how this might happen~\cite{abaproblem}:
+
+\begin{enumerate}
+	\item $P_{1}$ reads $A_{i}$ from location $L_{i}$.
+	\item $P_{k}$ interrupts $P_{1}$; $P_{k}$ stores the value $B$ into $L_{i}$.
+	\item $P_{j}$ stores the value $A_{i}$ into $L_{i}$.
+	\item $P_{1}$ resumes; it executes a false positive CAS.
+\end{enumerate} 
+
+It's a ``false positive'' because $P_{1}$'s compare-and-swap operation succeeds even though the value at $L_{i}$ has been modified in the meantime. If this doesn't seem like a bad thing, consider this. If you have a data structure that will be accessed by multiple threads, you might be controlling access to it by the compare-and-swap routine. What should happen is the algorithm should keep trying until the data structure in question has not been modified by any other thread in the meantime. But with a false positive we get the impression that things didn't change, even though they really did.
+
 You can combat this by ``tagging'': modify value with nonce upon each
 write.  You can also keep the value separately from the nonce; double
 compare and swap atomically swaps both value and nonce.
-
-Just something to be aware of. ``Not on exam''.
 
 
 \input{bibliography.tex}
