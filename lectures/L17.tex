@@ -2,12 +2,12 @@
 
 \begin{document}
 
-\lecture{17 --- C/C++11 Memory Model}{\term}{Patrick Lam}
+\lecture{17 --- C/C++11 Memory Model}{\term}{Patrick Lam \& Jeff Zarnett}
 
-\section*{Cache Coherency}
+\section*{C/C++11 Memory Model}
 
 We have talked about memory models in the context of OpenMP. Let's
-talk about the core languages now---that is, C and C++\footnote{\url{http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C}}\footnote{\url{http://rsim.cs.illinois.edu/Pubs/08PLDI.pdf}}---when
+talk about the core languages now---that is, C and C++~\cite{quora:cppthr, cppconcurrency}---when
 not using OpenMP.
 
 What outputs are possible from this example?
@@ -33,12 +33,18 @@ You might think ``undefined'', but actually it's worse than that. The
 C11 and C++11 language definitions don't even say what a thread is.
 Of course, there is Pthreads, but that is a library, not the language itself.
 So you can't even ask this question when talking about pre-C11/C++11 versions
-of C and C++.
+of C and C++. Well. Okay. You can ask, but the question makes no sense. Sort of like
+putting your hand up in class and saying ``Where did you bury your oranges?''.
+It's a syntactically valid question and it describes something that's possible,
+but it still makes no sense.
+
+The older standards made no reference to any kind of CPU, memory architecture, cache
+strategy, or anything like that. Which on the one hand is nice and general, but on the other hand, it leads to problems. The ``abstract machine'' that the C and C++ standards refer to is inherently single threaded, making it actually impossible to write a portable multithreaded C or C++ program~\cite{quora:cppthr}. The part that's impossible is that word ``portable'' -- people write multithreaded C and C++ programs all the time (in this class, even) but they have system specific code and implementation-defined behaviour. Open up a pthreads library or some equivalent and sure enough, you will find something architecture specific in there.
 
 C++11 (and C11) have improved the situation, though. There is actually
 a memory model (based on an abstract machine) and threading primitives
 such as mutexes, atomics, and memory barriers---the concepts that we
-have seen in this course.
+have seen in this course. Now there are rules! Yes. We like rules. Okay. I, at least, like rules. C++11 defines how a compiler can generate code that accesses memory even when there is concurrency. There are also standard mutex operations and atomics and barriers and all those lovely things.
 
 Now, we can ask the question about the behaviour of the above example.
 It does have undefined behaviour, since there is contended access to
@@ -64,7 +70,9 @@ A good exam question: if {\tt foo} is atomic, what are the possible outputs?
       \end{minipage}
     \end{tabular}
 
+Alright, we have some defined behaviour now.  Honestly, it depends how these things are scheduled, but the answer is one of the following set: \{0/0, 7/42, 7/0,  0/42\}. The answer depends on how they are interleaved. But at least we get some certainty that the output will be one of those four things and there's no chance of garbage because the print takes place during an assignment operation. 
 
+We probably still don't like this because we don't have mutual exclusion here and we can get several different answers, some of which are probably ``wrong'' (for whatever definition of a correct answer is), but at least our set of potential wrong answers is smaller. So that's a start. Compilers have to follow the new rules in generating code, so their output will behave as if the architecture followed the standard memory model. That's something. 
 
 \section*{Good C++ Practice}
 Lots of people use postfix ({\tt i++}) out of habit, but prefix ({\tt ++i}) is better.
@@ -89,19 +97,16 @@ x++; // x.operator++(0);
 
 Prefix is also known as {\bf increment and fetch}, and might be implemented like this:
   \begin{verbatim}
-X& X::operator++()
-{
+X& X::operator++() {
   *this += 1;
   return *this;
 }
   \end{verbatim}
-~\\[1em]
 
   Postfix is also known as {\bf fetch and increment}. Note that you have to make a copy of
 the old value:
   \begin{verbatim}
-const X X::operator++(int)
-{
+const X X::operator++(int) {
   const X old = *this;
   ++(*this);
   return old;
@@ -110,21 +115,20 @@ const X X::operator++(int)
 
 So, if you're the least concerned about efficiency (and why else would you be
 taking programming for performance?), always use
-  \emph{prefix} increments/decrements instead of defaulting to postfix.
-
-Only use {\tt postfix} when you really mean it, to be on the safe side.
+  \emph{prefix} increments/decrements instead of defaulting to postfix. This isn't really an issue if the operator is in a statement all on its own (e.g. a standalone line, or the last part of a for loop) because the compiler is (presumably) smart enough to know that this can be optimized as the return value is not assigned. Only use {\tt postfix} when you really mean it, to be on the safe side.
+  
+Mind you, if you're doing something like \texttt{array[i++]} or something similarly ``clever'', you might want to think twice about this. There's a lot of potential for error or misunderstanding in a code review. Remember, clever is hard to grep for.
 
 \section*{Locking Granularity}
 
-Locks prevent data races.
+Alright, we already know that locks prevent data races. If this is news to you, how did you pass the operating systems course?! So we need to use them to prevent data races, but it's not as simple as it sounds. We have choices about the granularity of locking, and it is a trade-off (like always).
 
-However, using locks involves a trade-off between coarse-grained
-locking, which can significantly reduce opportunities for parallelism,
-and fine-grained locking, which requires more careful design,
-increases locking overhead and is more prone to bugs.  Locks' extents
-constitute their {\bf granularity}. In coarse-grained locking, you
+\textit{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. \textit{
+Fine-grained locking} requires more careful design,
+increases locking overhead and is more prone to bugs (deadlock etc).  
+Locks' extents constitute their {\it granularity}. In coarse-grained locking, you
 lock large sections of your program with a big lock; in fine-grained
-locking, you divide the locks and protect smaller sections.
+locking, you divide the locks and protect smaller sections with multiple smaller locks.
 
 We'll discuss three major concerns when using locks:
   \begin{itemize}
@@ -132,7 +136,7 @@ We'll discuss three major concerns when using locks:
     \item contention; and
     \item deadlocks.
   \end{itemize}
-We aren't even talking about under-locking (i.e. remaining race conditions).
+We aren't even talking about under-locking (i.e., remaining race conditions). We'll assume there are adequate locks and that data accesses are protected. 
 
 \paragraph{Lock Overhead.}
   Using a lock isn't free. You pay:
@@ -153,8 +157,16 @@ We can fix this by:
 
 \paragraph{Deadlocks.} Finally, the more locks you have, the more you have to worry about deadlocks.
 
-As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding
-a lock held by process $X'$. ($X = X'$ is allowed).
+As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
+
+Okay, in a formal sense, the four conditions for deadlock are:
+
+\begin{enumerate}
+	\item \textbf{Mutual Exclusion}: A resource belongs to, at most, one process at a time.
+	\item \textbf{Hold-and-Wait}: A process that is currently holding some resources may request additional resources and may be forced to wait for them.
+	\item \textbf{No Preemption}: A resource cannot be ``taken'' from the process that holds it; only the process currently holding that resource may release it.
+	\item \textbf{Circular-Wait}: A cycle in the resource allocation graph.
+\end{enumerate}
 
 
 Consider, for instance, two processors trying to get two locks.
@@ -224,9 +236,13 @@ This code will not deadlock: you can only get {\bf l2} if you have
 {\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
 identity is not statically visible.
 
+Or another example, with threads $P$ and $Q$ attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
+
+To generalize and formalize this principle, if the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
+
+
 Alternately, you can use trylock. Recall that Pthreads' {\tt trylock}
-returns 0 if it gets the lock.  So, this code also won't deadlock: it
-will give up {\bf l1} if it can't get {\bf l2}.
+returns 0 if it gets the lock. But if it doesn't, your thread doesn't get blocked. Checking the return value is important, but at the very least, this code also won't deadlock: it will give up {\bf l1} if it can't get {\bf l2}.
   \begin{verbatim}
 void f1() {
     lock(&l1);
@@ -241,6 +257,8 @@ void f1() {
 }
   \end{verbatim}
   (Incidentaly, using trylocks can also help you measure lock contention.)
+  
+This prevents the hold and wait condition, which was one of the four conditions. A process attempts to lock a group of resources at once, and if it does not get everything it needs, it releases the locks it received and tries again. Thus a process does not wait while holding resources.
 
 \subsection*{Coarse-Grained Locking}
 One way of avoiding problems due to locking is to use few locks
@@ -252,10 +270,7 @@ It does have a couple of advantages:
     \item it has the lowest memory usage and setup time possible.
   \end{itemize}
 
-It also, however, has one big disadvantage in terms of programming for performance:
-  \begin{itemize}
-    \item your parallel program will quickly become sequential.
-  \end{itemize}
+It also, however, has one big disadvantage in terms of programming for performance: your parallel program will quickly become sequential.
 
 \paragraph{Example: Python (and other interpreters).}
 Python puts a lock around the whole interpreter (known as the
@@ -271,12 +286,11 @@ Two major implications:
       version (plus, the interpreter will slow down your system).
 \end{itemize}
 
+You might think ``this is stupid, who would ever do this?'' - a lot of OS kernels do in fact have (or at least had) a ``big kernel lock'', including Linux and the Mach Microkernel. This lasted in Linux for quite a while, from the advent of SMP support up until sometime in 2011. As much as this ruins performance, correctness is more important. We don't have a class ``programming for correctness'' (software testing? Hah!) because correctness is kind of assumed. What we want to do here is speed up our program as much as we can while maintaining correctness...
+
 \subsection*{Fine-Grained Locking}
 On the other end of the spectrum is \emph{fine-grained locking}. The big
-advantage:
-  \begin{itemize}
-    \item it maximizes parallelization in your program.
-  \end{itemize}
+advantage: it maximizes parallelization in your program.
 
 However, it also comes with a number of disadvantages:
   \begin{itemize}
@@ -286,21 +300,10 @@ However, it also comes with a number of disadvantages:
   \end{itemize}
 
 \paragraph{Examples.}
-    The Linux kernel used to have {\bf one big lock} that essentially
-    made the kernel sequential.  This worked fine for single-processor
-    systems!  The introduction of symmetric multiprocessor systems
-    (SMPs) required a more aggressive locking strategy, though, and
-    the kernel now uses finer-grained locks for performance.
 
     Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
 
     You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
-
-\paragraph{Live Coding Example.} I ran the code from the midterm (augmented with
-code to populate the tree) using 1) a coarse-grained lock; and 2)
-per-item fine-grained locks.
-
-Fine-grained locks were suspiciously fast.
 
 \input{bibliography.tex}
 
