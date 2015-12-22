@@ -1,0 +1,738 @@
+\input{configuration}
+\usepackage{multi row}
+
+\title{Lecture 10 --- Dependencies and Speculation }
+
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{p.lam@ece.uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\institute{Department of Electrical and Computer Engineering \\
+  University of Waterloo}
+\date{\today}
+
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+
+ \end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Next topic: Dependencies}
+
+  
+     \structure{Dependencies} are the main
+      limitation to parallelization.\\[1em]
+     Example: computation must be evaulated as {\tt XY} and not {\tt YX}.\\[1em]
+  
+\end{frame}
+
+\begin{frame}
+  \frametitle{Not synchronization}
+
+  
+      Assume (for now) no synchronization problems.\\[1em]
+      Only trying to identify code that is safe to run in
+      parallel.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{Dependencies: Analogies}
+
+Must extract bicycle from garage before closing garage door.\\[1em]
+
+Must close washing machine door before starting the cycle.\\[1em]
+
+Must be called on before answering questions? (sort of)\\[1em]
+
+Students must submit assignment before course staff can mark the assignment.
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Memory-carried Dependencies}
+
+Dependencies limit the amount of parallelization.
+\vfill
+Can we execute these 2 lines in parallel?
+\begin{lstlisting}
+x = 42
+x = x + 1  
+\end{lstlisting}
+\pause
+\alert{No.}\\[1em]
+\begin{itemize}
+\item Assume x initially 1. What are possible outcomes?
+\pause \newline \structure{~~~x = 43 or x = 42}\\[1em]
+
+\end{itemize}
+
+Next, we'll classify dependencies.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Read After Read (RAR)}
+
+Can we execute these 2 lines in parallel? (initially x is 2)
+\begin{lstlisting}
+y = x + 1
+z = x + 5
+\end{lstlisting}
+\pause
+\structure{Yes.}\\[1em]
+\begin{itemize}
+\item Variables y and z are independent.
+\item Variable x is only read.
+\end{itemize}
+
+RAR dependency allows parallelization.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Read After Write (RAW)}
+
+
+What about these 2 lines? (again, initially x is 2):
+\begin{lstlisting}
+x = 37
+z = x + 5
+\end{lstlisting}
+\pause
+\alert{No, z = 42 or z = 7.}\\[1em]
+
+RAW inhibits parallelization: can't change ordering.\\
+Also known as a \structure{true dependency}.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Write After Read (WAR)}
+
+What if we change the order now? (again, initially x is 2)
+\begin{lstlisting}
+z = x + 5
+x = 37
+\end{lstlisting}
+\pause
+\alert{No. Again, z = 42 or z = 7.}\\[1em]
+\begin{itemize}
+\item WAR is also known as a \structure{anti-dependency}.
+\item But, we can modify this code to enable parallelization.
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Removing Write After Read (WAR) Dependencies}
+
+Make a copy of the variable:
+\begin{lstlisting}
+x_copy = x
+z = x_copy + 5
+x = 37
+\end{lstlisting}
+\pause
+\structure{We can now run the last 2 lines in parallel.}
+\begin{itemize}
+\item Induced a true dependency (RAW) between first 2 lines.
+\item Isn't that bad?
+\end{itemize}
+\pause
+Not always:
+\begin{lstlisting}
+z = very_long_function(x) + 5
+x = very_long_calculation()
+\end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Write After Write (WAW)}
+
+Can we run these lines in parallel? (initially x is 2)
+\begin{lstlisting}
+z = x + 5
+z = x + 40
+\end{lstlisting}
+\pause
+\alert{Nope, z = 42 or z = 7}.\\[1em]
+\begin{itemize}
+\item WAW is also known as an \structure{output dependency}.
+\item We can remove this dependency (like WAR):
+\end{itemize}
+\pause
+\begin{lstlisting}
+z_copy = x + 5
+z = x + 40
+\end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+\frametitle{Summary of Memory-carried Dependencies}
+\begin{center}
+\begin{tabular}{ll|p{2.8cm}p{3.2cm}}
+& & \multicolumn{2}{c}{Second Access} \\ 
+&  & \bf Read & \bf Write \\ \hline
+\multirow{2}{*}{First Access} & \bf Read & No Dependency Read After Read (RAR)  & Anti-dependency Write After Read (WAR) \\[0.5em]
+& \bf Write & True Dependency Read After Write (RAW) & Output Dependency Write After Write (WAW) \\
+\end{tabular}
+\end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (1)}
+
+Can we run these lines in parallel? \\ ~~~(initially a[0] and a[1] are 1)
+\begin{lstlisting}
+a[4] = a[0] + 1
+a[5] = a[1] + 2
+\end{lstlisting}
+\pause
+\structure{Yes.}\\[1em]
+\begin{itemize}
+\item There are no dependencies between these lines.
+\item However, this is not how we normally use arrays\ldots
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (2)}
+
+What about this? (all elements initially 1)
+\begin{lstlisting}
+for (int i = 1; i < 12; ++i)
+    a[i] = a[i-1] + 1
+\end{lstlisting}
+\pause
+\alert{No, a[2] = 3 or a[2] = 2.}\\[1em]
+\begin{itemize}
+\item Statements depend on previous loop iterations.
+\item An example of a \structure{loop-carried dependency}.
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (3)}
+
+Can we parallelize this? (again, all elements initially 1)
+\begin{lstlisting}
+for (int i = 4; i < 12; ++i)
+    a[i] = a[i-4] + 1
+\end{lstlisting}
+\pause
+\structure{Yes, to a degree.}\\[1em]
+\begin{itemize}
+\item We can execute 4 statements in parallel:
+\begin{itemize}
+  \item a[4] = a[0] + 1, a[8] = a[4] + 1
+  \item a[5] = a[1] + 1, a[9] = a[5] + 1
+  \item a[6] = a[2] + 1, a[10] = a[6] + 1
+  \item a[7] = a[3] + 1, a[11] = a[7] + 1
+\end{itemize}  
+\end{itemize}
+
+\pause
+\structure{Always consider dependencies between iterations.}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Larger example: Loop-carried Dependencies}
+{\small \begin{verbatim}
+  // Repeatedly square input, return number of iterations before 
+  // absolute value exceeds 4, or 1000, whichever is smaller.
+  int inMandelbrot(double x0, double y0) {
+    int iterations = 0;
+    double x = x0, y = y0, x2 = x*x, y2 = y*y;
+    while ((x2+y2 < 4) && (iterations < 1000)) {
+      y = 2*x*y + y0;
+      x = x2 - y2 + x0;
+      x2 = x*x; y2 = y*y;
+      iterations++;
+    }
+    return iterations;
+  }
+\end{verbatim} 
+}
+How can we parallelize this? \\
+\pause
+\begin{itemize}
+\item Run {\tt inMandelbrot} sequentially for each point, but parallelize
+different point computations.
+\end{itemize}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Breaking Dependencies}
+
+  
+  \structure{Speculation}: architects use it to predict
+      branch targets.
+  \begin{itemize}
+    \item Need not wait for the branch to be evaluated.
+  \end{itemize}~\\[1em]
+  We'll use speculation at a coarser-grained level:
+      speculatively parallelize source code.\\[1em]
+
+      Two ways: \structure{speculative execution} and
+      \structure{value speculation}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\section{Speculation}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Speculative Execution: Example}
+
+  
+Consider the following code:
+  
+  \begin{lstlisting}
+void doWork(int x, int y) {
+    int value = longCalculation(x, y);
+    if (value > threshold) {
+      return value + secondLongCalculation(x, y);
+    }
+    else {
+      return value;
+    }
+}
+  \end{lstlisting}
+
+  Will we need to run {\tt secondLongCalculation}?
+  \vfill  
+  \begin{itemize}
+    \item<2> OK, so: could we execute {\tt longCalculation} and {\tt secondLongCalculation}
+      in parallel if we didn't have the conditional?
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Speculative Execution: Assume No Conditional}
+
+  
+  Yes, we could parallelize them. Consider this code:
+    
+    \begin{lstlisting}
+  void doWork(int x, int y) {
+    thread_t t1, t2;
+    point p(x,y);
+    int v1, v2;
+    thread_create(&t1, NULL, &longCalculation, &p);
+    thread_create(&t2, NULL, &secondLongCalculation, &p);
+    thread_join(t1, &v1);
+    thread_join(t2, &v2);
+    if (v1 > threshold) {
+      return v1 + v2;
+    } else {
+      return v1;
+    }
+  }
+    \end{lstlisting}
+
+  We do both the calculations in parallel and return the same result as before.
+
+  \begin{itemize}
+    \item What are we assuming about {\tt longCalculation} and
+{\tt secondLongCalculation}?
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Estimating Impact of Speculative Execution}
+
+  
+  $T_1$: time to run {\tt longCalculatuion}.
+
+  $T_2$: time to run {\tt secondLongCalculation}.
+
+  $p$: probability that {\tt secondLongCalculation} executes.\\[1em]
+
+  In the normal case we have:
+    \[T_{\mbox{\scriptsize normal}} = T_1 + pT_2.\]
+
+  $S$: synchronization overhead.\\
+  Our speculative code takes:
+    \[ T_{\mbox{\scriptsize speculative}} = \mbox{max}(T_1, T_2) + S.\]
+
+    \structure{Exercise.} When is speculative code faster? Slower? \\ How could you improve it?
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Estimating Impact of Speculative Execution}
+
+  
+  $T_1$: time to run {\tt longCalculatuion}.
+
+  $T_2$: time to run {\tt secondLongCalculation}.
+
+  $p$: probability that {\tt secondLongCalculation} executes.\\[1em]
+
+  In the normal case we have:
+    \[T_{\mbox{\scriptsize normal}} = T_1 + pT_2.\]
+
+  $S$: synchronization overhead.\\
+  Our speculative code takes:
+    \[ T_{\mbox{\scriptsize speculative}} = \mbox{max}(T_1, T_2) + S.\]
+
+    \structure{Exercise.} When is speculative code faster? Slower? \\ How could you improve it?
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Shortcomings of Speculative Execution}
+
+  
+  Consider the following code:
+  
+  \begin{lstlisting}
+void doWork(int x, int y) {
+    int value = longCalculation(x, y);
+    return secondLongCalculation(value);
+}
+  \end{lstlisting}
+
+  Now we have a true dependency; can't use speculative~execution.\\[1em]
+
+  But: if the value is predictable, we can execute
+      {\tt secondLongCalculation} using the predicted value.\\[1em]
+
+  This is \structure{value speculation}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Value Speculation Implementation}
+
+% note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
+  
+  This Pthread code does value speculation:
+  
+  \begin{lstlisting}
+void doWork(int x, int y) {
+    thread_t t1, t2;
+    point p(x,y);
+    int v1, v2, last_value;
+    thread_create(&t1, NULL, &longCalculation, &p);
+    thread_create(&t2, NULL, &secondLongCalculation,
+                  &last_value);
+    thread_join(t1, &v1);
+    thread_join(t2, &v2);
+    if (v1 == last_value) {
+      return v2;
+    } else {
+      last_value = v1;
+      return secondLongCalculation(v1);
+    }
+}
+  \end{lstlisting}
+
+  Note: this is like memoization (plus parallelization).
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Estimating Impact of Value Speculation}
+
+  
+  $T_1$: time to run {\tt longCalculatuion}.
+
+  $T_2$: time to run {\tt secondLongCalculation}.
+
+  $p$: probability that {\tt secondLongCalculation} executes.
+
+  $S$: synchronization overhead.\\[1em]
+
+  In the normal case, we again have:
+    \[ T = T_1 +pT_2.\]
+
+  This speculative code takes:
+    \[ T = \mbox{max}(T_1, T_2) + S + pT_2.\]
+
+    \structure{Exercise.} Again, when is speculative code faster? Slower? How could you improve it?
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{When Can We Speculate?}
+
+  
+  Required conditions for safety:
+
+  \begin{itemize}
+    \item {\tt longCalculation} and {\tt secondLongCalculation} must not call
+      each other.
+    \item {\tt secondLongCalculation} must not depend on
+      any values set or modified by {\tt longCalculation}.
+    \item The return value of {\tt longCalculation} must be deterministic.
+  \end{itemize}
+
+  General warning: Consider \structure{side effects} of function calls.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Side Effects}
+
+As a general warning: Consider the \alert{side effects} of function calls. 
+
+They have a big impact on parallelism. Side effects are problematic, but why? 
+
+For one thing they're kind of unpredictable. 
+
+Side effects are changes in state that do not depend on the function input. 
+
+Calling a function or expression has a side effect if it has some visible effect on the outside world. 
+
+Some things necessarily have side effects, like printing to the console. 
+
+Others are side effects which may be avoidable if we can help it, like modifying a global variable.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Purity}
+
+Code that allows multiple concurrent invocations without affecting the outcome is called reentrant or ``pure''. 
+
+It is a desirable property to have code that is reentrant. 
+
+If a function is not reentrant, it may not be possible to make it thread safe. 
+
+And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Side Effects}
+
+Side effects are sort of undesirable, but not necessarily bad. 
+
+Printing to console is unavoidably making use of a side effect, but it's what we want. 
+
+When printing we can't have reentrant behaviour because two threads trying to write at the same time to the console would result in jumbled output. 
+
+Or alternatively, restarting the print routine might result in some doubled characters on the screen.
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Non-Reentrant C Function}
+
+The trivial example of a non-reentrant C function:
+
+\begin{verbatim}
+int tmp;
+
+void swap( int x, int y ) {
+    tmp = y;
+    y = x;
+    x = tmp;
+}
+\end{verbatim}
+
+Why is this non-reentrant?
+
+How can we make it reentrant?
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Interrupt Handling}
+
+
+Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. 
+
+Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted, or we pause and resume.
+
+Either way, if the code is not reentrant we will run into problems.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Thread Safe vs. Reentrant}
+
+Let us also draw a distinction between thread safe code and reentrant code. 
+
+A thread safe operation is one that can be performed from more than one thread at the same time. 
+
+On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. 
+
+Or it can be re-started without affecting the outcome. 
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Thread Safe Non-Reentrant Example}
+{\scriptsize
+\begin{verbatim}
+int length = 0;
+char *s = NULL;
+
+// Note: Since strings end with a 0, if we want to
+// add a 0, we encode it as "\0", and encode a
+// backslash as "\\".
+
+
+// WARNING! This code is buggy - do not use!
+
+
+void AddToString(int ch)
+{
+  EnterCriticalSection(&someCriticalSection);
+  // +1 for the character we're about to add
+  // +1 for the null terminator
+  char *newString = realloc(s, (length+1) * sizeof(char));
+  if (newString) {
+    if (ch == '\0' || ch == '\\') {
+      AddToString('\\'); // escape prefix
+    }
+    newString[length++] = ch;
+    newString[length] = '\0';
+    s = newString;
+  }
+  LeaveCriticalSection(&someCriticalSection);
+}
+\end{verbatim}
+}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Analysis of This Example}
+
+Is it thread safe? Sure - there is a critical section protected by the mutex \texttt{someCriticalSection}. 
+
+But is is re-entrant? Nope. 
+
+The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s}.
+
+That is no longer valid because it got stomped by the earlier call to \texttt{realloc}.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Functional Programming}
+
+Interestingly, functional programming languages (NOT procedural like C) such as Scala and so on, lend themselves very nicely to being parallelized. 
+
+Why? 
+
+Because a purely functional program has no side effects and they are very easy to parallelize.
+
+Any impure function has to indicate that in its function signature.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Joel on Functional}
+
+\begin{quote}
+\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}
+\end{quote}
+\hfill - Joel Spolsky
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{OOP: \texttt{getBrain().damage()}}
+
+Object oriented programming kind of gives us some bad habits in this regard. 
+
+We tend to make a lot of \texttt{void} methods. 
+
+In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. 
+
+If a function returns nothing, what does it do? 
+
+For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
+
+\end{frame}
+
+\end{document}
+
