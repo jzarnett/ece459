@@ -1,0 +1,580 @@
+\input{configuration}
+
+\title{Lecture 17 --- C/C++11 Memory Model }
+
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{p.lam@ece.uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\institute{Department of Electrical and Computer Engineering \\
+  University of Waterloo}
+\date{\today}
+
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+
+ \end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Language Support: Before C/C++11}
+
+%http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C
+
+  
+    Before C/C++11: \\ \qquad no language-level definition of threads.\\[1em]
+
+    Not even a well-formed question to ask what this means:\\[.5em]
+    \begin{tabular}{ll}
+      \begin{minipage}{.2\textwidth}
+        Thread 1:
+        \begin{lstlisting}
+  foo = 7;
+  bar = 42;
+        \end{lstlisting}
+      \end{minipage} &
+      \begin{minipage}{.4\textwidth}
+        Thread 2:
+        \begin{lstlisting}
+  printf("%d\n", foo);
+  printf("%d\n", bar);
+        \end{lstlisting}
+      \end{minipage}
+    \end{tabular}
+    ~\\[1em]
+    \only<2>{pre C/C++11: no such thing as a thread!}
+    
+  
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Language Support in C++11: Defining the Question}
+
+  
+
+    Now\footnote{\url{http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C}}:
+    \begin{itemize}
+    \item a memory model
+    \item primitives: mutexes, atomics, memory barriers.
+    \end{itemize}
+
+    Previous example has undefined behaviour \\ \qquad per C++11. (why?)
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Language Support in C++11: Atomics}
+
+  
+    We've seen the notion of atomics. Here's the C++11 notation:
+
+    \begin{lstlisting}
+      atomic<int> foo, bar;      
+    \end{lstlisting}
+    
+    \begin{tabular}{ll}
+      \begin{minipage}{.25\textwidth}
+        Thread 1:
+        \begin{lstlisting}
+  foo.store(7);
+  bar.store(42);
+        \end{lstlisting}
+      \end{minipage} &
+      \begin{minipage}{.45\textwidth}
+        Thread 2:
+        \begin{lstlisting}
+  printf("%d\n", foo.load());
+  printf("%d\n", bar.load());
+        \end{lstlisting}
+      \end{minipage}
+    \end{tabular}
+
+    What are the possible outputs? (good exam question!)
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Prefix and Postfix}
+
+  
+
+  Lots of people use postfix out of habit, but prefix is better.\\[2em]
+
+  In C, this isn't a problem. \\[1em]
+  In some languages (like C++), it can be.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Why? Overloading}
+
+  
+
+  In C++, you can overload the {\tt ++} and {\tt --} operators.
+
+  \begin{lstlisting}
+class X {
+public:
+  X& operator++();
+  const X operator++(int);
+...
+};
+
+X x;
+++x; // x.operator++();
+x++; // x.operator++(0);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Common Increment Implementations}
+
+  
+
+  Prefix is also known as {\bf increment and fetch}.
+
+  \begin{lstlisting}
+X& X::operator++()
+{
+  *this += 1;
+  return *this;
+}
+  \end{lstlisting}
+~\\[1em]
+
+  Postfix is also known as {\bf fetch and increment}.
+
+  \begin{lstlisting}
+const X X::operator++(int)
+{
+  const X old = *this;
+  ++(*this);
+  return old;
+}
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Efficiency}
+
+  
+  If you're the least concerned about efficiency, always use
+  {\bf prefix} increments/decrements instead of defaulting to postfix.\\[1em]
+
+  Only use {\tt postfix} when you really mean it, to be on the safe side.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Digression: The Wayside}
+
+  \begin{center}
+    \includegraphics[width=.7\textwidth]{images/The_Wayside_Concord_Massachusetts}
+% http://en.wikipedia.org/wiki/File:The_Wayside_Concord_Massachusetts.jpg
+  \end{center}
+\hfill (Daderot, Wikimedia Commons)
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{It's Not Just Software}
+
+
+Nathaniel Hawthorne wrote:
+
+\begin{quote}
+I have been equally unsuccessful in my architectural projects; and have transformed a simple and small old farm-house into the absurdest anomaly you ever saw; but I really was not so much to blame here as the \sout{programmer} village-carpenter, who took the matter into his own hands, and produced an unimaginable sort of thing instead of what I asked for. (January 1864)
+\end{quote}
+
+
+\begin{tabular}{lrr}
+Original budget:& \$500 &(\$7540 inflation-adjusted)\\
+Actual cost: &\$2000 &(\$30160 inflation-adjusted)
+\end{tabular}
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Using locks also involves a trade-off between coarse-grained locking,
+%% which can significantly reduce opportunities for parallelism, and
+%% fine-grained locking, which requires more careful design, increases
+%% locking overhead and is more prone to bugs.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Locking}
+
+  
+  Locks prevent data races.
+
+  \begin{itemize}
+    \item Locks' extents constitute their {\bf granularity}---do you lock large sections of your program with a big lock, or do you divide the locks and protect smaller sections?
+  \end{itemize}
+
+  Concerns when using locks:
+
+  \begin{itemize}
+    \item overhead;
+    \item contention; and
+    \item deadlocks.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Locking: Overhead}
+
+  
+
+  Using a lock isn't free. You pay:
+  \begin{itemize}
+    \item allocated memory for the locks;
+    \item initialization and destruction time; and
+    \item acquisition and release time.
+  \end{itemize}
+
+  These costs scale with the number of locks that you have.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Locking: Contention}
+
+  
+    Most locking time is wasted waiting for the lock to become available.
+
+    How can we fix this?
+      \begin{itemize}
+        \item Make the locking regions smaller (more granular);
+        \item Make more locks for independent sections.
+      \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Locking: Deadlocks}
+
+  
+  The more locks you have, the more you have to worry about deadlocks.\\[1em]
+
+  Key condition: \\ 
+\qquad waiting for a lock held by process $X$ \\while holding
+a lock held by process $X'$. ($X = X'$ allowed).
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Formal Deadlock Definition}
+
+The four conditions for deadlock are:
+
+\begin{enumerate}
+	\item \textbf{Mutual Exclusion}
+	\item \textbf{Hold-and-Wait}
+	\item \textbf{No Preemption}
+	\item \textbf{Circular-Wait}
+\end{enumerate}
+
+
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[containsverbatim]
+  \frametitle{Does this look familiar?}
+
+  
+     Consider two processors trying to get two {\it locks}:
+     
+     \vfill
+  \begin{columns}
+    \column{0.4\textwidth}
+      {\bf Thread 1}
+
+      \verb+Get Lock 1+
+
+      \verb+Get Lock 2+
+
+      \verb+Release Lock 2+
+
+      \verb+Release Lock 1+
+    \column{0.4\textwidth}
+      {\bf Thread 2}
+
+      \verb+Get Lock 2+
+
+      \verb+Get Lock 1+
+
+      \verb+Release Lock 1+
+
+      \verb+Release Lock 2+
+    \end{columns}~\\[1em]
+     Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops!
+          They both wait for each other \structure{(deadlock)}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Key to Preventing Deadlock}
+
+  
+
+  Always be careful if \\
+your code {\bf acquires a lock while holding one}.\\[1em]
+
+  Here's how to prevent a deadlock:
+  
+  \begin{itemize}
+    \item Ensure consistent ordering in acquiring locks; or
+    \item Use {\tt trylock}.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Preventing Deadlocks---Ensuring Consistent Ordering}
+
+  
+  \begin{lstlisting}
+void f1() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+
+void f2() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+  \end{lstlisting}
+
+     This code will not deadlock: you can only get {\bf l2} if you have
+      {\bf l1}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Formal Lock Ordering}
+
+
+If the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$:
+
+Assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. 
+
+This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. 
+
+If the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). 
+
+To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. 
+
+If these two protocols are followed, then a circular-wait condition cannot hold.
+
+
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Preventing Deadlocks---Using {\tt trylock}}
+
+  
+  Recall: Pthreads' {\tt trylock} returns 0 if it gets the lock.
+
+  \begin{lstlisting}
+void f1() {
+    lock(&l1);
+    while (trylock(&l2) != 0) {
+        unlock(&l1);
+        // wait
+        lock(&l1);
+    }
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+  \end{lstlisting}
+
+    This code also won't deadlock: it will give up {\bf l1} if it can't get
+    {\bf l2}.\\[1em]
+
+    (BTW: trylocks also enable measuring lock contention.)
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Coarse-Grained Locking (1)}
+
+  \begin{center}
+    \includegraphics[scale=0.5]{images/lock-all-the-things}
+
+    (with one lock)
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Coarse-Grained Locking (2)}
+
+  
+  {\bf Advantages:}
+  
+  \begin{itemize}
+    \item Easier to implement;
+    \item No chance of deadlocking;
+    \item Lowest memory usage / setup time.
+  \end{itemize}
+  \vfill
+  {\bf Disadvantages:}
+  \begin{itemize}
+    \item Your parallel program can quickly become sequential.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Coarse-Grained Locking Example---Python GIL}
+
+  
+  This is the main reason (most) scripting languages have poor parallel
+  performance; Python's just an example.
+
+  \begin{itemize}
+    \item Python puts a lock around the whole interpreter\\ \quad (global interpreter lock).
+
+    \item Only performance benefit you'll see from threading is if a thread is
+      waiting for IO.
+
+    \item Any non-I/O-bound threaded program will be {\bf slower} than the sequential
+      version (plus, it'll slow down your system).
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Fine-Grained Locking (1)}
+
+  \begin{center}
+    \includegraphics[scale=0.5]{images/lock-all-the-things}
+
+    (with all different locks)
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Fine-Grained Locking (2)}
+
+  
+  {\bf Advantages:}
+  
+  \begin{itemize}
+    \item Maximizes parallelization in your program.
+  \end{itemize}
+  \vfill
+  {\bf Disadvantages}
+  \begin{itemize}
+    \item May be mostly wasted memory / setup time.
+    \item Prone to deadlocks.
+    \item Generally more error-prone (be sure you grab the right lock!)
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Fine-Grained Locking Examples}
+
+  
+    The Linux kernel used to have {\bf one big lock}\\ that essentially made
+      the kernel sequential. 
+    \begin{itemize}
+      \item (worked fine for single-processor systems!)
+    \end{itemize}
+    Now uses finer-grained locks for performance.\\[2em]
+
+    Databases may lock fields / records / tables.\\
+    \qquad  (fine-grained $\rightarrow$ coarse-grained).\\[1em]
+
+    Can lock individual objects.
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\section{}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary}
+
+  
+ C++11 memory model.\\
+ 
+ Good increment practice. \\
+
+ Lock granularity.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\end{document}
+
