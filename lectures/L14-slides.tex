@@ -1,0 +1,706 @@
+\input{configuration}
+
+\title{Lecture 14--- OpenMP Memory Model }
+
+\author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
+\institute{Department of Electrical and Computer Engineering \\
+  University of Waterloo}
+\date{\today}
+
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+
+ \end{frame}
+
+\begin{frame}
+  \frametitle{Memory Model}
+
+  
+
+  OpenMP uses a {\bf relaxed-consistency, shared-memory} model:
+
+  \begin{itemize}
+    \item All threads share a single store called
+      \structure{memory}.\\ ~~(may not actually represent RAM)\\[1em]
+    \item Each thread can have its own {\it temporary} view of memory.\\[1em]
+    \item A thread's {\it temporary} view of memory is not required to be
+      consistent with memory.
+  \end{itemize}~\\
+
+  We'll talk more about memory models later.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Preventing Simultaneous Execution?}
+
+  \begin{lstlisting}
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1) // [1]                atomic(a = 1) // [3]
+atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{lstlisting}
+
+  
+ Does this code actually prevent simultaneous execution?
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Possible States for Example}
+
+  \begin{lstlisting}
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1) // [1]                atomic(a = 1) // [3]
+atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{lstlisting}
+
+  \begin{center}
+  \begin{tabular}{r r r r | r r}
+    \multicolumn{4}{c|}{Order} & t1 tmp & t2 tmp\\
+    \hline
+    1 & 2 & 3 & 4 & 0 & 1\\
+    1 & 3 & 2 & 4 & 1 & 1\\
+    1 & 3 & 4 & 2 & 1 & 1\\
+    3 & 4 & 1 & 2 & 1 & 0\\
+    3 & 1 & 2 & 4 & 1 & 1\\
+    3 & 1 & 4 & 2 & 1 & 1\\
+  \end{tabular}
+  \end{center}
+
+  
+    Looks like it (at least intuitively).
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Memory Model Gotcha}
+
+  \begin{lstlisting}
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1) // [1]                atomic(a = 1) // [3]
+atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{lstlisting}
+
+  
+    Sorry! With OpenMP's memory model, no guarantees:\\
+    the update from one thread may not be seen by the other.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Flush: Ensuring Consistent Views of Memory}
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf flush} {\it[(list)]}
+  \end{center}
+
+  
+    Makes the thread's temporary view of memory consistent with main
+      memory; hence:\\[1em]
+    $\bullet$ enforces an order on the memory operations of the variables.\\[1em]
+    The variables in the list are called the {\it flush-set}. 
+    If no variables given, the compiler will determine them for you.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Explaining Flush}
+
+  
+  Enforcing an order on the memory operations means:
+
+  \begin{itemize}
+    \item All read/write operations on the {\it flush-set} which happen
+      before the {\bf flush} complete before the flush executes.
+    \item All read/write operations on the {\it flush-set} which happen
+      after the {\bf flush} complete after the flush executes.
+    \item Flushes with overlapping {\it flush-sets} can not be reordered.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Flush Correctness}
+
+  
+  To show a consistent value for a variable between two threads, 
+  OpenMP must run statements in this order:
+
+  \begin{enumerate}
+    \item $t_1$ writes the value to $v$;
+    \item $t_1$ flushes $v$; 
+    \item $t_2$ flushes $v$ also;
+    \item $t_2$ reads the consistent value from $v$.
+  \end{enumerate}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Take 2: Same Example, now improved with Flush}
+
+  \begin{lstlisting}
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1)                       atomic(a = 1)
+flush(b)                            flush(a)
+flush(a)                            flush(b)
+atomic(tmp = a)                     atomic(tmp = b)
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item OK. Will this now prevent simultaneous access?
+  \end{itemize}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{No Luck Yet: Why Flush Fails}
+
+  
+
+  \begin{center}
+    \alert{\LARGE No.}
+  \end{center}
+
+  \begin{itemize}
+    \item The compiler can reorder the {\tt flush(b)} in thread 1 or
+      {\tt flush(a)} in thread 2.
+
+    \item If {\tt flush(b)} gets reordered to after the protected
+      section, we will not get our intended operation.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Should you use flush?}
+
+  
+  \Large
+  Probably not, but now you know what it does.
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Same Example, Finally Correct}
+
+  \begin{lstlisting}
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1)                       atomic(a = 1)
+flush(a, b)                         flush(a, b)
+atomic(tmp = a)                     atomic(tmp = b)
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{lstlisting}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{OpenMP Directives Where Flush Isn't Implied}
+
+  
+  \begin{itemize}
+    \item at entry to {\bf for};
+    \item at entry to, or exit from, {\bf master};
+    \item at entry to {\bf sections}; 
+    \item at entry to {\bf single};
+    \item at exit from {\bf for}, {\bf single} or {\bf sections} with a {\bf nowait}
+      \begin{itemize}
+        \item {\bf nowait} removes implicit flush along with the implicit barrier
+      \end{itemize}
+  \end{itemize}
+
+  This is not true for OpenMP versions before 2.5, so be careful.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{OpenMP Task Directive}
+
+  
+  \begin{center}
+    {\tt \#pragma omp }{\bf task} {\it [clause [[,] clause]*]}
+  \end{center}~\\
+
+     Generates a task for a thread in the team to run.\\[1em]
+     When a thread enters the region it may:
+      \begin{itemize}
+        \item immediately execute the task; or
+        \item defer its execution.\\\qquad  (any other thread may be assigned the task)
+      \end{itemize}
+
+  Allowed Clauses: {\bf if, final, untied, default, mergeable, private,
+  firstprivate, shared}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Tasks: {\tt if} and {\tt final} Clauses}
+
+  
+  \begin{center}
+  {\bf if} {\it(scalar-logical-expression)}
+  \end{center}
+
+    When expression is {\tt false}, generates an undeferred task---\\
+    the generating task region is suspended until execution of the
+      undeferred task finishes.\\[1em]
+
+  \begin{center}
+  {\bf final} {\it(scalar-logical-expression)}
+  \end{center}
+
+    When expression is {\tt true}, generates a final task.\\
+    All tasks within a final task are {\it included}.\\
+    Included tasks are undeferred and also execute immediately in the same thread.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{{\tt if} and {\tt final} Clauses: Examples}
+
+  \begin{lstlisting}
+void foo () {
+    int i;
+    #pragma omp task if(0) // This task is undeferred
+    {
+        #pragma omp task
+        // This task is a regular task
+        for (i = 0; i < 3; i++) {
+            #pragma omp task
+            // This task is a regular task
+            bar();
+        }
+    }
+    #pragma omp task final(1) // This task is a regular task
+    {
+        #pragma omp task // This task is included
+        for (i = 0; i < 3; i++) {
+            #pragma omp task
+            // This task is also included
+            bar();
+        }
+    }
+}
+  \end{lstlisting}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{{\tt untied} and {\tt mergeable} Clauses}
+
+  
+\begin{center}
+  {\bf untied}
+\end{center}
+  \begin{itemize}
+    \item A suspended task can be resumed by any thread.
+    \item ``untied'' is ignored if used with {\bf final}.
+    \item Interacts poorly with thread-private variables and {\tt gettid()}.
+  \end{itemize}
+
+\begin{center}
+  {\bf mergeable}
+\end{center}
+
+  \begin{itemize}
+    \item For an undeferred or included task,
+    allows the implementation to generate a merged task instead.
+    \item In a merged task, the implementation may re-use the environment from its generating task (as if there was no task directive).
+  \end{itemize}
+
+  For more: \url{docs.oracle.com/cd/E24457_01/html/E21996/gljyr.html}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Bad {\tt mergeable} Example}
+
+  
+  \begin{lstlisting}
+#include <stdio.h>
+void foo () {
+    int x = 2;
+    #pragma omp task mergeable
+    {
+        x++; // x is by default firstprivate
+    }
+    #pragma omp taskwait
+    printf("%d\n",x); // prints 2 or 3
+}
+  \end{lstlisting}
+  
+    This is an incorrect usage of {\bf mergeable}: the output depends
+      on whether or not the task got merged.\\[1em]
+    Merging tasks (when safe) produces more efficient code.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Taskyield}
+
+  
+  \begin{center}
+    {\tt \#pragma omp }{\bf taskyield}
+  \end{center}
+
+    Specifies that the current task can be suspended in favour of another task.\\[1em]
+
+  Here's a good use of {\bf taskyield}.
+
+  \begin{lstlisting}
+void foo (omp_lock_t * lock, int n) {
+    int i;
+    for ( i = 0; i < n; i++ )
+    #pragma omp task
+    {
+        something_useful();
+        while (!omp_test_lock(lock)) {
+            #pragma omp taskyield
+        }
+        something_critical();
+        omp_unset_lock(lock);
+    }
+}
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Taskwait}
+
+  
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf taskwait}
+  \end{center}~\\[1em]
+
+     Waits for the completeion of the current task's child tasks.
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{OpenMP Example: Tree Traversal}
+
+  
+  \begin{lstlisting}
+struct node {
+    struct node *left;
+    struct node *right;
+};
+extern void process(struct node *);
+
+void traverse(struct node *p) {
+    if (p->left)
+        #pragma omp task
+        // p is firstprivate by default
+        traverse(p->left);
+    if (p->right)
+        #pragma omp task
+        // p is firstprivate by default
+        traverse(p->right);
+    process(p);
+}    
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{OpenMP Example 2: Post-order Tree Traversal}
+
+  
+  \begin{lstlisting}
+struct node {
+    struct node *left;
+    struct node *right;
+};
+extern void process(struct node *);
+
+void traverse(struct node *p) {
+    if (p->left)
+        #pragma omp task
+        // p is firstprivate by default
+        traverse(p->left);
+    if (p->right)
+        #pragma omp task
+        // p is firstprivate by default
+        traverse(p->right);
+    #pragma omp taskwait
+    process(p);
+}    
+  \end{lstlisting}
+  
+  Note: Used an explicit {\bf taskwait} before processing.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{OpenMP Example: Parallel Linked List Processing}
+
+  
+  \begin{lstlisting}
+// node struct with data and pointer to next
+extern void process(node* p);
+
+void increment_list_items(node* head) {
+    #pragma omp parallel
+    {
+        #pragma omp single
+        {
+            node * p = head;
+            while (p) {
+                #pragma omp task
+                {
+                    process(p);
+                }
+                p = p->next;
+            }
+        }
+    }
+}
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{OpenMP Example: Lots of Tasks}
+
+  
+  \begin{lstlisting}
+#define LARGE_NUMBER 10000000
+double item[LARGE_NUMBER];
+extern void process(double);
+
+int main() {
+    #pragma omp parallel
+    {
+        #pragma omp single
+        {
+            int i;
+            for (i=0; i<LARGE_NUMBER; i++)
+                #pragma omp task
+                // i is firstprivate, item is shared
+                process(item[i]);
+        }
+    }
+}
+  \end{lstlisting}
+
+
+  The main loop generates tasks, which are all assigned to the executing thread as it becomes available.\\[1em]
+  When too many tasks generated: suspends main thread, runs some tasks, then resumes the loop in main thread.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{OpenMP Example: Improved version of Lots of Tasks}
+
+  
+  \begin{lstlisting}
+#define LARGE_NUMBER 10000000
+double item[LARGE_NUMBER];
+extern void process(double);
+
+int main() {
+    #pragma omp parallel
+    {
+        #pragma omp single
+        {
+            int i;
+            #pragma omp task untied
+            {
+                for (i=0; i<LARGE_NUMBER; i++)
+                    #pragma omp task
+                    process(item[i]);
+            }
+        }
+    }
+}
+  \end{lstlisting}
+  
+  \begin{itemize}
+    \item {\bf untied} lets another thread take on tasks.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{About Nesting: Restrictions}
+
+  
+  \begin{itemize}
+    \item You cannot nest {\bf for} regions.
+    \item You cannot nest {\bf single} inside a {\bf for}.
+    \item You cannot nest {\bf barrier} inside a\\~~~~~ {\bf critical/single/master/for}.
+  \end{itemize}
+
+  \begin{lstlisting}
+void good_nesting(int n)
+{
+    int i, j;
+    #pragma omp parallel default(shared)
+    {
+        #pragma omp for
+        for (i=0; i<n; i++) {
+            #pragma omp parallel shared(i, n)
+            {
+                #pragma omp for
+                for (j=0; j < n; j++)
+                    work(i, j);
+            }
+        }
+    }
+}
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Why Your Code is Slow}
+
+  
+  Want it to run faster? Avoid these pitfalls:
+  \begin{enumerate}
+    \item Unnecessary flush directives.
+    \item Using critical sections or locks instead of atomic.
+    \item Unnecessary concurrent-memory-writing protection:
+      \begin{itemize}
+        \item No need to protect local thread variables.
+        \item No need to protect if only accessed in {\bf single} or
+          {\bf master}.
+      \end{itemize}
+    \item Too much work in a critical section.
+    \item Too many entries into critical sections.
+  \end{enumerate}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Example: Too Many Entries into Critical Sections}
+
+  
+  \begin{lstlisting}
+#pragma omp parallel for
+for (i = 0; i < N; ++i) { 
+    #pragma omp critical
+    {
+        if (arr[i] > max) max = arr[i];
+    } 
+}
+  \end{lstlisting}
+
+would be better as:
+
+  \begin{lstlisting}
+#pragma omp parallel for
+for (i = 0 ; i < N; ++i) { 
+    #pragma omp flush(max)
+    if (arr[i] > max) {
+          #pragma omp critical
+          {
+                if (arr[i] > max) max = arr[i];
+          }
+    }
+}
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary}
+
+  
+    Finished exploring OpenMP. Key points:
+  \begin{itemize}
+    \item How to use {\bf flush} correctly.
+    \item How to use OpenMP {\bf tasks} to parallelize unstructured problems.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\end{document}
+
