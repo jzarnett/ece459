@@ -1,0 +1,241 @@
+\documentclass[letterpaper,10pt]{article}
+
+\usepackage{titling}
+\usepackage{listings}
+\usepackage{url}
+\usepackage{setspace}
+\usepackage{subfig}
+\usepackage{sectsty}
+\usepackage{pdfpages}
+\usepackage{colortbl}
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{relsize}
+\usepackage{amsmath}
+\usepackage{wasysym}
+\usepackage{fancyvrb}
+\usepackage{amsmath,amssymb,amsthm,graphicx,xspace}
+\usepackage[titlenotnumbered,noend,noline]{algorithm2e}
+\usepackage[compact]{titlesec}
+\usepackage{XCharter}
+\usepackage[T1]{fontenc}
+\usepackage{tikz}
+\usetikzlibrary{arrows,automata,shapes,trees,matrix,chains,scopes,positioning,calc}
+\tikzstyle{block} = [rectangle, draw, fill=blue!20, 
+    text width=2.5em, text centered, rounded corners, minimum height=2em]
+\tikzstyle{bw} = [rectangle, draw, fill=blue!20, 
+    text width=4em, text centered, rounded corners, minimum height=2em]
+
+\definecolor{namerow}{cmyk}{.40,.40,.40,.40}
+\definecolor{namecol}{cmyk}{.40,.40,.40,.40}
+
+\let\LaTeXtitle\title
+\renewcommand{\title}[1]{\LaTeXtitle{\textsf{#1}}}
+
+
+\newcommand{\handout}[5]{
+  \noindent
+  \begin{center}
+  \framebox{
+    \vbox{
+      \hbox to 5.78in { {\bf ECE459: Programming for Performance } \hfill #2 }
+      \vspace{4mm}
+      \hbox to 5.78in { {\Large \hfill #4  \hfill} }
+      \vspace{2mm}
+      \hbox to 5.78in { {\em #3 \hfill} }
+    }
+  }
+  \end{center}
+  \vspace*{4mm}
+}
+
+\newcommand{\lecture}[3]{\handout{#1}{#2}{#3}{Lecture #1}}
+\newcommand{\tuple}[1]{\ensuremath{\left\langle #1 \right\rangle}\xspace}
+
+\addtolength{\oddsidemargin}{-1.000in}
+\addtolength{\evensidemargin}{-0.500in}
+\addtolength{\textwidth}{2.0in}
+\addtolength{\topmargin}{-1.000in}
+\addtolength{\textheight}{1.75in}
+\addtolength{\parskip}{\baselineskip}
+\setlength{\parindent}{0in}
+\renewcommand{\baselinestretch}{1.5}
+\newcommand{\term}{Winter 2016}
+
+\singlespace
+
+
+\title{\bf ECE 459: Programming for Performance\\Assignment 1}
+\author{Patrick Lam}
+\date{January 8, 2016 (Due: January 22, 2016)}
+
+\begin{document}
+
+\maketitle
+
+In this assignment, you'll work with a program which requests a
+resource across the network. I've provided 
+a single-threaded implementation which uses blocking I/O to get the
+resource. You will reduce the latency of this operation by sending out
+multiple requests simultaneously (to different machines). In part 1,
+you'll use pthreads to do this, while in part 2, you'll use
+nonblocking I/O.
+
+\section*{Setup}
+
+%Download the provided assignment code from
+%\url{http://patricklam.ca/p4p/files/provided-assignment-01.tar.gz}
+%and untar it using the {\tt tar xzvf assignment-01.tar.gz} command.
+
+After setting up your ssh key at {\tt http://ecgit.uwaterloo.ca}, fork the provided git repository at\\ {\tt git@ecgit.uwaterloo.ca:ece459/1161/a1} : 
+
+\begin{center}
+{\tt ssh git@ecgit.uwaterloo.ca fork ece459/1161/a1 ece459/1161/USERNAME/a1}
+\end{center}
+
+\noindent and then clone the provided files. %(You can also download the provided
+%files at \url{http://patricklam.ca/p4p/files/provided_a01.tar.gz}, but
+%don't do that if you're in the course---it'll make submitting harder.)
+
+You should do this assignment in Linux, as the provided {\tt Makefile}
+was only tested on Linux and isn't very robust. Use a virtual machine
+at your peril. It might work OK since the program's bottleneck is the
+response time of the remote execution. 
+
+You may log into {\tt ece459-1.uwaterloo.ca} with the ssh key that you
+set up at {\tt ecgit}. Use your uwuserid with
+that ssh key. I'll be testing your solutions on that machine.
+
+%I tested everything on this system, so everything should
+%be working. Just in case you want to make sure you setup is the same,
+%I used {\tt gcc 4.6.2} and {\tt glibc 2.15}. Make sure to use the
+%optimization flag {\tt -O2}, or you may get some weird results.
+
+\section*{Assignment code walkthrough}
+
+You will find the file {\tt paster.c} in the provided file. This code uses
+{\tt libcurl} to fetch a set of {\tt PNG} files from the network and {\tt libpng}
+to paste the files together.
+
+I've provided a web API which returns portions of some pictures that I took.
+You can see this in a browser by visiting
+\url{http://machine:4590/image?img=N},
+where {\tt machine} is one of {\tt patricklam.ca}, {\tt
+  berkeley.uwaterloo.ca} and {\tt ece459-1.uwaterloo.ca}, and where $\mbox{\tt N} \in [1,3]$. This API returns a $200 \times 3000$ horizontal strip, and uses
+an HTTP response header to tell you which strip you got.
+
+The provided code repeatedly fetches image segments until it has them
+all, puts them in an array, and then produces an output file, {\tt
+  output.png}, with the pasted-together image.
+
+\newpage
+\section*{Part 0: Resource Leaks (5 marks)}
+
+I inadvertently left a resource leak in the provided code. Resource
+leaks sap performance. Find it (valgrind helps), fix it, and document
+it in your report.
+
+\section*{Part 1: Pthreads (45 marks)}
+
+Use the {\tt pthread} library, create a threaded version of the
+provided program.  Your program should create as many threads as the
+{\tt num\_threads} variable (which reads the value from the {\tt -t}
+command line option) and distribute the work between the 3 provided
+servers. Make sure all of your library (standard glibc, libcurl, and
+libpng) calls are {\it thread-safe} (for glibc, e.g. {\tt man 3 rand} to
+look at the documentation).  
+
+We will look at your code to ensure that it uses {\tt pthread} calls 
+properly, and we will execute your code to verify that it produces the
+correct output. Code that doesn't compile on {\tt ece459-1} will get at most
+39\%.
+
+\vspace*{1em} \noindent (10 points) In your report, describe how you know that your threaded
+code uses only thread-safe calls, with pointers to the appropriate
+documents, and why your code is free of race conditions.
+
+Also, time your executions with the serial version and parallel version 
+(take an average of 3 runs each; for the parallel version, investigate $N \in \{4, 64\}$) and discuss how well parallelization works.
+
+\section*{Part 2: Nonblocking I/O (45 marks)}
+
+In this part, you will write a single-threaded version of {\tt paster}
+which uses nonblocking I/O to request multiple versions of the image
+simultaneously.  You will need to use the {\tt curl\_multi} API as
+well as either {\tt select} or {\tt epoll}. Once again, distribute the
+work between the 3 provided servers.
+
+Your solution should \emph{not} use pthreads. However, it should have multiple
+concurrent connections to servers open. In this case, the {\tt -t} command
+line option indicates the number of connections to keep open at once.
+The {\tt -i} option always indicates which image to fetch.
+
+\vspace*{1em} Again benchmark your work and report comparative results.
+Discuss the performance of all three versions. Is it what you expected?
+
+\paragraph{Alternate option.} You
+may instead provide a client-side JavaScript solution which
+initiates multiple requests, integrates the results,
+and displays the resulting image. I'm thinking of something like a
+solution with {\tt node-pngjs}. Last year, 3 students took this option. It is actually fairly
+easy to write this code, but you need to figure out everything on your own.
+I will not provide information on how
+to accomplish this (but come talk to me if you're
+interested). 
+
+
+\section*{Part 3: Applying Amdahl's Law and Gustafson's Law (5 marks)}
+The {\tt paster\_parallel} code clearly has a parallel and a serial part.
+In your report, estimate the number of seconds typically spent in the serial part,
+and explain how you arrived at that number. Discuss why Amdahl's Law and Gustafson's Law
+apply, or don't apply, to {\tt paster\_parallel}.
+
+\section*{Submitting}
+
+To submit, simply push your fork of the git repository back to {\tt ecgit.uwaterloo.ca}.
+We will
+be marking {\tt Makefile}, {\tt src/paster.c}, {\tt
+  src/paster\_parallel.c}, {\tt src/paster\_nbio.c}, and {\tt
+  report.pdf}. (You can modify the provided {\tt report/report.tex}
+and create it with {\tt make report}; do not submit a {\tt doc}
+file!). Running {\tt make} in the {\tt assignment-01} folder should
+produce three files: {\tt bin/paster}, {\tt bin/paster\_parallel}, and
+{\tt bin/paster\_nbio}. 
+
+\section*{Rubric}
+The general principle is that correct solutions earn full marks.
+However, it is your responsibility to demonstrate to the TA
+that your solution is correct. Well-designed, clean solutions 
+are therefore more likely to be recognized as correct. 
+
+Solutions that do not compile will earn at most 39\% of the available
+marks for that part. Segfaulting or otherwise crashing solutions earn
+at most 49\%.
+
+\paragraph{Part 0 (5 marks):} Self-explanatory.
+
+\paragraph{Part 1 (45 marks):} (35 marks for implementation) A correct solution must:
+\begin{itemize}
+\item start the appropriate number of threads (5 points);
+\item have each thread do work, distributed among the 3 servers (10 points);
+\item code safety: prevent buffer overflows and clean up all allocated resources, as verified by valgrind (10 points); and
+\item avoid data races and produce the correct output (10 points).
+\end{itemize}
+
+\noindent (10 marks for report) 8 marks for including the necessary information; 2 marks
+for clarity.
+
+\paragraph{Part 2 (45 marks):} (40 marks for implementation) A correct solution must:
+\begin{itemize}
+\item properly initialize the {\tt curl\_multi} handle with the appropriate number of individual {\tt curl\_easy} handles (10 points);
+\item process results from the {\tt curl\_multi} handle ({\tt select}/{\tt multi\_perform}/{\tt multi\_info\_read} or {\tt multi\_perform\_socket}) (10 points); 
+\item replace finished handles with new requests while requests remain (10 points);
+\item code safety: prevent buffer overflows and clean up all allocated resources (5 points); and
+\item produce the correct output (5 points).
+\end{itemize}
+
+\noindent (5 marks for report) 4 marks for information, 1 for clarity of exposition.
+
+\paragraph{Part 3 (5 marks):} Self-explanatory.
+
+\end{document}

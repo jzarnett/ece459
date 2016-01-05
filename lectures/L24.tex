@@ -1,0 +1,297 @@
+\include{header}
+
+\begin{document}
+
+\lecture{24 --- Profiling}{\term}{Patrick Lam}
+
+\section*{Profiling}
+If you want to make your programs or systems fast, you need to
+find out what is currently slow and improve it. (duh!)
+
+How profiling works:
+\begin{itemize}
+\item sampling-based (traditional): every so often (e.g. 100ms for gprof), query the
+system state; or,
+\item instrumentation-based, or probe-based/predicate-based
+  (traditionally too expensive): query system state under certain
+  conditions; like conditional breakpoints.
+\end{itemize}
+We'll talk about both per-process profiling and system-wide profiling.
+
+If you need your system to run fast, you need to start profiling
+and benchmarking as soon as you can run the system. Benefits:
+\begin{itemize}
+\item establishes a baseline performance for the system;
+\item allows you to measure impacts of changes and further system development;
+\item allows you to re-design the system before it's too late;
+\item avoids the need for ``perf spray'' to make the system faster, since
+that spray is often made of ``unobtainium''\footnote{\url{http://en.wikipedia.org/wiki/Unobtainium}}.
+\end{itemize}
+
+\paragraph{Tips for Leveraging Profiling.}
+When writing large software projects:
+  \begin{itemize}
+    \item First, write clear and concise code. \\
+      Don't do any premature optimizations---focus on correctness.
+    \item Profile to get a baseline of your performance:
+      \begin{itemize}
+        \item allows you to easily track any performance changes;
+        \item allows you to re-design your program before it's too late.
+      \end{itemize}
+  \end{itemize}
+Focus your optimization efforts on the code that matters.
+
+Look for abnormalities; in particular, you're looking for
+deviations from the following rules:
+\begin{itemize}
+\item time is spent in the right part of the system/program;
+\item time is not spent in error-handling, noncritical code, or exceptional cases; and
+\item time is not unnecessarily spent in the operating system.
+\end{itemize}
+For instance, ``why is {\tt ps} taking up all my cycles?'';
+see page 34 of Cantrill\footnote{\url{http://queue.acm.org/detail.cfm?id=1117401}}.
+
+\paragraph{Development vs. production.}
+You can always profile your systems in development, but that might not
+help with complexities in production. (You want separate dev and
+production systems, of course!) We'll talk a bit about DTrace, which
+is one way of profiling a production system. The constraints on profiling 
+production systems are that the profiling must not affect the system's
+performance or reliability.
+
+\section*{Userspace per-process profiling}
+Sometimes---or, in this course, often---you can get away with
+investigating just one process and get useful results about that
+process's behaviour.  We'll first talk about {\tt gprof}, the GNU
+profiler
+tool\footnote{\url{http://sourceware.org/binutils/docs/gprof/}}, and
+then continue with other tools.
+
+{\tt gprof} does sampling-based profiling for single processes: it
+requests that the operating system interrupt the process being
+profiled at regular time intervals and figures out which procedure is
+currently running. It also adds a bit of instrumentation to collect
+information about which procedures call other procedures.
+
+\paragraph{``Flat'' profile.} The obvious thing to do with the
+profile information is to just print it out. You get a list of
+procedures called and the amount of time spent in each of these 
+procedures.
+
+The general limitation is that procedures that don't run for
+long enough won't show up in the profile. (There's a caveat: if
+the function was compiled for profiling, then it will show up
+anyway, but you won't find out about how long it executed for).
+
+\paragraph{``Call graph''.} {\tt gprof} can also print out 
+its version of a call graph, which shows the amount of time that
+either a function runs (as in the ``flat'' profile) as well as the
+amount of time that the callees of the function run.  Another term for
+such a call graph is a ``dynamic call graph'', since it tracks the
+dynamic behaviour of the program.  Using the {\tt gprof} call graph,
+you can find out who is responsible for calling the functions that
+take a long time.
+
+\paragraph{Limitations of {\tt gprof}.} Beyond the usual limitations
+of a process-oriented profiler, {\tt gprof} also suffers limitations
+from running completely in user-space. That is, it has no access to
+information about system calls, including time spent doing I/O.
+It also doesn't know anything about the CPU's built-in counters
+(e.g. cache miss counts, etc). Like the other profilers, it causes
+overhead when it's running, but the overhead isn't too large.
+
+\section*{{\tt gprof} usage guide}
+We'll give some details about using {\tt gprof}. First,
+use the {\tt -pg} flag with {\tt gcc} when compiling and linking.
+Next, run your program as you normally would.
+ Your program will now create {\tt gmon.out}.
+
+Use gprof to interpret the results: {\tt gprof <executable>}.
+
+\paragraph*{Example.} Consider a program with 100 million calls 
+to two math functions.
+
+\begin{tabular}{ll}
+\begin{minipage}{.5\textwidth}
+\begin{lstlisting}[language=C,basicstyle=\scriptsize]
+int main() {
+    int i,x1=10,y1=3,r1=0;
+    float x2=10,y2=3,r2=0;
+
+    for(i=0;i<100000000;i++) {
+        r1 += int_math(x1,y1);
+        r2 += float_math(y2,y2);
+    }
+}
+
+int int_math(int x, int y){
+    int r1;
+    r1=int_power(x,y);
+    r1=int_math_helper(x,y);
+    return r1;
+}
+
+int int_math_helper(int x, int y){
+    int r1;
+    r1=x/y*int_power(y,x)/int_power(x,y);
+    return r1;
+}
+
+int int_power(int x, int y){
+    int i, r;
+    r=x;
+    for(i=1;i<y;i++){
+        r=r*x;
+    }
+    return r;
+}
+\end{lstlisting}
+\end{minipage}
+\begin{minipage}{0.5\textwidth}
+\begin{lstlisting}[language=C,basicstyle=\scriptsize]
+float float_math(float x, float y) {
+    float r1;
+    r1=float_power(x,y);
+    r1=float_math_helper(x,y);
+    return r1;
+}
+
+float float_math_helper(float x, float y) {
+    float r1;
+    r1=x/y*float_power(y,x)/float_power(x,y);
+    return r1;
+}
+
+float float_power(float x, float y){
+    float i, r;
+    r=x;
+    for(i=1;i<y;i++) {
+        r=r*x;
+    }
+    return r;
+}
+  \end{lstlisting}
+\end{minipage}
+\end{tabular}
+
+Looking at the code, we have no idea what takes longer.
+One might guess that floating point math takes longer. This is admittedly a
+silly example, but it works well to illustrate our point.
+
+\paragraph{Flat Profile Example.}
+    When we run the program and look at the flat profile, we see:
+
+  \begin{lstlisting}[basicstyle=\tiny]
+          Flat profile:
+
+          Each sample counts as 0.01 seconds.
+            %   cumulative   self              self     total           
+           time   seconds   seconds    calls  ns/call  ns/call  name    
+           32.58      4.69     4.69 300000000    15.64    15.64  int_power
+           30.55      9.09     4.40 300000000    14.66    14.66  float_power
+           16.95     11.53     2.44 100000000    24.41    55.68  int_math_helper
+           11.43     13.18     1.65 100000000    16.46    45.78  float_math_helper
+            4.05     13.76     0.58 100000000     5.84    77.16  int_math
+            3.01     14.19     0.43 100000000     4.33    64.78  float_math
+            2.10     14.50     0.30                             main
+  \end{lstlisting}
+
+ There is one function per line. Here are what the columns mean:
+  \begin{itemize}
+    \item {\bf \% time:} the percent of the total execution time in this function.
+    \item {\bf self:} seconds in this function.
+    \item {\bf cumulative:} sum of this function's time + any above it in table.
+    \item {\bf calls:} number of times this function was called.
+    \item {\bf self ns/call:} just self nanoseconds / calls.
+    \item {\bf total ns/call:} mean function execution time, including
+       calls the function makes.
+  \end{itemize}
+
+\paragraph{Call Graph Example.}
+After the flat profile gives you a feel for which functions are costly, you
+      can get a better story from the call graph.
+
+  \begin{lstlisting}[basicstyle=\tiny]
+          index % time    self  children    called     name
+                                                           <spontaneous>
+          [1]    100.0    0.30   14.19                 main [1]
+                          0.58    7.13 100000000/100000000     int_math [2]
+                          0.43    6.04 100000000/100000000     float_math [3]
+          -----------------------------------------------
+                          0.58    7.13 100000000/100000000     main [1]
+          [2]     53.2    0.58    7.13 100000000         int_math [2]
+                          2.44    3.13 100000000/100000000     int_math_helper [4]
+                          1.56    0.00 100000000/300000000     int_power [5]
+          -----------------------------------------------
+                          0.43    6.04 100000000/100000000     main [1]
+          [3]     44.7    0.43    6.04 100000000         float_math [3]
+                          1.65    2.93 100000000/100000000     float_math_helper [6]
+                          1.47    0.00 100000000/300000000     float_power [7]
+          -----------------------------------------------
+                          2.44    3.13 100000000/100000000     int_math [2]
+          [4]     38.4    2.44    3.13 100000000         int_math_helper [4]
+                          3.13    0.00 200000000/300000000     int_power [5]
+          -----------------------------------------------
+                          1.56    0.00 100000000/300000000     int_math [2]
+                          3.13    0.00 200000000/300000000     int_math_helper [4]
+          [5]     32.4    4.69    0.00 300000000         int_power [5]
+          -----------------------------------------------
+                          1.65    2.93 100000000/100000000     float_math [3]
+          [6]     31.6    1.65    2.93 100000000         float_math_helper [6]
+                          2.93    0.00 200000000/300000000     float_power [7]
+          -----------------------------------------------
+                          1.47    0.00 100000000/300000000     float_math [3]
+                          2.93    0.00 200000000/300000000     float_math_helper [6]
+          [7]     30.3    4.40    0.00 300000000         float_power [7]
+  \end{lstlisting}
+
+To interpret the call graph, note that the line with the index [N] is the \emph{primary line},
+or the current function being considered.
+\begin{itemize}
+    \item Lines above the primary line are the functions which called this function.
+    \item Lines below the primary line are the functions which were called by this function
+      (children).
+\end{itemize}
+
+For the primary line, the columns mean:
+  \begin{itemize}  
+    \item {\bf time:} total percentage of time spent in this function and its
+      children.
+    \item {\bf self:} same as in flat profile.
+    \item {\bf children:} time spent in all calls made by the function;
+      \begin{itemize}
+        \item should be equal to self + children of all functions below.
+      \end{itemize}
+  \end{itemize}
+
+For callers (functions above the primary line):
+  \begin{itemize}
+    \item {\bf self:} time spent in primary function, when called from current
+      function.
+    \item {\bf children:} time spent in primary function's children, when
+      called from current function.
+    \item {\bf called:} number of times primary function was called from current
+      function / number of nonrecursive calls to primary function.
+  \end{itemize}
+
+For callees (functions below the primary line):
+  \begin{itemize}  
+    \item {\bf self:} time spent in current function when called from primary.
+    \item {\bf children:} time spent in current function's children calls when
+      called from primary.
+      \begin{itemize}
+        \item self + children is an estimate of time spent in current function
+          when called from primary function.
+      \end{itemize}
+    \item {\bf called:} number of times current function was called from primary
+      function / number of nonrecursive calls to current function.
+  \end{itemize}
+
+Based on this information, we can now see where most of the time comes
+from, and pinpoint any locations that make unexpected calls, etc.
+This example isn't too exciting; we could simplify the math and optimize the
+program that way.
+
+\input{bibliography.tex}
+
+\end{document}

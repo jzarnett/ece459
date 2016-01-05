@@ -1,0 +1,198 @@
+\include{header}
+
+\begin{document}
+
+\lecture{35 --- DevOps for P4P}{\term}{Patrick Lam}
+
+Two topics today: 1) DevOps considerations (think
+big); 2) the cost of scalability (think small).
+
+\section*{DevOps for P4P}
+% this part took the whole 50 minutes, at least on the blackboard.
+So far, we've talked almost exclusively about one-off computations:
+you want to figure out the answer to a question, and you write code to
+do that. Our assignments have been like that, for instance. But a lot
+of the time we want to keep systems running over time. That gets us
+into the notion of operations. 
+
+The theme today will be using software development skills in
+operations (e.g. system administration, database management, etc).
+
+Even when we've talked about multi-computer tools like MPI and cloud
+computing, it still has not been in the context of keeping your
+systems operational over longer timescales. The trend today is away
+from strict separation between a development team, which writes the
+software, and an operations team, which runs the software.
+
+%http://cdn.meme.am/instances/500x/22605665.jpg
+
+Thanks to Chris Jones and Niall Murphy for the following points.
+
+\subsection*{Configuration as code}
+Systems have long come with complicated configuration options.
+Sendmail is particularly notorious, but apache and nginx aren't super
+easy to configure either. The first principle is to treat \emph{configuration as code}.
+Therefore:
+\begin{itemize}
+\item use version control on your configuration.
+\item test your configurations: that means that you check that they
+  generate expected files, or that they spawn expected
+  services. (Behaviours, or outcomes.) Also, configurations should
+  ``converge''. Unlike code, they might not terminate; we're talking
+  indefinitely-running services, after all. But the CPU usage should
+  go down after a while, for instance.
+\item aim for a suite of modular services that integrate together smoothly.
+\item refactor configuration files (Puppet manifests, Chef recipes, etc);
+\item use continuous builds (more on that later).
+\end{itemize}
+
+\subsection*{Servers as cattle, not pets}
+By servers, I mean servers, or virtual machines, or containers.
+At a certain scale (and it's smaller than you think), it's useful to
+mass-produce tools for dealing with servers, rather than doing tasks
+manually. At a minimum, you need to be able to set up these servers
+without manual intervention. They should be able to be spun up 
+programmatically.
+% http://smithmeadows.com/wp-content/uploads/2012/10/Cattle.jpg
+
+\subsection*{Common infrastructure}
+Use APIs to access your infrastructure. Some examples:
+\begin{itemize}
+\item storage: some sort of access layer to MongoDB or Amazon S3 or whatever;
+\item naming and discovery infrastructure (more below);
+\item monitoring infrastructure.
+\end{itemize}
+Try to avoid one-offs by using, for instance, open-source tools when applicable.
+Be prepared to build your own tools if needed.
+
+\subsection*{Design for 10$\times$ growth, redesign before 100$\times$}
+[original credit: Jeff Dean at Google] This discussion is based on
+Martin Fowler's piece on sacrificial architecture:
+\url{http://martinfowler.com/bliki/SacrificialArchitecture.html}.
+
+Consider eBay: in 1995, perl scripts; in 1997, C++/Windows; in 2002,
+Java.  Each of these architectures was appropriate at the time, but
+not as the requirements change. The more sophisticated successor
+architectures, however, would have been overkill at an earlier
+time. And it's hard to predict what would be needed in the future.
+% look up eBay growth stats
+%http://martinfowler.com/bliki/images/sacrificialArchitecture/sketch.png
+%http://web.archive.org/web/20000510004517/http://www.ebay.com/
+% http://www.ebay.com/
+
+\begin{quote}
+``Perf is a feature''.\\
+\hfill --- Jeff Atwood
+\end{quote}
+That is, you apply developer time to perf, and you make engineering tradeoffs
+to get it. Some thoughts:
+\begin{itemize}
+\item design with the eventual replacement in mind;
+\item don't abandon internal quality (e.g. modularity);
+\item sacrifice individual modules at a time, not the whole system;
+\item you can also implement new features with a rough draft and deploy to a test audience.
+\end{itemize}
+
+\subsection*{Naming}
+Naming is one of the hard problems in computer science. There are a
+lot of ways to name things. We'll talk about
+systems/VMs\footnote{\url{http://mnx.io/blog/a-proper-naming-scheme}},
+but naming is necessary for resources of all kinds.
+
+In brief:
+\begin{itemize}
+\item use canonical one-word names for servers;
+\item but, use aliases to specify functions, e.g. 1) geography (nyc); 2) environment (dev/tst/stg/prod); 
+3) purpose (app/sql/etc); and 4) serial number.
+\end{itemize}
+This enables you to have a way of referring to each machine in an absolute sense, but also 
+allows you to use functional names when creating dependencies between systems.
+
+\subsection*{Other Topics}
+Beyond the five principles above, there are a couple more techniques that particularly apply to
+DevOps:
+
+\paragraph{Continuous Integration.} 
+This is now a best practice. It's enabled by the use of version control, good tests, and scripted deployments.
+It works like this:
+\begin{itemize}
+\item pull code from version control;
+\item build;
+\item run tests;
+\item report results.
+\end{itemize}
+What's also key is a social convention to not break the build. 
+
+%https://jenkins-ci.org/sites/default/files/jenkins_logo.png
+
+CI is good for all code, but it's especially good for configuration-as-code, which is especially likely
+to break in different environments.
+
+\paragraph{Canarying.}
+%http://www.post-gazette.com/image/2013/10/29/ca27,76,1566,1822/Canary.jpg
+Deploy new software incrementally alongside production software, also known as ``test in prod''. Sometimes
+you just don't know how code is really going to work until you try it. After, of course, you use your best
+efforts to make sure the code is good. Steps:
+\begin{itemize}
+\item stage for deployment;
+\item remove canary servers from service;
+\item upgrade canary servers;
+\item run automatic tests on upgraded canaries;
+\item reintroduce canary servers into service;
+\item see how it goes!
+\end{itemize}
+Of course, you should implement your system so that rollback is possible.
+
+\paragraph{Monitoring.}
+Here's one way to think about it. 
+% track down the source here: Niall Murphy interview.
+\begin{itemize}
+\item {\bf Alerts}: a human must take action now;
+\item {\bf Tickets}: a human must take action soon (hours or days);
+\item {\bf Logging}: no need to look at this except for forensic/diagnostic purposes.
+\end{itemize}
+A common bad situation is logs-as-tickets: you should never be in the
+situation where you routinely have to look through logs to find
+errors. Write code to scan logs.
+
+\section*{Clusters versus Laptops}
+There is a paper about this:
+
+\noindent
+Frank McSherry, Michael Isard, Derek G. Murray. ``Scalability! But at what COST?'' HotOS XV.
+
+This part of the lecture is based on the companion blog post\footnote{\url{http://www.frankmcsherry.org/graph/scalability/cost/2015/01/15/COST.html}}.
+
+The key idea: scaling to big data systems introduces substantial overhead. Let's just see how, say, a
+laptop compares, in absolute times, to 128-core big data systems.
+
+\paragraph{Conclusion.} Big data systems haven't yet been shown to be obviously good; current evaluation is lacking.
+The important metric is not just scalability; absolute
+performance matters a lot too.
+
+\paragraph{Methodology.} We'll compare a competent single-threaded implementation to top
+big data systems, as described in an OSDI 2014 (top OS conference) paper on GraphX\footnote{\url{https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-gonzalez.pdf}}. The domain: graph processing
+algorithms, namely PageRank and graph connectivity (for which the bottleneck is label propagation). The subjects: graphs with billions of edges, amounting to a few
+GB of data.
+
+\paragraph{Results.} 128 cores don't consistently beat a laptop at PageRank: e.g. 249--857s on the twitter\_rv dataset for the big data system vs 300s for the laptop, and they are 2$\times$ slower for label
+propagation, at 251--1784s for the big data system vs 153s on
+twitter\_rv. (See the blog post for the full results).
+
+\paragraph{Wait, there's more.} I keep on saying that we can improve algorithms for additional performance boosts too.
+But that doesn't generalize, so it's hard to teach. In this case, two improvements are: using Hilbert curves
+for data layout, improving memory locality, which helps a lot for PageRank; and using a union-find algorithm 
+(which is also parallelizable). ``10$\times$ faster, 100$\times$ less embarrassing''.  We observe an overall
+$2\times$ speedup for PageRank and $10\times$ speedup for label propagation.
+
+\paragraph{Takeaways.} Some thoughts to keep in mind, from the authors:
+\begin{itemize}
+\item    ``If you are going to use a big data system for yourself, see if it is faster than your laptop.''
+\item    ``If you are going to build a big data system for others, see that it is faster than my laptop.''
+\end{itemize}
+
+
+
+\input{bibliography.tex}
+
+\end{document}
