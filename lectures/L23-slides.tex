@@ -1,0 +1,607 @@
+\input{configuration}
+
+% Custom packages
+\usepackage{xcolor}
+\definecolor{solarizedBase03}{HTML}{FFFFFF}
+\definecolor{solarizedBase02}{HTML}{000000}
+\definecolor{solarizedBase00}{HTML}{657B83}
+\definecolor{solarizedBase0}{HTML}{000000}
+\definecolor{solarizedBase1}{HTML}{93A1A1}
+\definecolor{solarizedBase3}{HTML}{FDF6E3}
+
+
+\usepackage[listings]{tcolorbox}
+\newtcbinputlisting{\codelisting}[2][]{
+    listing file={#2},
+    colback=solarizedBase03,
+    colframe=solarizedBase02,
+    colupper=solarizedBase0,
+    fonttitle=\bfseries\color{solarizedBase1},
+    listing options={basicstyle=\ttfamily\footnotesize},
+    listing only,
+    #1
+}
+\newtheorem{defn}{Definition}
+
+\title{Lecture 23 --- GPU Password Cracking }
+
+\author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
+\institute{Department of Electrical and Computer Engineering \\
+  University of Waterloo}
+\date{\today}
+
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+
+ \end{frame}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Last Time: OpenCL}
+
+  Saw principles of OpenCL programming:
+
+  \begin{center}
+    \includegraphics[width=.6\textwidth]{images/100-horses.jpg}
+  \end{center}
+  \hfill {\small (Credit: Karlyne, Wikimedia Commons)}
+  % http://en.wikipedia.org/wiki/File:Avenger_-_Westphalian_horse.jpg
+
+  Key concepts: kernels, buffers.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{GPU Application: Password Cracking}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reference: scrypt}
+
+  
+    scrypt is the algorithm behind DogeCoin. \\[1em] The reference:\\[1em]
+    
+    Colin Percival, ``Stronger Key Derivation via Sequential Memory-Hard Functions''. \\
+    Presented at BSDCan'09, May~2009.\\[1em]
+
+    \url{http://www.tarsnap.com/scrypt.html}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Acceptable Practices for Password Storage}
+  
+    \begin{itemize}
+    \item {\Huge \alert{{\bf not} plaintext!}}
+    \item \Large hashed and salted
+    \end{itemize}
+       
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Cryptographic hashing}
+  
+    One-way function:
+    \begin{itemize}
+    \item $x \mapsto f(x)$ ~~easy to compute; but
+      \item $f(x) \stackrel{?~}{\mapsto} x$ ~~hard to reverse.
+    \end{itemize}~\\
+    Examples: SHA1, Scrypt.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Breaking the Hash}
+  
+    How can we reverse the hash function?
+    \begin{itemize}
+    \item    Brute force.
+    \end{itemize}~\\
+    GPUs (or custom hardware) are good at that!
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{The Arms Race: Making Cracking Difficult}
+  
+    Historically: force repeated iterations of hashing.\\[1em]
+
+    Main idea behind scrypt (hence DogeCoin):
+    \begin{itemize}
+    \item make hashing expensive in time and space.
+    \end{itemize}~\\
+    Implication: require more circuitry to break passwords.\\
+    Increases both \# of operations and cost of brute-forcing.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Obligatory xkcd}
+
+Of course, there's always this form of cracking:
+\begin{center}
+\includegraphics[width=0.75\textwidth]{images/xkcd-538}\\
+\hfill (Source: xkcd 538)
+\end{center}
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Formalizing ``expensive in time and space''}
+  
+    Want to force use of the ``most memory possible'' for a given
+    number of operations.\\[1em]
+  
+    \begin{defn}
+      A \emph{memory-hard} algorithm on a Random Access Machine is an
+      algorithm which uses $S(n)$ space and $T(n)$ operations, where
+      $S(n) \in \Omega(T(n)^{1-\varepsilon})$.
+    \end{defn}~\\
+    
+      Such algorithms are expensive to implement in either hardware or software.
+    
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Generalizing to functions}
+  
+    Next, add a quantifier: \\move from particular algorithms to underlying functions.\\[1em]
+    A \emph{sequential memory-hard function} is one where:
+
+    \begin{itemize}
+      \item the fastest
+        sequential algorithm is memory-hard; and
+      \item it is impossible for a
+        parallel algorithm to asymptotically achieve lower cost.
+    \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Not made of unicorn tears}
+  
+    \emph{Exhibit.} ReMix is a concrete example of a sequential memory hard function.\\[1em]
+    The paper concludes with an example of a more realistic (cache-aware) model and
+    a function in that context, BlockMix.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Reduced-Resource Computation}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Trading Accuracy for Performance}
+
+
+    Consider Monte Carlo integration.\\
+    It illustrates a general tradeoff: accuracy vs performance.\\
+    You'll also implement this tradeoff manually in A4 \\ \qquad (with domain knowledge).\\[1em]
+
+    Martin Rinard generalized the accuracy vs performance tradeoff with:
+      \begin{itemize}
+        \item early phase termination [OOPSLA07]
+        \item loop perforation [CSAIL TR 2009]
+      \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination}
+
+
+
+  We've seen barriers before.\\
+
+  No thread may proceed past a barrier until all of the threads
+reach the barrier.\\[1em]
+
+  This may slow down the program: maybe one of the threads is horribly
+  slow.\\[1em]
+
+  Solution: kill the slowest thread.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: Objection}
+
+\Huge
+\begin{center}
+``Oh no, that's going to change the meaning of the program!''
+\end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: When is it OK anyway?}
+
+
+OK, so we don't want to be completely crazy.\\[1em]
+
+Instead: 
+\begin{itemize}
+\item develop a statistical model of the program behaviour.
+\item only kill tasks that don't introduce unacceptable distortions.
+\end{itemize}
+
+~\\[1em]
+
+When we run the program: \\ \qquad get the output, plus a confidence interval.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: Two Examples}
+
+
+
+Monte Carlo simulators: \\
+Raytracers:
+\begin{itemize}
+\item already picking points randomly.
+\end{itemize}
+
+In both cases: spawn a lot of threads.\\[1em]
+Could wait for all threads to complete;\\
+or just compensate for missing data points,\\
+assuming they look like points you did compute.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: Another Justification}
+
+
+
+In scientific computations:
+\begin{itemize}
+\item using points that were measured (subject to error);
+\item computing using machine numbers (also with error). 
+\end{itemize}
+
+Computers are only providing simulations, not ground truth.
+
+Actual question: is the simulation is good enough?
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Loop Perforation}
+
+
+  Like early-phase termination, but for sequential programs:\\
+  \qquad throw away data that's not actually useful.
+
+  \begin{lstlisting}
+for (i = 0; i < n; ++i) sum += numbers[i];
+  \end{lstlisting}
+
+  \begin{center}
+    $\Downarrow$
+  \end{center}
+
+  \begin{lstlisting}
+for (i = 0; i < n; i += 2) sum += numbers[i];
+sum *= 2;
+  \end{lstlisting}
+
+  This gives a speedup of $\sim$ 2 if {\tt numbers[]} is nice.\\[1em]
+
+  Works for video encoding: can't observe difference.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Applications of Reduced Resource Computation}
+
+
+  Loop perforation works for:
+  \begin{itemize}
+   \item evaluating forces on water molecules (summing numbers);
+   \item Monte-Carlo simulation of swaption pricing;
+   \item video encoding.
+  \end{itemize}
+
+  More on the video encoding example:\\
+  Changing loop increments from 4 to 8 gives:
+\begin{itemize}
+ \item speedup of 1.67;
+ \item signal-to-noise ratio decrease of 0.87\%;
+ \item bitrate increase of 18.47\%;
+ \item visually indistinguishable results.
+\end{itemize}
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Applications of Reduced Resource Computation}
+
+
+  Loop perforation works for:
+  \begin{itemize}
+   \item evaluating forces on water molecules (summing numbers);
+   \item Monte-Carlo simulation of swaption pricing;
+   \item video encoding.
+  \end{itemize}
+
+  More on the video encoding example:\\
+  Changing loop increments from 4 to 8 gives:
+\begin{itemize}
+ \item speedup of 1.67;
+ \item signal-to-noise ratio decrease of 0.87\%;
+ \item bitrate increase of 18.47\%;
+ \item visually indistinguishable results.
+\end{itemize}
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Video Encoding Skeleton Code}
+
+
+\begin{lstlisting}
+min = DBL_MAX;
+index = 0;
+for (i = 0; i < m; i++) {
+  sum = 0;
+  for (j = 0; j < n; j++) sum += numbers[i][j];
+  if (min < sum) {
+    min = sum;
+    index = i;
+  }
+}
+\end{lstlisting}
+The optimization changes the loop increments and then compensates. 
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Software Transactional Memory}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM: Introduction}
+
+
+    Instead of programming with locks, we have transactions on memory.
+      \begin{itemize}
+        \item Analogous to database transactions
+      \end{itemize}
+    An old idea; recently saw some renewed interest.\\[1em]
+
+    A series of memory operations either all succeed; or \\ \qquad
+     all fail (and get
+      rolled back), and are later retried.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM: Benefits}
+
+
+    Simple programming model: need not worry about lock
+      granularity or deadlocks.\\[1em]
+
+    Just group lines of code that should logically be one operation
+      in an {\tt atomic} block!\\[1em]
+
+    It is the responsibility of the implementer to ensure the code
+      operates as an atomic transaction.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{STM: Implementing a Motivating Example}
+
+
+  \begin{lstlisting}
+transfer_funds(Account* sender, Account* receiver,
+               double amount) {
+  atomic {
+    sender->funds -= amount;
+    receiver->funds += amount;
+  }
+}
+  \end{lstlisting}
+  [Note: bank transfers aren't actually atomic!]\\[1em]
+
+    With locks we have two main options:
+      \begin{itemize}
+        \item Lock everything to do with modifying accounts \\ 
+\qquad (slow; may forget to use lock).
+        \item Have a lock for every account \\ 
+\qquad (deadlocks; may forget to use lock).
+      \end{itemize}
+    With STM, we do not have to worry about remembering to acquire locks,
+      or about deadlocks.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM: Drawbacks}
+
+
+    Rollback is key to STM. \\
+     \qquad But, some things cannot be rolled back. \\
+     \qquad (write to the screen, send packet over network)\\[1em]
+
+    Nested transactions. \\
+     \qquad What if an inner transaction succeeds, \\ yet the
+      transaction aborts? \\[1em]
+
+    Limited transaction size: \\
+ \qquad Most implementations (especially
+    all-hardware) \\ have a limited transaction size.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Basic STM Implementation (Software)}
+
+
+    In all atomic blocks, record all reads/writes to a log.\\[1em]
+    At the end of the block, running thread verifies that no other threads
+      have modified any values read.\\[1em]
+    If validation is successful, changes are {\bf committed}.\\
+    Otherwise, the block is {\bf aborted} and re-executed.\\[2em]
+
+  Note: Hardware implementations exist too.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Basic STM Implementation Issues}
+
+
+    Since you don't protect against dataraces (just rollback),\\
+      a datarace may trigger a fatal error in your program.
+
+  \begin{lstlisting}
+atomic {
+  x++;
+  y++;
+}
+  \end{lstlisting}
+
+  \begin{lstlisting}
+atomic {
+  if (x != y)
+     while (true) { }
+}
+  \end{lstlisting}
+
+ In this silly example, assume initially {\tt x = y}. You may think the
+      code will not go into an infinite loop, but it can.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM Implementations}
+
+
+
+  Note: Typically STM performance is no worse than twice as slow as
+  fine-grained locks.
+
+  \begin{itemize}
+    \item Toward.Boost.STM (C++)
+
+    \item SXM (Microsoft, C\#)
+
+    \item Built-in to the language (Clojure, Haskell)
+
+    \item AtomJava (Java)
+
+    \item Durus (Python)
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM Summary}
+
+
+     Software Transactional Memory provides a more natural approach to
+      parallel programming: \\ \qquad no need to deal with locks and their associated problems.\\[1em]
+
+     Currently slow,\\ \qquad but a lot of research is going into improving it. (futile?)\\[1em]
+
+     Operates by either completing an atomic block,\\ or retrying (by rolling
+      back) until it successfully completes.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\part{Overall Summary}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Today's Lecture}
+
+
+
+  Three topics:
+  \begin{itemize}
+    \item Password cracking with GPUs.
+    \item Reduced-Resource Computation.
+    \item Software Transactional Memory
+  \end{itemize}~\\[1em]
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\end{document}
+
