@@ -2,13 +2,33 @@
 
 \begin{document}
 
-\lecture{24 --- Profiling}{\term}{Patrick Lam}
+\lecture{24 --- Profiling}{\term}{Jeff Zarnett \& Patrick Lam}
 
 \section*{Profiling}
-If you want to make your programs or systems fast, you need to
-find out what is currently slow and improve it. (duh!)
 
-How profiling works:
+Think back to the beginning of the course when we did a quiz on what operations are fast and what operations are not. The important takeaway was not that we needed to focus on how to micro-optimize this abstraction or that hash function, but that our intuition about what is fast and what is slow is often wrong. Not just at a macro level, but at a micro level. You may be able to narrow down that this computation of $x$ is slow, but if you examine it carefully... what parts of it are slow?
+
+If you don't use tools, then you end up guessing. You just make some assumptions about what you think is likely to be slow and try to change it. You've probably heard the famous quotation before, but here it is in its full form:
+
+\begin{quote}
+\textit{Programmers waste enormous amounts of time thinking about, or worrying about, the speed of noncritical parts of their programs, and these attempts at efficiency actually have a strong negative impact when debugging and maintenance are considered. We should forget about small efficiencies, say about 97\% of the time: premature optimization is the root of all evil. Yet we should not pass up our opportunities in that critical 3\%.}
+\end{quote}
+	\hfill -- Donald Knuth
+
+So going about this blindly is probably a waste of time. You might be fortunate and optimize a slow part\footnote{There is a saying that even a blind squirrel sometimes finds a nut.} but we should really follow one of my favourite rules: ``don't guess, measure!''\footnote{Now I am certain you are sick of hearing that.} So, to make your programs or systems fast, you need to find out what is currently slow and improve it (duh!). Up until now in the course it's mostly been about ``let's speed this up'', but we did not take much time to decide what we should speed up (though you maybe did this on your assignment 2...?).
+
+The general idea is, collect some data on what parts of the code are taking up the majority of the time. This can be broken down into looking at what functions get called, or how long functions take, or what's using memory...
+
+There is always the ``informal'' way of doing this; it sort of works but it's not exactly the best plan. You probably know that when developing a program you can ``debug'' it without using any tools (e.g., \texttt{gdb}) by inserting a lot of print statements to the console or the log file. So when you enter function \texttt{foo} you print a nice little line on the console that say something like ``entering function foo'', associated with a timestamp and then when you're ready to return, a corresponding print function that says ``exiting'' appears, also with a timestamp.
+
+This approach kind of works, and I've used it myself to figure out what blocks of a single large function are taking a long time (updating exchange rates... yeah). But this approach is not necessarily a good one.  It's an example of ``invasive'' profiling -- we are going in and changing the source code of the program in question -- to add instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half hour range and I could see that the save operation was taking twelve minutes. Not kidding. 
+
+(Also like debugging, if you get to be a wizard you can maybe do it by code inspection, but that technique of speculative execution inside your head is a lot harder to apply to performance problems than it is to debugging.)
+
+So we should all agree, we want to use tools and do this in a methodical way.
+
+Now that we agree on that, let's think about how profiling tools work\:
+
 \begin{itemize}
 \item sampling-based (traditional): every so often (e.g. 100ms for gprof), query the
 system state; or,
@@ -49,7 +69,7 @@ deviations from the following rules:
 \item time is not unnecessarily spent in the operating system.
 \end{itemize}
 For instance, ``why is {\tt ps} taking up all my cycles?'';
-see page 34 of Cantrill\footnote{\url{http://queue.acm.org/detail.cfm?id=1117401}}.
+see page 34 of ~\cite{300ps}.
 
 \paragraph{Development vs. production.}
 You can always profile your systems in development, but that might not
@@ -148,7 +168,7 @@ int int_power(int x, int y){
 \end{lstlisting}
 \end{minipage}
 \begin{minipage}{0.5\textwidth}
-\begin{lstlisting}[language=C,basicstyle=\scriptsize]
+\begin{lstlisting}[language=C]
 float float_math(float x, float y) {
     float r1;
     r1=float_power(x,y);
@@ -181,7 +201,7 @@ silly example, but it works well to illustrate our point.
 \paragraph{Flat Profile Example.}
     When we run the program and look at the flat profile, we see:
 
-  \begin{lstlisting}[basicstyle=\tiny]
+  \begin{lstlisting}
           Flat profile:
 
           Each sample counts as 0.01 seconds.
@@ -211,7 +231,7 @@ silly example, but it works well to illustrate our point.
 After the flat profile gives you a feel for which functions are costly, you
       can get a better story from the call graph.
 
-  \begin{lstlisting}[basicstyle=\tiny]
+  \begin{lstlisting}
           index % time    self  children    called     name
                                                            <spontaneous>
           [1]    100.0    0.30   14.19                 main [1]
