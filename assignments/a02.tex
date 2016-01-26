@@ -1,0 +1,273 @@
+\documentclass[letterpaper,10pt]{article}
+
+\usepackage{titling}
+\usepackage{listings}
+\usepackage{url}
+\usepackage{setspace}
+\usepackage{subfig}
+\usepackage{sectsty}
+\usepackage{pdfpages}
+\usepackage{colortbl}
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{relsize}
+\usepackage{amsmath}
+\usepackage{wasysym}
+\usepackage{fancyvrb}
+\usepackage{amsmath,amssymb,amsthm,graphicx,xspace}
+\usepackage[titlenotnumbered,noend,noline]{algorithm2e}
+\usepackage[compact]{titlesec}
+\usepackage{XCharter}
+\usepackage[T1]{fontenc}
+\usepackage{tikz}
+\usetikzlibrary{arrows,automata,shapes,trees,matrix,chains,scopes,positioning,calc}
+\tikzstyle{block} = [rectangle, draw, fill=blue!20, 
+    text width=2.5em, text centered, rounded corners, minimum height=2em]
+\tikzstyle{bw} = [rectangle, draw, fill=blue!20, 
+    text width=4em, text centered, rounded corners, minimum height=2em]
+
+\definecolor{namerow}{cmyk}{.40,.40,.40,.40}
+\definecolor{namecol}{cmyk}{.40,.40,.40,.40}
+
+\let\LaTeXtitle\title
+\renewcommand{\title}[1]{\LaTeXtitle{\textsf{#1}}}
+
+
+\newcommand{\handout}[5]{
+  \noindent
+  \begin{center}
+  \framebox{
+    \vbox{
+      \hbox to 5.78in { {\bf ECE459: Programming for Performance } \hfill #2 }
+      \vspace{4mm}
+      \hbox to 5.78in { {\Large \hfill #4  \hfill} }
+      \vspace{2mm}
+      \hbox to 5.78in { {\em #3 \hfill} }
+    }
+  }
+  \end{center}
+  \vspace*{4mm}
+}
+
+\newcommand{\lecture}[3]{\handout{#1}{#2}{#3}{Lecture #1}}
+\newcommand{\tuple}[1]{\ensuremath{\left\langle #1 \right\rangle}\xspace}
+
+\addtolength{\oddsidemargin}{-1.000in}
+\addtolength{\evensidemargin}{-0.500in}
+\addtolength{\textwidth}{2.0in}
+\addtolength{\topmargin}{-1.000in}
+\addtolength{\textheight}{1.75in}
+\addtolength{\parskip}{\baselineskip}
+\setlength{\parindent}{0in}
+\renewcommand{\baselinestretch}{1.5}
+\newcommand{\term}{Winter 2016}
+
+\singlespace
+
+\title{\bf ECE 459: Programming for Performance\\Assignment 2}
+\author{Patrick Lam}
+\date{January 26, 2015 (Due: February 12, 2015)}
+
+\lstset{basicstyle=\scriptsize, frame=single}
+
+\begin{document}
+
+\maketitle
+% http://gurmeet.net/2008/09/20/latex-tips-n-tricks-for-conference-papers/
+\newcommand{\squishlist}{
+ \begin{list}{$\bullet$}
+  { \setlength{\itemsep}{0pt}
+     \setlength{\parsep}{3pt}
+     \setlength{\topsep}{3pt}
+     \setlength{\partopsep}{0pt}
+     \setlength{\leftmargin}{1.5em}
+     \setlength{\labelwidth}{1em}
+     \setlength{\labelsep}{0.5em} } }
+\newcommand{\squishend}{
+  \end{list}  }
+
+\noindent
+Important Notes:
+
+\squishlist
+  \item {\bf Make sure you run your program on {\tt ece459-1.uwaterloo.ca}.}
+  \item {\bf Use the command ``{\tt OMP\_NUM\_THREADS=4;export OMP\_NUM\_THREADS}'' to set 4 threads.}
+  \item {\bf Run ``{\tt make report}'' and push your fork of the {\tt a2} directory.}
+  \item {\bf Make sure you don't change the behaviour of the program.}
+\squishend
+
+\noindent
+Fork the provided git repository at {\tt git@ecegit.uwaterloo.ca:ece459/1161/a2}:
+\begin{center}
+{\tt ssh git@ecegit.uwaterloo.ca fork ece459/1161/a2 ece459/1161/USERNAME/a2}
+\end{center}
+\noindent and then clone the provided files.
+
+Grading will be done by running {\tt make}, running your programs,
+looking at the source code and reading the report.
+
+\section*{Automatic Parallelization (40 marks)}
+Ray tracing is, in principle, easy to automatically parallelize. You do
+a separate computation for each point. In this part, you will convince a
+parallelizing compiler (I recommend Oracle's Solaris Studio) to parallelize
+a simple raytracing computation.
+
+For this question, you will work with {\tt raytrace\_simple.c} and {\tt
+  raytrace\_auto.c} in the {\tt q1} directory.  I've bumped up the
+height of the image to 60000 pixels so that the compiler will find it
+profitable to parallelize. Benchmark the sequential ({\tt raytrace})
+and optimized sequential ({\tt raytrace\_opt}) versions. Note that the
+compiler does manage to optimize the computation of the sequential
+raytrace quite a bit. Report the speedup due to the compiler and
+speculate about why that is the case. Compare all subsequent numbers
+to the optimized version.
+
+Your first programming task is to modify your program so you can take
+advantage of automatic parallelization. Figure out why it won't
+parallelize as is, and make any changes necessary. Preserve behaviour
+and make all your changes to {\tt raytrace\_auto.c}.
+
+I put Solaris Studio 12.3 on {\tt ece459-1}. The provided {\tt
+  Makefile} calls that compiler with the relevant flags. Your compiler
+output should look something like the following (the line numbers
+don't have to match, but you {\bf must} parallelize the critical loop):
+
+\newpage
+\begin{lstlisting}
+Compiling Part 1 Automatic Parallelization
+/opt/oracle/solarisstudio12.3/bin/cc  -fast -xautopar -xloopinfo -xreduction -xbuiltin -xO4 \
+    src/raytrace_auto.c -o bin/raytrace_auto
+"raytrace_auto.c", line 217: PARALLELIZED
+"raytrace_auto.c", line 218: not parallelized, not profitable
+"raytrace_auto.c", line 233: not parallelized, loop has multiple exits
+"raytrace_auto.c", line 241: not parallelized, not a recognized for loop
+"raytrace_auto.c", line 264: not parallelized, not a recognized for loop
+\end{lstlisting}
+
+Clearly and concisely explain your changes. Explain why the code would
+not parallelize initially, why your changes are correct but bad for
+maintainability, and why they preserve the behaviour of the sequential
+version. Run your benchmark again and calculate your
+speedup. Speculate about why you got your speedup.
+
+\squishlist
+  \item {\bf Minimum expected speedup:} 1.1
+  \item {\bf (my) initial solution speedup:} 1.1
+\squishend
+
+\paragraph{Totally unrelated hints.} Consider this page:
+\begin{center}
+  \scriptsize \url{http://stackoverflow.com/questions/321143/good-programming-practices-for-macro-definitions-define-in-c}
+\end{center}
+Also, let's say that you want a macro to return a struct of type {\tt struct foo} with
+two fields. You can create such a struct on-the-fly like so: \verb!(struct foo){1,2}!.
+
+\section*{Manual Parallelization with OpenMP (30 marks)}
+
+I replaced the old Q2 with a new program that does edge detection.
+Compile that program and run it like {\tt bin/canny\_edge
+  0496\_rocks.pgm 0.5 0.8 0.2}.  Either try to parallelize this new
+program, or the old Q2 benchmark, with Oracle's Solaris Studio (not
+going to get far) and write a paragraph about why that doesn't work.
+
+Your task is to provide OpenMP pragmas and structure changes (if
+needed) to parallelize this implementation. Provide real and user
+timings for the original version as well as with OpenMP directives
+(report the mean over 3 runs).  Calculate speedups, if you managed to
+get them. Describe how well your parallelization worked. Figure out
+whether there is a serial portion that is slowing you down and explain
+how you know. Be clear and concise.
+
+In an afternoon, I was not able to get speedup with OpenMP for this
+new program, although I think that should be possible. You can
+therefore earn full marks by handing in something that safely
+parallelizes the program without necessarily making it faster. I do
+expect a discussion of the effects of your changes. You can also earn
+bonus marks by showing a speedup.  I suspect that a 20\% speedup
+should be possible. You'll get 10 more marks for a properly-executed
+sped-up version (no race conditions). You can change anything you want
+as long as you preserve output. Use {\tt md5sum} to compare
+outputs. (You can also display this file much more easily than that
+from part 1.)
+
+\vspace*{1em}
+\noindent {\bf Notes:} Use {\tt er\_src} to get more detail about what the Oracle
+Solaris Studio compiler did.  You may change the
+Makefile's compilation flags if needed. Report speedups over the
+compiler-optimized sequential version.  You can use any compiler, but
+say which one you used. OpenMP tips:
+\begin{center}
+  \url{www.viva64.com/en/a/0054/}
+\end{center}
+
+\squishlist
+  \item {\bf Minimum expected speedup:} n/a
+  \item {\bf (my) initial solution speedup:} n/a
+\squishend
+
+\section*{Using OpenMP Tasks (30 marks)}
+
+We saw briefly how OpenMP tasks allow us to easily express some parallelism.
+In this part, we apply OpenMP tasks to the $n$-queens
+problem\footnote{\url{http://jsomers.com/nqueen_demo/nqueens.html}}.
+Benchmark the sequential version with a number that executes in approximately
+15 seconds under {\tt -O2} (14 on {\tt ece459-1}).
+
+Modify the code to use OpenMP tasks. Benchmark your modified program
+and calculate the speedup. Clearly and concisely explain why your
+changes improved performance. Write a couple of sentences explaining how
+you could further improve performance.
+
+\vspace*{1em}
+\noindent {\bf Hints:} 1) Be sure to get the right variable scoping, or
+you'll get race conditions. 2) Just adding the task annotation is going
+to make your code way slower. 3) You will have to implement a cutoff to
+get speedup. See, for instance, the Google results for ``openmp
+fibonacci tasks''. 4) My solution includes 4 annotations and some
+cutting-and-pasting of code.
+
+\squishlist
+  \item {\bf Minimum expected speedup:} 1.5
+  \item {\bf Initial solution speedup:} 1.7
+\squishend
+
+\section*{Rubric}
+
+The general principle is that correct solutions earn full marks.
+However, it is your responsibility to demonstrate to the TA
+that your solution is correct. Well-designed, clean solutions 
+are therefore more likely to be recognized as correct. 
+
+Solutions that do not compile will earn at most 39\% of the available
+marks for that part. Segfaulting or otherwise crashing solutions earn
+at most 49\%.
+
+\paragraph{Part 1, Automatic Parallelization (40 marks):}  (20 marks for implementation) A correct solution must:
+\begin{itemize}
+	\item preserve the behaviour (10 points); and
+	\item enable additional parallelization (10 points).
+\end{itemize}
+ 
+(20 marks for report) 16 marks for including the necessary information
+(describing the experiments and results, reasonably speculating about
+the cause, and explaining why you preserve behaviour); 4 marks for
+clarity of exposition.
+
+\paragraph{Part 2, Manual Parallelization (30 marks):} (20 marks for implementation) A correct solution must properly use OpenMP pragmas and minor code changes to parallelize the code (16 points).
+
+(10 marks for report) 7 marks for including speedup data and
+explaining why your parallelization helped. 3 marks for clarity.
+
+\paragraph{Part 3, OpenMP Tasks (30 marks):} (20 marks for implementation) A correct solution must:
+\begin{itemize}
+	\item properly use OpenMP tasks to get a speedup;
+	\item be free of obvious race conditions.
+\end{itemize}
+
+(10 marks for report) 7 marks for analyzing the performance
+of the provided version, describing the speedup due to your
+changes, explaining why your changes improved performance, and
+speculating reasonably about further changes. 3 marks for clarity.
+
+\end{document}
+
