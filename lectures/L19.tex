@@ -2,10 +2,510 @@
 
 \begin{document}
 
-\lecture{19 --- Midterm Review}{\term}{Jeff Zarnett}
+\lecture{19 --- Reentrancy, Thread-Safety, Inlining, HLL}{\term}{Patrick Lam}
 
-\section*{Midterm Review}
+\section*{Reentrancy versus Thread-Safety}
+On a different note, we're going to discuss the distinction, in slightly more detail, between reentrant functions and thread-safe functions. There is overlap, but these terms are actually different.
 
-Let's talk about things we already talked about!
+A function is \emph{reentrant} if it can be suspended in the middle
+and re-entered, or called again, before the previous execution
+returns.
+    
+Reentrant does not always mean {\bf thread-safe} (although it usually is).\
+Recall: {\bf thread-safe} is essentially ``no data races''. The distinction is moot if the function only modifies local data, e.g. {\tt sin()}.
+Those functions are both reentrant and thread-safe.
+
+\paragraph{Example.} Courtesy of Wikipedia (with modifications), here's a program (to the left) and its trace (to right):
+\begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.5\textwidth}
+  \begin{lstlisting}[basicstyle=\scriptsize]
+int t;
+ 
+void swap(int *x, int *y) {
+    t = *x;
+    *x = *y;
+    // interrupt might invoke isr() here!
+    *y = t;
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+\end{minipage}
+&
+\begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[basicstyle=\scriptsize]
+call swap(&a, &b);
+ t = *x;                // t = 3 (a)
+ *x = *y;               // a = 4 (b)
+ call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    t = *x;             // t = 1 (x)
+    *x = *y;            // x = 2 (y)
+    *y = t;             // y = 1
+ *y = t;                // b = 1
+
+Final values:
+a = 4, b = 1
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+\end{minipage}
+\end{tabular}
+\end{center}
+
+
+We can fix the example by storing the global variable in stack variable
+{\tt s}, as follows.
+\begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.5\textwidth}
+  \begin{lstlisting}[escapechar=@,basicstyle=\scriptsize]
+int t;
+ 
+void swap(int *x, int *y) {
+    int s;
+ 
+    @{\bf s = t}@;  // save global variable
+    t = *x;
+    *x = *y;
+    // interrupt might invoke isr() here!
+    *y = t;
+    @{\bf t = s}@;  // restore global variable
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+\end{minipage} &
+\begin{minipage}{.5\textwidth}
+  \begin{lstlisting}[basicstyle=\scriptsize]
+call swap(&a, &b);
+s = t;                 // s = UNDEFINED
+t = *x;                // t = 3 (a)
+*x = *y;               // a = 4 (b)
+call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    s = t;             // s = 3
+    t = *x;            // t = 1 (x)
+    *x = *y;           // x = 2 (y)
+    *y = t;            // y = 1
+    t = s;             // t = 3
+*y = t;                // b = 3
+t = s;                 // t = UNDEFINED
+
+Final values:
+a = 4, b = 3
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+\end{minipage}
+\end{tabular}
+\end{center}
+
+The obvious question: is the previous reentrant code also thread-safe?
+(This is more what we're concerned about in this course.)
+
+  Let's see. Consider two calls to the reentrant swap:\\ \verb+    swap(a, b)+, {\tt swap(c, d)} with {\tt a = 1, b = 2, c = 3, d = 4}.
+
+  \begin{lstlisting}[basicstyle=\scriptsize]
+    global: t
+
+    /* thread 1 */                       /* thread 2 */
+    a = 1, b = 2;
+    s = t;    // s = UNDEFINED
+    t = a;    // t = 1
+                                         c = 3, d = 4;
+                                         s = t;    // s = 1
+                                         t = c;    // t = 3
+                                         c = d;    // c = 4
+                                         d = t;    // d = 3
+    a = b;    // a = 2
+    b = t;    // b = 3
+    t = s;    // t = UNDEFINED
+                                         t = s;    // t = 1
+
+    Final values:
+    a = 2, b = 3, c = 4, d = 3, t = 1
+
+    Expected values:
+    a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
+  \end{lstlisting}
+
+To recap what we know so far: re-entrant does not always mean thread-safe. (But, for most sane implementations, reentrant is also thread-safe.)
+
+But, are {\bf thread-safe} functions reentrant?
+Nope! Consider:
+
+  \begin{lstlisting}[basicstyle=\scriptsize]
+int f() {
+    lock();
+    // protected code
+    unlock();
+}
+  \end{lstlisting}
+
+Recall:  Reentrant functions can be suspended in the middle of execution
+    and called again before the previous execution completes.
+
+{\tt f()} obviously isn't reentrant. Plus, it will deadlock\footnote{I'm talking about lock implementations which don't maintain a lock counter; you can request Java locks multiple times in the same thread and everything will be fine, but not pthreads locks.}.
+
+Interrupt handling is more for systems programming, so the topic of reentrancy may or may not come
+up again.
+
+To sum up, here's the difference between reentrant and thread-safe functions:
+
+  {\bf Reentrancy.}
+  \begin{itemize}
+    \item Has nothing to do with threads---assumes a {\bf single thread}.
+    \item Reentrant means the execution can context switch at any point in
+      in a function, call the {\bf same function}, and {\bf complete} before
+      returning to the original function call.
+    \item Function's result does not depend on where the context switch happens.
+  \end{itemize}
+
+  {\bf Thread-safety.}
+  \begin{itemize}
+    \item Result does not depend on any interleaving of threads from
+      concurrency or parallelism.
+    \item No unexpected results from multiple concurrent executions of the function.
+  \end{itemize}
+
+If it helps, here's another definition of thread-safety.
+\begin{quote}
+  ``A function whose effect, when called by two or more threads, is guaranteed to
+  be as if the threads each executed the function one after another, in an
+  undefined order, even if the actual execution is interleaved.''
+\end{quote}
+
+\paragraph{Good Example of an Exam Question.} Consider the following function.
+
+  \begin{lstlisting}
+void swap(int *x, int *y) {
+    int t;
+    t = *x;
+    *x = *y;
+    *y = t;
+}  
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item Is the above code thread-safe?
+    \item Write some expected results for running two calls in parallel.
+    \item Argue these expected results always hold, or show an example where
+      they do not.
+  \end{itemize}
+
+\section*{Good Programming Practices: Inlining}
+We have seen the notion of inlining:
+  \begin{itemize}
+    \item Instructs the compiler to just insert the function code in-place,
+      instead of calling the function.
+    \item Hence, no function call overhead!
+    \item Compilers can also do better---context-sensitive---operations they couldn't
+      have done before.
+  \end{itemize}
+
+OK, so inlining removes overhead. Sounds like better performance! Let's inline everything!
+There are two ways of inlining in C++.
+
+\paragraph{Implicit inlining.} (defining a function inside a class definition):
+  \begin{lstlisting}
+class P {
+public:
+    int get_x() const { return x; }
+...
+private:
+    int x;
+};
+  \end{lstlisting}
+
+\paragraph{Explicit inlining.} Or, we can be explicit:
+  \begin{lstlisting}
+inline max(const int& x, const int& y) {
+    return x < y ? y : x;
+}
+  \end{lstlisting}
+
+\paragraph{The Other Side of Inlining.}
+Inlining has one big downside:
+  \begin{itemize}
+    \item Your program size is going to increase.
+  \end{itemize}
+   This is worse than you think:
+      \begin{itemize}
+        \item Fewer cache hits.
+        \item More trips to memory.
+      \end{itemize}
+   Some inlines can grow very rapidly (C++ extended constructors).
+  Just from this your performance may go down easily.
+
+  Note also that inlining is merely a suggestion to compilers~\cite{gcc:inlining}.
+  They may ignore you.
+  For example:
+  \begin{itemize}
+    \item taking the address of an ``inline'' function and using it; or
+    \item virtual functions (in C++),
+  \end{itemize}
+  will get you ignored quite fast.
+
+\paragraph{Implications of inlining.} Inlining can make your life worse in two ways.
+First, debugging is more difficult (e.g. you can't set a breakpoint in a function that
+  doesn't actually exist).
+ Most compilers simply won't inline code with debugging symbols on.
+ Some do, but typically it's more of a pain.
+
+Second, it can be a problem for library design:
+  \begin{itemize}
+    \item If you change any inline function in your library, any users
+      of that library have to {\bf recompile} their program if the
+      library updates. (Congratulations, you made a non-binary-compatible change!)
+  \end{itemize}
+This would not be a problem for non-inlined functions---programs execute the new function
+dynamically at runtime.
+
+\section*{High-Level Language Performance Tweaks}
+So far, we've only seen C---we haven't seen anything complex, and C is
+low level, which is good for learning what's really going on.
+
+ Writing compact, readable code in C is hard, especially when \#define
+macros and {\tt void *} beckon.
+
+    C++11 has made major strides towards readability and
+    efficiency---it provides light-weight abstractions. We'll look at
+    a couple of examples.
+
+\paragraph{Sorting.} Our goal is simple: we'd like to sort a bunch of integers.
+In C, you would usually just use qsort from {\tt stdlib.h}.
+
+  \begin{lstlisting}
+void qsort (void* base, size_t num, size_t size,
+            int (*comparator) (const void*, const void*));
+  \end{lstlisting}
+
+This is a fairly ugly definition (as usual, for generic C functions). How ugly is it?
+Let's look at a usage example.
+  \begin{lstlisting}[basicstyle=\small]
+#include <stdlib.h>
+
+int compare(const void* a, const void* b)
+{
+    return (*((int*)a) - *((int*)b));
+}
+
+int main(int argc, char* argv[])
+{
+    int array[] = {4, 3, 5, 2, 1};
+    qsort(array, 5, sizeof(int), compare);
+}
+  \end{lstlisting}
+This looks like a nightmare, and is more likely to have bugs than what we'll see next.
+
+
+C++ has a sort with a much nicer interface\footnote{\ldots well, nicer to use, after you get over templates.}:
+
+  \begin{lstlisting}[basicstyle=\small]
+template <class RandomAccessIterator>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last
+);
+
+template <class RandomAccessIterator, class Compare>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last,
+    Compare comp
+);
+  \end{lstlisting}
+It is, in fact, easier to use:
+  \begin{lstlisting}[basicstyle=\small]
+#include <vector>
+#include <algorithm>
+
+int main(int argc, char* argv[])
+{
+    std::vector<int> v = {4, 3, 5, 2, 1};
+    std::sort(v.begin(), v.end());
+}
+  \end{lstlisting}
+
+{\bf Note:} Your compare function can be a function or a functor. (Don't know what functors
+are? In C++, they're functions with state.) By default,
+  {\tt sort} uses {\tt operator$<$} on the objects being sorted.
+
+  \begin{itemize}
+    \item Which is less error prone?
+    \item Which is {\bf faster}?
+  \end{itemize}
+
+The second question is empirical. Let's see. We generate an array of 2 million ints
+and sort it (10 times, taking the average).
+
+\begin{itemize}
+\item qsort: 0.49 seconds
+\item C++ sort: 0.21 seconds
+\end{itemize}
+
+The C++ version is {\bf twice} as fast. Why?
+      \begin{itemize}
+        \item The C version just operates on memory---it has no clue about the
+          data.
+        \item We're throwing away useful information about what's being sorted.
+        \item A C function-pointer call prevents inlining of the compare function.
+      \end{itemize}
+OK. What if we write our own sort in C, specialized for the data?
+
+\begin{itemize}
+\item Custom C sort: 0.29 seconds
+\end{itemize}
+
+Now the C++ version is still faster (but it's close). But, this is
+quickly going to become a maintainability nightmare.
+      \begin{itemize}
+        \item Would you rather read a custom sort or 1 line?
+        \item What (who) do you trust more?
+      \end{itemize}
+
+\subsection*{Lesson}
+Abstractions will not make your program slower. 
+
+\noindent
+They allow speedups and are much easier to maintain and read.
+
+\subsection*{Vectors vs Lists}
+Consider two
+problems.
+
+\begin{enumerate}
+\item Generate {\bf N} random integers and insert them into (sorted)
+      sequence.
+      
+      {\bf Example:} 3 4 2 1
+      
+      \begin{itemize}
+        \item 3
+        \item 3 4
+        \item 2 3 4
+        \item 1 2 3 4
+      \end{itemize}
+
+\item Remove {\bf N} elements one-at-a-time by going to a random position
+      and removing the element.
+
+      {\bf Example:} 2 0 1 0
+      
+      \begin{itemize}
+        \item 1 2 4
+        \item 2 4
+        \item 2
+        \item 
+      \end{itemize}
+\end{enumerate}
+
+For which {\bf N} is it better to use a list than a vector (or array)?
+
+ 
+\paragraph{Complexity analysis.} As good computer scientists, let's analyze
+the complexity.  
+
+{\bf Vector}:\\[-2em]
+      \begin{itemize}
+        \item Inserting\\[-2em]
+          \begin{itemize}
+            \item $O(\log n)$ for binary search
+            \item $O(n)$ for insertion (on average, move half the elements)
+          \end{itemize}
+        \item Removing\\[-2em]
+          \begin{itemize}
+            \item $O(1)$ for accessing
+            \item $O(n)$ for deletion (on average, move half the elements)
+          \end{itemize}
+      \end{itemize}
+
+{\bf List}:\\[-2em]
+      \begin{itemize}
+        \item Inserting\\[-2em]
+          \begin{itemize}
+            \item $O(n)$ for linear search
+            \item $O(1)$ for insertion
+          \end{itemize}
+        \item Removing\\[-2em]
+          \begin{itemize}
+            \item $O(n)$ for accessing
+            \item $O(1)$ for deletion
+          \end{itemize}
+      \end{itemize}
+
+Therefore, based on their complexity, lists should be better.
+
+\paragraph{Reality.} OK, here's what happens. 
+\begin{verbatim}
+$ ./vector_vs_list 50000
+Test 1
+======
+vector: insert 0.1s   remove 0.1s   total 0.2s
+list:   insert 19.44s   remove 5.93s   total 25.37s
+Test 2
+======
+vector: insert 0.11s   remove 0.11s   total 0.22s
+list:   insert 19.7s   remove 5.93s   total 25.63s
+Test 3
+======
+vector: insert 0.11s   remove 0.1s   total 0.21s
+list:   insert 19.59s   remove 5.9s   total 25.49s
+\end{verbatim}
+
+{\bf Vectors} dominate lists, performance wise. Why?
+  \begin{itemize}
+    \item Binary search vs. linear search complexity dominates.
+    \item Lists use far more memory.
+      {\bf On 64 bit machines:}
+      \begin{itemize}
+        \item Vector: 4 bytes per element.
+        \item List: At least 20 bytes per element.
+      \end{itemize}
+    \item Memory access is slow, and results arrive in blocks:
+      \begin{itemize}
+        \item Lists' elements are all over memory, hence many
+          cache misses.
+        \item A cache miss for a vector will bring a lot more usable data.
+      \end{itemize}
+  \end{itemize}
+
+So, here are some tips for getting better performance.
+  \begin{itemize}
+    \item Don't store unnecessary data in your program.
+    \item Keep your data as compact as possible.
+    \item Access memory in a predictable manner.
+    \item Use vectors instead of lists by default.
+    \item Programming abstractly can save a lot of time.
+    \item Often, telling the compiler more gives you better code.
+    \item Data structures can be critical, sometimes more than complexity.
+    \item {\bf Low-level code != Efficient}.
+    \item Think at a low level if you need to optimize anything.
+    \item Readable code is good code---different hardware needs different
+      optimizations.
+  \end{itemize}
+
+
+\input{bibliography.tex}
 
 \end{document}
