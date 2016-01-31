@@ -1,0 +1,816 @@
+\input{configuration}
+
+\title{Lecture 19 --- Reentrancy, Thread-Safety, Inlining, HLL }
+
+\author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
+\institute{Department of Electrical and Computer Engineering \\
+  University of Waterloo}
+\date{\today}
+
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+
+ \end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Reentrancy}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reentrancy}
+
+  
+    $\Rightarrow$ A function can be suspended in the middle and \\ {\bf re-entered}
+      (called again) before the previous execution returns.\\[1em]
+    
+     Does not always mean {\bf thread-safe} (although it usually is).
+      \begin{itemize}
+        \item Recall: {\bf thread-safe} is essentially ``no data races''.
+      \end{itemize}
+ ~\\[1em]
+  Moot point if the function only modifies local data, e.g. {\tt sin()}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example}
+
+  
+
+  Courtesy of Wikipedia (with modifications):
+  \begin{lstlisting}
+int t;
+ 
+void swap(int *x, int *y) {
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example---Explained (a trace)}
+
+  
+  \begin{lstlisting}
+call swap(&a, &b);
+ t = *x;                // t = 3 (a)
+ *x = *y;               // a = 4 (b)
+ call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    t = *x;             // t = 1 (x)
+    *x = *y;            // x = 2 (y)
+    *y = t;             // y = 1
+ *y = t;                // b = 1
+
+Final values:
+a = 4, b = 1
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed}
+
+  
+  \begin{lstlisting}[escapechar=@]
+int t;
+ 
+void swap(int *x, int *y) {
+    int s;
+ 
+    @\alert{s = t}@;  // save global variable
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+    @\alert{t = s}@;  // restore global variable
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed---Explained (a trace)}
+
+  
+  \begin{lstlisting}
+call swap(&a, &b);
+s = t;                 // s = UNDEFINED
+t = *x;                // t = 3 (a)
+*x = *y;               // a = 4 (b)
+call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    s = t;             // s = 3
+    t = *x;            // t = 1 (x)
+    *x = *y;           // x = 2 (y)
+    *y = t;            // y = 1
+    t = s;             // t = 3
+*y = t;                // b = 3
+t = s;                 // t = UNDEFINED
+
+Final values:
+a = 4, b = 3
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Previous Example: thread-safety}
+
+  
+  Is the previous reentrant code also thread-safe?\\
+
+  (This is more what we're concerned about in this course.)\\[1em]
+
+  Let's see:
+  \begin{lstlisting}
+int t;
+
+void swap(int *x, int *y) {
+    int s;
+ 
+    s = t;  // save global variable
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+    t = s;  // restore global variable
+}
+  \end{lstlisting}
+  
+  Consider two calls: {\tt swap(a, b)}, {\tt swap(c, d)} with\\
+  \quad {\tt a = 1, b = 2, c = 3, d = 4}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Previous Example: thread-safety trace}
+
+  
+  \begin{lstlisting}
+global: t
+
+/* thread 1 */                       /* thread 2 */
+a = 1, b = 2;
+s = t;    // s = UNDEFINED
+t = a;    // t = 1
+                                     c = 3, d = 4;
+                                     s = t;    // s = 1
+                                     t = c;    // t = 3
+                                     c = d;    // c = 4
+                                     d = t;    // d = 3
+a = b;    // a = 2
+b = t;    // b = 3
+t = s;    // t = UNDEFINED
+                                     t = s;    // t = 1
+
+Final values:
+a = 2, b = 3, c = 4, d = 3, t = 1
+
+Expected values:
+a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reentrancy vs Thread-Safety (1)}
+
+  
+  \begin{itemize}
+    \item Re-entrant does not always mean thread-safe (as we saw)
+      \begin{itemize}
+        \item But, for most sane implementations, it is thread-safe
+      \end{itemize}
+  \end{itemize}~\\[1em]
+
+  Ok, but are {\bf thread-safe} functions reentrant?
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy vs Thread-Safety (2)}
+
+  
+  Are {\bf thread-safe} functions reentrant? \alert{Nope.} Consider:
+
+  \begin{lstlisting}
+int f() {
+    lock();
+    // protected code
+    unlock();
+}
+  \end{lstlisting}
+
+  Recall: {\bf Reentrant functions can be suspended in the middle of execution
+    and called again before the previous execution completes.}\\[1em]
+
+  {\tt f()} obviously isn't reentrant. Plus, it will deadlock.\\[1em]
+
+  Interrupt handling is more for systems programming, so the topic of reentrancy may or may not come
+  up again.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary of Reentrancy vs Thread-Safety}
+
+  
+  Difference between reentrant and thread-safe functions:\\[1em]
+
+  {\bf Reentrancy}
+  \begin{itemize}
+    \item Has nothing to do with threads---assumes a {\bf single thread}.
+    \item Reentrant means the execution can context switch at any point in
+      in a function, call the {\bf same function}, and {\bf complete} before
+      returning to the original function call.
+    \item Function's result does not depend on where the context switch happens.
+  \end{itemize}
+  \vfill
+  {\bf Thread-safety}
+  \begin{itemize}
+    \item Result does not depend on any interleaving of threads from
+      concurrency or parallelism.
+    \item No unexpected results from multiple concurrent executions of the function.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Another Definition of Thread-Safe Functions}
+
+  
+
+\begin{quote}
+  ``A function whose effect, when called by two or more threads, is guaranteed to
+  be as if the threads each executed the function one after another, in an
+  undefined order, even if the actual execution is interleaved.''
+\end{quote}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Good Example of an Exam Question}
+
+  
+
+  \begin{lstlisting}
+void swap(int *x, int *y) {
+    int t;
+    t = *x;
+    *x = *y;
+    *y = t;
+}  
+  \end{lstlisting}
+  \vfill
+  \begin{itemize}
+    \item Is the above code thread-safe?
+    \vfill
+    \item Write some expected results for running two calls in parallel.
+    \vfill
+    \item Argue these expected results always hold, or show an example where
+      they do not.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Good Practices}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Inlining}
+
+  
+
+  We have seen the notion of inlining:
+  \begin{itemize}
+    \item Instructs the compiler to just insert the function code in-place,
+      instead of calling the function.
+    \item Hence, no function call overhead!
+    \item Compilers can also do better---context-sensitive---operations they couldn't
+      have done before.
+  \end{itemize}
+  \vfill
+  No overhead\ldots~ sounds like better performance\ldots~ \\let's inline everything!
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Inlining in C++}
+
+  
+  Implicit inlining (defining a function inside a class definition):
+  \begin{lstlisting}
+class P {
+public:
+    int get_x() const { return x; }
+...
+private:
+    int x;
+};
+  \end{lstlisting}
+  \vfill
+Explicit inlining:
+  \begin{lstlisting}
+inline max(const int& x, const int& y) {
+    return x < y ? y : x;
+}
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{The Other Side of Inlining}
+
+  
+
+  One big downside:
+  \begin{itemize}
+    \item Your program size is going to increase.
+  \end{itemize}
+   This is worse than you think:
+      \begin{itemize}
+        \item Fewer cache hits.
+        \item More trips to memory.
+      \end{itemize}
+   Some inlines can grow very rapidly (C++ extended constructors).\\[1em]
+  Just from this your performance may go down easily.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Compilers on Inlining}
+
+  
+
+  Inlining is merely a suggestion to compilers.\\
+  They may ignore you.\\[1em]
+
+  For example:
+n  \begin{itemize}
+    \item taking the address of an ``inline'' function and using it; or
+    \item virtual functions (in C++),
+  \end{itemize}
+  will get you ignored quite fast.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{From a Usability Point-of-View}
+
+  
+  Debugging is more difficult (e.g. you can't set a breakpoint in a function that
+  doesn't actually exist).
+  \begin{itemize}
+    \item Most compilers simply won't inline code with debugging symbols on.
+    \item Some do, but typically it's more of a pain.
+  \end{itemize}~\\[1em]
+
+  Library design:
+  \begin{itemize}
+    \item If you change any inline function in your library, any users
+      of that library have to {\bf recompile} their program if the
+      library updates. (non-binary-compatible change!)
+  \end{itemize}
+  Not a problem for non-inlined functions---programs execute the new function
+      dynamically at runtime.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Introduction}
+
+  
+    So far, we've only seen C---we haven't seen anything 
+      complex.\\[1em]
+
+    C is low level, which is good for learning what's
+    really going on.\\[2em]
+
+    Writing compact, readable code in C is hard. \\ Common C sights:
+      \begin{itemize}
+        \item {\bf \#define macros}
+        \item {\bf void*}
+      \end{itemize}
+    C++11 has made major strides towards readability and efficiency
+      (it provides light-weight abstractions).
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Sorting}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Goal}
+
+
+  
+  Sort a bunch of integers.\\[1em]
+  In {\bf C}, usually use qsort from {\tt stdlib.h}.
+
+  \begin{lstlisting}
+void qsort (void* base, size_t num, size_t size,
+            int (*comparator) (const void*, const void*));
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item A fairly ugly definition (as usual, for generic C functions)
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{How ugly? {\tt qsort} usage}
+
+  
+  \begin{lstlisting}
+#include <stdlib.h>
+
+int compare(const void* a, const void* b)
+{
+    return (*((int*)a) - *((int*)b));
+}
+
+int main(int argc, char* argv[])
+{
+    int array[] = {4, 3, 5, 2, 1};
+    qsort(array, 5, sizeof(int), compare);
+}
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item This looks like a nightmare, and is more likely to have bugs.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{C++ {\tt sort}}
+
+  
+  C++ has a sort with a much nicer interface\footnote{\ldots nicer to use, after you get over templates (they're useful, I swear).}$\ldots$
+
+  \begin{lstlisting}
+template <class RandomAccessIterator>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last
+);
+
+template <class RandomAccessIterator, class Compare>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last,
+    Compare comp
+);
+  \end{lstlisting}
+  
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{C++ {\tt sort} Usage}
+
+  
+  \begin{lstlisting}
+#include <vector>
+#include <algorithm>
+
+int main(int argc, char* argv[])
+{
+    std::vector<int> v = {4, 3, 5, 2, 1};
+    std::sort(v.begin(), v.end());
+}
+  \end{lstlisting}
+  \vfill
+
+  {\bf Note:} Your compare function can be a function or a functor. \\By~default,
+  {\tt sort} uses {\tt operator$<$} on the objects being sorted.
+
+  \begin{itemize}
+    \item Which is less error prone?
+    \item Which is {\bf faster}?
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Timing Various Sorts}
+
+  
+  \begin{center}
+    [Shown: actual runtimes of {\tt qsort} vs {\tt sort}]\\[1em]
+  \end{center}
+
+     The C++ version is {\bf twice} as fast. Why?
+      \begin{itemize}
+        \item The C version just operates on memory---it has no clue about the
+          data.
+        \item We're throwing away useful information about what's being sorted.
+        \item A C function-pointer call prevents inlining of the compare function.
+      \end{itemize}
+     OK. What if we write our own sort in C, specialized for the data?
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Custom Sort}
+
+
+  \begin{center}
+    [Shown: actual runtimes of custom sort vs {\tt sort}]
+  \end{center}
+
+  \begin{itemize}
+    \item The C++ version is still faster (although it's close).
+    \item However, this is quickly going to become a maintainability nightmare.
+      \begin{itemize}
+        \item Would you rather read a custom sort or 1 line?
+        \item What (who) do you trust more?
+      \end{itemize}
+  \end{itemize}
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Lesson}
+  
+\Huge
+    Abstractions will not make your program slower. \\[1em]
+
+    They 
+      allow speedups and are much easier to maintain and read.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Lecture Fun}
+
+  \begin{center}
+\Large
+    Let's throw Java-style programming (or at least collections) into the mix and see what happens.
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Vectors vs. Lists}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Vectors vs. Lists: Problem}
+  
+  
+
+    1. Generate {\bf N} random integers and insert them into (sorted)
+      sequence.
+      
+  
+
+      {\bf Example:} 3 4 2 1
+      
+      \begin{itemize}
+        \item 3
+        \item 3 4
+        \item 2 3 4
+        \item 1 2 3 4
+      \end{itemize}
+  
+
+    2. Remove {\bf N} elements one at a time by going to a random position
+      and removing the element.
+
+  
+      {\bf Example:} 2 0 1 0
+      
+      \begin{itemize}
+        \item 1 2 4
+        \item 2 4
+        \item 2
+        \item 
+      \end{itemize}
+  
+  For which {\bf N} is it better to use a list than a vector (or array)?
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Complexity}
+  
+  \begin{itemize}
+    \item {\bf Vector}
+      \begin{itemize}
+        \item Inserting
+          \begin{itemize}
+            \item $O(\log n)$ for binary search
+            \item $O(n)$ for insertion (on average, move half the elements)
+          \end{itemize}
+        \item Removing
+          \begin{itemize}
+            \item $O(1)$ for accessing
+            \item $O(n)$ for deletion (on average, move half the elements)
+          \end{itemize}
+      \end{itemize}
+
+    \item {\bf List}
+      \begin{itemize}
+        \item Inserting
+          \begin{itemize}
+            \item $O(n)$ for linear search
+            \item $O(1)$ for insertion
+          \end{itemize}
+        \item Removing
+          \begin{itemize}
+            \item $O(n)$ for accessing
+            \item $O(1)$ for deletion
+          \end{itemize}
+      \end{itemize}
+  \end{itemize}
+  \vfill
+  Therefore, based on their complexity, lists should be better.
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reality}
+  
+  \begin{center}
+    [Shown: actual runtimes of vectors and lists]
+  \end{center}
+
+  
+  {\bf Vectors} dominate lists, performance wise. Why?
+  \vfill
+  \begin{itemize}
+    \item Binary search vs. linear search complexity dominates.
+    \vfill
+    \item Lists use far more memory.
+
+      {\bf On 64 bit machines:}
+      \begin{itemize}
+        \item Vector: 4 bytes per element.
+        \item List: At least 20 bytes per element.
+      \end{itemize}
+    \vfill
+    \item Memory access is slow, and results arrive in blocks:
+      \begin{itemize}
+        \item Lists' elements are all over memory, hence many
+          cache misses.
+        \item A cache miss for a vector will bring a lot more usable data.
+      \end{itemize}
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Performance Tips: Bullets}
+
+  
+  \begin{itemize}
+    \item Don't store unnecessary data in your program.
+    \vfill
+    \item Keep your data as compact as possible.
+    \vfill
+    \item Access memory in a predictable manner.
+    \vfill
+    \item Use vectors instead of lists by default.
+    \vfill
+    \item Programming abstractly can save a lot of time.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary (Reentrancy)}
+
+
+  \begin{itemize}
+    \item Reentrancy vs thread-safety.
+    \item Inlining: limit your inlining to trivial functions:
+      \begin{itemize}
+        \item makes debugging easier and improves usability;
+        \item won't slow down your program before you even start optimizing it.
+      \end{itemize}
+    \item Tell the compiler high-level information but think low-level.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Programming for Performance with the Compiler}
+
+  
+
+  \begin{itemize}
+    \item Often, telling the compiler more gives you better code.
+    \vfill
+    \item Data structures can be critical, sometimes more than complexity.
+    \vfill
+    \item {\bf Low-level code != Efficient}.
+    \vfill
+    \item Think at a low level if you need to optimize anything.
+    \vfill
+    \item Readable code is good code---\\ different hardware needs different
+      optimizations.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\end{document}
+
