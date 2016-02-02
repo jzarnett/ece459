@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{26 --- Liar, Liar}{\term}{Patrick Lam}
+\lecture{26 --- Liar, Liar}{\term}{Patrick Lam \& Jeff Zarnett}
 
 \section*{Lies about Calling Context}
 
@@ -275,9 +275,30 @@ and overestimate the impact of locks.
 This is because mfence causes a pipeline flush, and the resulting 
 costs get attributed to instructions being flushed, not to the mfence itself.
 
-\paragraph{Summary} We saw a bunch of lies today: calling-context lies and perf attribution
-lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
-and understand how your tools work.
+
+\section*{The Long Tail}
+
+Our source here is the blog post by Dan Luu~\cite{perf-tracing}. Suppose we have a task that's going to get distributed over multiple computers (like a search). If we look at the latency distribution, the problem is mostly that we see a long tail of events and when we are doing a computation or search where we need all the results, we can only go as the slowest step. Let's take a look at a histogram of disk read latencies, where we are performing a 64 kB read, also from that source:
+
+\begin{center}
+	\includegraphics[width=0.65\textwidth]{images/disk_tail.png}
+\end{center}
+
+Let's break it down. Peak 1 corresponds to something cached in RAM - best case scenario. Peak 2 is at around 3ms, which is too fast for spinning and seeking magnetic hard disks, but it's fast enough for reading something from the disk cache via the PCI-Express interface. Peak 3 is obviously disk seek and read times, somewhere around 25ms. 
+
+These numbers don't look terrible, except for the fact that we have peaks at 250, 500, 750, and 1000 ms and the 99th percentile is some 696ms which is a very, very long time. Sampling profilers are not very good at finding these things, because they throw everything into various buckets and therefore we get averages. The averages are misleading, though, because we have these weird outliers that take dramatically longer. Averages are nice as long as our data is also reasonably ``nice''.
+
+So what actually happened? Well, from~\cite{perf-tracing}: The investigator found out that the cause was kernel throttling of the CPU for processes that went beyond their usage quota. To enforce the quota, the kernel puts all of the relevant threads to sleep until the next multiple of a quarter second. When the quarter-second hand of the clock rolls around, it wakes up all the threads, and if those threads are still using too much CPU, the threads get put back to sleep for another quarter second. The phase change out of this mode happens when, by happenstance, there aren’t too many requests in a quarter second interval and the kernel stops throttling the threads. After finding the cause, an engineer found that this was happening on 25\% of disk servers at Google, for an average of half an hour a day, with periods of high latency as long as 23 hours. This had been happening for three years.
+
+Further limitations of sampling profilers emerge, as demonstrated in this graph, also from~\cite{perf-tracing}, showing the data we get out of our sampling profiler if we take a look at Lucene (a search indexer):
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/perf-sample.png}
+\end{center}
+
+So at the default sampling interval for perf we see... nothing interesting whatsoever. If we bump up to the max sampling frequency of perf, we get a moderately more interesting graph, but not much. If we use a different tool and can sample at a dramatically higher rate, then we end up with something way more useful. So we're left to wonder why does perf sample so infrequently, and how does SHIP get around this?
+
+Well, for one thing, perf samples are done with interrupts. Processing interrupts takes a fair amount of time and if you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work. SHIM gets around this by being more invasive -- it adds some periodically executed code that puts information out whenever there is an appropriate event (e.g., function return). This produces a bunch of data which can be dealt with later to produce something useful.
 
   \paragraph{Algorithmic profiling.} From the recent research literature,
   {\tt aprof} is another profiling tool.
@@ -287,6 +308,12 @@ and understand how your tools work.
   aprof is a Valgrind tool for performance profiling designed to help developers discover hidden asymptotic inefficiencies in the code. From one or more runs of a program, aprof measures how the performance of individual routines scales as a function of the input size, yielding clues to its growth rate and to the "big-O" of the program.
   \end{quote}
   }
+
+\paragraph{Summary} We saw a bunch of lies today: calling-context lies and perf attribution
+lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
+and understand how your tools work.
+
+
 \input{bibliography.tex}
 
 \end{document}
