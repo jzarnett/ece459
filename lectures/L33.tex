@@ -108,9 +108,116 @@ Now we can calculate $C$ as 0.22857 and $T_{q}$ as 2.57 minutes (by simple plug 
 
 That is an important condition: if utilization is low. At some point will the two printers be a better choice than the single fast one? What if both printers are used to the max (100\% load)...?
 
-\section*{Making Predictions}
+\section*{Queuing for Performance}
 
-\cite{williams-perf}.
+The plan is to take queueing theory and apply it in a performance model. The guide to this section is~\cite{williams-perf}. The basic process is:
+
+\begin{enumerate}
+	\item Convert to common time units.
+	\item Calculate the visitation ratios $V_{i}$.
+	\item Calculate the device utilization $\rho_{i}$.
+	\item Calculate the CPU service time.
+	\item Calculate the device time.
+	\item Find the bottleneck device.
+	\item Calculate the maximum transaction rate.
+	\item Calculate the average transaction time.
+\end{enumerate}
+
+Let us execute this process on a web server system that serves 9~000 pages per hour. Here are the known values:
+
+\begin{center}
+\begin{tabular}{|l|l|l|l|l|l|l|} \hline
+	\textbf{Device} & \textbf{Data/Hour} & \textbf{$\lambda$} & \textbf{$S$} & \textbf{$V$} & \textbf{$\rho$} & \textbf{$V \times S$} \\ \hline
+	Webpages & 9~000 & & & & & \\ \hline
+	CPU & & & & &  42\% & \\ \hline
+	Disk 1 & 108~000 & & 11ms & & &\\ \hline
+	Disk 2 & 72~000 & & 16ms & & &\\ \hline
+	Network & 18~000 & & 23ms & & &\\ \hline
+\end{tabular}
+\end{center}
+
+Step one is to convert to common time units; in this case, seconds. That would be a simple and common time unit. Let's also look at the $\lambda$ values - reported counts divided by seconds in the reporting period.
+
+\begin{center}
+\begin{tabular}{|l|l|l|l|l|l|l|} \hline
+	\textbf{Device} & \textbf{Data/Hour} & \textbf{$\lambda$} & \textbf{$S$} & \textbf{$V$} & \textbf{$\rho$} & \textbf{$V \times S$} \\ \hline
+	Webpages & 9~000 & 2.5 & & & & \\ \hline
+	CPU & & & & & 42\% & \\ \hline
+	Disk 1 & 108~000 & 30 & 0.011s  & & &\\ \hline
+	Disk 2 & 72~000 & 20 & 0.016s & & &\\ \hline
+	Network & 18~000 & 5 & 0.023s & & &\\ \hline
+\end{tabular}
+\end{center}
+
+The visitation ratio is the number of times a device is used in each transaction; divide use by number of transactions to get $V_{i}$ (you could also log this sort of thing). The visitation ratio of the CPU is the sum of all other visitation ratios. Why? Suppose we do a disk read: the disk is visited, and when the disk read completes, we go back to the CPU and it picks up the data that's just been shuttled in from the impossibly slow disk.
+
+\begin{center}
+\begin{tabular}{|l|l|l|l|l|l|l|} \hline
+	\textbf{Device} & \textbf{Data/Hour} & \textbf{$\lambda$} & \textbf{$S$} & \textbf{$V$} & \textbf{$\rho$} & \textbf{$V \times S$} \\ \hline
+	Webpages & 9~000 & 2.5 & & 1 & & \\ \hline
+	CPU & 207~000 & 57.5 &  & 23 & 42\% & \\ \hline
+	Disk 1 & 108~000 & 30 & 0.011s  & 12& &\\ \hline
+	Disk 2 & 72~000 & 20 & 0.016s & 8 & &\\ \hline
+	Network & 18~000 & 5 & 0.023s & 2 & &\\ \hline
+\end{tabular}
+\end{center}
+
+Next, calculate device utilization: $\rho = \lambda \times s$. That is, arrival rate times service time.
+
+\begin{center}
+\begin{tabular}{|l|l|l|l|l|l|l|} \hline
+	\textbf{Device} & \textbf{Data/Hour} & \textbf{$\lambda$} & \textbf{$S$} & \textbf{$V$} & \textbf{$\rho$} & \textbf{$V \times S$} \\ \hline
+	Webpages & 9~000 & 2.5 & & 1 & & \\ \hline
+	CPU & 207~000 & 57.5 &  & 23 & 42\% & \\ \hline
+	Disk 1 & 108~000 & 30 & 0.011s  & 12& 0.33 &\\ \hline
+	Disk 2 & 72~000 & 20 & 0.016s & 8 & 0.32 &\\ \hline
+	Network & 18~000 & 5 & 0.023s & 2 & 0.115 &\\ \hline
+\end{tabular}
+\end{center}
+
+A small oddity: in the CPU we have a percentage for utilization rather than a decimal number. That's easy enough to fix; we can just convert it to 0.42. And we can also get the service time of the CPU by rearrangement of the utilization formula to $s = \rho / \lambda$.
+
+\begin{center}
+\begin{tabular}{|l|l|l|l|l|l|l|} \hline
+	\textbf{Device} & \textbf{Data/Hour} & \textbf{$\lambda$} & \textbf{$S$} & \textbf{$V$} & \textbf{$\rho$} & \textbf{$V \times S$} \\ \hline
+	Webpages & 9~000 & 2.5 & & 1 & & \\ \hline
+	CPU & 207~000 & 57.5 & 0.0073s & 23 & 0.42 & \\ \hline
+	Disk 1 & 108~000 & 30 & 0.011s  & 12& 0.33 &\\ \hline
+	Disk 2 & 72~000 & 20 & 0.016s & 8 & 0.32 &\\ \hline
+	Network & 18~000 & 5 & 0.023s & 2 & 0.115 &\\ \hline
+\end{tabular}
+\end{center}
+
+And the device time is the final thing we can fill in for this table: $V_{i} \times S_{i}$ (just like the column header says!).
+
+\begin{center}
+\begin{tabular}{|l|l|l|l|l|l|l|} \hline
+	\textbf{Device} & \textbf{Data/Hour} & \textbf{$\lambda$} & \textbf{$S$} & \textbf{$V$} & \textbf{$\rho$} & \textbf{$V \times S$} \\ \hline
+	Webpages & 9~000 & 2.5 & & 1 & & \\ \hline
+	CPU & 207~000 & 57.5 & 0.0073s & 23 & 0.42 & 0.168\\ \hline
+	Disk 1 & 108~000 & 30 & 0.011s  & 12& 0.33 & 0.132\\ \hline
+	Disk 2 & 72~000 & 20 & 0.016s & 8 & 0.32 & 0.128\\ \hline
+	Network & 18~000 & 5 & 0.023s & 2 & 0.115 & 0.046\\ \hline
+\end{tabular}
+\end{center}
+
+Did we need to complete the whole table? Probably not. In a practical sense what we cared about the most was the $\rho$ column -- utilization. The bottleneck device, i.e., the one that limits our maximum throughput, is the one that is the busiest. Thus, the one with the largest utilization. This application appears to be CPU bound; it has the highest utilization at 42\%, well ahead of disk 1 and disk 2. 
+
+Having identified the bottleneck device as the CPU, we can make a prediction about the maximum rate of transactions (web page requests) we can serve: $\dfrac{1}{S_{i}V_{i}}$ or in this example, 5.95. This is also called saturation. If $\lambda$ exceeds this saturation point, we will not be able to keep up with incoming requests.
+
+With this table we can also calculate the average transaction time: it is the sum of the $S_{i}V_{i}$ columns. In this example, it is 0.474 seconds. 
+
+\paragraph*{It Gets Worse}
+
+The typical assumption is that we know the service times for each device. Unfortunately this is not true; usually performance monitoring gives us the average size of a device queue. So we had better apply queuing theory here, once again credit to~\cite{williams-calc} for the section. 
+
+The average size of a device's queue is $W$, and for a queue with characteristics M/M/1 then $W = \dfrac{\rho^{2}}{1-\rho}$. Combining the known $W$ with the average arrival rate $\lambda$, we can work out the service time. $W = \dfrac{(\lambda s)^{2}}{1 - \lambda s}$.
+
+\begin{center}
+	$s = \cfrac{-w \pm \sqrt{w^{2}+4w}}{2\lambda}$
+\end{center}
+
+Yup. The quadratic formula strikes back. 
 
 \input{bibliography.tex}
 
