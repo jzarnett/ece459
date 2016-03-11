@@ -1,0 +1,215 @@
+\documentclass[letterpaper,10pt]{article}
+
+\usepackage{titling}
+\usepackage{listings}
+\usepackage{url}
+\usepackage{setspace}
+\usepackage{subfig}
+\usepackage{sectsty}
+\usepackage{pdfpages}
+\usepackage{colortbl}
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{relsize}
+\usepackage{amsmath}
+\usepackage{wasysym}
+\usepackage{fancyvrb}
+\usepackage{amsmath,amssymb,amsthm,graphicx,xspace}
+\usepackage[titlenotnumbered,noend,noline]{algorithm2e}
+\usepackage[compact]{titlesec}
+\usepackage{XCharter}
+\usepackage[T1]{fontenc}
+\usepackage{tikz}
+\usetikzlibrary{arrows,automata,shapes,trees,matrix,chains,scopes,positioning,calc}
+\tikzstyle{block} = [rectangle, draw, fill=blue!20, 
+    text width=2.5em, text centered, rounded corners, minimum height=2em]
+\tikzstyle{bw} = [rectangle, draw, fill=blue!20, 
+    text width=4em, text centered, rounded corners, minimum height=2em]
+
+\definecolor{namerow}{cmyk}{.40,.40,.40,.40}
+\definecolor{namecol}{cmyk}{.40,.40,.40,.40}
+
+\let\LaTeXtitle\title
+\renewcommand{\title}[1]{\LaTeXtitle{\textsf{#1}}}
+
+
+\newcommand{\handout}[5]{
+  \noindent
+  \begin{center}
+  \framebox{
+    \vbox{
+      \hbox to 5.78in { {\bf ECE459: Programming for Performance } \hfill #2 }
+      \vspace{4mm}
+      \hbox to 5.78in { {\Large \hfill #4  \hfill} }
+      \vspace{2mm}
+      \hbox to 5.78in { {\em #3 \hfill} }
+    }
+  }
+  \end{center}
+  \vspace*{4mm}
+}
+
+\newcommand{\lecture}[3]{\handout{#1}{#2}{#3}{Lecture #1}}
+\newcommand{\tuple}[1]{\ensuremath{\left\langle #1 \right\rangle}\xspace}
+
+\addtolength{\oddsidemargin}{-1.000in}
+\addtolength{\evensidemargin}{-0.500in}
+\addtolength{\textwidth}{2.0in}
+\addtolength{\topmargin}{-1.000in}
+\addtolength{\textheight}{1.75in}
+\addtolength{\parskip}{\baselineskip}
+\setlength{\parindent}{0in}
+\renewcommand{\baselinestretch}{1.5}
+\newcommand{\term}{Winter 2016}
+
+\singlespace
+
+\title{\bf ECE 459: Programming for Performance\\Assignment 3}
+\author{Patrick Lam}
+\date{February 22, 2015 (Due: March 11, 2015)}
+
+\lstset{basicstyle=\scriptsize, frame=single}
+
+
+
+\begin{document}
+
+\maketitle
+
+In this assignment, you will write OpenCL code to implement parts of
+an $N$-body simulation.  The first part consists of converting some
+sequential C code into OpenCL, while the second part requires you to
+improve the algorithm by making approximations for points that are far
+away.
+
+We'll be starting with the code from GPU Gems 3\footnote{\url{http://http.developer.nvidia.com/GPUGems3/gpugems3_ch31.html}}.
+I also found an OpenCL N-body simulation code on the Internet\footnote{\url{http://www.browndeertechnology.com/docs/BDT_OpenCL_Tutorial_NBody-rev3.html}}. Also, you can read Andrew Cooke's notes; they are similar to my OpenCL lecture, but they may make more sense to you\footnote{\url{http://www.acooke.org/cute/APractical0.html}}.
+
+Using OpenCL on ece459-1 should be fairly straightforward as long as
+you have the right compiler options. The Makefile I've provided
+should work for you. You are also free to use OpenCL on your own
+computer, if you choose.
+
+\paragraph{Getting started.} Fork the provided git repository:
+\begin{center}
+{\tt ssh git@ecgit.uwaterloo.ca fork ece459/1161/a3 ece459/1161/USERNAME/a3}
+\end{center}
+\noindent and then clone the provided files.
+
+To submit, push C++ files containing OpenCL versions (naive and optimized) of
+the $N$-body code, along with a brief report (about half a page).
+
+\section*{Part 1: Brute-force approach (50 points)}
+The easiest way to do an $N$-body simulation is to compute the effects
+of all points on each other. I've posted some sequential code (based
+on the GPU Gems code) to calculate the forces for one time-step. Your
+first task is to convert this code to OpenCL. We will evaluate the
+correctness and efficiency of your conversion. OpenCL can assign
+workgroups automatically.
+
+\section*{Part 2: Far-field approximations (50 points)}
+
+Algorithmic improvements are important. In this part, you will
+speed up the force calculation by crudely estimating the forces
+exerted by faraway points. The idea is to divide the points into a
+number of bins. (Real codes would use quadtrees or octrees to store,
+and thus find, the closest points\footnote{For a readable summary
+of the Barnes-Hut algorithm, see \url{http://arborjs.org/docs/barnes-hut}.}
+). You will then compute the center
+of mass for each bin and add the force exerted by the center of mass
+for faraway bins to the force exerted by individual particles for
+nearby particles.
+
+\paragraph{Computing centers-of-masses for bins (20 points).}
+Instead of finding the $k$ nearest points, we will divide space into a
+fixed number of bins and compute the center of mass of each of these
+bins. For nearby bins, we do the $O(n^2)$ calculation; for further
+bins, we compute forces for each bin. Conveniently, for this assignment
+I've divided space into $[0, 1000]^3$, so we can take bins which are
+cubes of length 100. This gives 1000 bins.
+
+I recommend that you create a 3-dimensional array {\tt cm} of {\tt
+  float4}s\footnote{When I did the assignment, a {\tt float} versus {\tt float4}
+mismatch took me a long time to debug.} to store centers-of-mass. The {\tt x}, {\tt y} and {\tt z}
+components contain the average position of the center of mass of a
+bin, while the {\tt w} component stores the total mass. Compute all of
+the masses in parallel: create one thread per bin, and add a point's
+position if it belongs to the bin, e.g.
+
+{\small
+\begin{verbatim}
+    int xbin, ybin, zbin; // initialize with bin coordinates
+    int b;
+    for (i = 0; i < POINTS; i++) {
+        if (pts[i] in bin coordinates) {
+            cm[b].x += pts[i].x; // y, z too
+            cm[b].w += 1.0f;
+        }
+    }
+    cm[b].x /= cm[b].w; // etc
+\end{verbatim}
+}
+
+\noindent
+Note that this parallelizes with the number of bins.
+
+\paragraph{Bin Contents (20 points).}
+For the next step, you'll also need to keep track of the points in
+each bin. Fortunately, you've collected the number of points in each
+bin, so you can allocate the appropriate amount of memory to store the
+points in a two-dimensional array {\tt binPts}. In a second phase,
+iterate over all bins again, this time putting coordinates into the
+proper element of {\tt binPts}.
+
+\paragraph{Computing Forces (10 points).}
+The payoff from all these calculations is to save time while
+calculating forces. Let's arbitrarily say that we'll compute exact
+forces for the points in the same bin and the directly-adjacent bins
+in each direction (think of a Rubik's Cube; that makes 27 bins in all,
+with 6 bins sharing a square, 12 bins sharing an edge, and 8 bins
+sharing a point with the center bin). If there is no adjacent bin,
+then there are no points in that bin. 
+
+Using the data that you've
+computed so far, write OpenCL code to estimate forces for each point.
+This has two parts. In the first part, compute forces directly for the 
+points in the 27 adjacent bins. In the second part, 
+sum the forces from the centers of mass. 
+
+There is a caveat: it's easier to add forces from all centers of mass,
+whether nearby or far away. I recommend that you add forces from centers
+of mass, and then subtract away the forces that you're double-counting:
+
+\begin{verbatim}
+  // add negative forces to not double-count adjacent bins
+  negBin.x = 2*myPosition.x-globalCM[bin].x;
+  negBin.y = 2*myPosition.y-globalCM[bin].y;
+  negBin.z = 2*myPosition.z-globalCM[bin].z;
+  negBin.w = globalCM[bin].w;
+  bodyBodyInteraction(myPosition, negBin, pacc);
+\end{verbatim}
+
+Finally, compare the performance of part 1 and part 2.
+
+\paragraph{What to hand in.} Commit and push your code.
+For part 2,
+write about your design choices and results (about half a page), and
+hand that in along with your OpenCL code.
+
+\section*{Timings}
+Here's some timings from the past.
+
+\paragraph{With 500 points.}
+\begin{itemize}
+\item    OpenCL, no approximations (1 kernel): 0.182s
+\item    OpenCL, with approximations (3 kernels): 0.168s
+\end{itemize}
+
+\paragraph{With 5000 points.}
+\begin{itemize}
+\item    OpenCL, no approximations (1 kernel): 6.131s
+\item    OpenCL, with approximations (3 kernels): 3.506s
+\end{itemize}
+
+
+\end{document}
