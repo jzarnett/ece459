@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 18 --- Cache Coherency }
+\title{Lecture 18 --- C/C++11 Memory Model }
 
-\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{p.lam@ece.uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -16,433 +16,561 @@
  \end{frame}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Introduction}
-
-  \begin{center}
-    \includegraphics[scale=0.7]{images/coherency}
-
-    Image courtesy of Wikipedia.
-  \end{center}
-
-  
-  {\bf Coherency:}
-  \begin{itemize}
-    \item Values in all caches are consistent;
-    \item System behaves as if all CPUs are using shared memory.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Cache Coherence Example}
-
-  
-  Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache.
-    \item {\tt CPU3} reads x, puts the value in its cache.
-    \item {\tt CPU3} modifies {\tt x := 42}
-    \item {\tt CPU1} reads x \ldots ~from its cache?
-    \item {\tt CPU2} reads x. Which value does it get?
-  \end{enumerate}
-  ~\\
-
-  Unless we do something, {\tt CPU1} is going to read invalid data.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{Snoopy Caches}
-
-The simplest way to ``do something''
-is to use Snoopy caches. 
-
-No, not this kind of Snoopy (sadly):
-
-\begin{center}
-	\includegraphics[width=0.25\textwidth]{images/peanuts-snoopy1.jpg}
-\end{center}
-
-
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{High-Level Explanation of Snoopy Caches}
-
-  
-  \begin{itemize}
-    \item Each CPU is connected to a simple bus.
-    \item Each CPU ``snoops'' to observe if a memory location is read or written
-      by another CPU.
-    \item We need a cache controller for every CPU.
-  \end{itemize}
-  ~\\
-  {\bf What happens?}
-
-  \begin{itemize}
-    \item Each CPU reads the bus to see if any memory operation is relevant. If
-      it is, the controller takes appropriate action.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{A Distributed Approach}
-
-
-This is a distributed approach; no centralized state is maintained. 
-
-Each cache with a copy of data from a block of physical memory knows whether it is shared or not. 
-
-Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. 
-
-If it is, then the CPU will need to take action.
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Through Cache}
-
-  
-Simplest type of cache coherence:
-  \begin{itemize}
-    \item All cache writes are done to main memory.
-    \item All cache writes also appear on the bus.
-    \item If another CPU snoops and sees it has the same location in
-      its cache, it will either {\it invalidate} or {\it update} the
-      data.\\ \qquad (We'll be looking at invalidating.)
-  \end{itemize}
-~\\
-
-    For write-through caches: normally, when you write to an invalidated
-    location, you bypass the cache and go directly to memory (aka {\bf
-      write no-allocate}).
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{In-val-i-daaaaaate!}
-
-Invalidation is the most common protocol. 
-
-It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  
-
-Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). 
-
-If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. 
-
-This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. 
-
-Regardless, the most recent value appears in memory, always.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Let's Yell}
-
-There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. 
-
-But it uses lots of bandwidth and is not necessarily a good idea. 
-
-It does, however prevent the costly cache miss that follows an invalidate. 
-
-Sadly, as we are mere users and not hardware architects, we don't get to decide; we just have to live with whichever one is on the hardware we get. Bummer.
-
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Through Protocol}
-
-  
-  \begin{itemize}
-    \item Two states, {\bf valid} and {\bf invalid}, for each memory location.
-    \item Events are either from a processor ({\bf Pr}) or the {\bf Bus}.
-  \end{itemize}
-  \vfill
-  \begin{center}
-    \begin{tabular}{llll}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
-      Valid   & PrRd  &       & Valid\\
-      Valid   & PrWr  & BusWr & Valid\\
-      Valid   & BusWr &       & Invalid\\
-      Invalid & PrWr  & BusWr & Valid\\
-      Invalid & PrRd  & BusRd & Valid\\
-    \end{tabular}
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Through Protocol Example}
-
-  
-
-  \begin{itemize}
-    \item For simplicity (this isn't an architecture course), assume all cache
-      reads/writes are atomic.
-  \end{itemize}
-  \vfill
-  {\bf Using the same example as before:}
-
-  Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache. \structure{(valid)}
-    \item {\tt CPU3} reads x, puts the value in its cache. \structure{(valid)}
-    \item {\tt CPU3} modifies {\tt x := 42}. \structure{(write to memory)}
-      \begin{itemize}
-        \item \structure{{\tt CPU1} snoops and marks data as invalid.}
-      \end{itemize}
-    \item {\tt CPU1} reads x, \structure{from main memory. (valid)}
-    \item {\tt CPU2} reads x, \structure{from main memory. (valid)}
-  \end{enumerate}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Back Cache}
-
-
-  \begin{itemize}
-    \item What if, in our example, {\tt CPU3} writes to {\tt x} 3 times?\\[1em]
-    \item Main goal: delay the write to memory as long as possible.\\[1em]
-    \item At minimum, we have to add a ``dirty'' bit:\\
-     \quad Indicates the our data has not yet been written to memory.
-  \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Back Implementation}
-
-  
-     The simplest type of write-back protocol (MSI), with 3 states:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; \\
-          \quad main memory is {\bf out-of-date}.
-        \item {\bf Shared}---location is unmodified, \\
-          \quad up-to-date with main
-          memory; \\
-          \quad may be present in other caches (also up-to-date).
-        \item {\bf Invalid}---same as before.
-      \end{itemize}~\\
-      
-     Initial state, upon first read, is ``shared''.\\[1em]
-
-     Implementation will only write the data to memory if another
-        processor requests it.\\[1em]
-
-     During write-back, a processor may read the data from the bus.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{MSI Protocol}
-
-  
-  \begin{itemize}
-    \item Bus write-back (or flush) is {\bf BusWB}.
-    \item Exclusive read on the bus is {\bf BusRdX}.
-  \end{itemize}~\\
-
-  \begin{center}
-    \begin{tabular}{llll}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
-      Modified   & PrRd   &        & Modified\\
-      Modified   & PrWr   &        & Modified\\
-      Modified   & BusRd  & BusWB  & Shared\\
-      Modified   & BusRdX & BusWB  & Invalid\\
-      Shared     & PrRd   &        & Shared\\
-      Shared     & BusRd  &        & Shared\\
-      Shared     & BusRdX &        & Invalid\\
-      Shared     & PrWr   & BusRdX & Modified\\
-      Invalid    & PrRd   & BusRd  & Shared\\
-      Invalid    & PrWr   & BusRdX & Modified\\
-    \end{tabular}
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{MSI Example}
-
-  
-
-  {\bf Using the same example as before:}
-
-  Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x from memory. \structure{(BusRd, shared)}
-    \item {\tt CPU3} reads x from memory. \structure{(BusRd, shared)}
-    \item {\tt CPU3} modifies {\tt x = 42}:
-      \begin{itemize}
-        \item \structure{Generates a BusRdX.}
-        \item \structure{{\tt CPU1} snoops and invalidates x.}
-        \item \structure{{\tt CPU3} changes {\tt x}'s state to modified.}
-      \end{itemize}
-    \item {\tt CPU1} reads x:
-      \begin{itemize}
-        \item \structure{Generates a BusRd.}
-        \item \structure{{\tt CPU3} writes back the data and sets x to shared.}
-        \item \structure{{\tt CPU1} reads the new value from the bus as shared.}
-      \end{itemize}
-    \item {\tt CPU2} reads x from memory. \structure{(BusRd, shared)}
-  \end{enumerate}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{An Extension to MSI: MESI}
-
-  
-    The most common protocol for cache coherence is MESI.\\[1em]
-    Adds another state:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; \\
-\qquad main memory is {\bf out-of-date}.
-        \item {\bf Exclusive}---only this cache has a valid copy; \\
-\qquad main memory is {\bf up-to-date}.
-        \item {\bf Shared}---same as before.
-        \item {\bf Invalid}---same as before.
-      \end{itemize}
-~\\
-
-    MESI allows a processor to modify data exclusive to it, \\without
-      having to communicate with the bus.\\
-    MESI is \structure{safe}: in E state, no other processor has the
-      data.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Even More States!}
-
-  
-    MESIF (used in latest i7 processors):
-      \begin{itemize}
-        \item {\bf Forward}---basically a shared state; but, current
-          cache is the only one that will respond to a request to
-          transfer the data.
-      \end{itemize}~\\[1em]
-
-    Hence: a processor requesting data that is already shared or exclusive will
-      only get one response transferring the data.\\[1em]
-    Permits more efficient usage of the bus.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Good Questions (1)}
-
-  
-  {\bf Cache coherency seems to make sure my data is consistent. Why do I have
-    to have something like flush or fence?}
-  \begin{itemize}
-    \item You might be ok, if all of the writes on processors are to the
-      cache. But they're not!
-    \item Cache coherency won't update any values modified in registers.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Good Questions (2)}
+  \frametitle{Language Support: Before C/C++11}
+
+%http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C
 
   
-  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
-    so then am I okay?}
-  \vspace{6.2em}
-  \pause
+    Before C/C++11: \\ \qquad no language-level definition of threads.\\[1em]
 
-  \begin{center}
-    \includegraphics[scale=0.3]{images/disapproval}    
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Good Questions (2)}
-
-  
-  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
-    so then am I okay?}\\[1em]
-
-    {\tt volatile} in C was only designed to:
-      \begin{itemize}
-        \item Allow access to memory mapped devices.
-        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
-        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
-      \end{itemize}~\\[1em]
-    Remember, things can also be reordered by the compiler,
-      {\tt volatile} doesn't prevent this.\\[1em]
-    Also, it's likely your variables could be in registers the majority
-      of the time, except in critical areas.
+    Not even a well-formed question to ask what this means:\\[.5em]
+    \begin{tabular}{ll}
+      \begin{minipage}{.2\textwidth}
+        Thread 1:
+        \begin{lstlisting}
+  foo = 7;
+  bar = 42;
+        \end{lstlisting}
+      \end{minipage} &
+      \begin{minipage}{.4\textwidth}
+        Thread 2:
+        \begin{lstlisting}
+  printf("%d\n", foo);
+  printf("%d\n", bar);
+        \end{lstlisting}
+      \end{minipage}
+    \end{tabular}
+    ~\\[1em]
+    \only<2>{pre C/C++11: no such thing as a thread!}
+    
   
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Cache Coherency Summary}
+  \frametitle{Language Support in C++11: Defining the Question}
 
   
-    We saw the basics of cache coherence (good to know, but more of an architecture
-      thing).\\[1em]
-    There are many other protocols for cache coherence, each with their own
-      trade-offs.\\[1em]
 
-     Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
-      compiler and hardware don't reorder reads and writes.\\[1em]
+    Now\footnote{\url{http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C}}:
     \begin{itemize}
-     \item Neither cache coherence nor {\tt volatile} will save you.
+    \item a memory model
+    \item primitives: mutexes, atomics, memory barriers.
     \end{itemize}
 
-Barriers/fences/flushes might be expensive in terms of ``wasting time'', but correctness is important.
+    Previous example has undefined behaviour \\ \qquad per C++11. (why?)
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Language Support in C++11: Atomics}
+
+  
+    We've seen the notion of atomics. Here's the C++11 notation:
+
+    \begin{lstlisting}
+      atomic<int> foo, bar;      
+    \end{lstlisting}
+    
+    \begin{tabular}{ll}
+      \begin{minipage}{.25\textwidth}
+        Thread 1:
+        \begin{lstlisting}
+  foo.store(7);
+  bar.store(42);
+        \end{lstlisting}
+      \end{minipage} &
+      \begin{minipage}{.45\textwidth}
+        Thread 2:
+        \begin{lstlisting}
+  printf("%d\n", foo.load());
+  printf("%d\n", bar.load());
+        \end{lstlisting}
+      \end{minipage}
+    \end{tabular}
+
+    What are the possible outputs? (good exam question!)
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Prefix and Postfix}
+
+  
+
+  Lots of people use postfix out of habit, but prefix is better.\\[2em]
+
+  In C, this isn't a problem. \\[1em]
+  In some languages (like C++), it can be.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Why? Overloading}
+
+  
+
+  In C++, you can overload the {\tt ++} and {\tt --} operators.
+
+  \begin{lstlisting}
+class X {
+public:
+  X& operator++();
+  const X operator++(int);
+...
+};
+
+X x;
+++x; // x.operator++();
+x++; // x.operator++(0);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Common Increment Implementations}
+
+  
+
+  Prefix is also known as {\bf increment and fetch}.
+
+  \begin{lstlisting}
+X& X::operator++()
+{
+  *this += 1;
+  return *this;
+}
+  \end{lstlisting}
+~\\[1em]
+
+  Postfix is also known as {\bf fetch and increment}.
+
+  \begin{lstlisting}
+const X X::operator++(int)
+{
+  const X old = *this;
+  ++(*this);
+  return old;
+}
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Efficiency}
+
+  
+  If you're the least concerned about efficiency, always use
+  {\bf prefix} increments/decrements instead of defaulting to postfix.\\[1em]
+
+  Only use {\tt postfix} when you really mean it, to be on the safe side.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Digression: The Wayside}
+
+  \begin{center}
+    \includegraphics[width=.7\textwidth]{images/The_Wayside_Concord_Massachusetts}
+% http://en.wikipedia.org/wiki/File:The_Wayside_Concord_Massachusetts.jpg
+  \end{center}
+\hfill (Daderot, Wikimedia Commons)
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{It's Not Just Software}
+
+
+Nathaniel Hawthorne wrote:
+
+\begin{quote}
+I have been equally unsuccessful in my architectural projects; and have transformed a simple and small old farm-house into the absurdest anomaly you ever saw; but I really was not so much to blame here as the \sout{programmer} village-carpenter, who took the matter into his own hands, and produced an unimaginable sort of thing instead of what I asked for. (January 1864)
+\end{quote}
+
+
+\begin{tabular}{lrr}
+Original budget:& \$500 &(\$7540 inflation-adjusted)\\
+Actual cost: &\$2000 &(\$30160 inflation-adjusted)
+\end{tabular}
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Using locks also involves a trade-off between coarse-grained locking,
+%% which can significantly reduce opportunities for parallelism, and
+%% fine-grained locking, which requires more careful design, increases
+%% locking overhead and is more prone to bugs.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Locking}
+
+  
+  Locks prevent data races.
+
+  \begin{itemize}
+    \item Locks' extents constitute their {\bf granularity}---do you lock large sections of your program with a big lock, or do you divide the locks and protect smaller sections?
+  \end{itemize}
+
+  Concerns when using locks:
+
+  \begin{itemize}
+    \item overhead;
+    \item contention; and
+    \item deadlocks.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Locking: Overhead}
+
+  
+
+  Using a lock isn't free. You pay:
+  \begin{itemize}
+    \item allocated memory for the locks;
+    \item initialization and destruction time; and
+    \item acquisition and release time.
+  \end{itemize}
+
+  These costs scale with the number of locks that you have.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Locking: Contention}
+
+  
+    Most locking time is wasted waiting for the lock to become available.
+
+    How can we fix this?
+      \begin{itemize}
+        \item Make the locking regions smaller (more granular);
+        \item Make more locks for independent sections.
+      \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Locking: Deadlocks}
+
+  
+  The more locks you have, the more you have to worry about deadlocks.\\[1em]
+
+  Key condition: \\ 
+\qquad waiting for a lock held by process $X$ \\while holding
+a lock held by process $X'$. ($X = X'$ allowed).
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Formal Deadlock Definition}
+
+The four conditions for deadlock are:
+
+\begin{enumerate}
+	\item \textbf{Mutual Exclusion}
+	\item \textbf{Hold-and-Wait}
+	\item \textbf{No Preemption}
+	\item \textbf{Circular-Wait}
+\end{enumerate}
+
+
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[containsverbatim]
+  \frametitle{Does this look familiar?}
+
+  
+     Consider two processors trying to get two {\it locks}:
+     
+     \vfill
+  \begin{columns}
+    \column{0.4\textwidth}
+      {\bf Thread 1}
+
+      \verb+Get Lock 1+
+
+      \verb+Get Lock 2+
+
+      \verb+Release Lock 2+
+
+      \verb+Release Lock 1+
+    \column{0.4\textwidth}
+      {\bf Thread 2}
+
+      \verb+Get Lock 2+
+
+      \verb+Get Lock 1+
+
+      \verb+Release Lock 1+
+
+      \verb+Release Lock 2+
+    \end{columns}~\\[1em]
+     Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops!
+          They both wait for each other \structure{(deadlock)}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Key to Preventing Deadlock}
+
+  
+
+  Always be careful if \\
+your code {\bf acquires a lock while holding one}.\\[1em]
+
+  Here's how to prevent a deadlock:
+  
+  \begin{itemize}
+    \item Ensure consistent ordering in acquiring locks; or
+    \item Use {\tt trylock}.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Preventing Deadlocks---Ensuring Consistent Ordering}
+
+  
+  \begin{lstlisting}
+void f1() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+
+void f2() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+  \end{lstlisting}
+
+     This code will not deadlock: you can only get {\bf l2} if you have
+      {\bf l1}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Formal Lock Ordering}
+
+
+If the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$:
+
+Assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. 
+
+This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. 
+
+If the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). 
+
+To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. 
+
+If these two protocols are followed, then a circular-wait condition cannot hold.
+
+
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Preventing Deadlocks---Using {\tt trylock}}
+
+  
+  Recall: Pthreads' {\tt trylock} returns 0 if it gets the lock.
+
+  \begin{lstlisting}
+void f1() {
+    lock(&l1);
+    while (trylock(&l2) != 0) {
+        unlock(&l1);
+        // wait
+        lock(&l1);
+    }
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+  \end{lstlisting}
+
+    This code also won't deadlock: it will give up {\bf l1} if it can't get
+    {\bf l2}.\\[1em]
+
+    (BTW: trylocks also enable measuring lock contention.)
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Coarse-Grained Locking (1)}
+
+  \begin{center}
+    \includegraphics[scale=0.5]{images/lock-all-the-things}
+
+    (with one lock)
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Coarse-Grained Locking (2)}
+
+  
+  {\bf Advantages:}
+  
+  \begin{itemize}
+    \item Easier to implement;
+    \item No chance of deadlocking;
+    \item Lowest memory usage / setup time.
+  \end{itemize}
+  \vfill
+  {\bf Disadvantages:}
+  \begin{itemize}
+    \item Your parallel program can quickly become sequential.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Coarse-Grained Locking Example---Python GIL}
+
+  
+  This is the main reason (most) scripting languages have poor parallel
+  performance; Python's just an example.
+
+  \begin{itemize}
+    \item Python puts a lock around the whole interpreter\\ \quad (global interpreter lock).
+
+    \item Only performance benefit you'll see from threading is if a thread is
+      waiting for IO.
+
+    \item Any non-I/O-bound threaded program will be {\bf slower} than the sequential
+      version (plus, it'll slow down your system).
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Fine-Grained Locking (1)}
+
+  \begin{center}
+    \includegraphics[scale=0.5]{images/lock-all-the-things}
+
+    (with all different locks)
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Fine-Grained Locking (2)}
+
+  
+  {\bf Advantages:}
+  
+  \begin{itemize}
+    \item Maximizes parallelization in your program.
+  \end{itemize}
+  \vfill
+  {\bf Disadvantages}
+  \begin{itemize}
+    \item May be mostly wasted memory / setup time.
+    \item Prone to deadlocks.
+    \item Generally more error-prone (be sure you grab the right lock!)
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Fine-Grained Locking Examples}
+
+  
+    The Linux kernel used to have {\bf one big lock}\\ that essentially made
+      the kernel sequential. 
+    \begin{itemize}
+      \item (worked fine for single-processor systems!)
+    \end{itemize}
+    Now uses finer-grained locks for performance.\\[2em]
+
+    Databases may lock fields / records / tables.\\
+    \qquad  (fine-grained $\rightarrow$ coarse-grained).\\[1em]
+
+    Can lock individual objects.
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\section{}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary}
+
+  
+ C++11 memory model.\\
+ 
+ Good increment practice. \\
+
+ Lock granularity.
 
   
 \end{frame}
