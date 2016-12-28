@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 19 --- Cache Coherency }
+\title{Lecture 19 --- Reentrancy, Thread-Safety, Inlining, HLL }
 
-\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
+\author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -16,225 +16,598 @@
  \end{frame}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Reentrancy}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reentrancy}
+
+  
+    $\Rightarrow$ A function can be suspended in the middle and \\ {\bf re-entered}
+      (called again) before the previous execution returns.\\[1em]
+    
+     Does not always mean {\bf thread-safe} (although it usually is).
+      \begin{itemize}
+        \item Recall: {\bf thread-safe} is essentially ``no data races''.
+      \end{itemize}
+ ~\\[1em]
+  Moot point if the function only modifies local data, e.g. {\tt sin()}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example}
+
+  
+
+  Courtesy of Wikipedia (with modifications):
+  \begin{lstlisting}
+int t;
+ 
+void swap(int *x, int *y) {
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example---Explained (a trace)}
+
+  
+  \begin{lstlisting}
+call swap(&a, &b);
+ t = *x;                // t = 3 (a)
+ *x = *y;               // a = 4 (b)
+ call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    t = *x;             // t = 1 (x)
+    *x = *y;            // x = 2 (y)
+    *y = t;             // y = 1
+ *y = t;                // b = 1
+
+Final values:
+a = 4, b = 1
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed}
+
+  
+  \begin{lstlisting}[escapechar=@]
+int t;
+ 
+void swap(int *x, int *y) {
+    int s;
+ 
+    @\alert{s = t}@;  // save global variable
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+    @\alert{t = s}@;  // restore global variable
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed---Explained (a trace)}
+
+  
+  \begin{lstlisting}
+call swap(&a, &b);
+s = t;                 // s = UNDEFINED
+t = *x;                // t = 3 (a)
+*x = *y;               // a = 4 (b)
+call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    s = t;             // s = 3
+    t = *x;            // t = 1 (x)
+    *x = *y;           // x = 2 (y)
+    *y = t;            // y = 1
+    t = s;             // t = 3
+*y = t;                // b = 3
+t = s;                 // t = UNDEFINED
+
+Final values:
+a = 4, b = 3
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Previous Example: thread-safety}
+
+  
+  Is the previous reentrant code also thread-safe?\\
+
+  (This is more what we're concerned about in this course.)\\[1em]
+
+  Let's see:
+  \begin{lstlisting}
+int t;
+
+void swap(int *x, int *y) {
+    int s;
+ 
+    s = t;  // save global variable
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+    t = s;  // restore global variable
+}
+  \end{lstlisting}
+  
+  Consider two calls: {\tt swap(a, b)}, {\tt swap(c, d)} with\\
+  \quad {\tt a = 1, b = 2, c = 3, d = 4}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Previous Example: thread-safety trace}
+
+  
+  \begin{lstlisting}
+global: t
+
+/* thread 1 */                       /* thread 2 */
+a = 1, b = 2;
+s = t;    // s = UNDEFINED
+t = a;    // t = 1
+                                     c = 3, d = 4;
+                                     s = t;    // s = 1
+                                     t = c;    // t = 3
+                                     c = d;    // c = 4
+                                     d = t;    // d = 3
+a = b;    // a = 2
+b = t;    // b = 3
+t = s;    // t = UNDEFINED
+                                     t = s;    // t = 1
+
+Final values:
+a = 2, b = 3, c = 4, d = 3, t = 1
+
+Expected values:
+a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reentrancy vs Thread-Safety (1)}
+
+  
+  \begin{itemize}
+    \item Re-entrant does not always mean thread-safe (as we saw)
+      \begin{itemize}
+        \item But, for most sane implementations, it is thread-safe
+      \end{itemize}
+  \end{itemize}~\\[1em]
+
+  Ok, but are {\bf thread-safe} functions reentrant?
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy vs Thread-Safety (2)}
+
+  
+  Are {\bf thread-safe} functions reentrant? \alert{Nope.} Consider:
+
+  \begin{lstlisting}
+int f() {
+    lock();
+    // protected code
+    unlock();
+}
+  \end{lstlisting}
+
+  Recall: {\bf Reentrant functions can be suspended in the middle of execution
+    and called again before the previous execution completes.}\\[1em]
+
+  {\tt f()} obviously isn't reentrant. Plus, it will deadlock.\\[1em]
+
+  Interrupt handling is more for systems programming, so the topic of reentrancy may or may not come
+  up again.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary of Reentrancy vs Thread-Safety}
+
+  
+  Difference between reentrant and thread-safe functions:\\[1em]
+
+  {\bf Reentrancy}
+  \begin{itemize}
+    \item Has nothing to do with threads---assumes a {\bf single thread}.
+    \item Reentrant means the execution can context switch at any point in
+      in a function, call the {\bf same function}, and {\bf complete} before
+      returning to the original function call.
+    \item Function's result does not depend on where the context switch happens.
+  \end{itemize}
+  \vfill
+  {\bf Thread-safety}
+  \begin{itemize}
+    \item Result does not depend on any interleaving of threads from
+      concurrency or parallelism.
+    \item No unexpected results from multiple concurrent executions of the function.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Another Definition of Thread-Safe Functions}
+
+  
+
+\begin{quote}
+  ``A function whose effect, when called by two or more threads, is guaranteed to
+  be as if the threads each executed the function one after another, in an
+  undefined order, even if the actual execution is interleaved.''
+\end{quote}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Good Example of an Exam Question}
+
+  
+
+  \begin{lstlisting}
+void swap(int *x, int *y) {
+    int t;
+    t = *x;
+    *x = *y;
+    *y = t;
+}  
+  \end{lstlisting}
+  \vfill
+  \begin{itemize}
+    \item Is the above code thread-safe?
+    \vfill
+    \item Write some expected results for running two calls in parallel.
+    \vfill
+    \item Argue these expected results always hold, or show an example where
+      they do not.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Good Practices}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Inlining}
+
+  
+
+  We have seen the notion of inlining:
+  \begin{itemize}
+    \item Instructs the compiler to just insert the function code in-place,
+      instead of calling the function.
+    \item Hence, no function call overhead!
+    \item Compilers can also do better---context-sensitive---operations they couldn't
+      have done before.
+  \end{itemize}
+  \vfill
+  No overhead\ldots~ sounds like better performance\ldots~ \\let's inline everything!
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Inlining in C++}
+
+  
+  Implicit inlining (defining a function inside a class definition):
+  \begin{lstlisting}
+class P {
+public:
+    int get_x() const { return x; }
+...
+private:
+    int x;
+};
+  \end{lstlisting}
+  \vfill
+Explicit inlining:
+  \begin{lstlisting}
+inline max(const int& x, const int& y) {
+    return x < y ? y : x;
+}
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{The Other Side of Inlining}
+
+  
+
+  One big downside:
+  \begin{itemize}
+    \item Your program size is going to increase.
+  \end{itemize}
+   This is worse than you think:
+      \begin{itemize}
+        \item Fewer cache hits.
+        \item More trips to memory.
+      \end{itemize}
+   Some inlines can grow very rapidly (C++ extended constructors).\\[1em]
+  Just from this your performance may go down easily.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Compilers on Inlining}
+
+  
+
+  Inlining is merely a suggestion to compilers.\\
+  They may ignore you.\\[1em]
+
+  For example:
+n  \begin{itemize}
+    \item taking the address of an ``inline'' function and using it; or
+    \item virtual functions (in C++),
+  \end{itemize}
+  will get you ignored quite fast.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{From a Usability Point-of-View}
+
+  
+  Debugging is more difficult (e.g. you can't set a breakpoint in a function that
+  doesn't actually exist).
+  \begin{itemize}
+    \item Most compilers simply won't inline code with debugging symbols on.
+    \item Some do, but typically it's more of a pain.
+  \end{itemize}~\\[1em]
+
+  Library design:
+  \begin{itemize}
+    \item If you change any inline function in your library, any users
+      of that library have to {\bf recompile} their program if the
+      library updates. (non-binary-compatible change!)
+  \end{itemize}
+  Not a problem for non-inlined functions---programs execute the new function
+      dynamically at runtime.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
   \frametitle{Introduction}
 
-  \begin{center}
-    \includegraphics[scale=0.7]{images/coherency}
-
-    Image courtesy of Wikipedia.
-  \end{center}
-
   
-  {\bf Coherency:}
-  \begin{itemize}
-    \item Values in all caches are consistent;
-    \item System behaves as if all CPUs are using shared memory.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    So far, we've only seen C---we haven't seen anything 
+      complex.\\[1em]
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Cache Coherence Example}
+    C is low level, which is good for learning what's
+    really going on.\\[2em]
 
-  
-  Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache.
-    \item {\tt CPU3} reads x, puts the value in its cache.
-    \item {\tt CPU3} modifies {\tt x := 42}
-    \item {\tt CPU1} reads x \ldots ~from its cache?
-    \item {\tt CPU2} reads x. Which value does it get?
-  \end{enumerate}
-  ~\\
-
-  Unless we do something, {\tt CPU1} is going to read invalid data.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{Snoopy Caches}
-
-The simplest way to ``do something''
-is to use Snoopy caches. 
-
-No, not this kind of Snoopy (sadly):
-
-\begin{center}
-	\includegraphics[width=0.25\textwidth]{images/peanuts-snoopy1.jpg}
-\end{center}
-
-
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{High-Level Explanation of Snoopy Caches}
-
-  
-  \begin{itemize}
-    \item Each CPU is connected to a simple bus.
-    \item Each CPU ``snoops'' to observe if a memory location is read or written
-      by another CPU.
-    \item We need a cache controller for every CPU.
-  \end{itemize}
-  ~\\
-  {\bf What happens?}
-
-  \begin{itemize}
-    \item Each CPU reads the bus to see if any memory operation is relevant. If
-      it is, the controller takes appropriate action.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{A Distributed Approach}
-
-
-This is a distributed approach; no centralized state is maintained. 
-
-Each cache with a copy of data from a block of physical memory knows whether it is shared or not. 
-
-Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. 
-
-If it is, then the CPU will need to take action.
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Through Cache}
-
-  
-Simplest type of cache coherence:
-  \begin{itemize}
-    \item All cache writes are done to main memory.
-    \item All cache writes also appear on the bus.
-    \item If another CPU snoops and sees it has the same location in
-      its cache, it will either {\it invalidate} or {\it update} the
-      data.\\ \qquad (We'll be looking at invalidating.)
-  \end{itemize}
-~\\
-
-    For write-through caches: normally, when you write to an invalidated
-    location, you bypass the cache and go directly to memory (aka {\bf
-      write no-allocate}).
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{In-val-i-daaaaaate!}
-
-Invalidation is the most common protocol. 
-
-It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  
-
-Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). 
-
-If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. 
-
-This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. 
-
-Regardless, the most recent value appears in memory, always.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Let's Yell}
-
-There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. 
-
-But it uses lots of bandwidth and is not necessarily a good idea. 
-
-It does, however prevent the costly cache miss that follows an invalidate. 
-
-Sadly, as we are mere users and not hardware architects, we don't get to decide; we just have to live with whichever one is on the hardware we get. Bummer.
-
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Through Protocol}
-
-  
-  \begin{itemize}
-    \item Two states, {\bf valid} and {\bf invalid}, for each memory location.
-    \item Events are either from a processor ({\bf Pr}) or the {\bf Bus}.
-  \end{itemize}
-  \vfill
-  \begin{center}
-    \begin{tabular}{llll}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
-      Valid   & PrRd  &       & Valid\\
-      Valid   & PrWr  & BusWr & Valid\\
-      Valid   & BusWr &       & Invalid\\
-      Invalid & PrWr  & BusWr & Valid\\
-      Invalid & PrRd  & BusRd & Valid\\
-    \end{tabular}
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Through Protocol Example}
-
-  
-
-  \begin{itemize}
-    \item For simplicity (this isn't an architecture course), assume all cache
-      reads/writes are atomic.
-  \end{itemize}
-  \vfill
-  {\bf Using the same example as before:}
-
-  Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache. \structure{(valid)}
-    \item {\tt CPU3} reads x, puts the value in its cache. \structure{(valid)}
-    \item {\tt CPU3} modifies {\tt x := 42}. \structure{(write to memory)}
+    Writing compact, readable code in C is hard. \\ Common C sights:
       \begin{itemize}
-        \item \structure{{\tt CPU1} snoops and marks data as invalid.}
+        \item {\bf \#define macros}
+        \item {\bf void*}
       \end{itemize}
-    \item {\tt CPU1} reads x, \structure{from main memory. (valid)}
-    \item {\tt CPU2} reads x, \structure{from main memory. (valid)}
-  \end{enumerate}
+    C++11 has made major strides towards readability and efficiency
+      (it provides light-weight abstractions).
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Sorting}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Goal}
+
+
+  
+  Sort a bunch of integers.\\[1em]
+  In {\bf C}, usually use qsort from {\tt stdlib.h}.
+
+  \begin{lstlisting}
+void qsort (void* base, size_t num, size_t size,
+            int (*comparator) (const void*, const void*));
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item A fairly ugly definition (as usual, for generic C functions)
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{How ugly? {\tt qsort} usage}
+
+  
+  \begin{lstlisting}
+#include <stdlib.h>
+
+int compare(const void* a, const void* b)
+{
+    return (*((int*)a) - *((int*)b));
+}
+
+int main(int argc, char* argv[])
+{
+    int array[] = {4, 3, 5, 2, 1};
+    qsort(array, 5, sizeof(int), compare);
+}
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item This looks like a nightmare, and is more likely to have bugs.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{C++ {\tt sort}}
+
+  
+  C++ has a sort with a much nicer interface\footnote{\ldots nicer to use, after you get over templates (they're useful, I swear).}$\ldots$
+
+  \begin{lstlisting}
+template <class RandomAccessIterator>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last
+);
+
+template <class RandomAccessIterator, class Compare>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last,
+    Compare comp
+);
+  \end{lstlisting}
+  
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{C++ {\tt sort} Usage}
+
+  
+  \begin{lstlisting}
+#include <vector>
+#include <algorithm>
+
+int main(int argc, char* argv[])
+{
+    std::vector<int> v = {4, 3, 5, 2, 1};
+    std::sort(v.begin(), v.end());
+}
+  \end{lstlisting}
+  \vfill
+
+  {\bf Note:} Your compare function can be a function or a functor. \\By~default,
+  {\tt sort} uses {\tt operator$<$} on the objects being sorted.
+
+  \begin{itemize}
+    \item Which is less error prone?
+    \item Which is {\bf faster}?
+  \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Write-Back Cache}
+  \frametitle{Timing Various Sorts}
 
+  
+  \begin{center}
+    [Shown: actual runtimes of {\tt qsort} vs {\tt sort}]\\[1em]
+  \end{center}
+
+     The C++ version is {\bf twice} as fast. Why?
+      \begin{itemize}
+        \item The C version just operates on memory---it has no clue about the
+          data.
+        \item We're throwing away useful information about what's being sorted.
+        \item A C function-pointer call prevents inlining of the compare function.
+      \end{itemize}
+     OK. What if we write our own sort in C, specialized for the data?
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Custom Sort}
+
+
+  \begin{center}
+    [Shown: actual runtimes of custom sort vs {\tt sort}]
+  \end{center}
 
   \begin{itemize}
-    \item What if, in our example, {\tt CPU3} writes to {\tt x} 3 times?\\[1em]
-    \item Main goal: delay the write to memory as long as possible.\\[1em]
-    \item At minimum, we have to add a ``dirty'' bit:\\
-     \quad Indicates the our data has not yet been written to memory.
+    \item The C++ version is still faster (although it's close).
+    \item However, this is quickly going to become a maintainability nightmare.
+      \begin{itemize}
+        \item Would you rather read a custom sort or 1 line?
+        \item What (who) do you trust more?
+      \end{itemize}
   \end{itemize}
   
 
@@ -243,207 +616,198 @@ Sadly, as we are mere users and not hardware architects, we don't get to decide;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Write-Back Implementation}
-
+  \frametitle{Lesson}
   
-     The simplest type of write-back protocol (MSI), with 3 states:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; \\
-          \quad main memory is {\bf out-of-date}.
-        \item {\bf Shared}---location is unmodified, \\
-          \quad up-to-date with main
-          memory; \\
-          \quad may be present in other caches (also up-to-date).
-        \item {\bf Invalid}---same as before.
-      \end{itemize}~\\
+\Huge
+    Abstractions will not make your program slower. \\[1em]
+
+    They 
+      allow speedups and are much easier to maintain and read.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Lecture Fun}
+
+  \begin{center}
+\Large
+    Let's throw Java-style programming (or at least collections) into the mix and see what happens.
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Vectors vs. Lists}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Vectors vs. Lists: Problem}
+  
+  
+
+    1. Generate {\bf N} random integers and insert them into (sorted)
+      sequence.
       
-     Initial state, upon first read, is ``shared''.\\[1em]
-
-     Implementation will only write the data to memory if another
-        processor requests it.\\[1em]
-
-     During write-back, a processor may read the data from the bus.
   
+
+      {\bf Example:} 3 4 2 1
+      
+      \begin{itemize}
+        \item 3
+        \item 3 4
+        \item 2 3 4
+        \item 1 2 3 4
+      \end{itemize}
+  
+
+    2. Remove {\bf N} elements one at a time by going to a random position
+      and removing the element.
+
+  
+      {\bf Example:} 2 0 1 0
+      
+      \begin{itemize}
+        \item 1 2 4
+        \item 2 4
+        \item 2
+        \item 
+      \end{itemize}
+  
+  For which {\bf N} is it better to use a list than a vector (or array)?
+  
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{MSI Protocol}
-
+  \frametitle{Complexity}
   
   \begin{itemize}
-    \item Bus write-back (or flush) is {\bf BusWB}.
-    \item Exclusive read on the bus is {\bf BusRdX}.
-  \end{itemize}~\\
+    \item {\bf Vector}
+      \begin{itemize}
+        \item Inserting
+          \begin{itemize}
+            \item $O(\log n)$ for binary search
+            \item $O(n)$ for insertion (on average, move half the elements)
+          \end{itemize}
+        \item Removing
+          \begin{itemize}
+            \item $O(1)$ for accessing
+            \item $O(n)$ for deletion (on average, move half the elements)
+          \end{itemize}
+      \end{itemize}
 
+    \item {\bf List}
+      \begin{itemize}
+        \item Inserting
+          \begin{itemize}
+            \item $O(n)$ for linear search
+            \item $O(1)$ for insertion
+          \end{itemize}
+        \item Removing
+          \begin{itemize}
+            \item $O(n)$ for accessing
+            \item $O(1)$ for deletion
+          \end{itemize}
+      \end{itemize}
+  \end{itemize}
+  \vfill
+  Therefore, based on their complexity, lists should be better.
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reality}
+  
   \begin{center}
-    \begin{tabular}{llll}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
-      Modified   & PrRd   &        & Modified\\
-      Modified   & PrWr   &        & Modified\\
-      Modified   & BusRd  & BusWB  & Shared\\
-      Modified   & BusRdX & BusWB  & Invalid\\
-      Shared     & PrRd   &        & Shared\\
-      Shared     & BusRd  &        & Shared\\
-      Shared     & BusRdX &        & Invalid\\
-      Shared     & PrWr   & BusRdX & Modified\\
-      Invalid    & PrRd   & BusRd  & Shared\\
-      Invalid    & PrWr   & BusRdX & Modified\\
-    \end{tabular}
+    [Shown: actual runtimes of vectors and lists]
   \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{MSI Example}
 
   
-
-  {\bf Using the same example as before:}
-
-  Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x from memory. \structure{(BusRd, shared)}
-    \item {\tt CPU3} reads x from memory. \structure{(BusRd, shared)}
-    \item {\tt CPU3} modifies {\tt x = 42}:
-      \begin{itemize}
-        \item \structure{Generates a BusRdX.}
-        \item \structure{{\tt CPU1} snoops and invalidates x.}
-        \item \structure{{\tt CPU3} changes {\tt x}'s state to modified.}
-      \end{itemize}
-    \item {\tt CPU1} reads x:
-      \begin{itemize}
-        \item \structure{Generates a BusRd.}
-        \item \structure{{\tt CPU3} writes back the data and sets x to shared.}
-        \item \structure{{\tt CPU1} reads the new value from the bus as shared.}
-      \end{itemize}
-    \item {\tt CPU2} reads x from memory. \structure{(BusRd, shared)}
-  \end{enumerate}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{An Extension to MSI: MESI}
-
-  
-    The most common protocol for cache coherence is MESI.\\[1em]
-    Adds another state:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; \\
-\qquad main memory is {\bf out-of-date}.
-        \item {\bf Exclusive}---only this cache has a valid copy; \\
-\qquad main memory is {\bf up-to-date}.
-        \item {\bf Shared}---same as before.
-        \item {\bf Invalid}---same as before.
-      \end{itemize}
-~\\
-
-    MESI allows a processor to modify data exclusive to it, \\without
-      having to communicate with the bus.\\
-    MESI is \structure{safe}: in E state, no other processor has the
-      data.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Even More States!}
-
-  
-    MESIF (used in latest i7 processors):
-      \begin{itemize}
-        \item {\bf Forward}---basically a shared state; but, current
-          cache is the only one that will respond to a request to
-          transfer the data.
-      \end{itemize}~\\[1em]
-
-    Hence: a processor requesting data that is already shared or exclusive will
-      only get one response transferring the data.\\[1em]
-    Permits more efficient usage of the bus.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Good Questions (1)}
-
-  
-  {\bf Cache coherency seems to make sure my data is consistent. Why do I have
-    to have something like flush or fence?}
+  {\bf Vectors} dominate lists, performance wise. Why?
+  \vfill
   \begin{itemize}
-    \item You might be ok, if all of the writes on processors are to the
-      cache. But they're not!
-    \item Cache coherency won't update any values modified in registers.
+    \item Binary search vs. linear search complexity dominates.
+    \vfill
+    \item Lists use far more memory.
+
+      {\bf On 64 bit machines:}
+      \begin{itemize}
+        \item Vector: 4 bytes per element.
+        \item List: At least 20 bytes per element.
+      \end{itemize}
+    \vfill
+    \item Memory access is slow, and results arrive in blocks:
+      \begin{itemize}
+        \item Lists' elements are all over memory, hence many
+          cache misses.
+        \item A cache miss for a vector will bring a lot more usable data.
+      \end{itemize}
   \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Good Questions (2)}
+\begin{frame}
+  \frametitle{Performance Tips: Bullets}
 
   
-  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
-    so then am I okay?}
-  \vspace{6.2em}
-  \pause
-
-  \begin{center}
-    \includegraphics[scale=0.3]{images/disapproval}    
-  \end{center}
+  \begin{itemize}
+    \item Don't store unnecessary data in your program.
+    \vfill
+    \item Keep your data as compact as possible.
+    \vfill
+    \item Access memory in a predictable manner.
+    \vfill
+    \item Use vectors instead of lists by default.
+    \vfill
+    \item Programming abstractly can save a lot of time.
+  \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+\section{}
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Good Questions (2)}
+\begin{frame}
+  \frametitle{Summary (Reentrancy)}
 
-  
-  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
-    so then am I okay?}\\[1em]
 
-    {\tt volatile} in C was only designed to:
+  \begin{itemize}
+    \item Reentrancy vs thread-safety.
+    \item Inlining: limit your inlining to trivial functions:
       \begin{itemize}
-        \item Allow access to memory mapped devices.
-        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
-        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
-      \end{itemize}~\\[1em]
-    Remember, things can also be reordered by the compiler,
-      {\tt volatile} doesn't prevent this.\\[1em]
-    Also, it's likely your variables could be in registers the majority
-      of the time, except in critical areas.
+        \item makes debugging easier and improves usability;
+        \item won't slow down your program before you even start optimizing it.
+      \end{itemize}
+    \item Tell the compiler high-level information but think low-level.
+  \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Cache Coherency Summary}
+  \frametitle{Programming for Performance with the Compiler}
 
   
-    We saw the basics of cache coherence (good to know, but more of an architecture
-      thing).\\[1em]
-    There are many other protocols for cache coherence, each with their own
-      trade-offs.\\[1em]
 
-     Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
-      compiler and hardware don't reorder reads and writes.\\[1em]
-    \begin{itemize}
-     \item Neither cache coherence nor {\tt volatile} will save you.
-    \end{itemize}
-
-Barriers/fences/flushes might be expensive in terms of ``wasting time'', but correctness is important.
-
+  \begin{itemize}
+    \item Often, telling the compiler more gives you better code.
+    \vfill
+    \item Data structures can be critical, sometimes more than complexity.
+    \vfill
+    \item {\bf Low-level code != Efficient}.
+    \vfill
+    \item Think at a low level if you need to optimize anything.
+    \vfill
+    \item Readable code is good code---\\ different hardware needs different
+      optimizations.
+  \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

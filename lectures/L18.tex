@@ -2,308 +2,226 @@
 
 \begin{document}
 
-\lecture{18 --- C/C++11 Memory Model}{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{18 --- Cache Coherency}{\term}{Patrick Lam \& Jeff Zarnett}
 
-\section*{C/C++11 Memory Model}
+\section*{Cache Coherency}
 
-We have talked about memory models in the context of OpenMP. Let's
-talk about the core languages now---that is, C and C++~\cite{quora:cppthr, cppconcurrency}---when
-not using OpenMP.
+\begin{center}
+    \includegraphics[width=0.5\textwidth]{images/coherency}
 
-What outputs are possible from this example?
+\hfill ---Wikipedia
+\end{center}
 
-\begin{tabular}{ll}
-      \begin{minipage}{.2\textwidth}
-        Thread 1:
-        \begin{verbatim}
-  foo = 7;
-  bar = 42;
-        \end{verbatim}
-      \end{minipage} &
-      \begin{minipage}{.4\textwidth}
-        Thread 2:
-        \begin{verbatim}
-  printf("%d\n", foo);
-  printf("%d\n", bar);
-        \end{verbatim}
-      \end{minipage}
-\end{tabular}
+We talked about memory ordering and fences last time.  Today we'll
+look at what support the architecture provides for memory ordering, in
+particular in the form of cache coherence. Since this isn't an
+architecture course, we'll look at this material more from the point
+of view of a user, not an implementer.
 
-You might think ``undefined'', but actually it's worse than that. The 
-C11 and C++11 language definitions don't even say what a thread is.
-Of course, there is Pthreads, but that is a library, not the language itself.
-So you can't even ask this question when talking about pre-C11/C++11 versions
-of C and C++. Well. Okay. You can ask, but the question makes no sense. Sort of like
-putting your hand up in class and saying ``Where did you bury your oranges?''.
-It's a syntactically valid question and it describes something that's possible,
-but it still makes no sense.
+The problem is of course that each CPU might have its own cache and if it does then these data may be out of sync. The simplest method, and a horrible solution, is to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?...). The compiler and OS and such will require the data to be read from memory always. Think of this as being like \texttt{volatile} (which prevented a variable from being put in a register), just moved up a level to preventing the variable from being put in a cache. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is coherency.
 
-The older standards made no reference to any kind of CPU, memory architecture, cache
-strategy, or anything like that. Which on the one hand is nice and general, but on the other hand, it leads to problems. The ``abstract machine'' that the C and C++ standards refer to is inherently single threaded, making it actually impossible to write a portable multithreaded C or C++ program~\cite{quora:cppthr}. The part that's impossible is that word ``portable'' -- people write multithreaded C and C++ programs all the time (in this class, even) but they have system specific code and implementation-defined behaviour. Open up a pthreads library or some equivalent and sure enough, you will find something architecture specific in there.
-
-C++11 (and C11) have improved the situation, though. There is actually
-a memory model (based on an abstract machine) and threading primitives
-such as mutexes, atomics, and memory barriers---the concepts that we
-have seen in this course. Now there are rules! Yes. We like rules. Okay. I, at least, like rules. C++11 defines how a compiler can generate code that accesses memory even when there is concurrency. There are also standard mutex operations and atomics and barriers and all those lovely things.
-
-Now, we can ask the question about the behaviour of the above example.
-It does have undefined behaviour, since there is contended access to
-the variables {\tt foo} and {\tt bar}. How can we fix that?
-
-\paragraph{Atomics.}
-A good exam question: if {\tt foo} is atomic, what are the possible outputs? 
-    
-    \begin{tabular}{ll}
-      \begin{minipage}{.25\textwidth}
-        Thread 1:
-        \begin{verbatim}
-  foo.store(7);
-  bar.store(42);
-        \end{verbatim}
-      \end{minipage} &
-      \begin{minipage}{.45\textwidth}
-        Thread 2:
-        \begin{verbatim}
-  printf("%d\n", foo.load());
-  printf("%d\n", bar.load());
-        \end{verbatim}
-      \end{minipage}
-    \end{tabular}
-
-Alright, we have some defined behaviour now.  Honestly, it depends how these things are scheduled, but the answer is one of the following set: \{0/0, 7/42, 7/0,  0/42\}. The answer depends on how they are interleaved. But at least we get some certainty that the output will be one of those four things and there's no chance of garbage because the print takes place during an assignment operation. 
-
-We probably still don't like this because we don't have mutual exclusion here and we can get several different answers, some of which are probably ``wrong'' (for whatever definition of a correct answer is), but at least our set of potential wrong answers is smaller. So that's a start. Compilers have to follow the new rules in generating code, so their output will behave as if the architecture followed the standard memory model. That's something. 
-
-\section*{Good C++ Practice}
-Lots of people use postfix ({\tt i++}) out of habit, but prefix ({\tt ++i}) is better.
-
-In C, this isn't a problem. 
-In some languages (like C++), it can be.
-
-\paragraph{Why? Overloading.} In C++, you can overload the {\tt ++} and {\tt --} operators.
-
-  \begin{verbatim}
-class X {
-public:
-  X& operator++();
-  const X operator++(int);
-...
-};
-
-X x;
-++x; // x.operator++();
-x++; // x.operator++(0);
-  \end{verbatim}
-
-Prefix is also known as {\bf increment and fetch}, and might be implemented like this:
-  \begin{verbatim}
-X& X::operator++() {
-  *this += 1;
-  return *this;
-}
-  \end{verbatim}
-
-  Postfix is also known as {\bf fetch and increment}. Note that you have to make a copy of
-the old value:
-  \begin{verbatim}
-const X X::operator++(int) {
-  const X old = *this;
-  ++(*this);
-  return old;
-}
-  \end{verbatim}
-
-So, if you're the least concerned about efficiency (and why else would you be
-taking programming for performance?), always use
-  \emph{prefix} increments/decrements instead of defaulting to postfix. This isn't really an issue if the operator is in a statement all on its own (e.g. a standalone line, or the last part of a for loop) because the compiler is (presumably) smart enough to know that this can be optimized as the return value is not assigned. Only use {\tt postfix} when you really mean it, to be on the safe side.
+Cache coherency means that:
+  \begin{itemize}
+    \item the values in all caches are consistent; and
+    \item to some extent, the system behaves as if all CPUs are using shared memory.
+  \end{itemize}
   
-Mind you, if you're doing something like \texttt{array[i++]} or something similarly ``clever'', you might want to think twice about this. There's a lot of potential for error or misunderstanding in a code review. Remember, clever is hard to grep for.
 
-\section*{Locking Granularity}
+\paragraph{Cache Coherence Example.} We will use this example to illustrate
+different cache coherence algorithms and how they handle the same situation.
 
-Alright, we already know that locks prevent data races. If this is news to you, how did you pass the operating systems course?! So we need to use them to prevent data races, but it's not as simple as it sounds. We have choices about the granularity of locking, and it is a trade-off (like always).
+Initially in main memory: {\tt x = 7}.
 
-\textit{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. \textit{
-Fine-grained locking} requires more careful design,
-increases locking overhead and is more prone to bugs (deadlock etc).  
-Locks' extents constitute their {\it granularity}. In coarse-grained locking, you
-lock large sections of your program with a big lock; in fine-grained
-locking, you divide the locks and protect smaller sections with multiple smaller locks.
+  \begin{enumerate}
+    \item {\tt CPU1} reads x, puts the value in its cache.
+    \item {\tt CPU3} reads x, puts the value in its cache.
+    \item {\tt CPU3} modifies {\tt x := 42}
+    \item {\tt CPU1} reads x \ldots ~from its cache?
+    \item {\tt CPU2} reads x. Which value does it get?
+  \end{enumerate}
 
-We'll discuss three major concerns when using locks:
+Unless we do something, {\tt CPU1} is going to read invalid data.
+
+\paragraph{High-Level Explanation of Snoopy Caches.} The simplest way to ``do something''
+is to use Snoopy caches~\cite{snoopycache}. No, not this kind of Snoopy (sadly):
+
+\begin{center}
+	\includegraphics[width=0.25\textwidth]{images/peanuts-snoopy1.jpg}
+\end{center}
+
+This is a distributed approach; no centralized state is maintained. Each cache with a copy of data from a block of physical memory knows whether it is shared or not. All the CPUs are connected to a shared bus, and each CPU has its own cache controller. Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. If it is, then the CPU will need to take action.
+
+
+\subsection*{Write-Through Caches}
+Let's put that into practice using write-through caches, the simplest type of
+cache coherence.
   \begin{itemize}
-    \item overhead;
-    \item contention; and
-    \item deadlocks.
+    \item All cache writes are done to main memory.
+    \item All cache writes also appear on the bus.
+    \item If another CPU snoops and sees it has the same location in
+      its cache, it will either {\it invalidate} or {\it update} the
+      data.
   \end{itemize}
-We aren't even talking about under-locking (i.e., remaining race conditions). We'll assume there are adequate locks and that data accesses are protected. 
+  
+Invalidation is the most common protocol. It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. Regardless, the most recent value appears in memory, always.
 
-\paragraph{Lock Overhead.}
-  Using a lock isn't free. You pay:
-  \begin{itemize}
-    \item allocated memory for the locks;
-    \item initialization and destruction time; and
-    \item acquisition and release time.
-  \end{itemize}
-  These costs scale with the number of locks that you have.
+There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. But it uses lots of bandwidth and is not necessarily a good idea. It does, however prevent the costly cache miss that follows an invalidate. Sadly, as we are mere users and not hardware architects, we don't get to decide which is better; we just have to live with whichever one is on the hardware we get to use. Bummer.
 
-\paragraph{Lock Contention.}
- Most locking time is wasted waiting for the lock to become available.
-We can fix this by:
+\paragraph{Write-Through Protocol.}
+The protocol for implementing such caches looks like this.
+There are two possible states, {\bf valid} and {\bf invalid}, for each cached memory location.
+Events are either from a processor ({\bf Pr}) or the {\bf Bus}. Actions will be either a \textbf{Rd} (read) or \textbf{Wr} (write).
+We then implement the following state machine.
+
+  \begin{center}
+    \begin{tabular}{l|l|l|l}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\ \hline
+      Valid   & PrRd  &       & Valid\\
+      Valid   & PrWr  & BusWr & Valid\\
+      Valid   & BusWr &       & Invalid\\
+      Invalid & PrWr  & BusWr & Valid\\
+      Invalid & PrRd  & BusRd & Valid\\
+    \end{tabular}
+  \end{center}
+
+\paragraph{Example.} For simplicity (this isn't an architecture course), assume all cache
+      reads/writes are atomic. \footnote{If you're a hardware person, this line probably makes you cry. There's a whole lot that goes into making this work. There are potential write races, which have to be dealt with by contending for the bus and then completing the transaction, possibly restarting a command if necessary. If we have a split transaction bus it's really ugly, because we can have multiple interleaved misses. And down the rabbit hole we go.} Using the same example as before:
+
+Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x, puts the value in its cache. {(valid)}
+    \item {\tt CPU3} reads x, puts the value in its cache. {(valid)}
+    \item {\tt CPU3} modifies {\tt x := 42}. {(write to memory)}
       \begin{itemize}
-        \item making the locking regions smaller (more granular); or
-        \item making more locks for independent sections.
+        \item {{\tt CPU1} snoops and marks data as invalid.}
+      \end{itemize}
+    \item {\tt CPU1} reads x, {from main memory. (valid)}
+    \item {\tt CPU2} reads x, {from main memory. (valid)}
+  \end{enumerate}
+
+\subsection*{Write-Back Caches}
+Let's try to improve performance. What if, in our example, {\tt CPU3} writes to {\tt x} 3 times? It's unpleasant to have to flush that to memory three times when we could do it only once. Let's try to delay the write to memory as long as possible. At minimum, we have to add a ``dirty'' bit, which indicates the our data has not yet been written to memory.
+
+\paragraph{Write-Back Implementation.}
+     The simplest type of write-back protocol (MSI) uses 3 states instead of 2:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; 
+          main memory is {\bf out-of-date}.
+        \item {\bf Shared}---location is unmodified, 
+           up-to-date with main
+          memory; 
+          \quad may be present in other caches (also up-to-date).
+        \item {\bf Invalid}---same as before.
+      \end{itemize}
+      
+The initial state for a memory location, upon its first read, is ``shared''.
+The implementation will only write the data to memory if another
+processor requests it.
+During write-back, a processor may read the data from the bus.
+
+\paragraph{MSI Protocol.} Here, bus write-back (or flush) is {\bf BusWB}.
+Exclusive read on the bus is {\bf BusRdX}.
+
+\begin{center}
+    \begin{tabular}{l|l|l|l}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\ \hline
+      Modified   & PrRd   &        & Modified\\
+      Modified   & PrWr   &        & Modified\\
+      Modified   & BusRd  & BusWB  & Shared\\
+      Modified   & BusRdX & BusWB  & Invalid\\
+      Shared     & PrRd   &        & Shared\\
+      Shared     & BusRd  &        & Shared\\
+      Shared     & BusRdX &        & Invalid\\
+      Shared     & PrWr   & BusRdX & Modified\\
+      Invalid    & PrRd   & BusRd  & Shared\\
+      Invalid    & PrWr   & BusRdX & Modified\\
+    \end{tabular}
+\end{center}
+
+\paragraph{MSI Example.} Using the same example as before:
+
+Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x from memory. {(BusRd, shared)}
+    \item {\tt CPU3} reads x from memory. {(BusRd, shared)}
+    \item {\tt CPU3} modifies {\tt x = 42}:
+      \begin{itemize}
+        \item {Generates a BusRdX.}
+        \item {{\tt CPU1} snoops and invalidates x.}
+      \end{itemize}
+    \item {\tt CPU1} reads x:
+      \begin{itemize}
+        \item {Generates a BusRd.}
+        \item {{\tt CPU3} writes back the data and sets x to shared.}
+        \item {{\tt CPU1} reads the new value from the bus as shared.}
+      \end{itemize}
+    \item {\tt CPU2} reads x from memory. {(BusRd, shared)}
+  \end{enumerate}
+
+\subsection*{An Extension to MSI: MESI}
+    The most common protocol for cache coherence is MESI.
+    This protocol adds yet another state:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; 
+ main memory is {\bf out-of-date}.
+        \item {\bf Exclusive}---only this cache has a valid copy; 
+ main memory is {\bf up-to-date}.
+        \item {\bf Shared}---same as before.
+        \item {\bf Invalid}---same as before.
       \end{itemize}
 
-\paragraph{Deadlocks.} Finally, the more locks you have, the more you have to worry about deadlocks.
+    MESI allows a processor to modify data exclusive to it, without
+    having to communicate with the bus.  MESI is safe. The key is that
+    if memory is in the E state, no other processor has the data.
 
-As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
+\subsection*{MSEIF: Even More States!}
 
-Okay, in a formal sense, the four conditions for deadlock are:
+    MESIF (used in latest i7 processors):
+      \begin{itemize}
+        \item {\bf Forward}---basically a shared state; but, current
+          cache is the only one that will respond to a request to
+          transfer the data.
+      \end{itemize}
 
-\begin{enumerate}
-	\item \textbf{Mutual Exclusion}: A resource belongs to, at most, one process at a time.
-	\item \textbf{Hold-and-Wait}: A process that is currently holding some resources may request additional resources and may be forced to wait for them.
-	\item \textbf{No Preemption}: A resource cannot be ``taken'' from the process that holds it; only the process currently holding that resource may release it.
-	\item \textbf{Circular-Wait}: A cycle in the resource allocation graph.
-\end{enumerate}
+    Hence: a processor requesting data that is already shared or exclusive will
+      only get one response transferring the data. This permits more efficient usage of the bus.
 
+\subsection*{Cache coherence vs flush}
 
-Consider, for instance, two processors trying to get two locks.
+\begin{quote}
+Cache coherency seems to make sure my data is consistent. Why do I have
+to have something like flush or fence?
+\end{quote}
 
-\begin{center}
-  \begin{tabular}{ll}
-\begin{minipage}{.4\textwidth}
-      {\bf Thread 1}
+Sadly, no. Cache coherence isn't enough. Writes may be to registers rather than
+memory, and those won't be coherent. Use fences or flushes.
 
-      \verb+Get Lock 1+
+\begin{quote}
+Well, I read that {\tt volatile} variables aren't stored in registers,
+    so then am I okay?
+\end{quote}
 
-      \verb+Get Lock 2+
+Again, sadly, no. Recall that {\tt volatile} in C was only designed to~\cite{pr:volatile}:
+      \begin{itemize}
+        \item Allow access to memory mapped devices.
+        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
+        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
+      \end{itemize}
 
-      \verb+Release Lock 2+
+All of these things apply to single-threaded situations or cases where the compiler has re-ordered some steps. Remember, things can also be reordered by the compiler, and {\tt
+  volatile} doesn't prevent reordering. Also, it's likely your
+variables could be in registers the majority of the time, except in
+critical areas. All that volatile does is tell the compiler that an access of that variable should go to memory, not a register.
 
-      \verb+Release Lock 1+
-\end{minipage} & 
-\begin{minipage}{.4\textwidth}
-      {\bf Thread 2}
+\paragraph{Coherence summary.}
+We saw four cache coherence protocols, from MSI through MESIF. There
+are many other protocols for cache coherence, each with their own
+trade-offs.
 
-      \verb+Get Lock 2+
-
-      \verb+Get Lock 1+
-
-      \verb+Release Lock 1+
-
-      \verb+Release Lock 2+
-\end{minipage}
-\end{tabular}
-\end{center}
-
- Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops! They
- both wait for each other. (Deadlock!).
-
-To avoid deadlocks, always be careful if your code {\bf acquires a
-  lock while holding one}.  You have two choices: (1) ensure
-consistent ordering in acquiring locks; or (2) use trylock.
-
-As an example of consistent ordering:
-\begin{center}
-\begin{tabular}{ll}
-\begin{minipage}{.4\textwidth}
-  \begin{verbatim}
-void f1() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-\end{verbatim}
-\end{minipage}&
-\begin{minipage}{.4\textwidth}
-\begin{verbatim}
-void f2() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-  \end{verbatim}
-\end{minipage}
-\end{tabular}
-\end{center}
-This code will not deadlock: you can only get {\bf l2} if you have
-{\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
-identity is not statically visible.
-
-Or another example, with threads $P$ and $Q$ attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
-
-To generalize and formalize this principle, if the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
-
-
-Alternately, you can use trylock. Recall that Pthreads' {\tt trylock}
-returns 0 if it gets the lock. But if it doesn't, your thread doesn't get blocked. Checking the return value is important, but at the very least, this code also won't deadlock: it will give up {\bf l1} if it can't get {\bf l2}.
-  \begin{verbatim}
-void f1() {
-    lock(&l1);
-    while (trylock(&l2) != 0) {
-        unlock(&l1);
-        // wait
-        lock(&l1);
-    }
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-  \end{verbatim}
-  (Incidentaly, using trylocks can also help you measure lock contention.)
-  
-This prevents the hold and wait condition, which was one of the four conditions. A process attempts to lock a group of resources at once, and if it does not get everything it needs, it releases the locks it received and tries again. Thus a process does not wait while holding resources.
-
-\subsection*{Coarse-Grained Locking}
-One way of avoiding problems due to locking is to use few locks
-(perhaps just one!). This is \emph{coarse-grained locking}.
-It does have a couple of advantages:
-  \begin{itemize}
-    \item it is easier to implement;
-    \item with one lock, there is no chance of deadlocking; and
-    \item it has the lowest memory usage and setup time possible.
-  \end{itemize}
-
-It also, however, has one big disadvantage in terms of programming for performance: your parallel program will quickly become sequential.
-
-\paragraph{Example: Python (and other interpreters).}
-Python puts a lock around the whole interpreter (known as the
-\emph{global interpreter lock}).  This is the main reason (most)
-scripting languages have poor parallel performance; Python's just an
-example.
-
-Two major implications:
-\begin{itemize}
-\item The only performance benefit you'll see from threading is if one of the threads is
-      waiting for IO.
-\item But: any non-I/O-bound threaded program will be {\bf slower} than the sequential
-      version (plus, the interpreter will slow down your system).
-\end{itemize}
-
-You might think ``this is stupid, who would ever do this?'' - a lot of OS kernels do in fact have (or at least had) a ``big kernel lock'', including Linux and the Mach Microkernel. This lasted in Linux for quite a while, from the advent of SMP support up until sometime in 2011. As much as this ruins performance, correctness is more important. We don't have a class ``programming for correctness'' (software testing? Hah!) because correctness is kind of assumed. What we want to do here is speed up our program as much as we can while maintaining correctness...
-
-\subsection*{Fine-Grained Locking}
-On the other end of the spectrum is \emph{fine-grained locking}. The big
-advantage: it maximizes parallelization in your program.
-
-However, it also comes with a number of disadvantages:
-  \begin{itemize}
-    \item if your program isn't very parallel, it'll be mostly wasted memory and setup time;
-    \item plus, you're now prone to deadlocks; and
-    \item fine-grained locking is generally more error-prone (be sure you grab the right lock!)
-  \end{itemize}
-
-\paragraph{Examples.}
-
-    Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
-
-    You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
+Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
+      compiler and hardware don't reorder reads and writes. Neither cache coherence nor {\tt volatile} will save you. Barriers/fences/flushes might be expensive in terms of ``wasting time,'' but correctness is important.
 
 \input{bibliography.tex}
 
