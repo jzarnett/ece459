@@ -26,9 +26,9 @@ Step one is to generate an executable with instrumentation. The compiler inserts
 
 Step two is training day: run the instrumented executable through real-world scenarios. Ideally you will spend the training time on the performance-critical sections. It does not have to be a single training run, of course, data can be collected from as many runs as desired.   Still, it is important to note that you are not trying to exercise every part of the program (this is not unit testing); instead it should be as close to real-world-usage as can be accomplished. In fact, trying to use ever bell and whistle of the program is counterproductive; if the usage data does not match real world scenarios then  the compiler has been given the wrong information about what is important. Or you might end up teaching it that almost nothing is important...
 
-Ste three is a recompile. This time, in addition to the source files, the training data is fed into the compiler for a second compile. and this data is applied to produce a better output executable than could be achieved by static analysis alone.
+Step three is a recompile. This time, in addition to the source files, the training data is fed into the compiler for a second compile. and this data is applied to produce a better output executable than could be achieved by static analysis alone.
 
-The Intel Developer Zone\footnote{Source: \url{https://software.intel.com/en-us/node/522721}} explains the process in a handy infographic:
+The Intel Developer Zone explains the process in a handy infographic\footnote{Source: \url{https://software.intel.com/en-us/node/522721}} :
 
 \begin{center}
 	\includegraphics[width=0.5\textwidth]{images/pogo-workflow.jpg}
@@ -38,7 +38,10 @@ It is not necessary to do all three steps for every build. Old training data can
 
 What does it mean for it to be better? We have already looked at an example about how to predict branches. Predicting it correctly will be faster than predicting it incorrectly, but this is not the only thing.  The algorithms will aim for speed in the areas that are ``hot'' (performance critical and/or common scenarios). The algorithms will alternatively aim to minimize the size of code of areas that are ``cold'' (not heavily used). It is recommended in~\cite{pogo} that less than 5\% of methods should be compiled for speed.
 
+It is possible that we can combine multiple training runs and we can manually give some suggestions of what scenarios are important. Obviously the more a scenario runs in the training data, the more important it will be, as far as the POGO optimization routine is concerned, but multiple runs can be merged with user assigned weightings.
+
 With the theory behind us, perhaps a demonstration about how it works is in order. Let us consider an example using the N-Body problem. Let's look at the video \url{https://www.youtube.com/watch?v=zEsdBcu4R00&t=21m45s} (from 21:45 to 34:23). (We'll come back to the video again in a little bit to see more of it at the end.)
+
 
 \subsection*{Behind the Scenes}
 
@@ -46,14 +49,57 @@ In the optimize phase, the training data is used to do the following optimizatio
 
 \begin{multicols}{2}
 \begin{enumerate}
-\item Full and partial inlining\item Function layout\item Speed and size decision\item Basic block layout \item Code separation\item Virtual call speculation\item Switch expansion\item Data separation\item Loop unrolling
+\item Full and partial inlining
+\item Function layout
+\item Speed and size decision
+\item Basic block layout 
+\item Code separation
+\item Virtual call speculation
+\item Switch expansion
+\item Data separation
+\item Loop unrolling
 \end{enumerate}
 \end{multicols}
 
 For the most part we should be familiar with the techniques that are listed as being other compiler optimizations we have previously discussed. The new ones are (3) speed and size decision, which we have just covered; and items (4) and (5) which relate to how to pack the generated code in the binary.
 
-%To do that,
+According to~\cite{pogo2} the majority of the performance gains relate to the inlining decisions. These decisions are based on the call graph path profiling: the behaviour of function \texttt{foo} may be very different when calling it from \texttt{bar} than it is when calling it from function \texttt{baz}\footnote{Why are these the example function names?! It's kind of like Alice and Bob...}. Great, let's look at this call graph from~\cite{pogo2}:
 
+\begin{center}
+	\includegraphics[width=0.25\textwidth]{images/callpaths.png}
+\end{center}
+
+Quick analysis of this code would have us find all the ways in which the functions might call each other. In total, there are 14 paths in this code, seven of which get us to function \texttt{Foo}.  
+
+Consider another diagram showing the relationships between functions, in which the numbers on the edges represent the number of invocations~\cite{pogo2}:
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/callpaths2.png}
+\end{center}
+
+When considering what to do here, POGO takes the view like this~\cite{pogo2}:
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/callpaths3.png}
+\end{center}
+
+Each part of the call path is considered separately, remembering that we want to inline where it makes sense for speed, but otherwise leave it alone because of code size increases. Inlining \texttt{bar} into \texttt{bat} makes sense, but not inlining \texttt{bar} into \texttt{goo} (because that increases the code size without significant performance benefits). It also makes sense for \texttt{baz} to get inlined into \texttt{bar}. This is illustrated below~\cite{pogo2}:
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/callpaths4.png}
+\end{center}
+
+Packing the blocks is also done based on this call graph profiling. The most common cases will be put next to each other, and, where possible, subsequent steps are put next to each other. The more we can pack related code together, the fewer page faults we get by jumping to some other section, causing a cache miss... If the function being called is in the same page as the call, it has achieved ``page locality'' (and that is the goal!). This is represented visually~\cite{pogo2}:
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/blocklayout.png}
+\end{center}
+
+According to the author, the ``dead'' code goes in its own special block. I don't think they actually mean truly dead code, the kind that is compile-time determined to be unreachable, but instead they mean code that never gets invoked in any of the training runs.
+
+So, to sum up, the training data is used to identify what branches are likely to be taken, inlines code where that is a performance increase, and tries to pack the binary code in such a way as to reduce cache misses/page faults. How well does it work?
+
+\subsection*{Benchmark Results}
 
 This table, condensed from~\cite{pogo2} summarizes the gains to be made. The application under test is a standard benchmark suite (Spec2K):
 
@@ -69,7 +115,5 @@ This table, condensed from~\cite{pogo2} summarizes the gains to be made. The app
 
 There are more details in the source as to how many functions are used in a typical run and how many things were inlined and so on. But we get enough of an idea from the last row of how much we are speeding up the program, plus some information about why. We can speculate about how well the results in a synthetic benchmark translate to real-world application performance, but at least from this view it does seem to be a net gain.
 
-
-\include{bibliography}
-
+\input{bibliography}
 \end{document}
