@@ -18,9 +18,329 @@
 \begin{frame}
 \frametitle{Profiler Guided Optimization}
 
+
+The compiler does a great deal of static analysis of the code you've written and makes its best guesses about what is likely to happen. 
+
+The canonical example for this is branch prediction. 
+
+There is an if-else block and the compiler will then guess about which is more likely and optimize for that version. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Profiler Guided Optimization}
+
+
 \begin{center}
-\url{https://www.youtube.com/watch?v=zEsdBcu4R00}
+	\includegraphics[width=0.65\textwidth]{images/4621codesnippet.png}
 \end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Hints and Java}
+
+There exists a solution to this, and it is that we can give hints to the compiler, but that's a manual process. 
+
+The Java HotSpot virtual machine will update its predictions on the fly. 
+
+There are some initial predictions and if they turn out to be wrong, the Just In Time compiler will replace it with the other version. 
+
+The compiler runs and it does its job and that's it; the program is never updated with newer predictions if more data becomes known.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Three Steps}
+
+Solving this problem is the goal of POGO. 
+
+It is taking the data from some actual runs of the program and using that to inform the predictions. 
+
+This necessitates a multi-step compile: first compile the code, run it to collect data, then recompile the code using the data we collected.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step One: Measure}
+
+Step one is to generate an executable with instrumentation. 
+
+The compiler inserts a bunch of probes into the generated code that are used to record data. 
+
+Three types of probe are inserted: 
+\begin{itemize}
+\item Function entry probes
+\item Edge probes
+\item Value probes
+\end{itemize}
+
+When this phase is complete, there is an instrumented executable and an empty database file where the training data goes.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step Two: Training Day}
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/training-day.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Step Two: Training Day}
+
+Run the instrumented executable through real-world scenarios. 
+
+Ideally you will spend the training time on the performance-critical sections. 
+
+It does not have to be a single training run, of course, data can be collected from as many runs as desired. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step Two: Training Day}
+
+You are not trying to exercise every part of the program (this is not unit testing)!
+
+In fact, trying to use every bell and whistle of the program is counterproductive.
+
+If the usage data does not match real world scenarios then  the compiler has been given the wrong information about what is important. 
+
+Or you might end up teaching it that almost nothing is important...
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step Three: Recompile}
+
+Step three is a recompile. 
+
+This time, in addition to the source files, the training data is fed into the compiler for a second compile. 
+
+This data is applied to produce a better output executable than could be achieved by static analysis alone.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Summary Graphic}
+
+\begin{center}
+	\includegraphics[width=0.75\textwidth]{images/pogo-workflow.jpg}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Save Some Steps}
+
+It is not necessary to do all three steps for every build. 
+
+Old training data can be re-used until the code base has diverged significantly enough from the instrumented version. 
+
+Recommended workflow: one developer performs these steps and check the training data into source control so that other developers can make use of it .
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Define ``Better''}
+
+What does it mean for it to be better? 
+
+The algorithms will aim for speed in the areas that are ``hot''. 
+
+The algorithms will aim to minimize the size of code of areas that are ``cold'' .
+
+Something less than 5\% of methods should be compiled for speed.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Training Runs}
+
+It is possible that we can combine multiple training runs and we can manually give some suggestions of what scenarios are important. 
+
+Obviously the more a scenario runs in the training data, the more important it will be, as far as the POGO optimization routine is concerned. 
+
+Multiple runs can be merged with user assigned weightings.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Show, Don't Tell}
+
+With the theory behind us, perhaps a demonstration about how it works is in order. 
+
+Let us consider an example using the N-Body problem. 
+
+Let's look at the video \url{https://www.youtube.com/watch?v=zEsdBcu4R00&t=21m45s}\\ (from 21:45 to 34:23).
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Behind the Scenes}
+
+In the optimize phase, the training data is used to do the following optimizations:
+
+\begin{enumerate}
+\item Full and partial inlining
+\item Function layout
+\item Speed and size decision
+\item Basic block layout 
+\item Code separation
+\item Virtual call speculation
+\item Switch expansion
+\item Data separation
+\item Loop unrolling
+\end{enumerate}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Muh Gainz}
+
+The majority of the performance gains relate to the inlining decisions. 
+
+These decisions are based on the call graph path profiling. 
+
+The behaviour of function \texttt{foo} may be very different when calling it from \texttt{bar} than it is when calling it from function \texttt{baz}. 
+
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/callpaths.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Another Call Graph}
+
+
+Consider another diagram showing the relationships between functions, in which the numbers on the edges represent the number of invocations:
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/callpaths2.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The POGO View of the World}
+
+When considering what to do here, POGO takes the view like this:
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/callpaths3.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The POGO View of the World}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/callpaths4.png}
+\end{center}
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Page Locality}
+
+Packing the blocks is also done based on this call graph profiling. 
+
+The most common cases will be put next to each other, and, where possible, subsequent steps are put next to each other. 
+
+The more we can pack related code together, the fewer page faults we get by jumping to some other section, causing a cache miss... 
+
+If the function being called is in the same page as the call, it has achieved ``page locality''.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Block Layout}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/blocklayout.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Dead Code?}
+
+According to the author, the ``dead'' code goes in its own special block. 
+
+I don't think they actually mean truly dead code, the kind that is compile-time determined to be unreachable. 
+
+Instead they mean code that never gets invoked in any of the training runs.
+
+But how well does it work?
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Benchmark Results}
+
+The application under test is a standard benchmark suite (Spec2K):
+
+\begin{center}
+\begin{tabular}{l|l|l|l|l|l}
+	\textbf{Spec2k:} & \textbf{sjeng} & \textbf{gobmk} & \textbf{perl} & \textbf{povray} & \textbf{gcc}\\ \hline
+	\textbf{App Size:} &  {Small} & {Medium} & {Medium} & {Medium} & {Large} \\ \hline
+	\textbf{Inlined Edge Count} & 50\% & 53\% & 25\% & 79\% & 65\% \\ \hline
+	\textbf{Page Locality} & 97\% & 75\% & 85\% & 98\% & 80\% \\ \hline
+	\textbf{Speed Gain} & 8.5\% & 6.6\% & 14.9\% & 36.9\% & 7.9\% \\ 
+\end{tabular}
+\end{center}
+
+We can speculate about how well the results in a synthetic benchmark translate to real-world application performance...
 
 
 \end{frame}
