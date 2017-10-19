@@ -65,7 +65,7 @@
 \singlespace
 
 \title{\bf ECE 459: Programming for Performance\\Assignment 2}
-\author{Patrick Lam}
+\author{Patrick Lam \& Jeff Zarnett}
 \date{\today ~ (Due: February 27, 2017)}
 
 \lstset{basicstyle=\scriptsize, frame=single}
@@ -97,16 +97,16 @@ Important Notes:
 \squishend
 
 \noindent
-Fork the provided git repository at {\tt git@ecegit.uwaterloo.ca:ece459/1171/a2}:
+Fork the provided git repository at {\tt git@ecegit.uwaterloo.ca:ece459/1181/a2}:
 \begin{center}
-{\tt ssh git@ecegit.uwaterloo.ca fork ece459/1171/a2 ece459/1171/USERNAME/a2}
+{\tt ssh git@ecegit.uwaterloo.ca fork ece459/1181/a2 ece459/1181/USERNAME/a2}
 \end{center}
 \noindent and then clone the provided files.
 
 Grading will be done by running {\tt make}, running your programs,
 looking at the source code and reading the report.
 
-\section*{Automatic Parallelization (40 marks)}
+\section{Automatic Parallelization (15 marks)}
 Ray tracing is, in principle, easy to automatically parallelize. You do
 a separate computation for each point. In this part, you will convince a
 parallelizing compiler (I recommend Oracle's Solaris Studio) to parallelize
@@ -162,35 +162,14 @@ speedup. Speculate about why you got your speedup.
 Also, let's say that you want a macro to return a struct of type {\tt struct foo} with
 two fields. You can create such a struct on-the-fly like so: \verb!(struct foo){1,2}!.
 
-\section*{Manual Parallelization with OpenMP (30 marks)}
+\section{Using OpenMP Tasks (30 marks)}
 
-I replaced the old Q2 with a new program that does edge detection.
-Compile that program and run it like {\tt bin/edge_detection 
-q2/0496_rocks.pgm 0.5 0.8 0.2}.  Either try to parallelize this new
-program, or the old Q2 benchmark, with Oracle's Solaris Studio (not
-going to get far) and write a paragraph about why that doesn't work.
+We saw briefly how OpenMP tasks allow us to easily express some parallelism.
+In this part, we apply OpenMP tasks to the $n$-queens
+problem\footnote{\url{http://jsomers.com/nqueen_demo/nqueens.html}}.
+Benchmark the sequential version with a number that executes in approximately
+15 seconds under {\tt -O2} (14 on {\tt ece459-1}).
 
-Your task is to provide OpenMP pragmas and structure changes (if
-needed) to parallelize this implementation. Provide real and user
-timings for the original version as well as with OpenMP directives
-(report the mean over 3 runs).  Calculate speedups, if you managed to
-get them. Describe how well your parallelization worked. Figure out
-whether there is a serial portion that is slowing you down and explain
-how you know. Be clear and concise.
-
-In an afternoon, I was not able to get speedup with OpenMP for this
-new program, although I think that should be possible. You can
-therefore earn full marks by handing in something that safely
-parallelizes the program without necessarily making it faster. I do
-expect a discussion of the effects of your changes. You can also earn
-bonus marks by showing a speedup.  I suspect that a 20\% speedup
-should be possible. You'll get 10 more marks for a properly-executed
-sped-up version (no race conditions). You can change anything you want
-as long as you preserve output. Use {\tt md5sum} to compare
-outputs. (You can also display this file much more easily than that
-from part 1.)
-
-\vspace*{1em}
 \noindent {\bf Notes:} Use {\tt er\_src} to get more detail about what the Oracle
 Solaris Studio compiler did.  You may change the
 Makefile's compilation flags if needed. Report speedups over the
@@ -199,19 +178,6 @@ say which one you used. OpenMP tips:
 \begin{center}
   \url{www.viva64.com/en/a/0054/}
 \end{center}
-
-\squishlist
-  \item {\bf Minimum expected speedup:} n/a
-  \item {\bf (my) initial solution speedup:} n/a
-\squishend
-
-\section*{Using OpenMP Tasks (30 marks)}
-
-We saw briefly how OpenMP tasks allow us to easily express some parallelism.
-In this part, we apply OpenMP tasks to the $n$-queens
-problem\footnote{\url{http://jsomers.com/nqueen_demo/nqueens.html}}.
-Benchmark the sequential version with a number that executes in approximately
-15 seconds under {\tt -O2} (14 on {\tt ece459-1}).
 
 Modify the code to use OpenMP tasks. Benchmark your modified program
 and calculate the speedup. Clearly and concisely explain why your
@@ -231,6 +197,51 @@ cutting-and-pasting of code.
   \item {\bf Initial solution speedup:} 1.7
 \squishend
 
+\newpage
+
+\section{Manual Parallelization with OpenMP (55 marks)}
+
+This time rather than just apply OpenMP directives to an existing program, you will write the program according to what is written below and verify its correctness with some provided sample files.
+
+The program does a simulation of Coulomb's Law: there are proton and electron particles (that have the standard masses and charges). The protons are kept fixed in place via mechanical forces, but the electrons will move. Electrons move according to classical physics: they are attracted to protons and repelled by other electrons. The program will perform just one step of the simulation.
+
+The program takes parameters:
+\begin{enumerate}
+\item $h$ -- initial size of simulation step (a measure of time) 
+\item $e$ -- epsilon, the amount of error allowed
+\item An input file of initial positions (comma separated value file).
+\end{enumerate}
+
+The program produces as output the new positions of the electrons and protons (the protons should not move).
+
+The simulation algorithm is:
+
+\begin{enumerate}
+\item The initial vector $y_{0}$ contains the positions of the electrons and protons.
+
+\item Calculate the sum of forces $K$ on each electron, and using that, the new positions vector $y_{1}$ as $y_{0} + h \times K$.
+
+\item Calculate a second vector $L$ which is the sum of the forces on each point at $y_{1}$ (but their new positions $y_{2}$ are not needed).
+
+\item For each point, compute $z_{1}$ as $y_{0} + h \times \dfrac{( K + L )}{2}$ (the average of the two forces). 
+
+\item If $|z_{1} - y_{1}| > e$ at any position (e.g., the error at any one position is larger than the tolerance), then the simulation has too much error and we need to go back to step 2, this time with $h$ cut in half.
+
+\end{enumerate}
+
+Once the sequential version is written, you will apply OpenMP directives, one at a time (or in a tightly integrated group) and judge their impact on the runtime of your program as a way to assess what areas benefit most from parallelization and the impact of various OpenMP directives. Note down for your report what is effective and what is ineffective, and what produces invalid results. 
+
+You should also try to achieve the maximum speedup you can while preserving behaviour. 
+
+Submit the final OpenMP-annotated version of your code. Your report will contain the impact of various OpenMP directives, trying some out individually to see which ones are the most important.
+
+\squishlist
+  \item {\bf Minimum expected speedup:} n/a
+  \item {\bf Initial solution speedup:} n/a
+\squishend
+
+\newpage
+
 \section*{Rubric}
 
 The general principle is that correct solutions earn full marks.
@@ -242,32 +253,47 @@ Solutions that do not compile will earn at most 39\% of the available
 marks for that part. Segfaulting or otherwise crashing solutions earn
 at most 49\%.
 
-\paragraph{Part 1, Automatic Parallelization (40 marks):}  (20 marks for implementation) A correct solution must:
+\paragraph{Part 1, Automatic Parallelization (15 marks):}  
 \begin{itemize}
-	\item preserve the behaviour (10 points); and
-	\item enable additional parallelization (10 points).
+\item 10 marks for implementation: A correct solution must:
+\begin{itemize}
+	\item preserve the behaviour (5 points); and
+	\item enable additional parallelization (5 points).
 \end{itemize}
  
-(20 marks for report) 16 marks for including the necessary information
+\item 5 marks for report: include the necessary information
 (describing the experiments and results, reasonably speculating about
-the cause, and explaining why you preserve behaviour); 4 marks for
-clarity of exposition.
+the cause, and explaining why you preserve behaviour)
+\end{itemize}
 
-\paragraph{Part 2, Manual Parallelization (30 marks):} (20 marks for implementation) A correct solution must properly use OpenMP pragmas and minor code changes to parallelize the code (16 points).
+\paragraph{Part 2, OpenMP Tasks (30 marks):} 
 
-(10 marks for report) 7 marks for including speedup data and
-explaining why your parallelization helped. 3 marks for clarity.
-
-\paragraph{Part 3, OpenMP Tasks (30 marks):} (20 marks for implementation) A correct solution must:
+\begin{itemize}
+\item 20 marks for implementation: A correct solution must:
 \begin{itemize}
 	\item properly use OpenMP tasks to get a speedup;
 	\item be free of obvious race conditions.
 \end{itemize}
-
-(10 marks for report) 7 marks for analyzing the performance
+\item 10 marks for report: 
+\begin{itemize}
+\item 7 marks for analyzing the performance
 of the provided version, describing the speedup due to your
 changes, explaining why your changes improved performance, and
-speculating reasonably about further changes. 3 marks for clarity.
+speculating reasonably about further changes. 
+\item 3 marks for clarity.
+\end{itemize}
+\end{itemize}
+
+\paragraph{Part 3, Manual Parallelization (55 marks):} 
+\begin{itemize}
+\item 20 marks for the single-threaded implementation. 
+
+\item 20 marks for the use of OpenMP pragmas and minor code changes to parallelize the code and get speedup.
+
+\item 15 marks for report: Explain which OpenMP directives helped. Try them out individually and determine the impact of each, and identify which ones work synergistically with others. 3 marks for clarity.
+\end{itemize}
+
+
 
 \end{document}
 
