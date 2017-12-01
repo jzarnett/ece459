@@ -117,17 +117,17 @@ For this question, you will work with {\tt raytrace\_simple.c} and {\tt
 height of the image to 60000 pixels so that the compiler will find it
 profitable to parallelize. Benchmark the sequential ({\tt raytrace})
 and optimized sequential ({\tt raytrace\_opt}) versions. Note that the
-compiler does manage to optimize the computation of the sequential
-raytrace quite a bit. Report the speedup due to the compiler and
-speculate about why that is the case. Compare all subsequent numbers
+compiler does manage to significantly optimize the computation of the sequential
+raytrace. Report the speedup due to the compiler and
+speculate why that is the case. Compare all subsequent numbers
 to the optimized version.
 
 Your first programming task is to modify your program so you can take
-advantage of automatic parallelization. Figure out why it won't
+advantage of automatic parallelization. Determine what why it won't
 parallelize as is, and make any changes necessary. Preserve behaviour
 and make all your changes to {\tt raytrace\_auto.c}.
 
-I put Solaris Studio 12.3 on {\tt ece459-1}. The provided {\tt
+Solaris Studio 12.3 is available on {\tt ece459-1}. The provided {\tt
   Makefile} calls that compiler with the relevant flags. Your compiler
 output should look something like the following (the line numbers
 don't have to match, but you {\bf must} parallelize the critical loop):
@@ -144,11 +144,14 @@ Compiling Part 1 Automatic Parallelization
 "raytrace_auto.c", line 264: not parallelized, not a recognized for loop
 \end{lstlisting}
 
-Clearly and concisely explain your changes. Explain why the code would
-not parallelize initially, why your changes are correct but bad for
-maintainability, and why they preserve the behaviour of the sequential
-version. Run your benchmark again and calculate your
-speedup. Speculate about why you got your speedup.
+Justify each change you make and explain why:
+\begin{itemize}
+\item the existing code does not parallelize;
+\item your changes improve parallelization and preserve the behaviour of the sequential version
+\item your changes adversely impact maintainability
+\end{itemize}
+
+Run your benchmark again and calculate your speedup. Speculate about why you got your speedup.
 
 \squishlist
   \item {\bf Minimum expected speedup:} 1.1
@@ -165,9 +168,9 @@ two fields. You can create such a struct on-the-fly like so: \verb!(struct foo){
 \section{Using OpenMP Tasks (30 marks)}
 
 We saw briefly how OpenMP tasks allow us to easily express some parallelism.
-In this part, we apply OpenMP tasks to the $n$-queens
+In this question, you will apply OpenMP tasks to the $n$-queens
 problem\footnote{\url{http://jsomers.com/nqueen_demo/nqueens.html}}.
-Benchmark the sequential version with a number that executes in approximately
+Benchmark the provided sequential version with a number that executes in approximately
 15 seconds under {\tt -O2} (14 on {\tt ece459-1}).
 
 \noindent {\bf Notes:} Use {\tt er\_src} to get more detail about what the Oracle
@@ -180,7 +183,7 @@ say which one you used. OpenMP tips:
 \end{center}
 
 Modify the code to use OpenMP tasks. Benchmark your modified program
-and calculate the speedup. Clearly and concisely explain why your
+and calculate the speedup. Explain why your
 changes improved performance. Write a couple of sentences explaining how
 you could further improve performance.
 
@@ -203,7 +206,7 @@ cutting-and-pasting of code.
 
 This time rather than just apply OpenMP directives to an existing program, you will write the program according to what is written below and verify its correctness with some provided sample files.
 
-The program does a simulation of Coulomb's Law: there are proton and electron particles (that have the standard masses and charges). The protons are kept fixed in place via mechanical forces, but the electrons will move. Electrons move according to classical physics: they are attracted to protons and repelled by other electrons. The program will perform just one step of the simulation.
+The program does a simulation of Coulomb's Law: there are proton and electron particles (that have the standard masses and charges). The protons are kept fixed in place via mechanical forces, but the electrons will move. Electrons move according to classical physics: they are attracted to protons and repelled by other electrons. The program will perform just one step of the simulation. The plan is to use Heun's method from ECE 204A (if you took that course).
 
 The program takes parameters:
 \begin{enumerate}
@@ -212,20 +215,39 @@ The program takes parameters:
 \item An input file of initial positions (comma separated value file).
 \end{enumerate}
 
-The program produces as output the new positions of the electrons and protons (the protons should not move).
+The input file is in csv format, first column is whether it is a proton or electron, second is x coordinate, third is y coordinate, fourth is z coordinate.
+
+The program produces as output the new positions of the electrons and protons (the protons should not move). The output file format should be the same as the input file format.
+
+Some physics facts you may need to know to get this done:
+
+\begin{itemize}
+\item Coulomb's law calculates the force of attraction as $\dfrac{k (q_{1} q_{2})}{r^{2}}$.  Where $k$ is Coulomb's constant, $q$ the charge, and $r$ the distance between the two points.
+
+\item The value for $k$ is Coulomb's constant $8.99 \times 10^{9} N m^{2} C^{-2}$. 
+
+\item The charge of an electron is the same as the charge of a proton which is $1.60217662 \times 10^{-19}$ Coulombs. Electrons have negative charge and protons have positive charge. 
+
+\item The mass of an electron is $9.10938356 \times 10^{-31}$ kg.
+\end{itemize}
+
 
 The simulation algorithm is:
 
 \begin{enumerate}
 \item The initial vector $y_{0}$ contains the positions of the electrons and protons.
 
-\item Calculate the sum of forces $K$ on each electron, and using that, the new positions vector $y_{1}$ as $y_{0} + h \times K$.
+\item Calculate a vector $k_{0}$ being the sum on each electron (and zero force on the protons), and use that to approximate the new positions vector $y_{1}$ = $y_{0} + h \times k_{0}$.
 
-\item Calculate a second vector $L$ which is the sum of the forces on each point at $y_{1}$ (but their new positions $y_{2}$ are not needed).
+To calculate new positions, remember $F = m \times a$;  acceleration will be considered constant in the range we're talking about ($h$ represents a very small unit of time, or it will after the value of $h$ has been divided multiple times after we find the error has been too large). 
 
-\item For each point, compute $z_{1}$ as $y_{0} + h \times \dfrac{( K + L )}{2}$ (the average of the two forces). 
+With the acceleration then we compute velocity $v$ for any point as $h \times a$; with the velocity in hand, the position is updated as simply $h \times v$ (again worth noting that the times are very small here so we don't have wild swings in $v$). 
 
-\item If $|z_{1} - y_{1}| > e$ at any position (e.g., the error at any one position is larger than the tolerance), then the simulation has too much error and we need to go back to step 2, this time with $h$ cut in half.
+\item Calculate a second vector $k_{1}$ being the sum of the forces on each point at the new position $y_{1}$, again having zero forces on the protons. You don't have to calculate the next set of positions $y_{2}$ because it is not needed for the next step.
+
+\item Using the two force vectors,  compute $z_{1}$ as $y_{0} + h \times \dfrac{( k_{0} + k_{2} )}{2}$ (the average of the two forces). This produces a second, more accurate position vector.
+
+\item If $||z_{1} - y_{1}|| > e$ at any position (i.e., the error at any one position is larger than the tolerance), then the simulation is too coarse, and we need to go back to step 2, this time with $h$ divided by 2.
 
 \end{enumerate}
 
@@ -240,7 +262,6 @@ Submit the final OpenMP-annotated version of your code. Your report will contain
   \item {\bf Initial solution speedup:} n/a
 \squishend
 
-\newpage
 
 \section*{Rubric}
 

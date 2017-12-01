@@ -100,6 +100,67 @@ To get memory access speed up there are things we can do, like relax coherency c
 
 If we want to get better performance, we need to figure out where time is going. For that we will have the subject of profiling, which comes up in some later lectures. If we can track down where our cache misses are occurring, maybe, just maybe, we can do something about it. 
 
+\section*{A Deeper Look at Cache Misses}
+
+As discussed, the CPU generates a memory address for a read or write operation. The address will be mapped to a page. Ideally, the page is found in the cache, because that would be faster. If the requested page is, in fact,  in the cache, we call that a cache \textit{hit}. If the page is not found in the cache, it is considered a cache \textit{miss}. In case of a miss, we must load the page from memory, a comparatively slow operation. The percentage of the time that a page is found in the cache is called the \textit{hit ratio}, because it is how often we have a cache hit. We can calculate the effective access time if we have a good estimate of the hit ratio (which is not overly difficult to obtain) and some measurements of how long it takes to load data from the cache and how long from memory. The effective access time is therefore computed as:
+
+\begin{center}
+Effective Access Time = $h \times t_{c} + (1-h) \times t_{m}$
+\end{center}
+
+Where $h$ is the hit ratio, $t_{c}$ is the time required to load a page from cache, and $t_{m}$ is the time to load a page from memory. Of course, we would like the hit ratio to be as high as possible. 
+
+Caches have limited size, because faster caches are more expensive. With infinite money we might put everything in registers, but that is rather unrealistic. Caches for memory are very often multileveled; Intel 64-bit CPUs tend to have L1, L2, and L3 caches. L1 is the smallest and L3 is the largest. Obviously, the effective access time formula needs to be updated and expanded, when we have multiple levels of cache with different access times and hit rates. See the diagram below:
+
+\begin{center}
+\includegraphics[width=0.6\textwidth]{images/caches.png}\\
+Three levels of cache between the CPU and main memory~\cite{osi}.
+\end{center}
+
+If we have a miss in the L1 cache, the L2 cache is checked. If the L2 cache contains the desired page, it will be copied to the L1 cache and sent to the CPU. If it is not in L2, then L3 is checked. If it is not there either, it is in main memory and will be retrieved from there and copied to the in-between levels on its way to the CPU. 
+
+Cliff Click said that 5\% miss rates dominate performance. Let's look at why.
+I looked up a characterization of the SPEC CPU2000 and CPU2006 
+benchmarks~\cite{cpu2006}.
+
+Here are the reported cache miss rates\footnote{\permil~is ``permil'', or per-1000.} for SPEC CPU2006.
+
+\begin{center}
+\begin{tabular}{ll}
+L1D & 40\permil \\
+L2 & 4 \permil
+\end{tabular}
+\end{center}
+
+Let's assume that the L1D cache miss penalty is 5 cycles and the L2 miss penalty is
+300 cycles, as in the video. Then, for every instruction, you would expect a running
+time of, on average:
+\[ 1 + 0.04 \times 5 + 0.004 \times 300 = 2.4. \]
+Misses are expensive!
+
+
+If we replace the terms $t_{c}$ and $t_{m}$ with $t_{m}$ and $t_{d}$ (time to retrieve it from disk) respectively, and redefine $h$ as $p$, the chance that a page is in memory, we can get an idea of the effective access time in virtual memory: 
+
+\begin{center}
+	Effective Access Time = $ p \times t_{m} + (1 - p) \times t_{d}$
+\end{center}
+
+And just while we're at it, we can combine the caching and disk read formulae to get the true effective access time for a system where there is only one level of cache:
+
+\begin{center}
+	Effective Access Time = $ h \times t_{c} + (1 - h) ( p \times t_{m} + (1 - p) \times t_{d})$
+\end{center}
+
+This is good, but what is $t_{d}$? This is a measurable quantity so it is possible, of course, to just measure it\footnote{One of my favourite engineering sayings is ``Don't guess; measure.'' You may be sick of hearing me say that one by now.}.
+
+The slow step in all of this, is obviously, the amount of time it takes to load the page from disk. According to~\cite{osc}, restarting the process and managing memory and such take something like 1 to 100~$\mu$s. A typical hard drive in their example has a latency of 3~ms, seek time (moving the read head of the disk to the location of the page) is around 5~ms, and a transfer time of 0.05~ms. So the latency plus seek time is the limiting component, and it's several orders of magnitude larger than any of the other costs in the system. And this is for servicing a request; don't forget that several requests may be queued, making the time even longer.
+
+Thus the disk read term $t_{d}$ dominates the effective access time equation. If memory access takes 200~ns and a disk read 8~ms, we can roughly estimate the access time in nanoseconds as $(1-p) \times 8~000~000$. 
+
+If the page fault rate is high, performance is awful. If performance of the computer is to be reasonable, the page fault rate has to be very, very low. On the order of $10^{-6}$. 
+
+Summary: misses are not just expensive, they hurt performance more than anything.
+
 \input{bibliography.tex}
 
 
