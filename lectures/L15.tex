@@ -2,439 +2,309 @@
 
 \begin{document}
 
-\lecture{15 --- OpenMP Memory Model}{\term}{Patrick Lam}
+\lecture{15 --- C/C++11 Memory Model}{\term}{Patrick Lam \& Jeff Zarnett}
 
-\section*{OpenMP Memory Model, Its Pitfalls, and How to Mitigate Them}
-OpenMP uses a {\bf relaxed-consistency, shared-memory} model. This almost certainly doesn't 
-do what you want. Here are its properties:
+\section*{C/C++11 Memory Model}
 
-\begin{itemize}
-    \item All threads share a single store called
-      \emph{memory}---this store may not actually represent RAM.
-    \item Each thread can have its own {\it temporary} view of memory.
-    \item A thread's {\it temporary} view of memory is not required to be
-      consistent with memory.
-\end{itemize}
+We have talked about memory models in the context of OpenMP. Let's
+talk about the core languages now---that is, C and C++~\cite{quora:cppthr, cppconcurrency}---when
+not using OpenMP.
 
-We'll talk more about memory models later. Now we're going to talk about 
-the OpenMP model and why it's a problem.
+What outputs are possible from this example?
 
-\paragraph{Memory Model Pitfall.} Consider this code.
+\begin{tabular}{ll}
+      \begin{minipage}{.2\textwidth}
+        Thread 1:
+        \begin{verbatim}
+  foo = 7;
+  bar = 42;
+        \end{verbatim}
+      \end{minipage} &
+      \begin{minipage}{.4\textwidth}
+        Thread 2:
+        \begin{verbatim}
+  printf("%d\n", foo);
+  printf("%d\n", bar);
+        \end{verbatim}
+      \end{minipage}
+\end{tabular}
 
-  \begin{verbatim}
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
+You might think ``undefined'', but actually it's worse than that. The 
+C11 and C++11 language definitions don't even say what a thread is.
+Of course, there is Pthreads, but that is a library, not the language itself.
+So you can't even ask this question when talking about pre-C11/C++11 versions
+of C and C++. Well. Okay. You can ask, but the question makes no sense. Sort of like
+putting your hand up in class and saying ``Where did you bury your oranges?''.
+It's a syntactically valid question and it describes something that's possible,
+but it still makes no sense.
 
-atomic(b = 1) // [1]                atomic(a = 1) // [3]
-atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{verbatim}
+The older standards made no reference to any kind of CPU, memory architecture, cache
+strategy, or anything like that. Which on the one hand is nice and general, but on the other hand, it leads to problems. The ``abstract machine'' that the C and C++ standards refer to is inherently single threaded, making it actually impossible to write a portable multithreaded C or C++ program~\cite{quora:cppthr}. The part that's impossible is that word ``portable'' -- people write multithreaded C and C++ programs all the time (in this class, even) but they have system specific code and implementation-defined behaviour. Open up a pthreads library or some equivalent and sure enough, you will find something architecture specific in there.
 
-Does this code actually prevent simultaneous execution?
-Let's reason about possible states.
+C++11 (and C11) have improved the situation, though. There is actually
+a memory model (based on an abstract machine) and threading primitives
+such as mutexes, atomics, and memory barriers---the concepts that we
+have seen in this course. Now there are rules! Yes. We like rules. Okay. I, at least, like rules. C++11 defines how a compiler can generate code that accesses memory even when there is concurrency. There are also standard mutex operations and atomics and barriers and all those lovely things.
 
-  \begin{center}
-  \begin{tabular}{r r r r | r r}
-    \multicolumn{4}{c|}{Order} & t1 tmp & t2 tmp\\
-    \hline
-    1 & 2 & 3 & 4 & 0 & 1\\
-    1 & 3 & 2 & 4 & 1 & 1\\
-    1 & 3 & 4 & 2 & 1 & 1\\
-    3 & 4 & 1 & 2 & 1 & 0\\
-    3 & 1 & 2 & 4 & 1 & 1\\
-    3 & 1 & 4 & 2 & 1 & 1\\
-  \end{tabular}
-  \end{center}
+Now, we can ask the question about the behaviour of the above example.
+It does have undefined behaviour, since there is contended access to
+the variables {\tt foo} and {\tt bar}. How can we fix that?
 
-Looks like it (at least intuitively).
+\paragraph{Atomics.}
+A good exam question: if {\tt foo} is atomic, what are the possible outputs? 
+    
+    \begin{tabular}{ll}
+      \begin{minipage}{.25\textwidth}
+        Thread 1:
+        \begin{verbatim}
+  foo.store(7);
+  bar.store(42);
+        \end{verbatim}
+      \end{minipage} &
+      \begin{minipage}{.45\textwidth}
+        Thread 2:
+        \begin{verbatim}
+  printf("%d\n", foo.load());
+  printf("%d\n", bar.load());
+        \end{verbatim}
+      \end{minipage}
+    \end{tabular}
 
-Sorry! With OpenMP's memory model, no guarantees:
-the update from one thread may not be seen by the other.
+Alright, we have some defined behaviour now.  Honestly, it depends how these things are scheduled, but the answer is one of the following set: \{0/0, 7/42, 7/0,  0/42\}. The answer depends on how they are interleaved. But at least we get some certainty that the output will be one of those four things and there's no chance of garbage because the print takes place during an assignment operation. 
 
-\paragraph{Restoring Sanity with Flush.} We do rely on 
-shared memory working ``properly'', but that's expensive.
-So OpenMP provides the {\bf flush} directive.
+We probably still don't like this because we don't have mutual exclusion here and we can get several different answers, some of which are probably ``wrong'' (for whatever definition of a correct answer is), but at least our set of potential wrong answers is smaller. So that's a start. Compilers have to follow the new rules in generating code, so their output will behave as if the architecture followed the standard memory model. That's something. 
 
-  \begin{center}
-    {\tt \#pragma omp }{\bf flush} {\it[(list)]}
-  \end{center}
+\section*{Good C++ Practice}
+Lots of people use postfix ({\tt i++}) out of habit, but prefix ({\tt ++i}) is better.
 
-This directive makes the thread's temporary view of memory consistent with main
-      memory; it:
-\begin{itemize}
-    \item enforces an order on the memory operations of the variables.
-\end{itemize}
+In C, this isn't a problem. 
+In some languages (like C++), it can be.
 
-The variables in the list are called the {\it flush-set}. 
-If you give no variables, the compiler will determine them for you.
-
-Enforcing an order on the memory operations means:
-\begin{itemize}
-    \item All read/write operations on the {\it flush-set} which happen
-      before the {\bf flush} complete before the flush executes.
-    \item All read/write operations on the {\it flush-set} which happen
-      after the {\bf flush} complete after the flush executes.
-    \item Flushes with overlapping {\it flush-sets} can not be reordered.
-\end{itemize}
-
-To show a consistent value for a variable between two threads, OpenMP
-must run statements in this order:
-
-  \begin{enumerate}
-    \item $t_1$ writes the value to $v$;
-    \item $t_1$ flushes $v$; 
-    \item $t_2$ flushes $v$ also;
-    \item $t_2$ reads the consistent value from $v$.
-  \end{enumerate}
-
-Let's revise the example again.
-  \begin{verbatim}
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1)                       atomic(a = 1)
-flush(b)                            flush(a)
-flush(a)                            flush(b)
-atomic(tmp = a)                     atomic(tmp = b)
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{verbatim}
-
-OK. Will this now prevent simultaneous access?
-
-Well, no.
-
-The compiler can reorder the {\tt flush(b)} in thread 1 or {\tt
-  flush(a)} in thread 2. If {\tt flush(b)} gets reordered to after the
-protected section, we will not get our intended operation.
-
-\paragraph{Correct Example.} We have to provide a list of variables
-to {\tt flush} to prevent re-ordering:
-  \begin{verbatim}
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1)                       atomic(a = 1)
-flush(a, b)                         flush(a, b)
-atomic(tmp = a)                     atomic(tmp = b)
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{verbatim}
-
-\paragraph{Where There's No Implicit Flush:}
-  \begin{itemize}
-    \item at entry to {\bf for};
-    \item at entry to, or exit from, {\bf master};
-    \item at entry to {\bf sections};
-    \item at entry to {\bf single};
-    \item at exit from {\bf for}, {\bf single} or {\bf sections} with a {\bf nowait}
-      \begin{itemize}
-        \item {\bf nowait} removes implicit flush along with the implicit barrier
-      \end{itemize}
-  \end{itemize}
-
-This is not true for OpenMP versions before 2.5, so be careful.
-
-\paragraph{Final thoughts on flush.} We've seen that it's very difficult to use flush properly. Really, you should be using mutexes or other synchronization instead of flush~\cite{flush}, because you'll probably just get it wrong. But now you know what flush means.
-
-\section*{OpenMP Task Directive}
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf task} {\it [clause [[,] clause]*]}
-  \end{center}~\\
-
-Generates a task for a thread in the team to run.
-     When a thread enters the region it may:
-\begin{itemize}
-        \item immediately execute the task; or
-        \item defer its execution. (any other thread may be assigned the task)
-\end{itemize}
-
-  Allowed Clauses: {\bf if, final, untied, default, mergeable, private,
-  firstprivate, shared}
-
-\paragraph{{\tt if} and {\tt final} Clauses.}
-
-  \begin{center}
-  {\bf if} {\it(scalar-logical-expression)}
-  \end{center}
-
-    When expression is {\tt false}, generates an undeferred task---\\
-    the generating task region is suspended until execution of the
-      undeferred task finishes.\\[1em]
-
-  \begin{center}
-  {\bf final} {\it(scalar-logical-expression)}
-  \end{center}
-
-    When expression is {\tt true}, generates a final task.\\
-    All tasks within a final task are {\it included}.\\
-    Included tasks are undeferred and also execute immediately in the same thread.
-
-Let's look at some examples of these clauses.
-  \begin{verbatim}
-void foo () {
-    int i;
-    #pragma omp task if(0) // This task is undeferred
-    {
-        #pragma omp task
-        // This task is a regular task
-        for (i = 0; i < 3; i++) {
-            #pragma omp task
-            // This task is a regular task
-            bar();
-        }
-    }
-    #pragma omp task final(1) // This task is a regular task
-    {
-        #pragma omp task // This task is included
-        for (i = 0; i < 3; i++) {
-            #pragma omp task
-            // This task is also included
-            bar();
-        }
-    }
-}
-  \end{verbatim}
-
-\paragraph{{\tt untied} and {\tt mergeable} Clauses.}
-
-\begin{center}
-  {\bf untied}
-\end{center}
-  \begin{itemize}
-    \item A suspended task can be resumed by any thread.
-    \item ``untied'' is ignored if used with {\bf final}.
-    \item Interacts poorly with thread-private variables and {\tt gettid()}.
-  \end{itemize}
-
-\begin{center}
-  {\bf mergeable}
-\end{center}
-
-  \begin{itemize}
-    \item For an undeferred or included task,
-    allows the implementation to generate a merged task instead.
-    \item In a merged task, the implementation may re-use the environment from its generating task (as if there was no task directive).
-  \end{itemize}
-
-  For more: \url{docs.oracle.com/cd/E24457_01/html/E21996/gljyr.html}
-
-\paragraph{Bad {\tt mergeable} Example.}
+\paragraph{Why? Overloading.} In C++, you can overload the {\tt ++} and {\tt --} operators.
 
   \begin{verbatim}
-#include <stdio.h>
-void foo () {
-    int x = 2;
-    #pragma omp task mergeable
-    {
-        x++; // x is by default firstprivate
-    }
-    #pragma omp taskwait
-    printf("%d\n",x); // prints 2 or 3
-}
-  \end{verbatim}
-  
-    This is an incorrect usage of {\bf mergeable}: the output depends
-      on whether or not the task got merged.
-    Merging tasks (when safe) produces more efficient code.
-
-\paragraph{Taskyield.}
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf taskyield}
-  \end{center}
-
-This directive specifies that the current task can be suspended in favour of another task.
-
-  Here's a good use of {\bf taskyield}.
-
-  \begin{verbatim}
-void foo (omp_lock_t * lock, int n) {
-    int i;
-    for ( i = 0; i < n; i++ )
-    #pragma omp task
-    {
-        something_useful();
-        while (!omp_test_lock(lock)) {
-            #pragma omp taskyield
-        }
-        something_critical();
-        omp_unset_lock(lock);
-    }
-}
-  \end{verbatim}
-
-\paragraph{Taskwait.}
-  \begin{center}
-    {\tt \#pragma omp }{\bf taskwait}
-  \end{center}~\\[1em]
-
-     Waits for the completeion of the current task's child tasks.
-
-\section*{OpenMP Examples}
-We are next going to look at a sequence of examples showing
-how to use OpenMP.
-
-\paragraph{Tree Traversal.}
-  \begin{verbatim}
-struct node {
-    struct node *left;
-    struct node *right;
+class X {
+public:
+  X& operator++();
+  const X operator++(int);
+...
 };
-extern void process(struct node *);
 
-void traverse(struct node *p) {
-    if (p->left) {
-        #pragma omp task
-        // p is firstprivate by default
-        traverse(p->left);
-    }
-    if (p->right) {
-        #pragma omp task
-        // p is firstprivate by default
-        traverse(p->right);
-    }
-    process(p);
-}    
+X x;
+++x; // x.operator++();
+x++; // x.operator++(0);
   \end{verbatim}
 
-If we want to guarantee a post-order traversal,
-we simply need to insert an explicit \verb+#pragma omp taskwait+
-after the two calls to {\tt traverse} and before the
-call to {\tt process}.
-
-
-\paragraph{Parallel Linked List Processing.} We can spawn 
-tasks to process linked list entries. It's hard to
-use two threads to traverse the list, though.
-
+Prefix is also known as {\bf increment and fetch}, and might be implemented like this:
   \begin{verbatim}
-// node struct with data and pointer to next
-extern void process(node* p);
-
-void increment_list_items(node* head) {
-    #pragma omp parallel
-    {
-        #pragma omp single
-        {
-            node * p = head;
-            while (p) {
-                #pragma omp task
-                {
-                    process(p);
-                }
-                p = p->next;
-            }
-        }
-    }
+X& X::operator++() {
+  *this += 1;
+  return *this;
 }
   \end{verbatim}
 
-\paragraph{Using Lots of Tasks.} Let's see what happens
-if we spawn lots of tasks in a {\tt single} directive.
-
+  Postfix is also known as {\bf fetch and increment}. Note that you have to make a copy of
+the old value:
   \begin{verbatim}
-#define LARGE_NUMBER 10000000
-double item[LARGE_NUMBER];
-extern void process(double);
-
-int main() {
-    #pragma omp parallel
-    {
-        #pragma omp single
-        {
-            int i;
-            for (i=0; i<LARGE_NUMBER; i++) {
-                #pragma omp task
-                // i is firstprivate, item is shared
-                process(item[i]);
-            }
-        }
-    }
+const X X::operator++(int) {
+  const X old = *this;
+  ++(*this);
+  return old;
 }
   \end{verbatim}
 
-In this case, the main loop generates tasks, which are all assigned to the executing thread as it becomes available (because of {\tt single}).
-When too many tasks get generated, OpenMP suspends the main thread, runs some tasks, then resumes the loop in the main thread.
+So, if you're the least concerned about efficiency (and why else would you be
+taking programming for performance?), always use
+  \emph{prefix} increments/decrements instead of defaulting to postfix. This isn't really an issue if the operator is in a statement all on its own (e.g. a standalone line, or the last part of a for loop) because the compiler is (presumably) smart enough to know that this can be optimized as the return value is not assigned. Only use {\tt postfix} when you really mean it, to be on the safe side.
+  
+Mind you, if you're doing something like \texttt{array[i++]} or something similarly ``clever'', you might want to think twice about this. There's a lot of potential for error or misunderstanding in a code review. Remember, clever is hard to grep for.
 
-\paragraph{Improved code.} It would be better to {\tt untied} the
-spawned tasks, enabling them to run on multiple threads. Surround
-the for loop with \verb+#pragma omp task untied+.
+\section*{Locking Granularity}
 
-\paragraph{About Nesting: Restrictions.}
-Let's consider nesting of parallel constructs.
+Alright, we already know that locks prevent data races. If this is news to you, how did you pass the operating systems course?! So we need to use them to prevent data races, but it's not as simple as it sounds. We have choices about the granularity of locking, and it is a trade-off (like always).
+
+\textit{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. \textit{
+Fine-grained locking} requires more careful design,
+increases locking overhead and is more prone to bugs (deadlock etc).  
+Locks' extents constitute their {\it granularity}. In coarse-grained locking, you
+lock large sections of your program with a big lock; in fine-grained
+locking, you divide the locks and protect smaller sections with multiple smaller locks.
+
+We'll discuss three major concerns when using locks:
   \begin{itemize}
-    \item You cannot nest {\bf for} regions.
-    \item You cannot nest {\bf single} inside a {\bf for}.
-    \item You cannot nest {\bf barrier} inside a\\~~~~~ {\bf critical/single/master/for}.
+    \item overhead;
+    \item contention; and
+    \item deadlocks.
   \end{itemize}
+We aren't even talking about under-locking (i.e., remaining race conditions). We'll assume there are adequate locks and that data accesses are protected. 
 
-Here's something that OpenMP does allow:
-  \begin{verbatim}
-void good_nesting(int n)
-{
-    int i, j;
-    #pragma omp parallel default(shared)
-    {
-        #pragma omp for
-        for (i=0; i<n; i++) {
-            #pragma omp parallel shared(i, n)
-            {
-                #pragma omp for
-                for (j=0; j < n; j++)
-                    work(i, j);
-            }
-        }
-    }
-}
-  \end{verbatim}
+\paragraph{Lock Overhead.}
+  Using a lock isn't free. You pay:
+  \begin{itemize}
+    \item allocated memory for the locks;
+    \item initialization and destruction time; and
+    \item acquisition and release time.
+  \end{itemize}
+  These costs scale with the number of locks that you have.
 
-\section*{Why Your Code is Slow}
-Code too slow? Want it to run faster? Avoid these pitfalls:
-  \begin{enumerate}
-    \item Unnecessary flush directives.
-    \item Using critical sections or locks instead of atomic.
-    \item Unnecessary concurrent-memory-writing protection:
+\paragraph{Lock Contention.}
+ Most locking time is wasted waiting for the lock to become available.
+We can fix this by:
       \begin{itemize}
-        \item No need to protect local thread variables.
-        \item No need to protect if only accessed in {\bf single} or
-          {\bf master}.
+        \item making the locking regions smaller (more granular); or
+        \item making more locks for independent sections.
       \end{itemize}
-    \item Too much work in a critical section.
-    \item Too many entries into critical sections.
-  \end{enumerate}
 
-\paragraph{Example: Too Many Entries into Critical Sections.}
+\paragraph{Deadlocks.} Finally, the more locks you have, the more you have to worry about deadlocks.
 
+As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
+
+Okay, in a formal sense, the four conditions for deadlock are:
+
+\begin{enumerate}
+	\item \textbf{Mutual Exclusion}: A resource belongs to, at most, one process at a time.
+	\item \textbf{Hold-and-Wait}: A process that is currently holding some resources may request additional resources and may be forced to wait for them.
+	\item \textbf{No Preemption}: A resource cannot be ``taken'' from the process that holds it; only the process currently holding that resource may release it.
+	\item \textbf{Circular-Wait}: A cycle in the resource allocation graph.
+\end{enumerate}
+
+
+Consider, for instance, two processors trying to get two locks.
+
+\begin{center}
+  \begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 1}
+
+      \verb+Get Lock 1+
+
+      \verb+Get Lock 2+
+
+      \verb+Release Lock 2+
+
+      \verb+Release Lock 1+
+\end{minipage} & 
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 2}
+
+      \verb+Get Lock 2+
+
+      \verb+Get Lock 1+
+
+      \verb+Release Lock 1+
+
+      \verb+Release Lock 2+
+\end{minipage}
+\end{tabular}
+\end{center}
+
+ Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops! They
+ both wait for each other. (Deadlock!).
+
+To avoid deadlocks, always be careful if your code {\bf acquires a
+  lock while holding one}.  You have two choices: (1) ensure
+consistent ordering in acquiring locks; or (2) use trylock.
+
+As an example of consistent ordering:
+\begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
   \begin{verbatim}
-#pragma omp parallel for
-for (i = 0; i < N; ++i) { 
-    #pragma omp critical
-    {
-        if (arr[i] > max) max = arr[i];
-    } 
-}
-  \end{verbatim}
-
-would be better as:
-
-  \begin{verbatim}
-#pragma omp parallel for
-for (i = 0 ; i < N; ++i) { 
-    #pragma omp flush(max)
-    if (arr[i] > max) {
-          #pragma omp critical
-          {
-                if (arr[i] > max) max = arr[i];
-          }
-    }
+void f1() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
 }
 \end{verbatim}
+\end{minipage}&
+\begin{minipage}{.4\textwidth}
+\begin{verbatim}
+void f2() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+  \end{verbatim}
+\end{minipage}
+\end{tabular}
+\end{center}
+This code will not deadlock: you can only get {\bf l2} if you have
+{\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
+identity is not statically visible.
+
+Or another example, with threads $P$ and $Q$ attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
+
+To generalize and formalize this principle, if the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
+
+
+Alternately, you can use trylock. Recall that Pthreads' {\tt trylock}
+returns 0 if it gets the lock. But if it doesn't, your thread doesn't get blocked. Checking the return value is important, but at the very least, this code also won't deadlock: it will give up {\bf l1} if it can't get {\bf l2}.
+  \begin{verbatim}
+void f1() {
+    lock(&l1);
+    while (trylock(&l2) != 0) {
+        unlock(&l1);
+        // wait
+        lock(&l1);
+    }
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+  \end{verbatim}
+  (Incidentaly, using trylocks can also help you measure lock contention.)
+  
+This prevents the hold and wait condition, which was one of the four conditions. A process attempts to lock a group of resources at once, and if it does not get everything it needs, it releases the locks it received and tries again. Thus a process does not wait while holding resources.
+
+\subsection*{Coarse-Grained Locking}
+One way of avoiding problems due to locking is to use few locks
+(perhaps just one!). This is \emph{coarse-grained locking}.
+It does have a couple of advantages:
+  \begin{itemize}
+    \item it is easier to implement;
+    \item with one lock, there is no chance of deadlocking; and
+    \item it has the lowest memory usage and setup time possible.
+  \end{itemize}
+
+It also, however, has one big disadvantage in terms of programming for performance: your parallel program will quickly become sequential.
+
+\paragraph{Example: Python (and other interpreters).}
+Python puts a lock around the whole interpreter (known as the
+\emph{global interpreter lock}).  This is the main reason (most)
+scripting languages have poor parallel performance; Python's just an
+example.
+
+Two major implications:
+\begin{itemize}
+\item The only performance benefit you'll see from threading is if one of the threads is
+      waiting for IO.
+\item But: any non-I/O-bound threaded program will be {\bf slower} than the sequential
+      version (plus, the interpreter will slow down your system).
+\end{itemize}
+
+You might think ``this is stupid, who would ever do this?'' - a lot of OS kernels do in fact have (or at least had) a ``big kernel lock'', including Linux and the Mach Microkernel. This lasted in Linux for quite a while, from the advent of SMP support up until sometime in 2011. As much as this ruins performance, correctness is more important. We don't have a class ``programming for correctness'' (software testing? Hah!) because correctness is kind of assumed. What we want to do here is speed up our program as much as we can while maintaining correctness...
+
+\subsection*{Fine-Grained Locking}
+On the other end of the spectrum is \emph{fine-grained locking}. The big
+advantage: it maximizes parallelization in your program.
+
+However, it also comes with a number of disadvantages:
+  \begin{itemize}
+    \item if your program isn't very parallel, it'll be mostly wasted memory and setup time;
+    \item plus, you're now prone to deadlocks; and
+    \item fine-grained locking is generally more error-prone (be sure you grab the right lock!)
+  \end{itemize}
+
+\paragraph{Examples.}
+
+    Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
+
+    You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
+
 \input{bibliography.tex}
 
 \end{document}

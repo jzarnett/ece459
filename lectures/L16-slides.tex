@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 16 ---  Memory Consistency }
+\title{Lecture 16 --- Cache Coherency }
 
-\author{Patrick Lam \& Jeff Zarnett\\ \small \texttt{p.lam@ece.uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -14,480 +14,439 @@
   \titlepage
 
  \end{frame}
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Memory Models}
+  \frametitle{Introduction}
+
+  \begin{center}
+    \includegraphics[scale=0.7]{images/coherency}
+
+    Image courtesy of Wikipedia.
+  \end{center}
 
   
+  {\bf Coherency:}
+  \begin{itemize}
+    \item Values in all caches are consistent;
+    \item System behaves as if all CPUs are using shared memory.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-  Sequential program: statements execute in order.\\
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Cache Coherence Example}
 
-  Your expectation for concurrency: sequential consistency.
+  
+  Initially in main memory: {\tt x = 7}.
 
-\begin{quote}
-``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
-\end{quote}
-  In brief:
   \begin{enumerate}
-  \item for each thread: in-order execution;
-  \item interleave the threads' executions.
-  \end{enumerate}~\\
+    \item {\tt CPU1} reads x, puts the value in its cache.
+    \item {\tt CPU3} reads x, puts the value in its cache.
+    \item {\tt CPU3} modifies {\tt x := 42}
+    \item {\tt CPU1} reads x \ldots ~from its cache?
+    \item {\tt CPU2} reads x. Which value does it get?
+  \end{enumerate}
+  ~\\
 
-  No one has it: too expensive.\\
-  Recall the worked example for {\bf flush} last time.\\[1em]
-
-  
-
-  
-\end{frame}
-
-\begin{frame}
-  \frametitle{Memory Models: Sequential Consistency}
-
-  
-    Another view of sequential consistency:
-
-    \begin{itemize}
-      \item each thread induces an \emph{execution trace}.
-      \item always: program has executed some prefix of each thread's
-        trace.
-    \end{itemize}
+  Unless we do something, {\tt CPU1} is going to read invalid data.
   
 \end{frame}
-
-\begin{frame}
-  \frametitle{Reordering}
-
-  
-     Compilers and processors may reorder non-interfering memory
-     operations.
-
-      \[ T1: x = 1; r1 = y; \]
-
-     If two statements are independent:
-     \begin{itemize}
-        \item OK to execute them in either order.
-        \item (equivalently: publish their results to other threads).
-     \end{itemize}
-
-     Reordering is a major compiler tactic to produce speedup.
-  
-\end{frame}
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Snoopy Caches}
+
+The simplest way to ``do something''
+is to use Snoopy caches. 
+
+No, not this kind of Snoopy (sadly):
+
+\begin{center}
+	\includegraphics[width=0.25\textwidth]{images/peanuts-snoopy1.jpg}
+\end{center}
+
+
+
+\end{frame}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Memory Consistency Models}
+  \frametitle{High-Level Explanation of Snoopy Caches}
 
   
-    Sequential consistency:
-      \begin{itemize}
-        \item No reordering of loads/stores.
-      \end{itemize}
-    Sequential consistency for datarace-free programs:
-      \begin{itemize}
-        \item If your program
-  has no data races, then sequential consistency.
-      \end{itemize}
-    Relaxed consistency (only some types of reorderings):
-      \begin{itemize}
-        \item Loads can be reordered after loads/stores; and
-        \item Stores can be reordered after loads/stores.
-      \end{itemize}
-    Weak consistency:
-      \begin{itemize}
-        \item Any reordering is possible.
-      \end{itemize}
-
-  Still, {\bf reorderings} only allowed if they look safe in current context
-  (i.e. independent; different memory addresses).
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{2011 Final Exam Question}
-
-  
-  \begin{lstlisting}
-                       x = y = 0
-
-/* thread 1 */                    /* thread 2 */
-x = 1;                            y = x;
-r1 = y;                           r2 = x;
-  \end{lstlisting}
-
-  Assume architecture not sequentially consistent\\ \hspace*{3em} (weak~consistency).
-
-  Show me all possible (intermediate and final) memory values and how they arise.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{2011 Final Exam Question: Solution}
-
-  
-    must include every permutation of lines \\ \qquad (since they can be in
-      any order);\\
-    then iterate over all the values.\\[1em]
-
-    Probably actually too long, but shows how memory reorderings
-      complicate things.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{The Compiler Reorders Memory Accesses}
-
-  
-  When it can prove safety, the {\bf compiler} may reorder instructions (not just the hardware).\\[1em]
-
-  {\bf Example:} want thread 1 to print value set in thread 2.
-
-  \begin{lstlisting}
-                            f = 0
-
-/* thread 1 */                          /* thread 2 */
-while (f == 0) /* spin */;              x = 42;
-printf("%d", x);                        f = 1;
-  \end{lstlisting}
+  \begin{itemize}
+    \item Each CPU is connected to a simple bus.
+    \item Each CPU ``snoops'' to observe if a memory location is read or written
+      by another CPU.
+    \item We need a cache controller for every CPU.
+  \end{itemize}
+  ~\\
+  {\bf What happens?}
 
   \begin{itemize}
-    \item If thread 2 reorders its instructions, will we get our intended
-      result?\\[1em]
-    \only<2-> \alert{~~~~~No.}
+    \item Each CPU reads the bus to see if any memory operation is relevant. If
+      it is, the controller takes appropriate action.
   \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+
+\begin{frame}
+\frametitle{A Distributed Approach}
+
+
+This is a distributed approach; no centralized state is maintained. 
+
+Each cache with a copy of data from a block of physical memory knows whether it is shared or not. 
+
+Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. 
+
+If it is, then the CPU will need to take action.
+
+\end{frame}
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Preventing Memory Reordering}
+\begin{frame}
+  \frametitle{Write-Through Cache}
 
   
-     A {\bf memory fence} prevents memory operations from crossing the
-      fence (also known as a {\bf memory barrier}).
-
-  \begin{lstlisting}
-                         f = 0
-
-/* thread 1 */                     /* thread 2 */
-while (f == 0) /* spin */;         x = 42;
-// memory fence                    // memory fence
-printf("%d", x);                   f = 1;
-  \end{lstlisting}
-
+Simplest type of cache coherence:
   \begin{itemize}
-    \item Now prevents reordering; get expected result.
+    \item All cache writes are done to main memory.
+    \item All cache writes also appear on the bus.
+    \item If another CPU snoops and sees it has the same location in
+      its cache, it will either {\it invalidate} or {\it update} the
+      data.\\ \qquad (We'll be looking at invalidating.)
   \end{itemize}
-  
+~\\
 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    For write-through caches: normally, when you write to an invalidated
+    location, you bypass the cache and go directly to memory (aka {\bf
+      write no-allocate}).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Preventing Memory Reordering in Programs}
-
-  
-     Step 1: Don't use volatile on C/C++ variables~\footnote{\tiny \url{http://stackoverflow.com/questions/78172/using-c-pthreads-do-shared-variables-need-to-be-volatile}.}.\\[1em]
-     Syntax depends on the compiler.\\
-
-\begin{itemize}
-  \item Microsoft Visual Studio C++ Compiler:
-  \begin{lstlisting}
-_ReadWriteBarrier()
-  \end{lstlisting}
-  \item Intel Compiler:
-  \begin{lstlisting}
-    __memory_barrier()
-  \end{lstlisting}
-  \item GNU Compiler:
-  \begin{lstlisting}
-__asm__ __volatile__ ("" ::: "memory");
-  \end{lstlisting}
-\end{itemize}
-
-  The compiler also shouldn't reorder\\ across e.g. Pthreads mutex calls.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+
+\begin{frame}
+\frametitle{In-val-i-daaaaaate!}
+
+Invalidation is the most common protocol. 
+
+It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  
+
+Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). 
+
+If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. 
+
+This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. 
+
+Regardless, the most recent value appears in memory, always.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Let's Yell}
+
+There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. 
+
+But it uses lots of bandwidth and is not necessarily a good idea. 
+
+It does, however prevent the costly cache miss that follows an invalidate. 
+
+Sadly, as we are mere users and not hardware architects, we don't get to decide; we just have to live with whichever one is on the hardware we get. Bummer.
+
+
+\end{frame}
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Aside: {\tt gcc} Inline Assembly}
+\begin{frame}
+  \frametitle{Write-Through Protocol}
 
   
-
-  Just as an aside, here's {\tt gcc}'s inline assembly format
-
-  \begin{lstlisting}
-__asm__ ( assembler template 
-       : output operands                  /* optional */
-       : input operands                   /* optional */
-       : list of clobbered registers      /* optional */
-       );
-  \end{lstlisting}
+  \begin{itemize}
+    \item Two states, {\bf valid} and {\bf invalid}, for each memory location.
+    \item Events are either from a processor ({\bf Pr}) or the {\bf Bus}.
+  \end{itemize}
   \vfill
-  Last slide used {\bf \_\_volatile\_\_} with  \_\_asm\_\_. This isn't the same as the normal C volatile. It means:
-
-  \begin{itemize}
-    \item The compiler may not reorder this assembly code\\ and put it somewhere
-      else in the program.
-  \end{itemize}
+  \begin{center}
+    \begin{tabular}{llll}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
+      Valid   & PrRd  &       & Valid\\
+      Valid   & PrWr  & BusWr & Valid\\
+      Valid   & BusWr &       & Invalid\\
+      Invalid & PrWr  & BusWr & Valid\\
+      Invalid & PrRd  & BusRd & Valid\\
+    \end{tabular}
+  \end{center}
   
-
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Memory Fences: Preventing Hardware Memory Reordering}
-
-
-Memory barrier: no access after the barrier becomes visible to the
-system (i.e. takes effect) until after all accesses before the barrier
-become visible.\\[1em]
-
-  {\bf Note:} these are all x86 {\tt asm} instructions.\\[1em]
-  {\tt mfence}:
-  \begin{itemize}
-    \item All loads and stores before the fence finish before any more loads or stores execute.
-  \end{itemize}
-  {\tt sfence}:
-  \begin{itemize}
-    \item All stores before the fence finish before any more stores execute.
-  \end{itemize}
-  {\tt lfence}:
-  \begin{itemize}
-    \item All loads before the fence finish before any more loads execute.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Preventing Hardware Memory Reordering (Option 2)}
+  \frametitle{Write-Through Protocol Example}
 
   
-  Some compilers also support preventing hardware reordering:
-
-\begin{itemize}
-  \item Microsoft Visual Studio C++ Compiler:
-  \begin{lstlisting}
-MemoryBarrier();
-  \end{lstlisting}
-
-  \item Solaris Studio (Oracle) Compiler:
-  \begin{lstlisting}
-__machine_r_barrier();
-__machine_w_barrier();
-__machine_rw_barrier();
-  \end{lstlisting}
-
-  \item GNU Compiler:
-  \begin{lstlisting}
-__sync_synchronize();
-  \end{lstlisting}
-\end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-  
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Memory Barriers and OpenMP}
-
-  
-    Fortunately, an OpenMP {\bf flush} (or, better yet, mutexes) also preserve the order of variable accesses.\\[1em]
-    Stops reordering from both the compiler and hardware.\\[1em]
-    For GNU, flush is implemented as
-      {\tt \_\_sync\_synchronize();}\\[1em]
-
-  {\bf Note:} proper use of memory fences makes {\tt volatile} not very
-  useful (again, {\tt volatile} is not meant to help with threading, and will
-  have a different behaviour for threading on different compilers/hardware).
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\part{Atomic Operations}
-\frame{\partpage}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Atomic Operations}
-
-  
-
- We saw the {\bf atomic} directive in OpenMP, plus C++11 atomics.\\[1em]
-
- Most OpenMP atomic expressions map to\\ atomic hardware instructions.\\[1em]
-
- Other atomic instructions exist.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Compare and Swap}
-
-  
-  Also called {\bf compare and exchange} ({\tt cmpxchg} instruction).
-
-  \begin{lstlisting}
-int compare_and_swap (int* reg, int oldval, int newval) 
-{
-  int old_reg_val = *reg;
-  if (old_reg_val == oldval) 
-     *reg = newval;
-  return old_reg_val;
-}
-  \end{lstlisting}
 
   \begin{itemize}
-    \item Afterwards, you can check if it returned {\tt oldval}.
-    \item If it did, you know you changed it.
+    \item For simplicity (this isn't an architecture course), assume all cache
+      reads/writes are atomic.
   \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  \vfill
+  {\bf Using the same example as before:}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Implementing a Spinlock}
+  Initially in main memory: {\tt x = 7}.
 
-  
-  Use compare-and-swap to implement spinlock:
-  \begin{lstlisting}
-void spinlock_init(int* lock) { *lock = 0; }
-
-void spinlock_lock(int* lock) {
-    while(compare_and_swap(lock, 0, 1) != 0) {}
-    __asm__ ("mfence");
-}
-
-void spinlock_unlock(int* lock) {
-    __asm__ ("mfence");
-    *lock = 0;  
-}
-  \end{lstlisting}
-  You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{ABA Problem}
-
-  
-    Sometimes you'll read a location twice.\\[1em]
-
-    If the value is the same, nothing has changed, right?
-
-    \pause
-
-    \alert{No.} This is an {\bf ABA problem}.\\[1em]
-
-    You can combat this by ``tagging'': modify value with nonce upon each write.\\[1em]
-
-    Can keep value separately from nonce; double compare and swap atomically swaps both value and nonce.\\[2em]
-
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\section{}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary}
-  
- Memory ordering:
+  \begin{enumerate}
+    \item {\tt CPU1} reads x, puts the value in its cache. \structure{(valid)}
+    \item {\tt CPU3} reads x, puts the value in its cache. \structure{(valid)}
+    \item {\tt CPU3} modifies {\tt x := 42}. \structure{(write to memory)}
       \begin{itemize}
-        \item Sequential consistency;
-        \item Relaxed consistency;
-        \item Weak consistency.
-      \end{itemize}~\\
-
- How to prevent memory reordering with fences.\\
-
- Other atomic operations.\\
+        \item \structure{{\tt CPU1} snoops and marks data as invalid.}
+      \end{itemize}
+    \item {\tt CPU1} reads x, \structure{from main memory. (valid)}
+    \item {\tt CPU2} reads x, \structure{from main memory. (valid)}
+  \end{enumerate}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Waterloo...}
+  \frametitle{Write-Back Cache}
 
-The ABA problem is not any sort of acronym nor a reference to this: \url{https://www.youtube.com/watch? v=Sj_9CiNkkn4}
 
+  \begin{itemize}
+    \item What if, in our example, {\tt CPU3} writes to {\tt x} 3 times?\\[1em]
+    \item Main goal: delay the write to memory as long as possible.\\[1em]
+    \item At minimum, we have to add a ``dirty'' bit:\\
+     \quad Indicates the our data has not yet been written to memory.
+  \end{itemize}
+  
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{ABA}
+  \frametitle{Write-Back Implementation}
 
-It's a value that is A, then changed to B, then changed back to A. 
+  
+     The simplest type of write-back protocol (MSI), with 3 states:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; \\
+          \quad main memory is {\bf out-of-date}.
+        \item {\bf Shared}---location is unmodified, \\
+          \quad up-to-date with main
+          memory; \\
+          \quad may be present in other caches (also up-to-date).
+        \item {\bf Invalid}---same as before.
+      \end{itemize}~\\
+      
+     Initial state, upon first read, is ``shared''.\\[1em]
 
-The ABA problem is a big mess for the designer of lock-free Compare-And-Swap routines. 
+     Implementation will only write the data to memory if another
+        processor requests it.\\[1em]
 
-\begin{enumerate}
-	\item $P_{1}$ reads $A_{i}$ from location $L_{i}$.
-	\item $P_{k}$ interrupts $P_{1}$; $P_{k}$ stores the value $B$ into $L_{i}$.
-	\item $P_{j}$ stores the value $A_{i}$ into $L_{i}$.
-	\item $P_{1}$ resumes; it executes a false positive CAS.
-\end{enumerate} 
-
-
+     During write-back, a processor may read the data from the bus.
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{False Positive}
+  \frametitle{MSI Protocol}
 
-It's a ``false positive'' because $P_{1}$'s compare-and-swap operation succeeds even though the value at $L_{i}$ has been modified in the meantime. 
+  
+  \begin{itemize}
+    \item Bus write-back (or flush) is {\bf BusWB}.
+    \item Exclusive read on the bus is {\bf BusRdX}.
+  \end{itemize}~\\
 
-If this doesn't seem like a bad thing, consider this. 
-
-If you have a data structure that will be accessed by multiple threads, you might be controlling access to it by the compare-and-swap routine. 
-
-What should happen is the algorithm should keep trying until the data structure in question has not been modified by any other thread in the meantime. 
-
-But with a false positive we get the impression that things didn't change, even though they really did.
-
+  \begin{center}
+    \begin{tabular}{llll}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
+      Modified   & PrRd   &        & Modified\\
+      Modified   & PrWr   &        & Modified\\
+      Modified   & BusRd  & BusWB  & Shared\\
+      Modified   & BusRdX & BusWB  & Invalid\\
+      Shared     & PrRd   &        & Shared\\
+      Shared     & BusRd  &        & Shared\\
+      Shared     & BusRdX &        & Invalid\\
+      Shared     & PrWr   & BusRdX & Modified\\
+      Invalid    & PrRd   & BusRd  & Shared\\
+      Invalid    & PrWr   & BusRdX & Modified\\
+    \end{tabular}
+  \end{center}
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Napoleon was defeated...}
+  \frametitle{MSI Example}
 
-You can combat this by ``tagging'': modify value with nonce upon each
-write.  
+  
 
-You can also keep the value separately from the nonce; double
-compare and swap atomically swaps both value and nonce.
+  {\bf Using the same example as before:}
 
+  Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x from memory. \structure{(BusRd, shared)}
+    \item {\tt CPU3} reads x from memory. \structure{(BusRd, shared)}
+    \item {\tt CPU3} modifies {\tt x = 42}:
+      \begin{itemize}
+        \item \structure{Generates a BusRdX.}
+        \item \structure{{\tt CPU1} snoops and invalidates x.}
+        \item \structure{{\tt CPU3} changes {\tt x}'s state to modified.}
+      \end{itemize}
+    \item {\tt CPU1} reads x:
+      \begin{itemize}
+        \item \structure{Generates a BusRd.}
+        \item \structure{{\tt CPU3} writes back the data and sets x to shared.}
+        \item \structure{{\tt CPU1} reads the new value from the bus as shared.}
+      \end{itemize}
+    \item {\tt CPU2} reads x from memory. \structure{(BusRd, shared)}
+  \end{enumerate}
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{An Extension to MSI: MESI}
+
+  
+    The most common protocol for cache coherence is MESI.\\[1em]
+    Adds another state:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; \\
+\qquad main memory is {\bf out-of-date}.
+        \item {\bf Exclusive}---only this cache has a valid copy; \\
+\qquad main memory is {\bf up-to-date}.
+        \item {\bf Shared}---same as before.
+        \item {\bf Invalid}---same as before.
+      \end{itemize}
+~\\
+
+    MESI allows a processor to modify data exclusive to it, \\without
+      having to communicate with the bus.\\
+    MESI is \structure{safe}: in E state, no other processor has the
+      data.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Even More States!}
+
+  
+    MESIF (used in latest i7 processors):
+      \begin{itemize}
+        \item {\bf Forward}---basically a shared state; but, current
+          cache is the only one that will respond to a request to
+          transfer the data.
+      \end{itemize}~\\[1em]
+
+    Hence: a processor requesting data that is already shared or exclusive will
+      only get one response transferring the data.\\[1em]
+    Permits more efficient usage of the bus.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Good Questions (1)}
+
+  
+  {\bf Cache coherency seems to make sure my data is consistent. Why do I have
+    to have something like flush or fence?}
+  \begin{itemize}
+    \item You might be ok, if all of the writes on processors are to the
+      cache. But they're not!
+    \item Cache coherency won't update any values modified in registers.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Good Questions (2)}
+
+  
+  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
+    so then am I okay?}
+  \vspace{6.2em}
+  \pause
+
+  \begin{center}
+    \includegraphics[scale=0.3]{images/disapproval}    
+  \end{center}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Good Questions (2)}
+
+  
+  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
+    so then am I okay?}\\[1em]
+
+    {\tt volatile} in C was only designed to:
+      \begin{itemize}
+        \item Allow access to memory mapped devices.
+        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
+        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
+      \end{itemize}~\\[1em]
+    Remember, things can also be reordered by the compiler,
+      {\tt volatile} doesn't prevent this.\\[1em]
+    Also, it's likely your variables could be in registers the majority
+      of the time, except in critical areas.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Cache Coherency Summary}
+
+  
+    We saw the basics of cache coherence (good to know, but more of an architecture
+      thing).\\[1em]
+    There are many other protocols for cache coherence, each with their own
+      trade-offs.\\[1em]
+
+     Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
+      compiler and hardware don't reorder reads and writes.\\[1em]
+    \begin{itemize}
+     \item Neither cache coherence nor {\tt volatile} will save you.
+    \end{itemize}
+
+Barriers/fences/flushes might be expensive in terms of ``wasting time'', but correctness is important.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \end{document}
 

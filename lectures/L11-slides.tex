@@ -1,6 +1,6 @@
 \input{configuration}
 
-\title{Lecture 11 --- Critical Paths, Data \& Task Parallelism }
+\title{Lecture 11 --- Autoparallelization }
 
 \author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -15,454 +15,625 @@
 
  \end{frame}
 
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Critical Paths}
+\begin{frame}[fragile]
+  \frametitle{Automatic Parallelization of Example Code}
 
-  
 
-  Should be familiar with critcal paths from other courses (Gantt charts).\\[1em]
+  Let's try automatic parallelization.
+  \vfill
+  Compiling with {\tt solarisstudio} and automatic parallelization yields
+  the following:
 
-  Consider the following diagram (edges are tasks):
 
-\begin{center}
-\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
-                    semithick,initial text=]
-  \node[initial,block] (s0) {Start};
-  \node[block] (s1) [right=of s0] {S1};
-  \node[block] (s2) [right=of s1] {S2};
-  \node[bw] (s3) [right=of s2] {Finish};
+{\scriptsize
+  \begin{lstlisting}
+% solarisstudio-cc -O3 -xautopar -xloopinfo omp_vector.c 
+"omp_vector.c", line 5: PARALLELIZED, and serial version generated                 
+"omp_vector.c", line 15: not parallelized, call may be unsafe
+  \end{lstlisting}
+}
 
-  \path (s0) edge node {A} (s1)
-        (s1) edge node {B} (s2)
-        (s2) edge node {D} (s3)
-        (s0) edge[bend left=30] node {C} (s2);
-\end{tikzpicture}
-\end{center}
+  How will this code compare to our manual efforts? \\
+  (If you weren't in class, you'll have to try it yourself.)
+  \vfill
+  {\bf Note:} {\tt solarisstudio} generates two versions of the code, 
+  and decides, at runtime, if the parallel code would be faster.
 
-  \begin{itemize}
-    \item B depends on A, C has no dependencies, and D depends on B and C.
-    \item Can execute A-then-B in parallel with C.
-    \item Keep dependencies in mind when calculating speedups for more
-      complex programs.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data and Task Parallelism}
-
-  
-     \structure{Data parallelism} is performing \emph{the same} operations on
-      different input.\\
-
-     {\bf Example:} doubling all elements of an array.\\[1em]
-
-     \structure{Task parallelism} is performing \emph{different} operations
-      on different input.
-
-    {\bf Example:} playing a video file: one thread decompresses
-      frames, another renders.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data Parallelism: Single Instruction, Multiple Data}
-
-  
-    We'll discuss SIMD in more detail later. An overview:
-    \begin{itemize}
-    \item You can load a bunch of data and perform 
-      arithmetic.
-    \item Intructions process multiple data items simultaneously.
-      (Exact number is hardware-dependent).
-    \end{itemize}
-    For x86-class CPUs, MMX and SSE extensions provide SIMD instructions.
-  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{SIMD Example}
+  \frametitle{Example Code to Parallelize}
+
+
+  \begin{lstlisting}[numbers=left]
+#include <stdlib.h>
+
+void setup(double *vector, int length) {
+    int i;
+    for (i = 0; i < length; i++)
+    {
+        vector[i] += 1.0;
+    }
+}
+
+int main()
+{
+    double *vector;
+    vector = (double*) malloc(sizeof(double)*1024*1024);
+    for (int i = 0; i < 1000; i++)
+    {
+        setup (vector, 1024*1024);
+    }
+}
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Automatic Parallelization of Example Code}
+
+
+  Let's try automatic parallelization.
+  \vfill
+  Compiling with {\tt solarisstudio} and automatic parallelization yields
+  the following:
+
+
+{\scriptsize
+  \begin{lstlisting}
+% solarisstudio-cc -O3 -xautopar -xloopinfo omp_vector.c 
+"omp_vector.c", line 5: PARALLELIZED, and serial version generated                 
+"omp_vector.c", line 15: not parallelized, call may be unsafe
+  \end{lstlisting}
+}
+
+  How will this code compare to our manual efforts? \\
+  (If you weren't in class, you'll have to try it yourself.)
+  \vfill
+  {\bf Note:} {\tt solarisstudio} generates two versions of the code, 
+  and decides, at runtime, if the parallel code would be faster.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Autoparallelization implementation: OpenMP}
+
+
+  Under the hood, most parallelization frameworks use {\tt OpenMP},
+      which we'll see next lecture.\\[1em]
+  For now: you can control the number of threads with the
+      {\tt OMP\_NUM\_THREADS} environment variable.\\[1em]
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Automatic Parallelization in {\tt gcc}}
+
+
+  {\tt gcc} (since 4.3) can also auto-parallelize loops. \\
+  However, there are
+      a few problems:
+      \begin{enumerate}
+        \item It will not tell you which loops it parallelizes (nicely).
+        \item It only operates with a fixed number of threads.
+        \item The profitability metrics are quite simple.
+        \item Only operates in simple cases.
+      \end{enumerate}
+   ~\\[1em]
+
+  Use the flags {\tt -floop-parallelize-all -ftree-parallelize-loops=N} where {\tt N} is the \# of
+  threads.
+  \vfill
+  {\bf Note:} {\tt gcc} also uses {\tt OpenMP} but ignores
+  {\tt OMP\_NUM\_THREADS}.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Understanding Automatic Parallelization in {\tt gcc}}
+
+
+  Flag {\tt -fdump-tree-parloops-details} shows what the automatic
+  parallelizations were, but it's quite unreadable.
+  \vfill
+  Instead, you can look at the assembly code to see the parallelizations
+  (obviously, impractical for a large project).
+  \begin{lstlisting}
+% gcc -std=c99 -O3 -ftree-parallelize-loops=4
+  omp_vector_gcc.c -S -o omp_vector_gcc_auto.s
+  \end{lstlisting}
+  \vfill
+  The resulting {\tt .s} file contains the following code:
+  \begin{lstlisting}
+call    GOMP_parallel_start
+leaq    80(%rsp), %rdi
+call    setup._loopfn.0
+call    GOMP_parallel_end
+  \end{lstlisting}
+  \vfill
+  {\bf Note:} {\tt gcc} also parallelizes {\tt main.\_loopfn.2} and
+  {\tt main.\_loopfn.3}, although it looks like it serves little purpose.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Loops That gcc's Automatic Parallelization Can Handle}
+
+
+  Single loop:
+  \begin{lstlisting}
+for (i = 0; i < 1000; i++)
+    x[i] = i + 3;
+  \end{lstlisting}
+  \vfill
+  Nested loops with simple dependency:
+  \begin{lstlisting}
+for (i = 0; i < 100; i++)
+    for (j = 0; j < 100; j++)
+        X[i][j] = X[i][j] + Y[i-1][j];
+  \end{lstlisting}
+  \vfill
+  Single loop with not-very-simple dependency:
+  \begin{lstlisting}
+for (i = 0; i < 10; i++)
+    X[2*i+1] = X[2*i];
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Loops That gcc's Automatic Parallelization Can't Handle}
+
+
+  Single loop with if statement:
+  \begin{lstlisting}
+for (j = 0; j <= 10; j++)
+    if (j > 5) X[i] = i + 3;
+  \end{lstlisting}
+  \vfill
+  Triangle loop:
+  \begin{lstlisting}
+for (i = 0; i < 100; i++)
+    for (j = i; j < 100; j++)
+        X[i][j] = 5;
+  \end{lstlisting}
+  \vfill
+  Examples from: \url{http://gcc.gnu.org/wiki/AutoparRelated}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary of Conditions for Automatic Parallelization}
+
+
+  From Chapter 10 of
+  Oracle's \emph{Fortran Programming Guide}
+  \footnote{\scriptsize \url{http://download.oracle.com/docs/cd/E19205-01/819-5262/index.html}}
+  translated to C, a loop must:
+
+  \begin{itemize}
+    \item have a recognized loop style, e.g., {\tt for} loops with
+      bounds that don't vary per-iteration;
+    \item have no dependencies between data accessed in loop bodies for
+      each iteration;
+    \item not conditionally change scalar variables read after the loop
+      terminates, or change any scalar variable across iterations; and
+    \item have enough work in the loop body to make parallelization profitable.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Manually Parallelizing the Example Code}
+
+
+  What can we do to parallelize this code?
+  \vfill
+  {\bf Option 1:} \uncover<2->{ horizontal~ \qquad \begin{minipage}{7em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}}
+
+  \begin{itemize}
+    \item<2-> Create 4 threads; each thread does 1000 iterations on its own sub-array.
+  \end{itemize}
+
+  {\bf Option 2:} \uncover<3->{ bad horizontal~~ \begin{minipage}{7em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}}
+
+  \begin{itemize}
+    \item<3-> 1000 times, create 4 threads which each operate once on the sub-array.
+  \end{itemize}
+
+  {\bf Option 3:} \uncover<4->{~~vertical $ \quad \: \qquad \mid \mid \mid\mid \:\: \mid \mid \mid \mid \:\: \mid \mid \mid \mid\:\: \mid \mid \mid \mid$}
+  \begin{itemize}
+    \item<4-> Create 4 threads; for each element, the owning thread does 1000 iterations on that element.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Manual Parallelization Demo}
+
+
+  I'll show a demo of three example PThread parallelizations.\\[1em]
+
+  Methodology: compiling with {\tt solarisstudio}, \\ flags {\tt -O3 -lpthread}.\\[1em]
+
+  Which manual option performs better?
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Comparing Parallelization Results}
+
+
+How does autoparallelization compare to manual parallelization?
+  %% \begin{itemize}
+  %%   \item<2-> Relative ordering: {\bf Option 3} \textgreater{} Automatic
+  %%     \textgreater{} {\bf Option 1}
+  %%   \item<2-> Automatic parallelization of {\bf Option 1} was better than
+  %%     manual, why?
+  %%   \item<3-> Manual {\bf Option 3} performed better, even though both used the
+  %%     same number of threads, why?
+  %% \end{itemize}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Case Study 2: Multiplying a Matrix by a Vector}
+
+
+Let's see how automatic parallelization does on a more complicated
+program (could we parallelize this?):
+
+  \begin{lstlisting}[numbers=left]
+void matVec (double **mat, double *vec, double *out,
+             int *row, int *col) 
+{
+  int i, j;
+  for (i = 0; i < *row; i++)
+  {
+    out[i] = 0;
+    for (j = 0; j < *col; j++)
+    {
+      out[i] += mat[i][j] * vec[j];
+    }
+  }
+}
+  \end{lstlisting}
+
+
+  \begin{center}
+    Reminder:
+    \begin{math}
+      \begin{bmatrix} 1 & 2 & 3 \\ 4 & 5 & 6\end{bmatrix}
+      \begin{bmatrix} 1 \\ 2 \\ 3 \end{bmatrix}
+      =
+      \begin{bmatrix} 14 \\ 32 \end{bmatrix}
+    \end{math}
+  \end{center}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Case Study: Automatic Parallelization, Attempt 1}
 
   
+  Well, based on our knowledge, we could parallelize the outer loop.\\[1em]
+  Let's see what {\tt solarisstudio} will do for us\ldots
+  
+
+  \begin{lstlisting}
+% solarisstudio-cc -xautopar -xloopinfo -O3 -c fploop.c
+"fploop.c", line 5: not parallelized, not a recognized for loop
+"fploop.c", line 8: not parallelized, not a recognized for loop
+  \end{lstlisting}
+
+  
+  \ldots it refuses to do anything, guesses?
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Case Study: Automatic Parallelization, Attempt 2}
+
+
+  \begin{itemize}
+    \item The loop bounds are not constant, since one of the variables may alias
+      {\tt row} or {\tt col}, even though {\tt int $\neq$ double}.
+  \end{itemize}
+~\\[1em]
+
+  So, let's add {\tt restrict} to {\tt row} and {\tt col} and see what
+  happens\ldots
+
+  \begin{lstlisting}
+% solarisstudio-cc -O3 -xautopar -xloopinfo -c fploop.c
+"fploop.c", line 5: not parallelized, unsafe dependence
+"fploop.c", line 8: not parallelized, unsafe dependence
+  \end{lstlisting}
+
+  Now it recognizes the loop, but still won't parallelize it. Why?
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Case Study: Automatic Parallelization, Attempt 3}
+
+
+  \begin{itemize}
+    \item {\tt out} might alias {\tt mat} or {\tt vec}, which would make this
+      unsafe
+  \end{itemize}
+
+  Let's add another {\tt restrict} to {\tt out}:
+
+  \begin{lstlisting}
+% solarisstudio-cc -O3 -xautopar -xloopinfo -c fploop.c
+"fploop.c", line 5: PARALLELIZED, and serial version
+  generated
+"fploop.c", line 8: not parallelized, unsafe dependence
+  \end{lstlisting}
+
+  Now, we can get the outer loop to parallelize.
+  
+  \begin{itemize}
+    \item Parallelizing the outer loop is almost always better than inner loops,
+      and usually it's a waste to do both, so we're done.
+  \end{itemize}
+
+  {\bf Note:} We can parallelize the inner loop as well (it's similar to
+  Assignment 1). We'll see that {\tt solarisstudio} can do it automatically.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[containsverbatim]
+  \frametitle{Lingering Questions about Runtimes}
+
+  
+    What happened here?\\[1em]
+  
+    \begin{tabular}{ll}
+      \begin{minipage}{5em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}& horizontal good: \\
+      & \qquad create 4 threads to do 1000 iterations on sub-arrays.\\
+      \begin{minipage}{5em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}& horizontal bad: \\
+      & \qquad 1000 times, create 4 threads to iterate on sub-array. \\
+      $ \mid \mid \mid\mid \: \mid \mid \mid \mid \: \mid \mid \mid \mid\: \mid \mid \mid \mid$& vertical:\\
+      & \qquad create 4 threads, handle 1 element at a time.\\[1em]
+    \end{tabular}
+    
+      
+      Last year, {\tt perf stat -r 5} gave following task-clocks (in seconds):\\[1em]
+
+      \begin{center}
+      \begin{tabular}{lrrrr}
+        & H good & H bad & V & auto \\
+        gcc, no opt & 2.794 & 2.953 & 2.799\\
+        gcc, -O3 & 0.588 & 1.490 & 0.980\\
+        solaris, no opt & 3.175 & 3.291 & 2.966 \\
+        solaris, -xO4 & 0.494 & 1.453 & 2.739 & 0.688\\
+      \end{tabular}
+      \end{center}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[containsverbatim]
+  \frametitle{Runtimes---Why?}
+
+  
+    Observations:\\[1em]
+    \begin{itemize}
+    \item Good runs had 5 to 7 cpu-migrations; bad had 4000.
+    \item \# cycles varied from 2B to 9.7B (no opt).\\
+    \item Branch misses varied from 8k to 208k.
+    \end{itemize}
+  
+    
+
+    
+%%     gcc plain, bad: 4,004 cpu-migrations; 5.2B cycles; 75\% frontend cycles idle; 1B branches; 167k branch misses
+%% gcc -O3, bad: 4,003 cpu-migrations; 4.2B cycles; 80\% frontend cycles idle; 466k branches; 208k branch misses
+%% gcc plain, good: 5 cpu-migrations; 9.6B cycles; 39\% frontend cycles idle; 1B branches; 13k branch misses
+%% gcc -O3, good: 7 cpu-migrations; 2B cycles; 49\% frontend cycles idle; 525k branches; 8k branch misses
+
+%% gcc plain, V: 5 cpu-migrations; 9.7B cycles; 44\% frontend cycles idle; 1B branches; 1M branch misses
+%% gcc -O3, V: 7 cpu-migrations; 3.3B cycles; 69\% frontend cycles idle; 1B branches; 1M branch misses
+
+%% solaris auto: 0.688s; 3 cpu-migrations; 2.4B cycles; 72\% frontend cycles idle; 134M branches; 30k branch misses
+        
+    
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reductions}
+
+
+  \begin{itemize}
+    \item Reductions combine input data into a smaller (summary) set.
+    \item We'll see a more complete definition when we touch on functional
+      programming.
+    \item Simplest instance: computing the sum of an array.
+  \end{itemize}
+~\\
+
   Consider the following code:
 
   \begin{lstlisting}
-void vadd(double * restrict a, double * restrict b, 
-          int count) {
-  for (int i = 0; i < count; i++)
-    a[i] += b[i];
-}    
+double sum (double *array, int length)
+{
+  double total = 0;
+
+  for (int i = 0; i < length; i++)
+    total += array[i];
+  return total;
+}
   \end{lstlisting}
 
-    In this scenario, we have a regular operation over block data.\\[1em]
+  Can we parallelize this? 
 
-    We could use threads, but we'll use SIMD.
-
-  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly without SIMD}
-
-  
-If we compile this without SIMD instructions on a 32-bit x86, (flags {\tt -m32 -march=i386 -S}) we might get this:
-
-  \begin{lstlisting}
-loop:
-  fldl  (%edx)
-  faddl (%ecx)
-  fstpl (%edx)
-  addl  8, %edx
-  addl  8, %ecx
-  addl  1, %esi
-  cmp   %eax, %esi
-  jle   loop
-  \end{lstlisting}
-
-   Just loads, adds, writes and increments.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  \frametitle{Reduction Problems}
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly with SIMD}
-
-  
- Instead, compiling to SIMD instructions\\ ({\tt -m32 -mfpmath=sse -march=prescott}) gives:
-
-  \begin{lstlisting}
-loop:
-  movupd (%edx),%xmm0
-  movupd (%ecx),%xmm1
-  addpd  %xmm1,%xmm0
-  movpd  %xmm0,(%edx)
-  addl   16,%edx
-  addl   16,%ecx
-  addl   2,%esi
-  cmp    %eax,%esi
-  jle    loop
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item Now processing two elements at a time on the same core.
-    \item Also, no need for stack-based x87 code.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{SIMD Overview}
-
-  
-  \begin{itemize}
-    \item Operations \emph{packed}: operate on multiple data elements 
-      at~the~same~time.
-    \vfill
-    \item On modern 64-bit CPUs, SSE has 16 128-bit registers.
-    \vfill
-    \item Very good if your data can be \emph{vectorized} and performs math.
-    \vfill
-    \item Usual application: image/video processing.
-    \vfill
-    \item We'll see more SIMD as we get into GPU programming: GPUs excel
-       at these types of applications.
-  \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Task-Based Patterns: Overview}
-
-\Large
-  
-  \begin{itemize}
-    \item We'll now look at thread and process-based~parallelization.
-    \item Although threads and processes differ, we don't care for now.
-  \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 1: Multiple Independent Tasks}
-
-  
-    Only useful to maximize system utilization.
-  \begin{itemize}
-    \item Run multiple tasks on the same system \\ ~~~(e.g. database and web server).\\[1em]
-     If one is memory-bound and the other is I/O-bound, for example, you'll
-      get maximum utilization out of your resources.\\[1em]
-     {\bf Example:} cloud computing, each task is independent and can
-      tasks can spread themselves over different nodes.\\[1em]
-    \item Performance can increase linearly with the number of threads.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 2: Multiple Loosely-Coupled Tasks}
-
-  
-    Tasks aren't quite independent, so there needs to be some inter-task
-      communication (but not much).
-  \begin{itemize}
-
-    \item Communication might be from the tasks to a controller or status
-      monitor.
-  \end{itemize}
-
-    Refactoring an application can help with latency. \\
-For instance: split off
-      the CPU-intensive computations into a separate thread---your application may
-      respond more quickly.\\[1em]
-     {\bf Example:} A program (1) receives/forwards packets and (2) logs them. You
-      can split these two tasks into two threads, so you can still
-      receive/forward while waiting for disk. This will increase the
-      \structure{throughput} of the system.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 3: Multiple Copies of the Same Task}
-
-  
-    Variant of multiple independent tasks: run multiple copies of the same task (probably on different data).
-
-  \begin{itemize}
-    \item No communcation between different copies.
-  \end{itemize}
-
-  Again, performance should increase linearly with number of tasks.\\[1em]
-
-  {\bf Example:} In a rendering application, each thread can be
-      responsible for a frame (gain \structure{throughput}; same
-      \structure{latency}).
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 4: Single Task, Multiple Threads}
-
-  
-  Classic vision of ``parallelization''.\\[1em]
-
-  {\bf Example:} Distribute array processing over multiple 
-      threads---each thread computes results for a subset of the array.
-
-  \begin{itemize}
-    \item Can decrease \structure{latency} (and increase
-      \structure{throughput}), as we saw with \structure{Amdahl's Law}.
-    \item Communication can be a problem, if the data is not nicely partitioned.
-    \item Most common implementation is just creating threads and joining them,
-      combining all results at the join.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 5: Pipeline of Tasks}
-
-  
-    Seen briefly in computer architecture.
-
-    \begin{itemize}
-    \item Use multiple stages; each thread handles a stage.\\[1em]
-     {\bf Example:} a program that handles network packets: (1) accepts
-      packets, (2) processes them, and (3) re-transmits them. Could set up the threads such that each packet goes through the threads.
-    \vfill
-    \item Improves \structure{throughput}; may increase \structure{latency} as
-      there's communication between threads.
-    \vfill
-    \item In the best case, you'll have a linear speedup.\\[1em]
-
-     Rare, since the runtime of the stages will vary, and the slow
-      one will be the bottleneck (but you could have 2 instances of the
-      slow stage).
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 6: Client-Server}
-
-  
-    To execute a large computation, the server supplies work to many
-      clients---as many as request it.\\[1em]
-
-    Client computes results and returns them to the server.\\[1em]
-   {\bf Examples:} botnets, {\tt SETI@Home}, GUI application (backend
-      acts as the server).\\[1em]
-   Server can arbitrate access to shared resources (such as network
-      access) by storing the requests and sending them out.\\[1em]
-
-   \begin{itemize}
-    \item Parallelism is somewhere between single task, multiple threads and
-      multiple loosely-coupled tasks  
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 7: Producer-Consumer}
-
-  
-    Variant on the pipeline and client-server models.\\
-    Producer generates work, and consumer performs work.\\[1em]
-    {\bf Example:} producer which generates rendered frames;
-      consumer which orders these frames and writes them to disk.\\[1em]
-    Any number of producers and consumers.\\[1em]
-
-    \begin{itemize}
-    \item This approach can improve \structure{throughput} and also reduces
-      design complexity
-    \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Combining Strategies}
-
-  
-    Most problems don't fit into one category, so it's often best to combine
-      strategies.\\[1em]
-
-    For instance, you might often start with a pipeline, and then use
-      multiple threads in a particular pipeline stage to handle one piece of
-      data.\\[1em]
-    Tip: estimate to see what divisions of strategies would work best
-      (might have to do more iterations of Amdahl's law depending on the amount
-      of strategies you can use).
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Midterm Questions from 2011 (1)}
-
-
-  For each of the following situations, {\bf name an appropriate parallelization
-  pattern and the granularity at which you would apply it, explain the necessary
-  communication, and explain why your pattern is appropriate}.
-  \begin{itemize}
-  \item build system, e.g. parallel make
-    \begin{itemize}
-      \item<2-> Multiple independent tasks, at a per-file granularity
-    \end{itemize}
-  \item optical character recognition system
-    \begin{itemize}
-      \item<2-> Pipeline of tasks
-      \item<2-> 2 tasks - finding characters and analyzing them
-    \end{itemize}
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Midterm Questions from 2011 (2)}
-
-
-  {\bf Give a concrete example} where you would use the following
-  parallelization patterns. {\bf Explain} the granularity at which you'd apply
-  the pattern.
-  \begin{itemize}
-    \item single task, multiple threads:
-    \begin{itemize}
-      \item<2-> Computation of a mathematical function with independent
-        sub-formulas.
-    \end{itemize}
-    \item producer-consumer (no rendering frames, please):
-    \begin{itemize}
-      \item<2-> Processing of stock-market data:
-        a server might generate raw financial data (quotes) for a
-        particular security. The server would be the producer. Several clients
-        (or consumers) may take the raw data and use them in different ways, e.g. by computing means, generating charts, etc.
-    \end{itemize}
-  \end{itemize}
- 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{How To Parallelize Code: Strategy}
-  
-  
-  Four-step outline:
+  Barriers to parallelization:
   \begin{enumerate}
-    \item Profile the code.
-    \item Look at hotspots; find and optimize dependencies; parallelize dependency chains; change the algorithm if you can.
-    \item Estimate benefits.
-    \item If not good enough, step back and try higher level of abstraction.
+    \item value of {\tt total} depends on previous
+      iterations;
+    \item addition is actually non-associative for floating-point values
+      \\ (is this a problem?)
   \end{enumerate}
-  Always try to minimize synchronization.
-  
+  ~\\[1em]
+  \begin{center}
+    Recall that ``associative'' means: 
+     \[a + (b + c) = (a + b) + c.\]
+  \end{center}
+    \only<2-> In this case, the program probably isn't sensitive to rounding,
+      but you should always consider if an operation is associative.
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Automatic Parallelization via Reduction}
+
+
+  If we compile the program with {\tt solarisstudio} and add the flag
+  {\tt -xreduction}, it will parallelize the code:
+
+
+  \begin{lstlisting}
+% solarisstudio-cc -xautopar -xloopinfo -xreduction -O3 -c sum.c 
+"sum.c", line 5: PARALLELIZED, reduction, and serial version
+  generated
+  \end{lstlisting}
+~\\[1em]
+
+
+  {\bf Note:} If we try to do the reduction on {\tt fploop.c} with {\tt restrict}s added, we'll get the following:
+
+
+  \begin{lstlisting}
+% solarisstudio-cc -O3 -xautopar -xloopinfo  -xreduction -c fploop.c
+"fploop.c", line 5: PARALLELIZED, and serial version generated
+"fploop.c", line 8: not parallelized, not profitable
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Low-level Implementation Tactic: Thread Pools}
-  
-  
-    Instead of creating threads, destroying them and recreating them, you
-      can use a \structure{thread pool}.
-    \begin{itemize}
-    \item It creates $n$ threads; you just {\tt push} work onto them.
-    \end{itemize}
+  \frametitle{Dealing with Function Calls}
 
-  \begin{center}
-    \includegraphics[scale=0.4]{images/thread-pool}
-  \end{center}
-
+  
   \begin{itemize}
-    \item Only question is: How many threads should you create? (Experiment to find out).
-    \item Implementation from GLib: {\tt GThreadPool}.
+    \item A general function could have arbitary side effects.
+    \item Production compilers tend to avoid parallelizing any loops with
+      function calls.
   \end{itemize}
+~\\[1em]
+
+  Some built-in functions, like {\tt sin()}, are ``pure'', have no side
+  effects, and are safe to parallelize.
+~\\[1em]
+  {\bf Note:} this is why functional languages are nice for parallel
+  programming: impurity is visible in type signatures.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Dealing with Function Calls in {\tt solarisstudio}}
+
   
+  \begin{itemize}
+    \item For {\tt solarisstudio} you can use the {\tt -xbuiltin} flag to make
+      the compiler use its whitelist of ``pure'' functions.
+    \item The compiler can then parallelize a loop which uses {\tt sin()}
+      (you shouldn't replace built-in functions with your own if you use this
+      option).
+  \end{itemize}
+  \vfill
+  Other options which may work:
+  
+  \begin{enumerate}
+    \item Crank up the optimization level ({\tt -xO4}).
+    \item Explicitly tell the compiler to inline certain functions ({\tt
+      -xinline=}, or use the {\tt inline} keyword).
+  \end{enumerate}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary of Automatic Parallelization}
+
+  
+To help the compiler, we can:
+\begin{itemize}
+\item use {\tt restrict} (make a {\tt restrict}ed copy); and,
+\item make sure that loop bounds are constant (temporary
+variables). 
+\end{itemize}
+~\\
+Some compilers automatically create different versions
+for the alias-free case and the (parallelized) aliased case.\\[1em]
+
+At runtime, the program runs the aliased case if correct.
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
