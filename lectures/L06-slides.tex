@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 6 -- Asynchronous I/O, epoll, select }
+\title{Lecture 6 --- Race Conditions \& Synchronization }
 
-\author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{p.lam@ece.uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -15,848 +15,711 @@
 
  \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
-  \frametitle{Juicy Quotes}
+\frametitle{Race Conditions }
 
-
-  \fbox{\includegraphics[width=.7\textwidth]{images/aio-linux.png}}\\
-{\scriptsize (mirrored at \url{compgeom.com/~piyush/teach/4531_06/project/hell.html})}
-   \\[3em]
-
-   ``Asynchronous I/O, for example, is often infuriating.''\\
---- Robert Love. {\em Linux System Programming, 2nd ed, } page 215.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Why non-blocking I/O?}
-  
-  Consider some I/O:
-
-
-\begin{minipage}{.5\textwidth}
-\begin{lstlisting}
-    fd = open(...);
-    read(...);
-    close(fd);
-  \end{lstlisting}
-\end{minipage}
-
-
-  Not very performant---under what conditions do we lose out?
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Mitigating I/O impact}
-
-    So far: can use threads to mitigate latency.\\
-
-    What are the disadvantages?
-    \only<2>{
-      \begin{itemize}
-        \item race conditions
-        \item overhead/max \# of thread limitations
-      \end{itemize}
-    }
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Live coding: Fork Bomb! }
-
-\begin{center}
-(well, threadbomb anyway)
-\end{center}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{An Alternative to Threads}
-
-    Asynchronous/nonblocking I/O.\\[2em]
-
-
-\begin{minipage}{.6\textwidth}
-\begin{lstlisting}
-    fd = open(..., O_NONBLOCK);
-    read(...); // returns instantly!
-    close(fd);
-  \end{lstlisting}
-\end{minipage}
-
-
-\begin{center}
-~\\[1em]
-$\cdots$\\[2em]
-
-\includegraphics[width=.25\textwidth]{images/Easy_button.JPG}
-\end{center}
-\hfill {\scriptsize (credit: Yskyflyer, Wikimedia Commons)}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Not Quite So Easy: Live Demo}
-
-    Doesn't work on files---they're always ready. Only e.g. sockets.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Other Outstanding Problem with Nonblocking I/O}
-
-    How do you know when I/O is ready to be queried?
-
-    \only<2>{\begin{itemize} 
-      \item polling ({\tt select}, {\tt poll}, {\tt epoll})
-      \item interrupts (signals)
-      \end{itemize}
-    }
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Using {\tt epoll}}
-  
-    Key idea: give {\tt epoll} a bunch of file descriptors;\\
-     \hspace*{2em}wait for events to happen.\\[1em]
-
-     Steps:
-     \begin{enumerate}
-       \item create an instance ({\tt epoll\_create1});
-       \item populate it with file descriptors ({\tt epoll\_ctl});
-       \item wait for events ({\tt epoll\_wait}).
-     \end{enumerate}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Creating an {\tt epoll} instance}
-  
-    \begin{minipage}{.5\textwidth}
-    \begin{lstlisting}
-   int epfd = epoll_create1(0);
-    \end{lstlisting}
-    \end{minipage}
-
-    {\tt efpd} doesn't represent any files; use it to talk to {\tt epoll}.\\[1em]
-
-    0 represents the flags (only flag: {\tt EPOLL\_CLOEXEC}).
-    
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Populating the {\tt epoll} instance}
-  
-    To add {\tt fd} to the set of descriptors watched by {\tt epfd}:
-    \begin{lstlisting}
-   struct epoll_event event;
-   int ret;
-   event.data.fd = fd;
-   event.events = EPOLLIN | EPOLLOUT;
-   ret = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &event);
-    \end{lstlisting}
-
-    Can also modify and delete descriptors from {\tt epfd}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Waiting on an {\tt epoll} instance}
-  
-    Now we're ready to wait for events on any file descriptor in {\tt epfd}.
-    \begin{lstlisting}
-  #define MAX_EVENTS 64
-
-  struct epoll_event events[MAX_EVENTS];
-  int nr_events;
-
-  nr_events = epoll_wait(epfd, events, MAX_EVENTS, -1);
-    \end{lstlisting}
-
--1: wait potentially forever; otherwise, milliseconds to wait.\\[1em]
-
-Upon return from {\tt epoll\_wait}, we have {\tt nr\_events} events ready.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Level-Triggered and Edge-Triggered Events}
-  
-    Default {\tt epoll} behaviour is \structure{level-triggered}:\\
-    \quad return whenever data is ready.\\[1em]
-
-    Can also specify (via {\tt epoll\_ctl}) \structure{edge-triggered} behaviour:\\
-    \quad return whenever there is a change in readiness.\\[1em]
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Asynchronous I/O}
-  
-    POSIX standard defines \structure{aio} calls.\\[1em]
-
-    These work for disk as well as sockets.\\[1em]
-
-    Key idea: you specify the action to occur when I/O is ready:
-    \begin{itemize}
-      \item nothing;
-      \item start a new thread;
-      \item raise a signal
-    \end{itemize}
-
-    Submit the requests using e.g. {\tt aio\_read} and {\tt aio\_write}.\\[1em]
-    Can wait for I/O to happen using {\tt aio\_suspend}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Nonblocking I/O with curl}
-  
-    Similar idea to {\tt epoll}:
-\begin{itemize}
-\item build up a set of descriptors;
-\item invoke the transfers and wait for them to finish;
-\item see how things went.
-\end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{curl\_multi initialization}
-
-  
-    curl\_multi: work with multiple resources at once.\\[1em]
-
-    How? Similar idea to {\tt epoll}:\\[1em]
-
-    1. To use {\tt curl\_multi}, first create the individual requests \\ \hspace{2em} ({\tt curl\_easy\_init}).\\
-    ~~~(Set options as needed on each handle).\\[1em]
-
-    2. Then, combine them with:
-    \begin{itemize}
-      \item {\tt curl\_multi\_init()};
-      \item {\tt curl\_multi\_add\_handle()}.
-    \end{itemize}
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{curl\_multi\_perform: option 1, select-based interface}
-
-  
-    Main idea: put in requests and wait for results.\\[1em]
-
-    {\tt curl\_multi\_perform} is a generalization of {\tt curl\_easy\_perform} to multiple resources.\\[1em]
-
-    Handle completed transfers with {\tt curl\_multi\_info\_read}.
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{calling curl\_multi\_perform}
-
-  
-    perform interface requires use of {\tt select} (not {\tt epoll}).\\[1em]
-
-    usage (once you've {\tt curl\_multi\_add\_handle}'d):\\[.5em]
-{\tt curl\_multi\_perform(multi\_handle, \&still\_running)}\\[.5em]
-    performs a non-blocking read/write, and\\
-    returns the number of still-active handles\\ \hspace*{2em} (with more data to come).
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Next steps after curl\_multi\_perform}
-
-  
-    do
-    \begin{itemize}
-      \item organize a call to {\tt select}; and
-      \item call {\tt curl\_multi\_perform} again
-    \end{itemize}
-    while there are still running transfers.\\[1em]
-
-    After the {\tt curl\_multi\_perform}, you can also delete, alter,
-    and re-add an {\tt curl\_easy\_handle} when a transfer finishes.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Before calling {\tt select}}
-
-  
-    {\tt select} needs a timeout and an {\tt fdset}. \\
-    \qquad ({\tt curl} provides both.)\\[1em]
-
-    Initializing the {\tt fdset} from the {\tt multi\_handle}:
-  
-
-\begin{lstlisting}
-    // zero the fd-sets
-    FD_ZERO(&fdread); FD_ZERO(&fdwrite); FD_ZERO(&fdexcep);
-    // retrieve the fds, check for error
-    curl_multi_fdset(multi_handle, 
-                     &fdread, &fdwrite, &fdexcep, &maxfd);
-    if (maxfd < -1) abort_("multi_fdset: couldn't wait for fds");
-\end{lstlisting}
-
-  
-    Retrieving the proper timeout:
-  
-\begin{lstlisting}
-    curl_multi_timeout(multi_handle, &curl_timeout);
-\end{lstlisting}
-  
-    (and then convert the {\tt long} to a {\tt struct timeval}).
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{The call to {\tt select}}
-
-\begin{lstlisting}
-  rc = select(maxfd + 1, &fdread, &fdwrite, &fdexcep, &timeout);
-  if (rc == -1) abort_("[main] select error");
-\end{lstlisting}
-
-  
-    Wait for one of the fds to become ready,\\ ~~or for timeout to elapse. \\[1em]
-    What next?\\
-    \only<2>{Call {\tt curl\_multi\_perform} again to do the work.}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Knowing what happened after {\tt curl\_multi\_perform}}
-
-  
-    {\tt curl\_multi\_info\_read} will tell you.
-  
-\begin{lstlisting}
-  msg = curl_multi_info_read(multi_handle, &msgs_left);
-\end{lstlisting}
-  
-    and also how many messages are left.\\[1em]
-    {\tt msg->msg} can be {\tt CURLMSG\_DONE} or an error;\\
-    {\tt msg->easy\_handle} tells you who is done.\\[1em]
-  
-
-    Some gotchas (thanks Desiye Collier):
-    \begin{itemize}
-    \item Checking \verb+msg->msg == CURLMSG_DONE+ is not sufficient to ensure that a curl request actually happened. You also need to check {\tt data.result}.
-
-    \item (A1 hint:) To reset an individual handle in the {\tt multi\_handle}, you need to ``replace'' it. But you shouldn't use {\tt curl\_easy\_init()}.  In fact, you don't need a new handle at all.
-    \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{curl\_multi cleanup}
-
-  
-    Call {\tt curl\_multi\_cleanup} on the multi handle.\\[1em]
-    Then, call {\tt curl\_easy\_cleanup} on each easy handle.\\[2em]
-    If you replace {\tt curl\_easy\_init} by {\tt curl\_global\_init},\\
-    then call {\tt curl\_global\_cleanup} also.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{curl\_multi\_perform example}
-
-  
-    Not a great example:
-
-\begin{center}
-\url{http://curl.haxx.se/libcurl/c/multi-app.html}
-\end{center}
-
-    I'm not even sure it works verbatim.\\[1em]
-
-    Nevertheless, you could use it as a solution template.\\
-    You'll have to add more code to replace completed transfers.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{A better choice: curl\_multi\_wait}
-
-  
-    Instead of using {\tt select()}, \\
-    you can use {\tt curl\_multi\_wait()}.\\[2em]
-    It's just better.\\
-  \url{https://gist.github.com/clemensg/4960504}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{curl\_multi, option 3: curl\_multi\_socket\_action}
-
-  
-    So, I couldn't quite figure out how this works. Sorry.\\[1em]
-
-    Similar to the {\tt perform} interface, but you have more control.
-
-    Advantage:
-
+\vfill
 \begin{quote}
-   2 - When the application discovers action on a single socket, it calls
-       libcurl and informs that there was action on this particular socket and
-       libcurl can then act on that socket/transfer only and not care about
-       any other transfers. (The previous API always had to scan through all
-       the existing transfers.)
+\textit{
+	``Knock knock.''\\
+	``Race Condition.''\\
+	``Who's there?''
+	}
 \end{quote}
-
-\url{http://curl.haxx.se/dev/readme-multi_socket.html}
-
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
+\frametitle{Define A Race Condition}
 
-  \frametitle{multi\_socket usage}
+A race occurs when you have two concurrent accesses to the
+same memory location, at least one of which is a {\bf write}.
 
+This definition is a little bit strict. 
 
-From the manpage:
-\small
-\begin{itemize}
-\item Create a multi handle
+We could also say that there is a race condition if there is some form of output, such as writing to the console. 
 
-\item Set the socket callback with {\tt CURLMOPT\_SOCKETFUNCTION}
+If one thread is going to write ``1'' to the console and another is going to write ``2'', then we could have a race condition. 
 
-\item Set the timeout callback with {\tt CURLMOPT\_TIMERFUNCTION}, to get to know what timeout value to use when waiting for socket activities.
+If there is no co-ordination, we could get output of ``12'' or ``21''. 
 
-\item Add easy handles with {\tt curl\_multi\_add\_handle()}
-
-\item Provide some means to manage the sockets libcurl is using, so you can check them for activity. This can be done through your application code, or by way of an external library such as libevent or glib.
-
-\item Call {\tt curl\_multi\_socket\_action(..., CURL\_SOCKET\_TIMEOUT, 0, ...)} to kickstart everything. To get one or more callbacks called.
-
-\item Wait for activity on any of libcurl's sockets, use the timeout value your callback has been told.
-
-\item When activity is detected, call {\tt curl\_multi\_socket\_action()} for the socket(s) that got action. If no activity is detected and the timeout expires, call {\tt curl\_multi\_socket\_action(3)} with {\tt CURL\_SOCKET\_TIMEOUT}. 
-\end{itemize}
-  
+If the order here is unimportant, there's no issue; but if one order is correct, then the appearance of the other is a bug.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
+\frametitle{Matters of State}
 
-  \frametitle{multi\_socket example}
+When there's a race, the final state may not be the same as running
+one access to completion and then the other. 
 
+But it ``usually'' is.  It's nondeterministic. 
 
-This example is even worse than the last one:
-\begin{center}
-\url{http://curl.haxx.se/libcurl/c/hiperfifo.html}
-\end{center}~\\[1em]
-It contains more moving parts than we need to understand the API, and gets
-another library ({\tt libevent}) involved.
+The fact that the output is often ``12'' and only very occasionally ``21'' may make it very difficult to track down the source of the problem. 
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
-  \frametitle{Concurrent Socket I/O}
+\frametitle{Hazards}
 
-  
-    Complete change of topic. A Quora question:
+In other situations (e.g., processor design) these are sometimes referred to as data hazards or dependencies. 
 
-    \begin{quote}
-      What is the ideal design for server process in Linux that handles concurrent socket I/O?
-    \end{quote}
+\begin{enumerate}
+	\item \textbf{RAW} (Read After Write)	
+	\item \textbf{WAR} (Write After Read)
+	\item \textbf{WAW} (Write After Write)
+	\item \textbf{RAR} (Read After Read) - No such hazard! 
+\end{enumerate}
 
-    So far in this class, we've seen:
-    \begin{itemize}
-    \item processes;
-    \item threads;
-    \item thread pools; and
-      \item async/non-blocking I/O.
-    \end{itemize}
-
-    We'll see the answer by Robert Love, Linux kernel hacker\footnote{\tiny \url{https://plus.google.com/105706754763991756749/posts/VPMT8ucAcFH}}.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{The Real Question}
-
-  
-    \Large
-    \begin{quote}
-      How do you want to do I/O?\\[1em]
-    \end{quote}
-
-    Not really ``how many threads?''.
-  
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Four Choices}
-
-  
-    \begin{itemize}
-      \item Blocking I/O; 1 process per request.
-      \item Blocking I/O; 1 thread per request.
-      \item Asynchronous I/O, pool of threads, \\callbacks, \\ each thread handles multiple connections.
-      \item Nonblocking I/O, pool of threads, \\ multiplexed with select/poll,
-        event-driven, \\ each thread handles multiple connections.
-    \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Blocking I/O; 1 process per request}
-
-  
-  Old Apache model: \hfill \includegraphics[width=.2\textwidth]{images/httpd_logo_wide_new}
-
-  \begin{itemize}
-    \item Main thread waits for connections.
-    \item Upon connect, forks off a new process, \\which completely
-      handles the connection.
-    \item Each I/O request is blocking: \\ e.g. reads wait until more data arrives.
-  \end{itemize}
-
-  Advantage: 
-  \begin{itemize}
-    \item ``Simple to undertand and easy to program.''
-  \end{itemize}
-
-  Disadvantage:
-  \begin{itemize}
-    \item High overhead from starting 1000s of processes.\\
-      (can somewhat mitigate with process pool).
-  \end{itemize}
-  Can handle $\sim$10 000 processes, but doesn't generally scale.
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Blocking I/O; 1 thread per request}
-
-  
-    We know that threads are more lightweight than processes.\\[1em]
-
-    Same as 1 process per request, but less overhead.\\[1em]
-
-    I/O is the same---still blocking.\\[1em]
-
-    Advantage:
-    \begin{itemize}
-      \item Still simple to understand and easy to program.
-    \end{itemize}
-
-    Disadvantages:
-    \begin{itemize}
-      \item Overhead still piles up, although less than processes.
-      \item New complication: race conditions on shared data.
-    \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Asynchronous I/O Benefits}
-
-  
-    In 2006, perf benefits of asynchronous I/O on lighttpd\footnote{\tiny \url{http://blog.lighttpd.net/articles/2006/11/12/lighty-1-5-0-and-linux-aio/}}:\\
-
-{\small
-    \begin{tabular}{llrrr}
-    version & & fetches/sec & bytes/sec & CPU idle \\
-    1.4.13 & sendfile & 36.45 & 3.73e+06 & 16.43\% \\
-    1.5.0 & sendfile & 40.51 & 4.14e+06 & 12.77\% \\
-    1.5.0 & linux-aio-sendfile & 72.70 & 7.44e+06 & 46.11\% \\
-    \end{tabular}
-}~\\[1em]
-
-    (Workload: $2\times 7200$ RPM in RAID1, 1GB RAM, \\
-     \qquad transferring 10GBytes on a 100MBit network).\\[1em]
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Using Asynchronous I/O in Linux (select/poll)}
 
 
-   Basic workflow: \\[1em]
-   \begin{enumerate}
-     \item enqueue a request;
-     \item \ldots ~do something else;
-     \item (if needed) periodically check whether request is done; and
-     \item read the return value.
-   \end{enumerate}
 
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Asynchronous I/O Code Example I: Setup}
+\frametitle{It's a Kind of Hazard}
+Race conditions typically arise between variables shared
+between threads.
+{\scriptsize
+\begin{verbatim}
+#include <stdlib.h>
+#include <stdio.h>
+#include <pthread.h>
 
-  
-\begin{lstlisting}
-#include <aio.h>
-
-int main() {
-    // so far, just like normal
-    int file = open("blah.txt", O_RDONLY, 0);
-
-    // create buffer and control block
-    char* buffer = new char[SIZE_TO_READ];
-    aiocb cb;
-    
-    memset(&cb, 0, sizeof(aiocb));
-    cb.aio_nbytes = SIZE_TO_READ;
-    cb.aio_fildes = file;
-    cb.aio_offset = 0;
-    cb.aio_buf = buffer;
-\end{lstlisting}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Asynchronous I/O Code Example II: Read}
-
-  
-\begin{lstlisting}
-    // enqueue the read
-    if (aio_read(&cb) == -1) { /* error handling */ }
-
-    do {
-      // ... do something else ...
-    while (aio_error(&cb) == EINPROGRESS); // poll
-
-    // inspect the return value
-    int numBytes = aio_return(&cb);
-    if (numBytes == -1) { /* error handling */ }
-
-    // clean up
-    delete[] buffer;
-    close(file);
-\end{lstlisting}
-  
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Nonblocking I/O in Servers using Select/Poll}
-
-  
-    Each thread handles multiple connections.\\[1em]
-
-    When a thread is ready, it uses select/poll to find work.\\
-
-    \begin{itemize}
-      \item perhaps it needs to read from disk into a mmap'd tempfile;
-      \item perhaps it needs to copy the tempfile to the network.
-    \end{itemize}~\\
-    In either case, the thread does work and updates the request state.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Callback-Based Asynchronous I/O Model}
-
-  
-    Weird programming model; not popular.\\[1em]
-    Instead of select/poll, pass along a callback,\\ to be executed upon success or failure.\\[1em]
-    JavaScript does this extensively, but more unwieldy in C.\\[1em]
-    We'll see the Go programming model, which makes this easy.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Callback-Based Example}
-
-\begin{lstlisting}
-void
-new_connection_cb (int cfd)
-{
-  if (cfd < 0) {
-    fprintf (stderr, "error in accepting connection!\n");
-    exit (1);
-  }
-
-  ref<connection_state> c = 
-    new refcounted<connection_state>(cfd);
-
-  c->killing_task = delaycb(10, 0, wrap(&clean_up, c));
-
-  /* next step: read information on the new connection */
-  fdcb (cfd, selread, wrap (&read_http_cb, cfd, c, true,
-                 wrap(&read_req_complete_cb)));
+void* run1(void* arg) {
+    int* x = (int*) arg;
+    *x += 1;
 }
-\end{lstlisting}
+
+void* run2(void* arg) {
+    int* x = (int*) arg;
+    *x += 2;
+}
+
+int main(int argc, char *argv[])
+{
+    int* x = malloc(sizeof(int));
+    *x = 1;
+    pthread_t t1, t2;
+    pthread_create(&t1, NULL, &run1, x);
+    pthread_join(t1, NULL);
+    pthread_create(&t2, NULL, &run2, x);
+    pthread_join(t2, NULL);
+    printf("%d\n", *x);
+    free(x);
+    return EXIT_SUCCESS;
+}
+\end{verbatim}
+}
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}[fragile]
-  \frametitle{node.js: A Superficial View}
+\frametitle{It's a Kind of Hazard II}
 
-   node.js is another event-based nonblocking I/O model.\\[1em]
+{\scriptsize
+\begin{verbatim}
+int main(int argc, char *argv[])
+{
+    int* x = malloc(sizeof(int));
+    *x = 1;
+    pthread_t t1, t2;
+    pthread_create(&t1, NULL, &run1, x);
+    pthread_create(&t2, NULL, &run2, x);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    printf("%d\n", *x);
+    free(x);
+    return EXIT_SUCCESS;
+}
+\end{verbatim}
+}
 
-   (Since JavaScript is singlethreaded, nonblocking I/O mandatory.)\\[1em]
-
-Canonical example from node.js homepage:
-\begin{lstlisting}
-var http = require('http');
-http.createServer(function (req, res) {
-  res.writeHead(200, {'Content-Type': 'text/plain'});
-  res.end('Hello World\n');
-}).listen(1337, '127.0.0.1');
-console.log('Server running at http://127.0.0.1:1337/');
-\end{lstlisting}
-
-Note the use of the callback---it's called upon each connection.
+Now do we have a race?
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}[fragile]
-  \frametitle{Building on node.js}
+\frametitle{Trace the Race}
 
-Usually we want a higher-level view, e.g. expressjs\footnote{\url{http://expressjs.com}}.\\[1em]
+What are the possible outputs? (Assume that initially {\tt *x} is 1.)
+We'll look at compiler intermediate code (three-address code) to tell.
 
-An example from the Internet\footnote{\tiny \url{https://github.com/tglines/nodrr/blob/master/controllers/nod.js}}:
-\begin{lstlisting}
-app.post('/nod', function(req, res) {
-  loadAccount(req,function(account) {
-    if(account && account.username) {
-      var n = new Nod();
-      n.username = account.username;
-      n.text = req.body.nod;
-      n.date = new Date();
-      n.save(function(err){
-        res.redirect('/');
-      });
+\hspace*{.2\textwidth}\begin{minipage}{.8\textwidth}
+\begin{verbatim}
+run1                          run2   
+D.1 = *x;                     D.1 = *x;
+D.2 = D.1 + 1;                D.2 = D.1 + 2
+*x = D.2;                     *x = D.2;
+  \end{verbatim}
+\end{minipage}
+
+Memory reads and writes are key in data~races.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Trace the Race}
+Let's call the read and write from {\tt run1} R1 and W1; R2 and W2
+from {\tt run2}.
+
+Here are all possible orderings:
+  \begin{center}
+    \begin{tabular}{llll|l}
+\multicolumn{4}{c|}{Order} & {\tt *x}\\
+\hline
+R1 & W1 & R2 & W2 & 4 \\
+R1 & R2 & W1 & W2 & 3 \\
+R1 & R2 & W2 & W1 & 2 \\
+R2 & W2 & R1 & W1 & 4 \\
+R2 & R1 & W2 & W1 & 2 \\
+R2 & R1 & W1 & W2 & 3 \\
+    \end{tabular}
+  \end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Synchronization}
+
+You'll need some sort of synchronization to get sane results from
+multithreaded programs. 
+
+We'll start by talking about how to use
+mutual exclusion in Pthreads.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Mutual Exclusion}
+
+Mutexes are the most basic type of synchronization.
+As a reminder:
+    \begin{itemize}
+    \item Only one thread can access code protected by a mutex at a time.
+    \item All other threads must wait until the mutex is free before they can
+      execute the protected code.
+    \end{itemize}
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Using a Mutex}
+
+  Here's an example of using mutexes:
+    
+    \begin{tabular}{ll}
+      \begin{minipage}{.65\textwidth}
+        {\bf PThreads}
+{\scriptsize
+  \begin{verbatim}
+pthread_mutex_t m1_static = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t m2_dynamic;
+
+pthread_mutex_init(&m2_dynamic, NULL);
+...
+pthread_mutex_destroy(&m1_static);
+pthread_mutex_destroy(&m2_dynamic);
+  \end{verbatim}
+  }
+      \end{minipage}
+      \begin{minipage}{.35\textwidth}
+
+        {\bf C++11}
+{\scriptsize
+  \begin{verbatim}
+mutex m1;
+mutex * m2;
+
+m2 = new mutex();
+// ...
+
+delete (m2);
+  \end{verbatim}
+  }
+      \end{minipage}
+    \end{tabular}
+
+You can initialize mutexes statically (as with {\tt m1\_static}) or
+dynamically ({\tt m2\_dynamic}). 
+
+If you want to include attributes,
+you need to use the dynamic version.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Mutex Attributes}
+
+ Both threads and mutexes use the notion of attributes.
+ 
+
+  \begin{itemize}
+    \item {\bf Protocol}: specifies the protocol used to prevent priority
+      inversions for a mutex.
+    \item {\bf Prioceiling}: specifies the priority ceiling of a mutex.
+    \item {\bf Process-shared}: specifies the process sharing of a mutex.
+  \end{itemize}
+  
+  You can specify a mutex as {\it process shared} so that you can access it
+  between processes.
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Mutex Example}
+
+   \begin{tabular}{ll}
+      \begin{minipage}{.5\textwidth}
+        {\bf PThreads}
+  \begin{verbatim}
+// code
+pthread_mutex_lock(&m1);
+// protected code
+pthread_mutex_unlock(&m1);
+// more code
+  \end{verbatim}
+      \end{minipage}&
+      \begin{minipage}{.35\textwidth}
+        {\bf C++11 Threads}
+  \begin{verbatim}
+// code
+m1.lock();
+// protected code
+m1.unlock();
+// more code
+  \end{verbatim}
+      \end{minipage}
+    \end{tabular}
+
+  \begin{itemize}
+    \item Everything within the {\tt lock} and {\tt unlock} is protected.
+    \item Be careful to avoid deadlocks if you are using multiple mutexes (always
+acquire locks in the same order across threads).
+    \item Another useful primitive is {\tt pthread\_mutex\_trylock}.
+later.
+  \end{itemize}
+
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Locks and Data Races}
+
+Why are we bothering with locks? Data races. A data race occurs when
+two concurrent actions access the same variable and at least one of
+them is a {\bf write}. (This shows up on Assignment 1!)
+
+  \begin{verbatim}
+static int counter = 0;
+
+void* run(void* arg) {
+    for (int i = 0; i < 100; ++i) {
+        ++counter;
     }
-  });
-});
-\end{lstlisting}
+}
+
+int main(int argc, char *argv[]) {
+    // Create 8 threads
+    // Join 8 threads
+    printf("counter = %i\n", counter);
+}
+  \end{verbatim}
+
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Use Mutexes}
+
+ \begin{verbatim}
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static int counter = 0;
+
+void* run(void* arg) {
+    for (int i = 0; i < 100; ++i) {
+        pthread_mutex_lock(&mutex);
+        ++counter;
+        pthread_mutex_unlock(&mutex);
+    }
+}
+
+int main(int argc, char *argv[]) {
+    // Create 8 threads
+    // Join 8 threads
+    pthread_mutex_destroy(&mutex);
+    printf("counter = %i\n", counter);
+}
+  \end{verbatim}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Mutex Recap}
+
+\begin{itemize}
+\item Call {\tt lock} on mutex $\ell_1$. Upon return from
+      {\tt lock}, your thread has exclusive access to $\ell_1$ until it
+      {\tt unlock}s it.
+\item Other calls to {\tt lock} $\ell_1$ will not return
+      until {\tt m1} is available.
+\end{itemize}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Protect the End Zone}
+
+Key idea: locks protect resources; only one thread
+can hold a lock at a time. 
+
+A second thread trying to obtain the lock
+(i.e. \alert{contending} for the lock) has to wait, or \alert{block},
+until the first thread releases the lock. 
+
+So only one thread has
+access to the protected resource at a time. 
+
+The code between the lock
+acquisition and release is known as the \alert{critical region} or \alert{critical section}.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Try, Try Again}
+
+Some mutex implementations also provide a ``try-lock'' primitive.
+
+This grabs the lock if it's available, or returns control to the
+thread if it's not.
+
+This enables the thread to do something else. (Kind of
+like non-blocking I/O!)
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Don't Lock Too Much}
+
+Excessive use of locks can serialize programs. 
+
+Consider two resources
+$A$ and $B$ protected by a single lock $\ell$. 
+
+Then a thread that's
+just interested in $B$ still has acquire $\ell$, which requires it to
+wait for any other thread working with $A$.
+
+Example: Linux Big Kernel Lock
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Spinlocks}
+
+Spinlocks are a variant of mutexes, where the
+waiting thread repeatedly tries to acquire the lock instead of sleeping.
+
+Use spinlocks when you expect critical sections to finish 
+quickly.
+
+Spinning
+for a long time consumes lots of CPU resources.
+
+ Many lock
+implementations use both sleeping and spinlocks: spin for a bit,
+then sleep longer.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Why Use Spinlocks?}
+
+When would we ever want to use a spinlock?
+
+What we normally expect is to block until the lock becomes available. 
+
+But that means a process switch, and then a switch back in the future when the lock is available.  This takes nonzero time. 
+
+It's optimal to use a spinlock if the amount of time we expect to wait for the lock is less than the amount of time it would take to do two process switches. 
+
+As long as we have a multicore system.
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Read-Write Locks}
+
+  Two observations:
+  \begin{itemize}
+    \item If there are only reads, there's no datarace.
+    \item Often, writes are relatively rare.
+  \end{itemize}
+  With mutexes/spinlocks, you have to lock the data, even for a read,
+      since a write could happen.\\[1em]
+
+  But, most of the time, reads can happen in parallel, as long as
+      there's no write.\\[1em]
+
+  Solution: Multiple threads can hold a read lock\\ \hspace*{2em} ({\tt pthread\_rwlock\_rdlock})\\
+      but only one thread may hold the associated write lock\\ \hspace*{2em} ({\tt pthread\_rwlock\_wrlock});\\
+      grabbing the write waits until  current readers are done.
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Semaphores}
+
+    Semaphores have a {\tt value}.
+      You specify initial {\tt value}.\\[1em]
+    Semaphores allow sharing of a \# of instances of a resource.\\[1em]
+    Two fundamental operations: {\tt wait} and {\tt post}.\\[1em]
+  \begin{itemize}
+    \item {\tt wait} is like {\tt lock}; reserves the resource and decrements the value.
+      \begin{itemize}
+        \item If value is 0, sleep until value is greater than 0.
+      \end{itemize}
+    \item {\tt post} is like {\tt unlock}; releases the resource and increments the value.
+  \end{itemize}
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Summary: Building Servers}
+  \frametitle{Barriers}
 
-  
-    \begin{itemize}
-      \item Blocking I/O; 1 process per request (old Apache).
-      \item Blocking I/O; 1 thread per request (Java).
-      \item Asynchronous I/O, pool of threads, callbacks, \\ each thread handles multiple connections. (no one does this)
-      \item Nonblocking I/O, pool of threads, \\ multiplexed with select/poll,
-        event-driven, \\ each thread handles multiple connections. (JavaScript)
-    \end{itemize}
-  
+
+    Allows you to ensure that (some subset of) a collection 
+    of threads all reach the barrier before finishing.\\[1em]
+
+    Pthreads: A barrier is a {\tt pthread\_barrier\_t}.\\[1em]
+
+    Functions: {\tt \_init()} (parameter: how many threads the barrier
+    should wait for) and {\tt \_destroy()}.\\[1em]
+
+    Also {\tt \_wait()}: similar to {\tt pthread\_join()}, but waits
+      for the specified number of threads to arrive at the barrier
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Lock-Free Algorithms}
+
+
+    We'll talk more about this in a few weeks.\\[1em]
+
+    Modern CPUs support atomic operations, such as compare-and-swap, which
+enable experts to write lock-free code.\\[1em]
+
+    Lock-free implementations are extremely complicated and must still contain certain synchronization constructs.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Semaphores Usage}
+  
+
+  \begin{lstlisting}
+#include <semaphore.h>
+
+int sem_init(sem_t *sem, int pshared, unsigned int value);
+int sem_destroy(sem_t *sem);
+int sem_post(sem_t *sem);
+int sem_wait(sem_t *sem);
+int sem_trywait(sem_t *sem);
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item Also must link with {\tt -pthread} (or {\tt -lrt} on Solaris).
+    \item All functions return {\tt 0} on success.
+    \item Same usage as mutexes in terms of passing pointers.
+  \end{itemize}~\\[1em]
+    How could you use as {\tt semaphore} as a {\tt mutex}?
+    \begin{itemize}
+    \item<2-> If the initial {\tt value} is 1 and you use {\tt wait} to lock
+      and {\tt post} to unlock, it's equivalent to a {\tt mutex}.
+    \end{itemize}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Semaphores for Signalling}
+
+
+  Here's an example from the book. How would you make this always print
+  ``Thread 1'' then ``Thread 2'' using semaphores?
+
+  \begin{lstlisting}
+#include <pthread.h>
+#include <stdio.h>
+#include <semaphore.h>
+#include <stdlib.h>
+
+void* p1 (void* arg) { printf("Thread 1\n"); }
+
+void* p2 (void* arg) { printf("Thread 2\n"); }
+
+int main(int argc, char *argv[])
+{
+    pthread_t thread[2];
+    pthread_create(&thread[0], NULL, p1, NULL);
+    pthread_create(&thread[1], NULL, p2, NULL);
+    pthread_join(thread[0], NULL);
+    pthread_join(thread[1], NULL);
+    return EXIT_SUCCESS;
+}
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Semaphores for Signalling}
+
+
+  Here's their solution. Is it actually correct?
+
+  \begin{lstlisting}
+sem_t sem;
+void* p1 (void* arg) {
+  printf("Thread 1\n");
+  sem_post(&sem);
+}
+void* p2 (void* arg) {
+  sem_wait(&sem);
+  printf("Thread 2\n");
+}
+
+int main(int argc, char *argv[])
+{
+    pthread_t thread[2];
+    sem_init(&sem, 0, /* value: */ 1);
+    pthread_create(&thread[0], NULL, p1, NULL);
+    pthread_create(&thread[1], NULL, p2, NULL);
+    pthread_join(thread[0], NULL);
+    pthread_join(thread[1], NULL);
+    sem_destroy(&sem);
+}
+  \end{lstlisting}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Semaphores for Signalling}
+
+  
+
+  \begin{enumerate}
+    \item {\tt value} is initially 1.
+    \vfill
+    \item Say {\tt p2} hits its {\tt sem\_wait} first and succeeds.
+    \vfill
+    \item {\tt value} is now 0 and {\tt p2} prints ``Thread 2'' first.
+  \end{enumerate}
+  \begin{itemize}
+    \item If {\tt p1} happens first, it would just increase
+      {\tt value} to 2.\vfill
+    \item<2-> Fix: set the initial {\tt value} to \alert{0}.\\[1em]
+Then, if {\tt p2} hits its {\tt sem\_wait} first, it will
+      not print until {\tt p1} posts (and prints ``Thread 1'') first.
+  \end{itemize}~\\[1em]
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{{\tt volatile} Keyword}
+
+
+  \begin{itemize}
+    \item Used to notify the compiler that the variable may be changed by ``external forces''. For instance,
+    %% \item Prevents the compiler from substituting values instead of evaluating
+    %%   the value (with proper locking you'll never need this, why?)
+  \end{itemize}
+
+  \begin{lstlisting}
+int i = 0;
+
+while (i != 255) {
+  ...
+  \end{lstlisting}
+
+{\tt volatile} prevents this from being optimized to:
+
+  \begin{lstlisting}
+int i = 0;
+
+while (true) {
+  ...
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item Variable will not actually be {\tt volatile} in the critical section
+      and only prevents useful optimizations.
+    \item Usually wrong unless there is a {\bf very} good reason for it.
+  \end{itemize}
+
+
+\end{frame}
+
 
 \end{document}
 

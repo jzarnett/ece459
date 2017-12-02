@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 18 --- Cache Coherency }
+\title{Lecture 18 --- Critical Paths, Data \& Task Parallelism }
 
-\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
+\author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -15,438 +15,458 @@
 
  \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Introduction}
 
-  \begin{center}
-    \includegraphics[scale=0.7]{images/coherency}
-
-    Image courtesy of Wikipedia.
-  \end{center}
-
-  
-  {\bf Coherency:}
-  \begin{itemize}
-    \item Values in all caches are consistent;
-    \item System behaves as if all CPUs are using shared memory.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Cache Coherence Example}
+  \frametitle{Critical Paths}
 
   
-  Initially in main memory: {\tt x = 7}.
 
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache.
-    \item {\tt CPU3} reads x, puts the value in its cache.
-    \item {\tt CPU3} modifies {\tt x := 42}
-    \item {\tt CPU1} reads x \ldots ~from its cache?
-    \item {\tt CPU2} reads x. Which value does it get?
-  \end{enumerate}
-  ~\\
+  Should be familiar with critcal paths from other courses (Gantt charts).\\[1em]
 
-  Unless we do something, {\tt CPU1} is going to read invalid data.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{Snoopy Caches}
-
-The simplest way to ``do something''
-is to use Snoopy caches. 
-
-No, not this kind of Snoopy (sadly):
+  Consider the following diagram (edges are tasks):
 
 \begin{center}
-	\includegraphics[width=0.25\textwidth]{images/peanuts-snoopy1.jpg}
+\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
+                    semithick,initial text=]
+  \node[initial,block] (s0) {Start};
+  \node[block] (s1) [right=of s0] {S1};
+  \node[block] (s2) [right=of s1] {S2};
+  \node[bw] (s3) [right=of s2] {Finish};
+
+  \path (s0) edge node {A} (s1)
+        (s1) edge node {B} (s2)
+        (s2) edge node {D} (s3)
+        (s0) edge[bend left=30] node {C} (s2);
+\end{tikzpicture}
 \end{center}
 
-
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{High-Level Explanation of Snoopy Caches}
-
-  
   \begin{itemize}
-    \item Each CPU is connected to a simple bus.
-    \item Each CPU ``snoops'' to observe if a memory location is read or written
-      by another CPU.
-    \item We need a cache controller for every CPU.
-  \end{itemize}
-  ~\\
-  {\bf What happens?}
-
-  \begin{itemize}
-    \item Each CPU reads the bus to see if any memory operation is relevant. If
-      it is, the controller takes appropriate action.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{A Distributed Approach}
-
-
-This is a distributed approach; no centralized state is maintained. 
-
-Each cache with a copy of data from a block of physical memory knows whether it is shared or not. 
-
-Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. 
-
-If it is, then the CPU will need to take action.
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Through Cache}
-
-  
-Simplest type of cache coherence:
-  \begin{itemize}
-    \item All cache writes are done to main memory.
-    \item All cache writes also appear on the bus.
-    \item If another CPU snoops and sees it has the same location in
-      its cache, it will either {\it invalidate} or {\it update} the
-      data.\\ \qquad (We'll be looking at invalidating.)
-  \end{itemize}
-~\\
-
-    For write-through caches: normally, when you write to an invalidated
-    location, you bypass the cache and go directly to memory (aka {\bf
-      write no-allocate}).
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{In-val-i-daaaaaate!}
-
-Invalidation is the most common protocol. 
-
-It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  
-
-Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). 
-
-If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. 
-
-This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. 
-
-Regardless, the most recent value appears in memory, always.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Let's Yell}
-
-There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. 
-
-But it uses lots of bandwidth and is not necessarily a good idea. 
-
-It does, however prevent the costly cache miss that follows an invalidate. 
-
-Sadly, as we are mere users and not hardware architects, we don't get to decide; we just have to live with whichever one is on the hardware we get. Bummer.
-
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Through Protocol}
-
-  
-  \begin{itemize}
-    \item Two states, {\bf valid} and {\bf invalid}, for each memory location.
-    \item Events are either from a processor ({\bf Pr}) or the {\bf Bus}.
-  \end{itemize}
-  \vfill
-  \begin{center}
-    \begin{tabular}{llll}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
-      Valid   & PrRd  &       & Valid\\
-      Valid   & PrWr  & BusWr & Valid\\
-      Valid   & BusWr &       & Invalid\\
-      Invalid & PrWr  & BusWr & Valid\\
-      Invalid & PrRd  & BusRd & Valid\\
-    \end{tabular}
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Through Protocol Example}
-
-  
-
-  \begin{itemize}
-    \item For simplicity (this isn't an architecture course), assume all cache
-      reads/writes are atomic.
-  \end{itemize}
-  \vfill
-  {\bf Using the same example as before:}
-
-  Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache. \structure{(valid)}
-    \item {\tt CPU3} reads x, puts the value in its cache. \structure{(valid)}
-    \item {\tt CPU3} modifies {\tt x := 42}. \structure{(write to memory)}
-      \begin{itemize}
-        \item \structure{{\tt CPU1} snoops and marks data as invalid.}
-      \end{itemize}
-    \item {\tt CPU1} reads x, \structure{from main memory. (valid)}
-    \item {\tt CPU2} reads x, \structure{from main memory. (valid)}
-  \end{enumerate}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Back Cache}
-
-
-  \begin{itemize}
-    \item What if, in our example, {\tt CPU3} writes to {\tt x} 3 times?\\[1em]
-    \item Main goal: delay the write to memory as long as possible.\\[1em]
-    \item At minimum, we have to add a ``dirty'' bit:\\
-     \quad Indicates the our data has not yet been written to memory.
-  \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Write-Back Implementation}
-
-  
-     The simplest type of write-back protocol (MSI), with 3 states:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; \\
-          \quad main memory is {\bf out-of-date}.
-        \item {\bf Shared}---location is unmodified, \\
-          \quad up-to-date with main
-          memory; \\
-          \quad may be present in other caches (also up-to-date).
-        \item {\bf Invalid}---same as before.
-      \end{itemize}~\\
-      
-     Initial state, upon first read, is ``shared''.\\[1em]
-
-     Implementation will only write the data to memory if another
-        processor requests it.\\[1em]
-
-     During write-back, a processor may read the data from the bus.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{MSI Protocol}
-
-  
-  \begin{itemize}
-    \item Bus write-back (or flush) is {\bf BusWB}.
-    \item Exclusive read on the bus is {\bf BusRdX}.
-  \end{itemize}~\\
-
-  \begin{center}
-    \begin{tabular}{llll}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
-      Modified   & PrRd   &        & Modified\\
-      Modified   & PrWr   &        & Modified\\
-      Modified   & BusRd  & BusWB  & Shared\\
-      Modified   & BusRdX & BusWB  & Invalid\\
-      Shared     & PrRd   &        & Shared\\
-      Shared     & BusRd  &        & Shared\\
-      Shared     & BusRdX &        & Invalid\\
-      Shared     & PrWr   & BusRdX & Modified\\
-      Invalid    & PrRd   & BusRd  & Shared\\
-      Invalid    & PrWr   & BusRdX & Modified\\
-    \end{tabular}
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{MSI Example}
-
-  
-
-  {\bf Using the same example as before:}
-
-  Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x from memory. \structure{(BusRd, shared)}
-    \item {\tt CPU3} reads x from memory. \structure{(BusRd, shared)}
-    \item {\tt CPU3} modifies {\tt x = 42}:
-      \begin{itemize}
-        \item \structure{Generates a BusRdX.}
-        \item \structure{{\tt CPU1} snoops and invalidates x.}
-        \item \structure{{\tt CPU3} changes {\tt x}'s state to modified.}
-      \end{itemize}
-    \item {\tt CPU1} reads x:
-      \begin{itemize}
-        \item \structure{Generates a BusRd.}
-        \item \structure{{\tt CPU3} writes back the data and sets x to shared.}
-        \item \structure{{\tt CPU1} reads the new value from the bus as shared.}
-      \end{itemize}
-    \item {\tt CPU2} reads x from memory. \structure{(BusRd, shared)}
-  \end{enumerate}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{An Extension to MSI: MESI}
-
-  
-    The most common protocol for cache coherence is MESI.\\[1em]
-    Adds another state:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; \\
-\qquad main memory is {\bf out-of-date}.
-        \item {\bf Exclusive}---only this cache has a valid copy; \\
-\qquad main memory is {\bf up-to-date}.
-        \item {\bf Shared}---same as before.
-        \item {\bf Invalid}---same as before.
-      \end{itemize}
-~\\
-
-    MESI allows a processor to modify data exclusive to it, \\without
-      having to communicate with the bus.\\
-    MESI is \structure{safe}: in E state, no other processor has the
-      data.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Even More States!}
-
-  
-    MESIF (used in latest i7 processors):
-      \begin{itemize}
-        \item {\bf Forward}---basically a shared state; but, current
-          cache is the only one that will respond to a request to
-          transfer the data.
-      \end{itemize}~\\[1em]
-
-    Hence: a processor requesting data that is already shared or exclusive will
-      only get one response transferring the data.\\[1em]
-    Permits more efficient usage of the bus.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Good Questions (1)}
-
-  
-  {\bf Cache coherency seems to make sure my data is consistent. Why do I have
-    to have something like flush or fence?}
-  \begin{itemize}
-    \item You might be ok, if all of the writes on processors are to the
-      cache. But they're not!
-    \item Cache coherency won't update any values modified in registers.
+    \item B depends on A, C has no dependencies, and D depends on B and C.
+    \item Can execute A-then-B in parallel with C.
+    \item Keep dependencies in mind when calculating speedups for more
+      complex programs.
   \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Good Questions (2)}
+\begin{frame}
+  \frametitle{Data and Task Parallelism}
 
   
-  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
-    so then am I okay?}
-  \vspace{6.2em}
-  \pause
+     \structure{Data parallelism} is performing \emph{the same} operations on
+      different input.\\
 
-  \begin{center}
-    \includegraphics[scale=0.3]{images/disapproval}    
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+     {\bf Example:} doubling all elements of an array.\\[1em]
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Good Questions (2)}
+     \structure{Task parallelism} is performing \emph{different} operations
+      on different input.
 
-  
-  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
-    so then am I okay?}\\[1em]
+    {\bf Example:} playing a video file: one thread decompresses
+      frames, another renders.
 
-    {\tt volatile} in C was only designed to:
-      \begin{itemize}
-        \item Allow access to memory mapped devices.
-        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
-        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
-      \end{itemize}~\\[1em]
-    Remember, things can also be reordered by the compiler,
-      {\tt volatile} doesn't prevent this.\\[1em]
-    Also, it's likely your variables could be in registers the majority
-      of the time, except in critical areas.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Cache Coherency Summary}
+  \frametitle{Data Parallelism: Single Instruction, Multiple Data}
 
   
-    We saw the basics of cache coherence (good to know, but more of an architecture
-      thing).\\[1em]
-    There are many other protocols for cache coherence, each with their own
-      trade-offs.\\[1em]
-
-     Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
-      compiler and hardware don't reorder reads and writes.\\[1em]
+    We'll discuss SIMD in more detail later. An overview:
     \begin{itemize}
-     \item Neither cache coherence nor {\tt volatile} will save you.
+    \item You can load a bunch of data and perform 
+      arithmetic.
+    \item Intructions process multiple data items simultaneously.
+      (Exact number is hardware-dependent).
+    \end{itemize}
+    For x86-class CPUs, MMX and SSE extensions provide SIMD instructions.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{SIMD Example}
+
+  
+  Consider the following code:
+
+  \begin{lstlisting}
+void vadd(double * restrict a, double * restrict b, 
+          int count) {
+  for (int i = 0; i < count; i++)
+    a[i] += b[i];
+}    
+  \end{lstlisting}
+
+    In this scenario, we have a regular operation over block data.\\[1em]
+
+    We could use threads, but we'll use SIMD.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{SIMD Example---Assembly without SIMD}
+
+  
+If we compile this without SIMD instructions on a 32-bit x86, (flags {\tt -m32 -march=i386 -S}) we might get this:
+
+  \begin{lstlisting}
+loop:
+  fldl  (%edx)
+  faddl (%ecx)
+  fstpl (%edx)
+  addl  8, %edx
+  addl  8, %ecx
+  addl  1, %esi
+  cmp   %eax, %esi
+  jle   loop
+  \end{lstlisting}
+
+   Just loads, adds, writes and increments.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{SIMD Example---Assembly with SIMD}
+
+  
+ Instead, compiling to SIMD instructions\\ ({\tt -m32 -mfpmath=sse -march=prescott}) gives:
+
+  \begin{lstlisting}
+loop:
+  movupd (%edx),%xmm0
+  movupd (%ecx),%xmm1
+  addpd  %xmm1,%xmm0
+  movpd  %xmm0,(%edx)
+  addl   16,%edx
+  addl   16,%ecx
+  addl   2,%esi
+  cmp    %eax,%esi
+  jle    loop
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item Now processing two elements at a time on the same core.
+    \item Also, no need for stack-based x87 code.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{SIMD Overview}
+
+  
+  \begin{itemize}
+    \item Operations \emph{packed}: operate on multiple data elements 
+      at~the~same~time.
+    \vfill
+    \item On modern 64-bit CPUs, SSE has 16 128-bit registers.
+    \vfill
+    \item Very good if your data can be \emph{vectorized} and performs math.
+    \vfill
+    \item Usual application: image/video processing.
+    \vfill
+    \item We'll see more SIMD as we get into GPU programming: GPUs excel
+       at these types of applications.
+  \end{itemize}
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Task-Based Patterns: Overview}
+
+\Large
+  
+  \begin{itemize}
+    \item We'll now look at thread and process-based~parallelization.
+    \item Although threads and processes differ, we don't care for now.
+  \end{itemize}
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Pattern 1: Multiple Independent Tasks}
+
+  
+    Only useful to maximize system utilization.
+  \begin{itemize}
+    \item Run multiple tasks on the same system \\ ~~~(e.g. database and web server).\\[1em]
+     If one is memory-bound and the other is I/O-bound, for example, you'll
+      get maximum utilization out of your resources.\\[1em]
+     {\bf Example:} cloud computing, each task is independent and can
+      tasks can spread themselves over different nodes.\\[1em]
+    \item Performance can increase linearly with the number of threads.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Pattern 2: Multiple Loosely-Coupled Tasks}
+
+  
+    Tasks aren't quite independent, so there needs to be some inter-task
+      communication (but not much).
+  \begin{itemize}
+
+    \item Communication might be from the tasks to a controller or status
+      monitor.
+  \end{itemize}
+
+    Refactoring an application can help with latency. \\
+For instance: split off
+      the CPU-intensive computations into a separate thread---your application may
+      respond more quickly.\\[1em]
+     {\bf Example:} A program (1) receives/forwards packets and (2) logs them. You
+      can split these two tasks into two threads, so you can still
+      receive/forward while waiting for disk. This will increase the
+      \structure{throughput} of the system.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Pattern 3: Multiple Copies of the Same Task}
+
+  
+    Variant of multiple independent tasks: run multiple copies of the same task (probably on different data).
+
+  \begin{itemize}
+    \item No communcation between different copies.
+  \end{itemize}
+
+  Again, performance should increase linearly with number of tasks.\\[1em]
+
+  {\bf Example:} In a rendering application, each thread can be
+      responsible for a frame (gain \structure{throughput}; same
+      \structure{latency}).
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Pattern 4: Single Task, Multiple Threads}
+
+  
+  Classic vision of ``parallelization''.\\[1em]
+
+  {\bf Example:} Distribute array processing over multiple 
+      threads---each thread computes results for a subset of the array.
+
+  \begin{itemize}
+    \item Can decrease \structure{latency} (and increase
+      \structure{throughput}), as we saw with \structure{Amdahl's Law}.
+    \item Communication can be a problem, if the data is not nicely partitioned.
+    \item Most common implementation is just creating threads and joining them,
+      combining all results at the join.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Pattern 5: Pipeline of Tasks}
+
+  
+    Seen briefly in computer architecture.
+
+    \begin{itemize}
+    \item Use multiple stages; each thread handles a stage.\\[1em]
+     {\bf Example:} a program that handles network packets: (1) accepts
+      packets, (2) processes them, and (3) re-transmits them. Could set up the threads such that each packet goes through the threads.
+    \vfill
+    \item Improves \structure{throughput}; may increase \structure{latency} as
+      there's communication between threads.
+    \vfill
+    \item In the best case, you'll have a linear speedup.\\[1em]
+
+     Rare, since the runtime of the stages will vary, and the slow
+      one will be the bottleneck (but you could have 2 instances of the
+      slow stage).
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Pattern 6: Client-Server}
+
+  
+    To execute a large computation, the server supplies work to many
+      clients---as many as request it.\\[1em]
+
+    Client computes results and returns them to the server.\\[1em]
+   {\bf Examples:} botnets, {\tt SETI@Home}, GUI application (backend
+      acts as the server).\\[1em]
+   Server can arbitrate access to shared resources (such as network
+      access) by storing the requests and sending them out.\\[1em]
+
+   \begin{itemize}
+    \item Parallelism is somewhere between single task, multiple threads and
+      multiple loosely-coupled tasks  
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Pattern 7: Producer-Consumer}
+
+  
+    Variant on the pipeline and client-server models.\\
+    Producer generates work, and consumer performs work.\\[1em]
+    {\bf Example:} producer which generates rendered frames;
+      consumer which orders these frames and writes them to disk.\\[1em]
+    Any number of producers and consumers.\\[1em]
+
+    \begin{itemize}
+    \item This approach can improve \structure{throughput} and also reduces
+      design complexity
+    \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Combining Strategies}
+
+  
+    Most problems don't fit into one category, so it's often best to combine
+      strategies.\\[1em]
+
+    For instance, you might often start with a pipeline, and then use
+      multiple threads in a particular pipeline stage to handle one piece of
+      data.\\[1em]
+    Tip: estimate to see what divisions of strategies would work best
+      (might have to do more iterations of Amdahl's law depending on the amount
+      of strategies you can use).
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Midterm Questions from 2011 (1)}
+
+
+  For each of the following situations, {\bf name an appropriate parallelization
+  pattern and the granularity at which you would apply it, explain the necessary
+  communication, and explain why your pattern is appropriate}.
+  \begin{itemize}
+  \item build system, e.g. parallel make
+    \begin{itemize}
+      \item<2-> Multiple independent tasks, at a per-file granularity
+    \end{itemize}
+  \item optical character recognition system
+    \begin{itemize}
+      \item<2-> Pipeline of tasks
+      \item<2-> 2 tasks - finding characters and analyzing them
+    \end{itemize}
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Midterm Questions from 2011 (2)}
+
+
+  {\bf Give a concrete example} where you would use the following
+  parallelization patterns. {\bf Explain} the granularity at which you'd apply
+  the pattern.
+  \begin{itemize}
+    \item single task, multiple threads:
+    \begin{itemize}
+      \item<2-> Computation of a mathematical function with independent
+        sub-formulas.
+    \end{itemize}
+    \item producer-consumer (no rendering frames, please):
+    \begin{itemize}
+      \item<2-> Processing of stock-market data:
+        a server might generate raw financial data (quotes) for a
+        particular security. The server would be the producer. Several clients
+        (or consumers) may take the raw data and use them in different ways, e.g. by computing means, generating charts, etc.
+    \end{itemize}
+  \end{itemize}
+ 
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{How To Parallelize Code: Strategy}
+  
+  
+  Four-step outline:
+  \begin{enumerate}
+    \item Profile the code.
+    \item Look at hotspots; find and optimize dependencies; parallelize dependency chains; change the algorithm if you can.
+    \item Estimate benefits.
+    \item If not good enough, step back and try higher level of abstraction.
+  \end{enumerate}
+  Always try to minimize synchronization.
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Low-level Implementation Tactic: Thread Pools}
+  
+  
+    Instead of creating threads, destroying them and recreating them, you
+      can use a \structure{thread pool}.
+    \begin{itemize}
+    \item It creates $n$ threads; you just {\tt push} work onto them.
     \end{itemize}
 
-Barriers/fences/flushes might be expensive in terms of ``wasting time'', but correctness is important.
+  \begin{center}
+    \includegraphics[scale=0.4]{images/thread-pool}
+  \end{center}
 
+  \begin{itemize}
+    \item Only question is: How many threads should you create? (Experiment to find out).
+    \item Implementation from GLib: {\tt GThreadPool}.
+  \end{itemize}
   
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 \end{document}
 

@@ -2,226 +2,297 @@
 
 \begin{document}
 
-\lecture{18 --- Cache Coherency}{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{18 --- Critical Paths, Data \& Task Parallelism}{\term}{Patrick Lam}
 
-\section*{Cache Coherency}
+\section*{Critical Paths}
+You should be familiar with the concept of a critical path from previous
+courses; it is the minimum amount of time to complete the task, taking
+dependencies into account, and without speculating.
 
+Consider the following diagram, which illustrates dependencies between
+tasks (shown on the arrows). 
+Note that B depends on A, and D depends on B and C, but C does
+not depend on anything, so it could be done in parallel with
+everything else. You can also compute expected execution times
+for different strategies.
 \begin{center}
-    \includegraphics[width=0.5\textwidth]{images/coherency}
+\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
+                    semithick,initial text=]
+  \node[initial,block] (s0) {Start};
+  \node[block] (s1) [right=of s0] {S1};
+  \node[block] (s2) [right=of s1] {S2};
+  \node[bw] (s3) [right=of s2] {Finish};
 
-\hfill ---Wikipedia
+  \path (s0) edge node {A} (s1)
+        (s1) edge node {B} (s2)
+        (s2) edge node {D} (s3)
+        (s0) edge[bend left=30] node {C} (s2);
+\end{tikzpicture}
 \end{center}
 
-We talked about memory ordering and fences last time.  Today we'll
-look at what support the architecture provides for memory ordering, in
-particular in the form of cache coherence. Since this isn't an
-architecture course, we'll look at this material more from the point
-of view of a user, not an implementer.
+\section*{Data and Task Parallelism}
+There are two broad categories of paralellism: data parallelism and
+task parallelism. An analogy to data parallelism is hiring a call
+center to (incompetently) handle large volumes of support calls,
+\emph{all in the same way}. Assembly lines are an analogy to task
+parallelism: each worker does a \emph{different} thing.
 
-The problem is of course that each CPU might have its own cache and if it does then these data may be out of sync. The simplest method, and a horrible solution, is to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?...). The compiler and OS and such will require the data to be read from memory always. Think of this as being like \texttt{volatile} (which prevented a variable from being put in a register), just moved up a level to preventing the variable from being put in a cache. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is coherency.
+More precisely, in data parallelism, multiple threads perform the
+\emph{same} operation on separate data items. For instance, you have a
+big array and want to double all of the elements. Assign part of the
+array to each thread. Each thread does the same thing: double array
+elements.
 
-Cache coherency means that:
-  \begin{itemize}
-    \item the values in all caches are consistent; and
-    \item to some extent, the system behaves as if all CPUs are using shared memory.
-  \end{itemize}
-  
+In task parallelism, multiple threads perform \emph{different}
+operations on separate data items. So you might have a thread that
+renders frames and a thread that compresses frames and combines them
+into a single movie file.
 
-\paragraph{Cache Coherence Example.} We will use this example to illustrate
-different cache coherence algorithms and how they handle the same situation.
+We'll continue by looking at a number of parallelization patterns,
+examples of how to apply them, and situations where they might apply.
 
-Initially in main memory: {\tt x = 7}.
+\subsection*{Data Parallelism with SIMD}
+The ``typical'' boring standard uniprocessor is Single Instruction Single Data (SISD) but since the mid-1980s we've had more options than that. We'll talk about single-instruction multiple-data (SIMD) later on in
+this course, but here's a quick look. Each SIMD
+instruction operates on an entire vector of data. These instructions
+originated with supercomputers in the 70s. More recently, GPUs; the
+x86 SSE instructions; the SPARC VIS instructions; and the
+Power/PowerPC AltiVec instructions all implement SIMD.
 
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache.
-    \item {\tt CPU3} reads x, puts the value in its cache.
-    \item {\tt CPU3} modifies {\tt x := 42}
-    \item {\tt CPU1} reads x \ldots ~from its cache?
-    \item {\tt CPU2} reads x. Which value does it get?
-  \end{enumerate}
+\paragraph{Code.} Let's look at an application of SIMD instructions.
 
-Unless we do something, {\tt CPU1} is going to read invalid data.
+\begin{verbatim}
+void vadd(double * restrict a, double * restrict b, int count) {
+  for (int i = 0; i < count; i++)
+    a[i] += b[i];
+}
+\end{verbatim}
 
-\paragraph{High-Level Explanation of Snoopy Caches.} The simplest way to ``do something''
-is to use Snoopy caches~\cite{snoopycache}. No, not this kind of Snoopy (sadly):
+Compiling this without SIMD on a 32-bit x86 ({\tt gcc -m32 -march=i386 -S}) might give this:
+\begin{verbatim}
+loop:
+  fldl  (%edx)
+  faddl (%ecx)
+  fstpl (%edx)
+  addl  8, %edx
+  addl  8, %ecx
+  addl  1, %esi
+  cmp   %eax, %esi
+  jle   loop
+\end{verbatim}
+
+We can instead compile to SIMD instructions ({\tt gcc -m32 -march=prescott -mfpmath=sse})
+and get something like this:
+\begin{verbatim}
+loop:
+  movupd (%edx),%xmm0
+  movupd (%ecx),%xmm1
+  addpd  %xmm1,%xmm0
+  movpd  %xmm0,(%edx)
+  addl   16,%edx
+  addl   16,%ecx
+  addl   2,%esi
+  cmp    %eax,%esi
+  jle    loop
+\end{verbatim}
+The \emph{packed} operations ({\tt p}) operate on multiple data
+elements at a time (what kind of parallelism is this?)
+The implication is that the loop only needs to loop half as many times.
+Also, the instructions themselves are more efficient, because they're
+not stack-based x87 instructions.
+
+SIMD is different from the other types of parallelization we're
+looking at, since there aren't multiple threads working at once.
+It is complementary to using threads, and good for cases
+where loops operate over vectors of data. These loops could also be
+parallelized; multicore chips can do both, achieving high throughput.
+SIMD instructions also work well on small data sets, where thread startup
+cost is too high, while registers are just there to use.
+
+
+\subsection*{Parallelization using Threads or Processes}
+We'll be looking at thread-based or process-based parallelization for the
+next bit. We don't care about the distinction between threads and processes
+for the moment. In fact, we could even distribute work over multiple systems.
+
+\paragraph{Pattern 1: Multiple Independent Tasks.} If you're just trying to maximize
+system utilization, you can use one system to run a number of independent
+tasks; for instance, you can put both a web server and database on
+one machine. If the web server happens to be memory-bound while the
+database is I/O-bound, then both can use system resources. If the web
+server isn't talking to the database (rare these days!), then the tasks
+would not get in each others' way.
+
+Most services probably ought to be run under virtualization these
+days, unless they're trivial or not mission-critical.
+
+A more relevant example of multiple independent tasks occurs in
+cluster/grid/cloud computing: the cloud might run a number of
+independent tasks, and each node would run some of the tasks. The
+cloud can retry a task (on a different node, perhaps) if it fails on
+some node. Note that the performance ought to increase linearly with
+the number of threads, since there shouldn't be communication between
+the tasks.
+
+\paragraph{Pattern 2: Multiple Loosely-Coupled Tasks.} Some applications contain
+tasks which aren't quite independent (so there is some inter-task
+communication), but not much.  In this case, the tasks may be
+different from each other. The communication might be from the tasks
+to a controller or status monitor; it would usually be asynchronous or
+be limited to exceptional situations.
+
+Refactoring an application this way can help with latency: if you 
+split off the CPU-intensive computations into a sub-thread, then
+the main thread can respond to user input more quickly.
+
+Here's an example. Assume that an application needs to receive and
+forward network packets, and also must log packet activity to disk.
+Then the two tasks are clear: receive/forward, and log. Since logging
+to disk is a high-latency event, a single-threaded application might
+incur latency while writing to disk. Splitting into subtasks allows
+the receive/forward to run without waiting for previous packets to be
+logged, thus increasing the throughput of the system.
+
+\paragraph{Pattern 3: Multiple Copies of the Same Task.} A common variant of
+multiple independent tasks is multiple copies of the same task
+(presumably on different data). In this case, we'd require there to be
+no communication between the different copies, which would enable
+linear speedup. An example is a rendering application running on
+multiple distinct animations. We gain throughput, but need to wait
+just as long for each task to complete.
+
+\paragraph{Pattern 4: Single Task, Multiple Threads.} This is the classic
+vision of ``parallelization'': for instance, distribute array
+processing over multiple threads, and let each thread compute the
+results for a subset of the array.
+
+This pattern, unlike many of the others before it, can actually
+decrease the time needed to complete a unit of work, since it gets
+multiple threads involved in doing the single unit simultaneously.
+The result is improved latency and therefore increased throughput.
+Communication can be a problem, if the data is not nicely
+array-structured, or has dependencies between different array parts.
+
+Other names and variations for this pattern include ``fork-join'',
+where the main process forks its execution and gives work to all of
+the threads, with the join synchronizing threads and combining the
+results; and ``divide-and-conquer'', where a thread spawns subthreads
+to compute smaller and smaller parts of the solution.
+
+\paragraph{Pattern 5: Pipeline of Tasks.} We've seen pipelining in the context of
+computer architecture. It can also work for software. For instance,
+you can use pipelining for packet-handling software, where multiple
+threads, as above, might confound the order. If you use a three-stage
+pipeline, then you can have three packets in-flight at the same time,
+and you can improve throughput by a factor of 3 (given appropriate
+hardware).  Latency would tend to remain the same or be worse (due to
+communication overhead).
+
+Some notes and variations on the pipeline: 1) if a stage is
+particularly slow, then it can limit the performance of the entire
+pipeline, if all of the work has to go through that stage; and 2) you
+can duplicate pipeline stages, if you know that a particular stage is
+going to be the bottleneck.
+
+\paragraph{Pattern 6: Client-Server.} Botnets work this way (as does \verb+SETI@Home+,
+etc). To execute some large computation, a server is ready to tell
+clients what to do.  Clients ask the server for some work, and the
+server gives work to the clients, who report back the results. Note
+that the server doesn't need to know the identity of the clients for
+this to work.
+
+A single-machine example is a GUI application where the server part
+does the backend, while the client part contains the user interface.
+One could imagine symbolic algebra software being designed that way.
+Window redraws are an obvious candidate for tasks to run on clients.
+
+Note that the single server can arbitrate access to shared resources.
+For instance, the clients might all need to perform network access.
+The server can store all of the requests and send them out in an
+orderly fashion.
+
+The client-server pattern enables different threads to share work
+which can somehow be parcelled up, potentially improving
+throughput. Typically, the parallelism is somewhere between single
+task, multiple threads and multiple loosely-coupled tasks. It's also a
+design pattern that's easy to reason about.
+
+\paragraph{Pattern 7: Producer-Consumer.} The producer-consumer is 
+a variant on the pipeline and client-server models. In this case, the
+producer generates work, and the consumer performs work. An example is
+a producer which generates rendered frames, and a consumer which
+orders these frames and writes them to disk. There can be any number
+of producers and consumers. This approach can improve throughput
+and also reduces design complexity.
+
+\paragraph{Combining Strategies.} If one of the patterns suffices,
+then you're done. Otherwise, you may need to combine strategies.
+For instance, you might often start with a pipeline, and then 
+use multiple threads in a particular pipeline stage to handle one
+piece of data. Or, as I alluded to earlier, you can replicate
+pipeline stages to handle different data items simultaneously.
+
+Note also that you can get synergies between different patterns.
+For instance, consider a task which takes 100 seconds. First, you
+take 80 seconds and parallelize it 4 ways (so, 20 seconds). This
+reduces the runtime to 40 seconds. Then, you can take the serial 
+20 seconds and split it into two threads. This further reduces 
+runtime to 30 seconds. You get a $2.5\times$ speedup from the
+first transformation and $1.3\times$ from the second, if you do it
+after the first. But, if you only did the second parallelization,
+you'd only get a $1.1\times$ speedup.
+
+\subsection*{How to Parallelize Code}
+Here's a four-step outline of what you need to do.
+\begin{enumerate}
+\item Profile the code.
+\item Find dependencies in hotspots. For each dependency chain in
+a hotspot, figure out if you can execute the chain as
+multiple parallel tasks or a loop over multiple parallel iterations.
+Think about changing the algorithm, if that would help.
+\item Estimate benefits. 
+\item If they're not good enough (e.g. far from linear speedup),
+step back and see if you can parallelize something else up the
+call chain, or at a higher level of absraction.
+(Think Mandelbrot sets and computing different points in parallel).
+\end{enumerate}
+Try to reduce the amuont of synchronization that you have to do
+(waiting for parallel tasks to finish), because that always slows
+you down.
+
+\section*{Thread Pools} We talked about ``single task, multiple threads''
+last week. The idea behind a \emph{thread pool} is that it's relatively
+expensive to start a thread; it costs resources to keep the threads
+running at the operating system level; and the threads won't run
+optimally anyway, because they'll spend too much time swapping state
+in and out of the cache.  Instead, you start an appropriate number of
+threads, which each grab work from a work queue, do the work,
+and report the results back. Web servers are a good application of
+thread pools\footnote{Apache does this: \url{http://httpd.apache.org/docs/2.0/mod/worker.html}. Also see an assignment where the students write thread-pooled web servers: \url{http://www.cse.nd.edu/~dthain/courses/cse30341/spring2009/project4/project4.html}.}.
+
+A key question is: how many threads should you create?  This depends
+on which resources your threads use; if you are writing
+computationally-intensive threads, then you probably want to have
+fewer threads than the number of virtual CPUs. You can also use
+Amdahl's Law to estimate the maximum useful number of threads, as
+discussed previously.
+
+Here's a longer discussion of thread pools:
 
 \begin{center}
-	\includegraphics[width=0.25\textwidth]{images/peanuts-snoopy1.jpg}
+\url{http://www.ibm.com/developerworks/library/j-jtp0730.html}
 \end{center}
 
-This is a distributed approach; no centralized state is maintained. Each cache with a copy of data from a block of physical memory knows whether it is shared or not. All the CPUs are connected to a shared bus, and each CPU has its own cache controller. Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. If it is, then the CPU will need to take action.
+Modern languages provide thread pools; Java's
+\url{java.util.concurrent.ThreadPoolExecutor}~\cite{java:threadpoolexecutor}, C\#'s
+\url{System.Threading.ThreadPool}~\cite{csharp:threadpool}, and GLib's {\tt GThreadPool}~\cite{gnome:threadpool} all implement thread pools. 
 
-
-\subsection*{Write-Through Caches}
-Let's put that into practice using write-through caches, the simplest type of
-cache coherence.
-  \begin{itemize}
-    \item All cache writes are done to main memory.
-    \item All cache writes also appear on the bus.
-    \item If another CPU snoops and sees it has the same location in
-      its cache, it will either {\it invalidate} or {\it update} the
-      data.
-  \end{itemize}
-  
-Invalidation is the most common protocol. It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. Regardless, the most recent value appears in memory, always.
-
-There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. But it uses lots of bandwidth and is not necessarily a good idea. It does, however prevent the costly cache miss that follows an invalidate. Sadly, as we are mere users and not hardware architects, we don't get to decide which is better; we just have to live with whichever one is on the hardware we get to use. Bummer.
-
-\paragraph{Write-Through Protocol.}
-The protocol for implementing such caches looks like this.
-There are two possible states, {\bf valid} and {\bf invalid}, for each cached memory location.
-Events are either from a processor ({\bf Pr}) or the {\bf Bus}. Actions will be either a \textbf{Rd} (read) or \textbf{Wr} (write).
-We then implement the following state machine.
-
-  \begin{center}
-    \begin{tabular}{l|l|l|l}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\ \hline
-      Valid   & PrRd  &       & Valid\\
-      Valid   & PrWr  & BusWr & Valid\\
-      Valid   & BusWr &       & Invalid\\
-      Invalid & PrWr  & BusWr & Valid\\
-      Invalid & PrRd  & BusRd & Valid\\
-    \end{tabular}
-  \end{center}
-
-\paragraph{Example.} For simplicity (this isn't an architecture course), assume all cache
-      reads/writes are atomic. \footnote{If you're a hardware person, this line probably makes you cry. There's a whole lot that goes into making this work. There are potential write races, which have to be dealt with by contending for the bus and then completing the transaction, possibly restarting a command if necessary. If we have a split transaction bus it's really ugly, because we can have multiple interleaved misses. And down the rabbit hole we go.} Using the same example as before:
-
-Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x, puts the value in its cache. {(valid)}
-    \item {\tt CPU3} reads x, puts the value in its cache. {(valid)}
-    \item {\tt CPU3} modifies {\tt x := 42}. {(write to memory)}
-      \begin{itemize}
-        \item {{\tt CPU1} snoops and marks data as invalid.}
-      \end{itemize}
-    \item {\tt CPU1} reads x, {from main memory. (valid)}
-    \item {\tt CPU2} reads x, {from main memory. (valid)}
-  \end{enumerate}
-
-\subsection*{Write-Back Caches}
-Let's try to improve performance. What if, in our example, {\tt CPU3} writes to {\tt x} 3 times? It's unpleasant to have to flush that to memory three times when we could do it only once. Let's try to delay the write to memory as long as possible. At minimum, we have to add a ``dirty'' bit, which indicates the our data has not yet been written to memory.
-
-\paragraph{Write-Back Implementation.}
-     The simplest type of write-back protocol (MSI) uses 3 states instead of 2:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; 
-          main memory is {\bf out-of-date}.
-        \item {\bf Shared}---location is unmodified, 
-           up-to-date with main
-          memory; 
-          \quad may be present in other caches (also up-to-date).
-        \item {\bf Invalid}---same as before.
-      \end{itemize}
-      
-The initial state for a memory location, upon its first read, is ``shared''.
-The implementation will only write the data to memory if another
-processor requests it.
-During write-back, a processor may read the data from the bus.
-
-\paragraph{MSI Protocol.} Here, bus write-back (or flush) is {\bf BusWB}.
-Exclusive read on the bus is {\bf BusRdX}.
-
-\begin{center}
-    \begin{tabular}{l|l|l|l}
-      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\ \hline
-      Modified   & PrRd   &        & Modified\\
-      Modified   & PrWr   &        & Modified\\
-      Modified   & BusRd  & BusWB  & Shared\\
-      Modified   & BusRdX & BusWB  & Invalid\\
-      Shared     & PrRd   &        & Shared\\
-      Shared     & BusRd  &        & Shared\\
-      Shared     & BusRdX &        & Invalid\\
-      Shared     & PrWr   & BusRdX & Modified\\
-      Invalid    & PrRd   & BusRd  & Shared\\
-      Invalid    & PrWr   & BusRdX & Modified\\
-    \end{tabular}
-\end{center}
-
-\paragraph{MSI Example.} Using the same example as before:
-
-Initially in main memory: {\tt x = 7}.
-
-  \begin{enumerate}
-    \item {\tt CPU1} reads x from memory. {(BusRd, shared)}
-    \item {\tt CPU3} reads x from memory. {(BusRd, shared)}
-    \item {\tt CPU3} modifies {\tt x = 42}:
-      \begin{itemize}
-        \item {Generates a BusRdX.}
-        \item {{\tt CPU1} snoops and invalidates x.}
-      \end{itemize}
-    \item {\tt CPU1} reads x:
-      \begin{itemize}
-        \item {Generates a BusRd.}
-        \item {{\tt CPU3} writes back the data and sets x to shared.}
-        \item {{\tt CPU1} reads the new value from the bus as shared.}
-      \end{itemize}
-    \item {\tt CPU2} reads x from memory. {(BusRd, shared)}
-  \end{enumerate}
-
-\subsection*{An Extension to MSI: MESI}
-    The most common protocol for cache coherence is MESI.
-    This protocol adds yet another state:
-      \begin{itemize}
-        \item {\bf Modified}---only this cache has a valid copy; 
- main memory is {\bf out-of-date}.
-        \item {\bf Exclusive}---only this cache has a valid copy; 
- main memory is {\bf up-to-date}.
-        \item {\bf Shared}---same as before.
-        \item {\bf Invalid}---same as before.
-      \end{itemize}
-
-    MESI allows a processor to modify data exclusive to it, without
-    having to communicate with the bus.  MESI is safe. The key is that
-    if memory is in the E state, no other processor has the data.
-
-\subsection*{MSEIF: Even More States!}
-
-    MESIF (used in latest i7 processors):
-      \begin{itemize}
-        \item {\bf Forward}---basically a shared state; but, current
-          cache is the only one that will respond to a request to
-          transfer the data.
-      \end{itemize}
-
-    Hence: a processor requesting data that is already shared or exclusive will
-      only get one response transferring the data. This permits more efficient usage of the bus.
-
-\subsection*{Cache coherence vs flush}
-
-\begin{quote}
-Cache coherency seems to make sure my data is consistent. Why do I have
-to have something like flush or fence?
-\end{quote}
-
-Sadly, no. Cache coherence isn't enough. Writes may be to registers rather than
-memory, and those won't be coherent. Use fences or flushes.
-
-\begin{quote}
-Well, I read that {\tt volatile} variables aren't stored in registers,
-    so then am I okay?
-\end{quote}
-
-Again, sadly, no. Recall that {\tt volatile} in C was only designed to~\cite{pr:volatile}:
-      \begin{itemize}
-        \item Allow access to memory mapped devices.
-        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
-        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
-      \end{itemize}
-
-All of these things apply to single-threaded situations or cases where the compiler has re-ordered some steps. Remember, things can also be reordered by the compiler, and {\tt
-  volatile} doesn't prevent reordering. Also, it's likely your
-variables could be in registers the majority of the time, except in
-critical areas. All that volatile does is tell the compiler that an access of that variable should go to memory, not a register.
-
-\paragraph{Coherence summary.}
-We saw four cache coherence protocols, from MSI through MESIF. There
-are many other protocols for cache coherence, each with their own
-trade-offs.
-
-Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
-      compiler and hardware don't reorder reads and writes. Neither cache coherence nor {\tt volatile} will save you. Barriers/fences/flushes might be expensive in terms of ``wasting time,'' but correctness is important.
+\paragraph{GLib.} 
+GLib is a C library developed by the GTK team. It provides many useful
+features that you might otherwise have to implement yourself in C.
+Consider using GLib's thread pool in your assignment 2, unless you
+want to implement the work queue yourself.  (I see no reason to do
+that!)
 
 \input{bibliography.tex}
 

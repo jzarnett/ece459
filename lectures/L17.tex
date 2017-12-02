@@ -2,308 +2,450 @@
 
 \begin{document}
 
-\lecture{17 --- C/C++11 Memory Model}{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{17 --- Dependencies and Speculation }{\term}{Patrick Lam and Jeff Zarnett}
 
-\section*{C/C++11 Memory Model}
+\section*{Dependencies}
+Some computations appear to be ``inherently sequential''. There are plenty of real-life analogies:
 
-We have talked about memory models in the context of OpenMP. Let's
-talk about the core languages now---that is, C and C++~\cite{quora:cppthr, cppconcurrency}---when
-not using OpenMP.
-
-What outputs are possible from this example?
-
-\begin{tabular}{ll}
-      \begin{minipage}{.2\textwidth}
-        Thread 1:
-        \begin{verbatim}
-  foo = 7;
-  bar = 42;
-        \end{verbatim}
-      \end{minipage} &
-      \begin{minipage}{.4\textwidth}
-        Thread 2:
-        \begin{verbatim}
-  printf("%d\n", foo);
-  printf("%d\n", bar);
-        \end{verbatim}
-      \end{minipage}
-\end{tabular}
-
-You might think ``undefined'', but actually it's worse than that. The 
-C11 and C++11 language definitions don't even say what a thread is.
-Of course, there is Pthreads, but that is a library, not the language itself.
-So you can't even ask this question when talking about pre-C11/C++11 versions
-of C and C++. Well. Okay. You can ask, but the question makes no sense. Sort of like
-putting your hand up in class and saying ``Where did you bury your oranges?''.
-It's a syntactically valid question and it describes something that's possible,
-but it still makes no sense.
-
-The older standards made no reference to any kind of CPU, memory architecture, cache
-strategy, or anything like that. Which on the one hand is nice and general, but on the other hand, it leads to problems. The ``abstract machine'' that the C and C++ standards refer to is inherently single threaded, making it actually impossible to write a portable multithreaded C or C++ program~\cite{quora:cppthr}. The part that's impossible is that word ``portable'' -- people write multithreaded C and C++ programs all the time (in this class, even) but they have system specific code and implementation-defined behaviour. Open up a pthreads library or some equivalent and sure enough, you will find something architecture specific in there.
-
-C++11 (and C11) have improved the situation, though. There is actually
-a memory model (based on an abstract machine) and threading primitives
-such as mutexes, atomics, and memory barriers---the concepts that we
-have seen in this course. Now there are rules! Yes. We like rules. Okay. I, at least, like rules. C++11 defines how a compiler can generate code that accesses memory even when there is concurrency. There are also standard mutex operations and atomics and barriers and all those lovely things.
-
-Now, we can ask the question about the behaviour of the above example.
-It does have undefined behaviour, since there is contended access to
-the variables {\tt foo} and {\tt bar}. How can we fix that?
-
-\paragraph{Atomics.}
-A good exam question: if {\tt foo} is atomic, what are the possible outputs? 
-    
-    \begin{tabular}{ll}
-      \begin{minipage}{.25\textwidth}
-        Thread 1:
-        \begin{verbatim}
-  foo.store(7);
-  bar.store(42);
-        \end{verbatim}
-      \end{minipage} &
-      \begin{minipage}{.45\textwidth}
-        Thread 2:
-        \begin{verbatim}
-  printf("%d\n", foo.load());
-  printf("%d\n", bar.load());
-        \end{verbatim}
-      \end{minipage}
-    \end{tabular}
-
-Alright, we have some defined behaviour now.  Honestly, it depends how these things are scheduled, but the answer is one of the following set: \{0/0, 7/42, 7/0,  0/42\}. The answer depends on how they are interleaved. But at least we get some certainty that the output will be one of those four things and there's no chance of garbage because the print takes place during an assignment operation. 
-
-We probably still don't like this because we don't have mutual exclusion here and we can get several different answers, some of which are probably ``wrong'' (for whatever definition of a correct answer is), but at least our set of potential wrong answers is smaller. So that's a start. Compilers have to follow the new rules in generating code, so their output will behave as if the architecture followed the standard memory model. That's something. 
-
-\section*{Good C++ Practice}
-Lots of people use postfix ({\tt i++}) out of habit, but prefix ({\tt ++i}) is better.
-
-In C, this isn't a problem. 
-In some languages (like C++), it can be.
-
-\paragraph{Why? Overloading.} In C++, you can overload the {\tt ++} and {\tt --} operators.
-
-  \begin{verbatim}
-class X {
-public:
-  X& operator++();
-  const X operator++(int);
-...
-};
-
-X x;
-++x; // x.operator++();
-x++; // x.operator++(0);
-  \end{verbatim}
-
-Prefix is also known as {\bf increment and fetch}, and might be implemented like this:
-  \begin{verbatim}
-X& X::operator++() {
-  *this += 1;
-  return *this;
-}
-  \end{verbatim}
-
-  Postfix is also known as {\bf fetch and increment}. Note that you have to make a copy of
-the old value:
-  \begin{verbatim}
-const X X::operator++(int) {
-  const X old = *this;
-  ++(*this);
-  return old;
-}
-  \end{verbatim}
-
-So, if you're the least concerned about efficiency (and why else would you be
-taking programming for performance?), always use
-  \emph{prefix} increments/decrements instead of defaulting to postfix. This isn't really an issue if the operator is in a statement all on its own (e.g. a standalone line, or the last part of a for loop) because the compiler is (presumably) smart enough to know that this can be optimized as the return value is not assigned. Only use {\tt postfix} when you really mean it, to be on the safe side.
-  
-Mind you, if you're doing something like \texttt{array[i++]} or something similarly ``clever'', you might want to think twice about this. There's a lot of potential for error or misunderstanding in a code review. Remember, clever is hard to grep for.
-
-\section*{Locking Granularity}
-
-Alright, we already know that locks prevent data races. If this is news to you, how did you pass the operating systems course?! So we need to use them to prevent data races, but it's not as simple as it sounds. We have choices about the granularity of locking, and it is a trade-off (like always).
-
-\textit{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. \textit{
-Fine-grained locking} requires more careful design,
-increases locking overhead and is more prone to bugs (deadlock etc).  
-Locks' extents constitute their {\it granularity}. In coarse-grained locking, you
-lock large sections of your program with a big lock; in fine-grained
-locking, you divide the locks and protect smaller sections with multiple smaller locks.
-
-We'll discuss three major concerns when using locks:
-  \begin{itemize}
-    \item overhead;
-    \item contention; and
-    \item deadlocks.
-  \end{itemize}
-We aren't even talking about under-locking (i.e., remaining race conditions). We'll assume there are adequate locks and that data accesses are protected. 
-
-\paragraph{Lock Overhead.}
-  Using a lock isn't free. You pay:
-  \begin{itemize}
-    \item allocated memory for the locks;
-    \item initialization and destruction time; and
-    \item acquisition and release time.
-  \end{itemize}
-  These costs scale with the number of locks that you have.
-
-\paragraph{Lock Contention.}
- Most locking time is wasted waiting for the lock to become available.
-We can fix this by:
-      \begin{itemize}
-        \item making the locking regions smaller (more granular); or
-        \item making more locks for independent sections.
-      \end{itemize}
-
-\paragraph{Deadlocks.} Finally, the more locks you have, the more you have to worry about deadlocks.
-
-As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
-
-Okay, in a formal sense, the four conditions for deadlock are:
-
-\begin{enumerate}
-	\item \textbf{Mutual Exclusion}: A resource belongs to, at most, one process at a time.
-	\item \textbf{Hold-and-Wait}: A process that is currently holding some resources may request additional resources and may be forced to wait for them.
-	\item \textbf{No Preemption}: A resource cannot be ``taken'' from the process that holds it; only the process currently holding that resource may release it.
-	\item \textbf{Circular-Wait}: A cycle in the resource allocation graph.
-\end{enumerate}
-
-
-Consider, for instance, two processors trying to get two locks.
-
-\begin{center}
-  \begin{tabular}{ll}
-\begin{minipage}{.4\textwidth}
-      {\bf Thread 1}
-
-      \verb+Get Lock 1+
-
-      \verb+Get Lock 2+
-
-      \verb+Release Lock 2+
-
-      \verb+Release Lock 1+
-\end{minipage} & 
-\begin{minipage}{.4\textwidth}
-      {\bf Thread 2}
-
-      \verb+Get Lock 2+
-
-      \verb+Get Lock 1+
-
-      \verb+Release Lock 1+
-
-      \verb+Release Lock 2+
-\end{minipage}
-\end{tabular}
-\end{center}
-
- Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops! They
- both wait for each other. (Deadlock!).
-
-To avoid deadlocks, always be careful if your code {\bf acquires a
-  lock while holding one}.  You have two choices: (1) ensure
-consistent ordering in acquiring locks; or (2) use trylock.
-
-As an example of consistent ordering:
-\begin{center}
-\begin{tabular}{ll}
-\begin{minipage}{.4\textwidth}
-  \begin{verbatim}
-void f1() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-\end{verbatim}
-\end{minipage}&
-\begin{minipage}{.4\textwidth}
-\begin{verbatim}
-void f2() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-  \end{verbatim}
-\end{minipage}
-\end{tabular}
-\end{center}
-This code will not deadlock: you can only get {\bf l2} if you have
-{\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
-identity is not statically visible.
-
-Or another example, with threads $P$ and $Q$ attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
-
-To generalize and formalize this principle, if the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
-
-
-Alternately, you can use trylock. Recall that Pthreads' {\tt trylock}
-returns 0 if it gets the lock. But if it doesn't, your thread doesn't get blocked. Checking the return value is important, but at the very least, this code also won't deadlock: it will give up {\bf l1} if it can't get {\bf l2}.
-  \begin{verbatim}
-void f1() {
-    lock(&l1);
-    while (trylock(&l2) != 0) {
-        unlock(&l1);
-        // wait
-        lock(&l1);
-    }
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-  \end{verbatim}
-  (Incidentaly, using trylocks can also help you measure lock contention.)
-  
-This prevents the hold and wait condition, which was one of the four conditions. A process attempts to lock a group of resources at once, and if it does not get everything it needs, it releases the locks it received and tries again. Thus a process does not wait while holding resources.
-
-\subsection*{Coarse-Grained Locking}
-One way of avoiding problems due to locking is to use few locks
-(perhaps just one!). This is \emph{coarse-grained locking}.
-It does have a couple of advantages:
-  \begin{itemize}
-    \item it is easier to implement;
-    \item with one lock, there is no chance of deadlocking; and
-    \item it has the lowest memory usage and setup time possible.
-  \end{itemize}
-
-It also, however, has one big disadvantage in terms of programming for performance: your parallel program will quickly become sequential.
-
-\paragraph{Example: Python (and other interpreters).}
-Python puts a lock around the whole interpreter (known as the
-\emph{global interpreter lock}).  This is the main reason (most)
-scripting languages have poor parallel performance; Python's just an
-example.
-
-Two major implications:
 \begin{itemize}
-\item The only performance benefit you'll see from threading is if one of the threads is
-      waiting for IO.
-\item But: any non-I/O-bound threaded program will be {\bf slower} than the sequential
-      version (plus, the interpreter will slow down your system).
+\item must extract bicycle from garage before closing garage door
+ 
+\item must close washing machine door before starting the cycle
+ 
+\item must be called on before answering questions? (sort of, some people shout out...)
+ 
+\item students must submit assignment before course staff can mark the assignment (also sort of... I can assign you a grade of zero if you didn't submit an assignment!)
 \end{itemize}
 
-You might think ``this is stupid, who would ever do this?'' - a lot of OS kernels do in fact have (or at least had) a ``big kernel lock'', including Linux and the Mach Microkernel. This lasted in Linux for quite a while, from the advent of SMP support up until sometime in 2011. As much as this ruins performance, correctness is more important. We don't have a class ``programming for correctness'' (software testing? Hah!) because correctness is kind of assumed. What we want to do here is speed up our program as much as we can while maintaining correctness...
+There are some prerequisite steps that need to be taken before a given step can take place. The problem is that we need some result or state from an earlier step before we can go on to the next step. Interestingly, in many of the analogies, sometimes if you fail to respect the dependency, nothing physically stops the next step from taking place, but the outcome might not be what you want (... you don't want zero on your assignment, right?).
 
-\subsection*{Fine-Grained Locking}
-On the other end of the spectrum is \emph{fine-grained locking}. The big
-advantage: it maximizes parallelization in your program.
+The same with dependencies in computation. If you need the result of the last step you will have to wait for it to be available before you can go on to the next. And if you jump the gun and try to do it early, you will get the wrong result (if any at all).
 
-However, it also comes with a number of disadvantages:
+Note that, in this lecture, we are going to assume that memory accesses follow the
+sequentially consistent memory model. For instance, if you declared all variables
+to be C++11 atomics, that would be fine. This reasoning is not guaranteed to work
+in the presence of undefined behaviour, which exists when you have data races.
+
+\paragraph{Main Idea.} A \emph{dependency} prevents parallelization
+when the computation $XY$ produces a different result from the
+computation $YX$.
+
+\paragraph{Loop- and Memory-Carried Dependencies.} We distinguish
+between \emph{loop-carried} and \emph{memory-carried} dependencies.
+In a loop-carried dependency, an iteration depends on the result of
+the previous iteration. For instance, consider this code to
+compute whether a complex number $x_0 + iy_0$ belongs to the Mandelbrot
+set.
+
+{\small \begin{verbatim}
+    // Repeatedly square input, return number of iterations before 
+    // absolute value exceeds 4, or 1000, whichever is smaller.
+    int inMandelbrot(double x0, double y0) {
+      int iterations = 0;
+      double x = x0, y = y0, x2 = x*x, y2 = y*y;
+      while ((x2+y2 < 4) && (iterations < 1000)) {
+        y = 2*x*y + y0;
+        x = x2 - y2 + x0;
+        x2 = x*x; y2 = y*y;
+        iterations++;
+      }
+      return iterations;
+    }
+\end{verbatim} }
+In this case, it's impossible to parallelize loop iterations, because
+each iteration \emph{depends} on the $(x, y)$ values calculated in the
+previous iteration. For any particular $x_0 + iy_0$, you have to run the
+loop iterations sequentially.
+
+Note that you can parallelize the Mandelbrot set calculation
+by computing the result simultaneously over many points at
+once. Indeed, that is a classic ``embarassingly parallel'' problem,
+because the you can compute the result for all of the points
+simultaneously, with no need to communicate.
+
+On the other hand, a memory-carried dependency is one where the result
+of a computation \emph{depends} on the order in which two memory accesses
+occur. For instance:
+
+{\small \begin{verbatim}
+    int val = 0;
+
+    void g() { val = 1; }
+    void h() { val = val + 2; }
+\end{verbatim} }
+
+{\sf What are the possible outcomes after executing {\tt g()} and {\tt h()}
+in parallel threads?} \\[1em]
+
+\subsection*{RAW, WAR, WAW and RAR}
+The most obvious case of a dependency is as follows:
+{\small \begin{verbatim}
+    int y = f(x);
+    int z = g(y);
+\end{verbatim} }
+This is a read-after-write (RAW), or ``true'' dependency: the first
+statement writes {\tt y} and the second statement reads it.
+Other types of dependencies are:
+
+\begin{center}
+\begin{tabular}{l|ll}
+& {\bf Read 2nd} & {\bf Write 2nd} \\ \hline
+{\bf Read 1st} & Read after read (RAR) & Write after read (WAR) \\
+& No dependency & Antidependency \\
+{\bf Write 1st} & Read after write (RAW) & Write after write (WAW) \\
+& True dependency & Output dependency
+\end{tabular}
+\end{center}
+
+The no-dependency case (RAR) is clear. Declaring data immutable 
+in your program is a good way to ensure no dependencies.
+
+Let's look at an antidependency (WAR) example.
+
+{\small \begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+\begin{verbatim}
+void antiDependency(int z) {
+  int y = f(x);
+  x = z + 1;
+}
+\end{verbatim}
+\end{minipage} &
+\begin{minipage}{.4\textwidth}
+\begin{verbatim}
+void fixedAntiDependency(int z) {
+  int x_copy = x;
+  int y = f(x_copy);
+  x = z + 1;
+}
+\end{verbatim}
+\end{minipage} 
+\end{tabular}
+\end{center} }
+{\sf Why is there a problem?}\\[2em]
+
+Finally, WAWs can also inhibit parallelization:
+
+{\small \begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.45\textwidth}
+\begin{verbatim}
+void outputDependency(int x, int z) {
+  y = x + 1;
+  y = z + 1;
+}
+\end{verbatim}
+\end{minipage} &
+\begin{minipage}{.4\textwidth}
+\begin{verbatim}
+void fixedOutputDependency(int x, int z) {
+  y_copy = x + 1;
+  y = z + 1;
+}
+\end{verbatim}
+\end{minipage} 
+\end{tabular}
+\end{center} }
+
+In both of these cases, renaming or copying data can
+eliminate the dependence and enable parallelization. Of course,
+copying data also takes time and uses cache, so it's not free. One
+might change the output locations of both statements and then copy in
+the correct output. These are usually more useful when it's not just one
+access, but some sort of longer computation.
+
+\section*{Loop-carried Dependencies}
+As we said last time, a loop-carried dependency is one where an
+iteration depends on the result of the previous iteration. Let's look
+at a couple of examples.
+
+
+Initially, {\tt a[0]} and {\tt a[1]} are 1.
+Can we run these lines in parallel?
+
+\begin{verbatim}
+     a[4] = a[0] + 1;
+     a[5] = a[1] + 2;
+\end{verbatim}
+
+\url{http://www.youtube.com/watch?v=jjXyqcx-mYY}. (This one is legit! Really!)
+
+It turns out that there are no dependencies between the two lines. But this is
+an atypical use of arrays. Let's look at more typical uses.
+
+
+What about this? (Again, all elements initially 1.)
+
+\begin{verbatim}
+    for (int i = 1; i < 12; ++i)
+        a[i] = a[i-1] + 1;
+\end{verbatim}
+
+Nope! We can unroll the first two iterations:
+\begin{verbatim}
+    a[1] = a[0] + 1
+    a[2] = a[1] + 1
+\end{verbatim}
+
+Depending on the execution order, either {\tt a[2] = 3} or {\tt a[2] =
+  2}.  In fact, no out-of-order execution here is safe---statements depend
+on previous loop iterations, which exemplifies the notion of a
+\emph{loop-carried dependency}. You would have
+to play more complicated games to parallelize this.
+
+
+  Now consider this example---is it parallelizable? (Again, all elements initially 1.)
+
+\begin{verbatim}
+    for (int i = 4; i < 12; ++i)
+        a[i] = a[i-4] + 1;
+\end{verbatim}
+
+Yes, to a degree. We can execute 4 statements in parallel at a time:
+\begin{itemize}
+  \item a[4] = a[0] + 1, a[8] = a[4] + 1
+  \item a[5] = a[1] + 1, a[9] = a[5] + 1
+  \item a[6] = a[2] + 1, a[10] = a[6] + 1
+  \item a[7] = a[3] + 1, a[11] = a[7] + 1
+\end{itemize}  
+We can say that the array accesses have stride 4---there are no
+dependencies between adjacent array elements. In general, consider
+dependencies between iterations.
+
+\paragraph{Larger loop-carried dependency example.}
+Now consider the following function.
+
+\begin{verbatim}
+  // Repeatedly square input, return number of iterations before 
+  // absolute value exceeds 4, or 1000, whichever is smaller.
+  int inMandelbrot(double x0, double y0) {
+    int iterations = 0;
+    double x = x0, y = y0, x2 = x*x, y2 = y*y;
+    while ((x2+y2 < 4) && (iterations < 1000)) {
+      y = 2*x*y + y0;
+      x = x2 - y2 + x0;
+      x2 = x*x; y2 = y*y;
+      iterations++;
+    }
+    return iterations;
+  }
+\end{verbatim}
+
+How do we parallelize this?
+
+Well, that's a trick question. There's not much that you can do with that
+function. What you can do is to run this function sequentially for each
+point, and parallelize along the different points.
+
+As mentioned in class, but one potential problem with that
+approach is that one point may take disproportionately long. The safe thing to do is to parcel out the work
+at a finer granularity. There are
+(unsafe!) techniques for dealing with that too. We'll talk about that
+later.
+
+%What I did do in class was to actually live-code a parallelization
+%of the Mandelbrot code. I had to first refactor the code, creating
+%an array to hold the output. Then I added a struct to pass the offset and
+%stride to the thread. Finally, I invoked pthread to create and join threads.
+
+%In class, I live-coded a parallelization
+%of the Mandelbrot code. I had to first refactor the code, creating
+%an array to hold the output. Then I added a struct to pass the offset and
+%stride to the thread. Finally, I invoked pthread to create and join threads.
+
+\section*{Breaking Dependencies with Speculation}
+Let's go back to a real life analogy of speculation. Under normal circumstances, the coffee shop staff waits for you to place your order (``medium double double'') before they start making your order. Sensible. If you go to a certain coffee shop enough, then the staff start to know you and know your typical order and they might speculate about your order and start preparing it in advance, even before you get up to the counter. If they're right, time is saved: your order is ready sooner. If they're wrong, the staff did some unnecessary work and they'll throw away that result and start again with what you did order. If they can predict with high accuracy what you want, then most of the time this is a benefit, and that's what we want.
+
+Recall that computer architects often use speculation to predict branch
+targets: the direction of the branch depends on the condition codes
+when executing the branch code. To get around having to wait, the processor
+speculatively executes one of the branch targets, and cleans up if it
+has to.
+
+We can also use speculation at a coarser-grained level and
+speculatively parallelize code. We discuss two ways of doing so: one
+which we'll call speculative execution, the other value speculation.
+
+\subsection*{Speculative Execution for Threads.} The idea here is to
+start up a thread to compute a result that you may or may not need.
+Consider the following code:
+
+{\small \begin{verbatim}
+  void doWork(int x, int y) {
+    int value = longCalculation(x, y);
+    if (value > threshold) {
+      return value + secondLongCalculation(x, y);
+    }
+    else {
+      return value;
+    }
+  }
+\end{verbatim} }
+Without more information, you don't know whether you'll have to execute
+{\tt secondLongCalculation} or not; it depends on the return value of
+{\tt longCalculation}. 
+
+Fortunately, the arguments to {\tt secondLongCalculation} do not
+depend on {\tt longCalculation}, so we can call it at any point. 
+Here's one way to speculatively thread the work:
+
+{\small \begin{verbatim}
+  void doWork(int x, int y) {
+    thread_t t1, t2;
+    point p(x,y);
+    int v1, v2;
+    thread_create(&t1, NULL, &longCalculation, &p);
+    thread_create(&t2, NULL, &secondLongCalculation, &p);
+    thread_join(t1, &v1);
+    thread_join(t2, &v2);
+    if (v1 > threshold) {
+      return v1 + v2;
+    } else {
+      return v1;
+    }
+  }
+\end{verbatim} }
+We now execute both of the calculations in parallel and return the same
+result as before.
+
+{\sf Intuitively: when is this code faster? When is it slower? How
+  could you improve the use of threads?}\\[4em]
+
+We can model the above code by estimating the probability $p$ that
+the second calculation needs to run, the time $T_1$ that it takes
+to run {\tt longCalculation}, the time $T_2$ that it takes to run
+{\tt secondLongCalculation}, and synchronization overhead $S$.
+Then the original code takes time
+\[ T = T_1 + p T_2, \]
+while the speculative code takes time
+\[ T_s = \max(T_1, T_2) + S.\]
+
+\paragraph{Exercise.} Symbolically compute when it's profitable to do the
+speculation as shown above. There are two cases: $T_1 > T_2$ and $T_1
+< T_2$. (You can ignore $T_1 = T_2$.)
+
+
+\subsection*{Value Speculation}
+The other kind of speculation is value speculation. In this case,
+there is a (true) dependency between the result of a computation 
+and its successor:
+% note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
+
+{\small \begin{verbatim}
+  void doWork(int x, int y) {
+    int value = longCalculation(x, y);
+    return secondLongCalculation(value);
+  }
+\end{verbatim} }
+If the result of {\tt value} is predictable, then we can speculatively
+execute {\tt secondLongCalculation} based on the predicted value.
+(Most values in programs are indeed predictable).
+{\small \begin{verbatim}
+void doWork(int x, int y) {
+    thread_t t1, t2;
+    point p(x,y);
+    int v1, v2, last_value;
+    thread_create(&t1, NULL, &longCalculation, &p);
+    thread_create(&t2, NULL, &secondLongCalculation,
+                  &last_value);
+    thread_join(t1, &v1);
+    thread_join(t2, &v2);
+    if (v1 == last_value) {
+      return v2;
+    } else {
+      last_value = v1;
+      return secondLongCalculation(v1);
+    }
+}
+\end{verbatim}
+}
+Note that this is somewhat similar to memoization, except with 
+parallelization thrown in. In this case, the original running time is
+\[ T = T_1 + T_2, \]
+while the speculatively parallelized code takes time
+\[ T_s = \max(T_1, T_2) + S + pT_2,\]
+where $S$ is still the synchronization overhead, and $p$ is the probability that
+\verb+v1 != last_value+.
+
+\paragraph{Exercise.} Do the same computation as for speculative execution.
+
+\subsection*{When can we speculate?}
+Speculation isn't always safe. We need the following conditions:
   \begin{itemize}
-    \item if your program isn't very parallel, it'll be mostly wasted memory and setup time;
-    \item plus, you're now prone to deadlocks; and
-    \item fine-grained locking is generally more error-prone (be sure you grab the right lock!)
+    \item {\tt longCalculation} and {\tt secondLongCalculation} must not call
+      each other.
+    \item {\tt secondLongCalculation} must not depend on
+      any values set or modified by {\tt longCalculation}.
+    \item The return value of {\tt longCalculation} must be deterministic.
   \end{itemize}
 
-\paragraph{Examples.}
+As a general warning: Consider the \emph{side effects} of function calls. Oh, let's talk about side effects. Why not. They have a big impact on parallelism. Side effects are problematic, but why? For one thing they're kind of unpredictable (why does calling this function result in unexpected changes elsewhere?!). Side effects are changes in state that do not depend on the function input. Calling a function or expression has a side effect if it has some visible effect on the outside world. Some things necessarily have side effects, like printing to the console. Others are side effects which may be avoidable if we can help it, like modifying a global variable.
 
-    Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
+Code that allows multiple concurrent invocations without affecting the outcome is called reentrant or ``pure'' (and the use of the word pure shouldn't imply any sort of moral judgement on the code). It is a desirable property to have code that is reentrant if we want to parallelize things. If a function is not reentrant, it may not be possible to make it thread safe. And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
 
-    You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
+Side effects are sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's what we want. Nevertheless, it should be obvious that when printing we can't have reentrant behaviour because two threads trying to write at the same time to the console would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
+
+The trivial example of a non-reentrant C function:
+
+\begin{verbatim}
+int tmp;
+
+void swap( int x, int y ) {
+    tmp = y;
+    y = x;
+    x = tmp;
+}
+\end{verbatim}
+
+Why is this non-reentrant? Because there is a global variable \texttt{tmp} and it is changed on every invocation of the function. We can make the code reentrant by moving the declaration of \texttt{tmp} inside the function, which would mean that every invocation is independent of every other. And thus it would be thread safe, too.
+
+Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted (or we're going to break off handling what we're doing and call the same ISR in the middle of the current one). Either way, if the code is not reentrant we will run into problems.
+
+Let us also draw a distinction between thread safe code and reentrant code. A thread safe operation is one that can be performed from more than one thread at the same time. On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. Or it can be re-started without affecting the outcome. See this code example from~\cite{tont:threadsafe}:
+
+\begin{verbatim}
+int length = 0;
+char *s = NULL;
+
+// Note: Since strings end with a 0, if we want to
+// add a 0, we encode it as "\0", and encode a
+// backslash as "\\".
+
+
+// WARNING! This code is buggy - do not use!
+
+
+void AddToString(int ch)
+{
+  EnterCriticalSection(&someCriticalSection);
+  // +1 for the character we're about to add
+  // +1 for the null terminator
+  char *newString = realloc(s, (length+1) * sizeof(char));
+  if (newString) {
+    if (ch == '\0' || ch == '\\') {
+      AddToString('\\'); // escape prefix
+    }
+    newString[length++] = ch;
+    newString[length] = '\0';
+    s = newString;
+  }
+  LeaveCriticalSection(&someCriticalSection);
+}
+\end{verbatim}
+
+Is it thread safe? Sure - there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
+
+
+Interestingly, functional programming languages (by which I do NOT mean procedural programming languages like C) such as Haskell and Scala and so on, lend themselves very nicely to being parallelized. Why? Because a purely functional program has no side effects and they are very easy to parallelize. If a function is impure, its functions signature will indicate so. Thus spake Joel\footnote{``Thus Spake Zarathustra'' is a book by Nietzsche, and this was not a spelling error.}:
+
+\begin{quote}
+\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}~\cite{joel:functional}
+\end{quote}
+
+This assumes of course that there is no data dependency between functions. Obviously, if we need a computation result, then we have to wait. 
+
+Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
 
 \input{bibliography.tex}
 

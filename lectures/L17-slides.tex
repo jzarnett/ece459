@@ -1,6 +1,7 @@
 \input{configuration}
+\usepackage{multi row}
 
-\title{Lecture 17 --- C/C++11 Memory Model }
+\title{Lecture 17 --- Dependencies and Speculation }
 
 \author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{p.lam@ece.uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -16,565 +17,698 @@
  \end{frame}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Language Support: Before C/C++11}
-
-%http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C
+\begin{frame}
+  \frametitle{Next topic: Dependencies}
 
   
-    Before C/C++11: \\ \qquad no language-level definition of threads.\\[1em]
-
-    Not even a well-formed question to ask what this means:\\[.5em]
-    \begin{tabular}{ll}
-      \begin{minipage}{.2\textwidth}
-        Thread 1:
-        \begin{lstlisting}
-  foo = 7;
-  bar = 42;
-        \end{lstlisting}
-      \end{minipage} &
-      \begin{minipage}{.4\textwidth}
-        Thread 2:
-        \begin{lstlisting}
-  printf("%d\n", foo);
-  printf("%d\n", bar);
-        \end{lstlisting}
-      \end{minipage}
-    \end{tabular}
-    ~\\[1em]
-    \only<2>{pre C/C++11: no such thing as a thread!}
-    
+     \structure{Dependencies} are the main
+      limitation to parallelization.\\[1em]
+     Example: computation must be evaulated as {\tt XY} and not {\tt YX}.\\[1em]
   
 \end{frame}
+
+\begin{frame}
+  \frametitle{Not synchronization}
+
+  
+      Assume (for now) no synchronization problems.\\[1em]
+      Only trying to identify code that is safe to run in
+      parallel.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{Dependencies: Analogies}
+
+Must extract bicycle from garage before closing garage door.\\[1em]
+
+Must close washing machine door before starting the cycle.\\[1em]
+
+Must be called on before answering questions? (sort of)\\[1em]
+
+Students must submit assignment before course staff can mark the assignment.
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Memory-carried Dependencies}
+
+Dependencies limit the amount of parallelization.
+\vfill
+Can we execute these 2 lines in parallel?
+\begin{lstlisting}
+x = 42
+x = x + 1  
+\end{lstlisting}
+\pause
+\alert{No.}\\[1em]
+\begin{itemize}
+\item Assume x initially 1. What are possible outcomes?
+\pause \newline \structure{~~~x = 43 or x = 42 or x = 2}\\[1em]
+
+\end{itemize}
+
+Next, we'll classify dependencies.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Read After Read (RAR)}
+
+Can we execute these 2 lines in parallel? (initially x is 2)
+\begin{lstlisting}
+y = x + 1
+z = x + 5
+\end{lstlisting}
+\pause
+\structure{Yes.}\\[1em]
+\begin{itemize}
+\item Variables y and z are independent.
+\item Variable x is only read.
+\end{itemize}
+
+RAR dependency allows parallelization.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Read After Write (RAW)}
+
+
+What about these 2 lines? (again, initially x is 2):
+\begin{lstlisting}
+x = 37
+z = x + 5
+\end{lstlisting}
+\pause
+\alert{No, z = 42 or z = 7.}\\[1em]
+
+RAW inhibits parallelization: can't change ordering.\\
+Also known as a \structure{true dependency}.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Write After Read (WAR)}
+
+What if we change the order now? (again, initially x is 2)
+\begin{lstlisting}
+z = x + 5
+x = 37
+\end{lstlisting}
+\pause
+\alert{No. Again, z = 42 or z = 7.}\\[1em]
+\begin{itemize}
+\item WAR is also known as a \structure{anti-dependency}.
+\item But, we can modify this code to enable parallelization.
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Removing Write After Read (WAR) Dependencies}
+
+Make a copy of the variable:
+\begin{lstlisting}
+x_copy = x
+z = x_copy + 5
+x = 37
+\end{lstlisting}
+\pause
+\structure{We can now run the last 2 lines in parallel.}
+\begin{itemize}
+\item Induced a true dependency (RAW) between first 2 lines.
+\item Isn't that bad?
+\end{itemize}
+\pause
+Not always:
+\begin{lstlisting}
+z = very_long_function(x) + 5
+x = very_long_calculation()
+\end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Write After Write (WAW)}
+
+Can we run these lines in parallel? (initially x is 2)
+\begin{lstlisting}
+z = x + 5
+z = x + 40
+\end{lstlisting}
+\pause
+\alert{Nope, z = 42 or z = 7}.\\[1em]
+\begin{itemize}
+\item WAW is also known as an \structure{output dependency}.
+\item We can remove this dependency (like WAR):
+\end{itemize}
+\pause
+\begin{lstlisting}
+z_copy = x + 5
+z = x + 40
+\end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Language Support in C++11: Defining the Question}
+\frametitle{Summary of Memory-carried Dependencies}
+\begin{center}
+\begin{tabular}{ll|p{2.8cm}p{3.2cm}}
+& & \multicolumn{2}{c}{Second Access} \\ 
+&  & \bf Read & \bf Write \\ \hline
+\multirow{2}{*}{First Access} & \bf Read & No Dependency Read After Read (RAR)  & Anti-dependency Write After Read (WAR) \\[0.5em]
+& \bf Write & True Dependency Read After Write (RAW) & Output Dependency Write After Write (WAW) \\
+\end{tabular}
+\end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (1)}
+
+Can we run these lines in parallel? \\ ~~~(initially a[0] and a[1] are 1)
+\begin{lstlisting}
+a[4] = a[0] + 1
+a[5] = a[1] + 2
+\end{lstlisting}
+\pause
+\structure{Yes.}\\[1em]
+\begin{itemize}
+\item There are no dependencies between these lines.
+\item However, this is not how we normally use arrays\ldots
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (2)}
+
+What about this? (all elements initially 1)
+\begin{lstlisting}
+for (int i = 1; i < 12; ++i)
+    a[i] = a[i-1] + 1
+\end{lstlisting}
+\pause
+\alert{No, a[2] = 3 or a[2] = 2.}\\[1em]
+\begin{itemize}
+\item Statements depend on previous loop iterations.
+\item An example of a \structure{loop-carried dependency}.
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (3)}
+
+Can we parallelize this? (again, all elements initially 1)
+\begin{lstlisting}
+for (int i = 4; i < 12; ++i)
+    a[i] = a[i-4] + 1
+\end{lstlisting}
+\pause
+\structure{Yes, to a degree.}\\[1em]
+\begin{itemize}
+\item We can execute 4 statements in parallel:
+\begin{itemize}
+  \item a[4] = a[0] + 1, a[8] = a[4] + 1
+  \item a[5] = a[1] + 1, a[9] = a[5] + 1
+  \item a[6] = a[2] + 1, a[10] = a[6] + 1
+  \item a[7] = a[3] + 1, a[11] = a[7] + 1
+\end{itemize}  
+\end{itemize}
+
+\pause
+\structure{Always consider dependencies between iterations.}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Larger example: Loop-carried Dependencies}
+{\small \begin{verbatim}
+  // Repeatedly square input, return number of iterations before 
+  // absolute value exceeds 4, or 1000, whichever is smaller.
+  int inMandelbrot(double x0, double y0) {
+    int iterations = 0;
+    double x = x0, y = y0, x2 = x*x, y2 = y*y;
+    while ((x2+y2 < 4) && (iterations < 1000)) {
+      y = 2*x*y + y0;
+      x = x2 - y2 + x0;
+      x2 = x*x; y2 = y*y;
+      iterations++;
+    }
+    return iterations;
+  }
+\end{verbatim} 
+}
+How can we parallelize this? \\
+\pause
+\begin{itemize}
+\item Run {\tt inMandelbrot} sequentially for each point, but parallelize
+different point computations.
+\end{itemize}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Breaking Dependencies}
 
   
+  \structure{Speculation}: architects use it to predict
+      branch targets.
+  \begin{itemize}
+    \item Need not wait for the branch to be evaluated.
+  \end{itemize}~\\[1em]
+  We'll use speculation at a coarser-grained level:
+      speculatively parallelize source code.\\[1em]
 
-    Now\footnote{\url{http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C}}:
-    \begin{itemize}
-    \item a memory model
-    \item primitives: mutexes, atomics, memory barriers.
-    \end{itemize}
+      Two ways: \structure{speculative execution} and
+      \structure{value speculation}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-    Previous example has undefined behaviour \\ \qquad per C++11. (why?)
+
+\section{Speculation}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Speculative Execution: Example}
+
+  
+Consider the following code:
+  
+  \begin{lstlisting}
+void doWork(int x, int y) {
+    int value = longCalculation(x, y);
+    if (value > threshold) {
+      return value + secondLongCalculation(x, y);
+    }
+    else {
+      return value;
+    }
+}
+  \end{lstlisting}
+
+  Will we need to run {\tt secondLongCalculation}?
+  \vfill  
+  \begin{itemize}
+    \item<2> OK, so: could we execute {\tt longCalculation} and {\tt secondLongCalculation}
+      in parallel if we didn't have the conditional?
+  \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Language Support in C++11: Atomics}
+  \frametitle{Speculative Execution: Assume No Conditional}
 
   
-    We've seen the notion of atomics. Here's the C++11 notation:
-
+  Yes, we could parallelize them. Consider this code:
+    
     \begin{lstlisting}
-      atomic<int> foo, bar;      
+  void doWork(int x, int y) {
+    thread_t t1, t2;
+    point p(x,y);
+    int v1, v2;
+    thread_create(&t1, NULL, &longCalculation, &p);
+    thread_create(&t2, NULL, &secondLongCalculation, &p);
+    thread_join(t1, &v1);
+    thread_join(t2, &v2);
+    if (v1 > threshold) {
+      return v1 + v2;
+    } else {
+      return v1;
+    }
+  }
     \end{lstlisting}
-    
-    \begin{tabular}{ll}
-      \begin{minipage}{.25\textwidth}
-        Thread 1:
-        \begin{lstlisting}
-  foo.store(7);
-  bar.store(42);
-        \end{lstlisting}
-      \end{minipage} &
-      \begin{minipage}{.45\textwidth}
-        Thread 2:
-        \begin{lstlisting}
-  printf("%d\n", foo.load());
-  printf("%d\n", bar.load());
-        \end{lstlisting}
-      \end{minipage}
-    \end{tabular}
 
-    What are the possible outputs? (good exam question!)
+  We do both the calculations in parallel and return the same result as before.
+
+  \begin{itemize}
+    \item What are we assuming about {\tt longCalculation} and
+{\tt secondLongCalculation}?
+  \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Prefix and Postfix}
+  \frametitle{Estimating Impact of Speculative Execution}
 
   
+  $T_1$: time to run {\tt longCalculation}.
 
-  Lots of people use postfix out of habit, but prefix is better.\\[2em]
+  $T_2$: time to run {\tt secondLongCalculation}.
 
-  In C, this isn't a problem. \\[1em]
-  In some languages (like C++), it can be.
+  $p$: probability that {\tt secondLongCalculation} executes.\\[1em]
+
+  In the normal case we have:
+    \[T_{\mbox{\scriptsize normal}} = T_1 + pT_2.\]
+
+  $S$: synchronization overhead.\\
+  Our speculative code takes:
+    \[ T_{\mbox{\scriptsize speculative}} = \mbox{max}(T_1, T_2) + S.\]
+
+    \structure{Exercise.} When is speculative code faster? Slower? \\ How could you improve it?
+
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Why? Overloading}
+  \frametitle{Shortcomings of Speculative Execution}
 
   
-
-  In C++, you can overload the {\tt ++} and {\tt --} operators.
-
+  Consider the following code:
+  
   \begin{lstlisting}
-class X {
-public:
-  X& operator++();
-  const X operator++(int);
-...
-};
-
-X x;
-++x; // x.operator++();
-x++; // x.operator++(0);
+void doWork(int x, int y) {
+    int value = longCalculation(x, y);
+    return secondLongCalculation(value);
+}
   \end{lstlisting}
+
+  Now we have a true dependency; can't use speculative~execution.\\[1em]
+
+  But: if the value is predictable, we can execute
+      {\tt secondLongCalculation} using the predicted value.\\[1em]
+
+  This is \structure{value speculation}.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Common Increment Implementations}
+  \frametitle{Value Speculation Implementation}
 
+% note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
   
-
-  Prefix is also known as {\bf increment and fetch}.
-
+  This Pthread code does value speculation:
+  
   \begin{lstlisting}
-X& X::operator++()
-{
-  *this += 1;
-  return *this;
+void doWork(int x, int y) {
+    thread_t t1, t2;
+    point p(x,y);
+    int v1, v2, last_value;
+    thread_create(&t1, NULL, &longCalculation, &p);
+    thread_create(&t2, NULL, &secondLongCalculation,
+                  &last_value);
+    thread_join(t1, &v1);
+    thread_join(t2, &v2);
+    if (v1 == last_value) {
+      return v2;
+    } else {
+      last_value = v1;
+      return secondLongCalculation(v1);
+    }
 }
   \end{lstlisting}
-~\\[1em]
 
-  Postfix is also known as {\bf fetch and increment}.
+  Note: this is like memoization (plus parallelization).
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-  \begin{lstlisting}
-const X X::operator++(int)
-{
-  const X old = *this;
-  ++(*this);
-  return old;
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Estimating Impact of Value Speculation}
+
+  
+  $T_1$: time to run {\tt longCalculatuion}.
+
+  $T_2$: time to run {\tt secondLongCalculation}.
+
+  $p$: probability that {\tt secondLongCalculation} executes again.
+
+  $S$: synchronization overhead.\\[1em]
+
+  In the normal case, we have:
+    \[ T = T_1 +T_2.\]
+
+  This speculative code takes:
+    \[ T = \mbox{max}(T_1, T_2) + S + pT_2.\]
+
+    \structure{Exercise.} Again, when is speculative code faster? Slower? How could you improve it?
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{When Can We Speculate?}
+
+  
+  Required conditions for safety:
+
+  \begin{itemize}
+    \item {\tt longCalculation} and {\tt secondLongCalculation} must not call
+      each other.
+    \item {\tt secondLongCalculation} must not depend on
+      any values set or modified by {\tt longCalculation}.
+    \item The return value of {\tt longCalculation} must be deterministic.
+  \end{itemize}
+
+  General warning: Consider \structure{side effects} of function calls.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Side Effects}
+
+As a general warning: Consider the \alert{side effects} of function calls. 
+
+They have a big impact on parallelism. Side effects are problematic, but why? 
+
+For one thing they're kind of unpredictable. 
+
+Side effects are changes in state that do not depend on the function input. 
+
+Calling a function or expression has a side effect if it has some visible effect on the outside world. 
+
+Some things necessarily have side effects, like printing to the console. 
+
+Others are side effects which may be avoidable if we can help it, like modifying a global variable.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Purity}
+
+Code that allows multiple concurrent invocations without affecting the outcome is called reentrant or ``pure''. 
+
+It is a desirable property to have code that is reentrant. 
+
+If a function is not reentrant, it may not be possible to make it thread safe. 
+
+And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Side Effects}
+
+Side effects are sort of undesirable, but not necessarily bad. 
+
+Printing to console is unavoidably making use of a side effect, but it's what we want. 
+
+When printing we can't have reentrant behaviour because two threads trying to write at the same time to the console would result in jumbled output. 
+
+Or alternatively, restarting the print routine might result in some doubled characters on the screen.
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Non-Reentrant C Function}
+
+The trivial example of a non-reentrant C function:
+
+\begin{verbatim}
+int tmp;
+
+void swap( int x, int y ) {
+    tmp = y;
+    y = x;
+    x = tmp;
 }
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\end{verbatim}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Efficiency}
+Why is this non-reentrant?
 
-  
-  If you're the least concerned about efficiency, always use
-  {\bf prefix} increments/decrements instead of defaulting to postfix.\\[1em]
-
-  Only use {\tt postfix} when you really mean it, to be on the safe side.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Digression: The Wayside}
-
-  \begin{center}
-    \includegraphics[width=.7\textwidth]{images/The_Wayside_Concord_Massachusetts}
-% http://en.wikipedia.org/wiki/File:The_Wayside_Concord_Massachusetts.jpg
-  \end{center}
-\hfill (Daderot, Wikimedia Commons)
+How can we make it reentrant?
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
-  \frametitle{It's Not Just Software}
+\frametitle{Interrupt Handling}
 
 
-Nathaniel Hawthorne wrote:
+Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. 
+
+Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted, or we pause and resume.
+
+Either way, if the code is not reentrant we will run into problems.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Thread Safe vs. Reentrant}
+
+Let us also draw a distinction between thread safe code and reentrant code. 
+
+A thread safe operation is one that can be performed from more than one thread at the same time. 
+
+On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. 
+
+Or it can be re-started without affecting the outcome. 
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Thread Safe Non-Reentrant Example}
+{\scriptsize
+\begin{verbatim}
+int length = 0;
+char *s = NULL;
+
+// Note: Since strings end with a 0, if we want to
+// add a 0, we encode it as "\0", and encode a
+// backslash as "\\".
+
+
+// WARNING! This code is buggy - do not use!
+
+
+void AddToString(int ch)
+{
+  EnterCriticalSection(&someCriticalSection);
+  // +1 for the character we're about to add
+  // +1 for the null terminator
+  char *newString = realloc(s, (length+1) * sizeof(char));
+  if (newString) {
+    if (ch == '\0' || ch == '\\') {
+      AddToString('\\'); // escape prefix
+    }
+    newString[length++] = ch;
+    newString[length] = '\0';
+    s = newString;
+  }
+  LeaveCriticalSection(&someCriticalSection);
+}
+\end{verbatim}
+}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Analysis of This Example}
+
+Is it thread safe? Sure - there is a critical section protected by the mutex \texttt{someCriticalSection}. 
+
+But is is re-entrant? Nope. 
+
+The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s}.
+
+That is no longer valid because it got stomped by the earlier call to \texttt{realloc}.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Functional Programming}
+
+Interestingly, functional programming languages (NOT procedural like C) such as Scala and so on, lend themselves very nicely to being parallelized. 
+
+Why? 
+
+Because a purely functional program has no side effects and they are very easy to parallelize.
+
+Any impure function has to indicate that in its function signature.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Joel on Functional}
 
 \begin{quote}
-I have been equally unsuccessful in my architectural projects; and have transformed a simple and small old farm-house into the absurdest anomaly you ever saw; but I really was not so much to blame here as the \sout{programmer} village-carpenter, who took the matter into his own hands, and produced an unimaginable sort of thing instead of what I asked for. (January 1864)
+\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}
 \end{quote}
-
-
-\begin{tabular}{lrr}
-Original budget:& \$500 &(\$7540 inflation-adjusted)\\
-Actual cost: &\$2000 &(\$30160 inflation-adjusted)
-\end{tabular}
-
+\hfill - Joel Spolsky
 
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%% Using locks also involves a trade-off between coarse-grained locking,
-%% which can significantly reduce opportunities for parallelism, and
-%% fine-grained locking, which requires more careful design, increases
-%% locking overhead and is more prone to bugs.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Locking}
-
-  
-  Locks prevent data races.
-
-  \begin{itemize}
-    \item Locks' extents constitute their {\bf granularity}---do you lock large sections of your program with a big lock, or do you divide the locks and protect smaller sections?
-  \end{itemize}
-
-  Concerns when using locks:
-
-  \begin{itemize}
-    \item overhead;
-    \item contention; and
-    \item deadlocks.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Locking: Overhead}
-
-  
-
-  Using a lock isn't free. You pay:
-  \begin{itemize}
-    \item allocated memory for the locks;
-    \item initialization and destruction time; and
-    \item acquisition and release time.
-  \end{itemize}
-
-  These costs scale with the number of locks that you have.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Locking: Contention}
-
-  
-    Most locking time is wasted waiting for the lock to become available.
-
-    How can we fix this?
-      \begin{itemize}
-        \item Make the locking regions smaller (more granular);
-        \item Make more locks for independent sections.
-      \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Locking: Deadlocks}
-
-  
-  The more locks you have, the more you have to worry about deadlocks.\\[1em]
-
-  Key condition: \\ 
-\qquad waiting for a lock held by process $X$ \\while holding
-a lock held by process $X'$. ($X = X'$ allowed).
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 
 \begin{frame}
-\frametitle{Formal Deadlock Definition}
+\frametitle{OOP: \texttt{getBrain().damage()}}
 
-The four conditions for deadlock are:
+Object oriented programming kind of gives us some bad habits in this regard. 
 
-\begin{enumerate}
-	\item \textbf{Mutual Exclusion}
-	\item \textbf{Hold-and-Wait}
-	\item \textbf{No Preemption}
-	\item \textbf{Circular-Wait}
-\end{enumerate}
+We tend to make a lot of \texttt{void} methods. 
 
+In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. 
 
+If a function returns nothing, what does it do? 
 
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{Does this look familiar?}
-
-  
-     Consider two processors trying to get two {\it locks}:
-     
-     \vfill
-  \begin{columns}
-    \column{0.4\textwidth}
-      {\bf Thread 1}
-
-      \verb+Get Lock 1+
-
-      \verb+Get Lock 2+
-
-      \verb+Release Lock 2+
-
-      \verb+Release Lock 1+
-    \column{0.4\textwidth}
-      {\bf Thread 2}
-
-      \verb+Get Lock 2+
-
-      \verb+Get Lock 1+
-
-      \verb+Release Lock 1+
-
-      \verb+Release Lock 2+
-    \end{columns}~\\[1em]
-     Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops!
-          They both wait for each other \structure{(deadlock)}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Key to Preventing Deadlock}
-
-  
-
-  Always be careful if \\
-your code {\bf acquires a lock while holding one}.\\[1em]
-
-  Here's how to prevent a deadlock:
-  
-  \begin{itemize}
-    \item Ensure consistent ordering in acquiring locks; or
-    \item Use {\tt trylock}.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Preventing Deadlocks---Ensuring Consistent Ordering}
-
-  
-  \begin{lstlisting}
-void f1() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-
-void f2() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-  \end{lstlisting}
-
-     This code will not deadlock: you can only get {\bf l2} if you have
-      {\bf l1}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{Formal Lock Ordering}
-
-
-If the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$:
-
-Assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. 
-
-This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. 
-
-If the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). 
-
-To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. 
-
-If these two protocols are followed, then a circular-wait condition cannot hold.
-
-
+For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
 
 \end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Preventing Deadlocks---Using {\tt trylock}}
-
-  
-  Recall: Pthreads' {\tt trylock} returns 0 if it gets the lock.
-
-  \begin{lstlisting}
-void f1() {
-    lock(&l1);
-    while (trylock(&l2) != 0) {
-        unlock(&l1);
-        // wait
-        lock(&l1);
-    }
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-  \end{lstlisting}
-
-    This code also won't deadlock: it will give up {\bf l1} if it can't get
-    {\bf l2}.\\[1em]
-
-    (BTW: trylocks also enable measuring lock contention.)
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Coarse-Grained Locking (1)}
-
-  \begin{center}
-    \includegraphics[scale=0.5]{images/lock-all-the-things}
-
-    (with one lock)
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Coarse-Grained Locking (2)}
-
-  
-  {\bf Advantages:}
-  
-  \begin{itemize}
-    \item Easier to implement;
-    \item No chance of deadlocking;
-    \item Lowest memory usage / setup time.
-  \end{itemize}
-  \vfill
-  {\bf Disadvantages:}
-  \begin{itemize}
-    \item Your parallel program can quickly become sequential.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Coarse-Grained Locking Example---Python GIL}
-
-  
-  This is the main reason (most) scripting languages have poor parallel
-  performance; Python's just an example.
-
-  \begin{itemize}
-    \item Python puts a lock around the whole interpreter\\ \quad (global interpreter lock).
-
-    \item Only performance benefit you'll see from threading is if a thread is
-      waiting for IO.
-
-    \item Any non-I/O-bound threaded program will be {\bf slower} than the sequential
-      version (plus, it'll slow down your system).
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Fine-Grained Locking (1)}
-
-  \begin{center}
-    \includegraphics[scale=0.5]{images/lock-all-the-things}
-
-    (with all different locks)
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Fine-Grained Locking (2)}
-
-  
-  {\bf Advantages:}
-  
-  \begin{itemize}
-    \item Maximizes parallelization in your program.
-  \end{itemize}
-  \vfill
-  {\bf Disadvantages}
-  \begin{itemize}
-    \item May be mostly wasted memory / setup time.
-    \item Prone to deadlocks.
-    \item Generally more error-prone (be sure you grab the right lock!)
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Fine-Grained Locking Examples}
-
-  
-    The Linux kernel used to have {\bf one big lock}\\ that essentially made
-      the kernel sequential. 
-    \begin{itemize}
-      \item (worked fine for single-processor systems!)
-    \end{itemize}
-    Now uses finer-grained locks for performance.\\[2em]
-
-    Databases may lock fields / records / tables.\\
-    \qquad  (fine-grained $\rightarrow$ coarse-grained).\\[1em]
-
-    Can lock individual objects.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\section{}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary}
-
-  
- C++11 memory model.\\
- 
- Good increment practice. \\
-
- Lock granularity.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \end{document}
 
