@@ -1,7 +1,7 @@
 #SRC := $(shell egrep -l '^[^%]*\\input{../configuration}' [a-zA-Z0-9]*.tex)
 
 NOTES := $(shell ls *.tex | grep -v \- | grep L)
-SLIDES := $(shell ls *-slides.tex)
+SLIDES := $(shell ls *-slides.tex | grep -v \- | grep L*-slides)
 
 SLIDES_PO := $(SLIDES:%.tex=%-slides.pdf)
 

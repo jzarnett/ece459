@@ -6,7 +6,7 @@
 
 
 \section*{Race Conditions}
-Previous courses (ECE~155, ECE~254) should have introduced the concept of a race condition. We'll be talking about them in greater detail in this course.
+Previous courses (ECE~254 or equivalent) should have introduced the concept of a race condition. We'll be talking about them in greater detail in this course.
 
 \begin{quote}
 \textit{
@@ -33,12 +33,25 @@ In other situations (e.g., processor design) these are sometimes referred to as 
 	\item \textbf{RAR} (Read After Read) - No such hazard! 
 \end{enumerate}
 
+\begin{center}
+\begin{tabular}{l|ll}
+& {\bf Read 2nd} & {\bf Write 2nd} \\ \hline
+{\bf Read 1st} & Read after read (RAR) & Write after read (WAR) \\
+& No dependency & Antidependency \\
+{\bf Write 1st} & Read after write (RAW) & Write after write (WAW) \\
+& True dependency & Output dependency
+\end{tabular}
+\end{center}
+
+The no-dependency case (RAR) is clear. Declaring data immutable 
+in your program is a good way to ensure no dependencies.
+
 
 Race conditions typically arise between variables which are shared
 between threads.
 
 \paragraph{Example.}
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
@@ -68,7 +81,7 @@ int main(int argc, char *argv[])
     free(x);
     return EXIT_SUCCESS;
 }
-\end{verbatim}
+\end{lstlisting}
 
 \noindent
 Question: Do we have a data race? Why or why not?
@@ -76,7 +89,7 @@ Question: Do we have a data race? Why or why not?
 %No, we don't. Only one thread is active at a time.
 
 \paragraph{Example 2.} Here's another example; keep the same thread definitions.
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int main(int argc, char *argv[])
 {
     int* x = malloc(sizeof(int));
@@ -90,7 +103,7 @@ int main(int argc, char *argv[])
     free(x);
     return EXIT_SUCCESS;
 }
-\end{verbatim}
+\end{lstlisting}
 
 Now do we have a data race? Why or why not?
 \vspace*{2em}
@@ -102,12 +115,12 @@ What are the possible outputs? (Assume that initially {\tt *x} is 1.)
 We'll look at compiler intermediate code (three-address code) to tell.
 
 \hspace*{.2\textwidth}\begin{minipage}{.8\textwidth}
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 run1                          run2   
 D.1 = *x;                     D.1 = *x;
 D.2 = D.1 + 1;                D.2 = D.1 + 2
 *x = D.2;                     *x = D.2;
-  \end{verbatim}
+  \end{lstlisting}
 \end{minipage}
 
 Memory reads and writes are key in data~races.
@@ -136,6 +149,64 @@ R2 & R1 & W1 & W2 & 3 \\
   \end{center}
 
 
+Let's look at an antidependency (WAR) example.
+
+{\small \begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+\begin{lstlisting}[language=C]
+void antiDependency(int z) {
+  int y = f(x);
+  x = z + 1;
+}
+\end{lstlisting}
+\end{minipage} &
+\begin{minipage}{.4\textwidth}
+\begin{lstlisting}[language=C]
+void fixedAntiDependency(int z) {
+  int x_copy = x;
+  int y = f(x_copy);
+  x = z + 1;
+}
+\end{lstlisting}
+\end{minipage} 
+\end{tabular}
+\end{center} }
+{\sf Why is there a problem?}\\[2em]
+
+Finally, WAWs can also inhibit parallelization:
+
+{\small \begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.45\textwidth}
+\begin{lstlisting}[language=C]
+void outputDependency(int x, int z) {
+  y = x + 1;
+  y = z + 1;
+}
+\end{lstlisting}
+\end{minipage} &
+\begin{minipage}{.4\textwidth}
+\begin{lstlisting}[language=C]
+void fixedOutputDependency(int x, int z) {
+  y_copy = x + 1;
+  y = z + 1;
+}
+\end{lstlisting}
+\end{minipage} 
+\end{tabular}
+\end{center} }
+
+In both of these cases, renaming or copying data can
+eliminate the dependence and enable parallelization. Of course,
+copying data also takes time and uses cache, so it's not free. One
+might change the output locations of both statements and then copy in
+the correct output. These are usually more useful when it's not just one
+access, but some sort of longer computation.
+
+
+
+
 \section*{Synchronization}
 You'll need some sort of synchronization to get sane results from
 multithreaded programs. We'll start by talking about how to use
@@ -155,7 +226,7 @@ As a reminder:
     \begin{tabular}{ll}
       \begin{minipage}{.65\textwidth}
         {\bf PThreads}
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 pthread_mutex_t m1_static = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t m2_dynamic;
 
@@ -163,11 +234,11 @@ pthread_mutex_init(&m2_dynamic, NULL);
 ...
 pthread_mutex_destroy(&m1_static);
 pthread_mutex_destroy(&m2_dynamic);
-  \end{verbatim}
+  \end{lstlisting}
       \end{minipage}
       \begin{minipage}{.35\textwidth}
         {\bf C++11}
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 mutex m1;
 mutex * m2;
 
@@ -175,7 +246,7 @@ m2 = new mutex();
 // ...
 
 delete (m2);
-  \end{verbatim}
+  \end{lstlisting}
       \end{minipage}
     \end{tabular}
 
@@ -200,23 +271,23 @@ We won't talk about mutex attributes in any detail, but here are the three stand
     \begin{tabular}{ll}
       \begin{minipage}{.5\textwidth}
         {\bf PThreads}
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 // code
 pthread_mutex_lock(&m1);
 // protected code
 pthread_mutex_unlock(&m1);
 // more code
-  \end{verbatim}
+  \end{lstlisting}
       \end{minipage}&
       \begin{minipage}{.35\textwidth}
         {\bf C++11 Threads}
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 // code
 m1.lock();
 // protected code
 m1.unlock();
 // more code
-  \end{verbatim}
+  \end{lstlisting}
       \end{minipage}
     \end{tabular}
   \begin{itemize}
@@ -232,7 +303,7 @@ Why are we bothering with locks? Data races. A data race occurs when
 two concurrent actions access the same variable and at least one of
 them is a {\bf write}. (This shows up on Assignment 1!)
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 static int counter = 0;
 
 void* run(void* arg) {
@@ -246,13 +317,13 @@ int main(int argc, char *argv[]) {
     // Join 8 threads
     printf("counter = %i\n", counter);
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 Is there a datarace in this example? If so, how would we fix it?
 
 \paragraph{Solution: use mutexes.}~
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static int counter = 0;
 
@@ -270,7 +341,7 @@ int main(int argc, char *argv[]) {
     pthread_mutex_destroy(&mutex);
     printf("counter = %i\n", counter);
 }
-  \end{verbatim}
+  \end{lstlisting}
   
   
 \paragraph{Recap: Mutexes.} Recall that our goal in this course is
@@ -341,7 +412,7 @@ threads can hold the lock in read mode, but only one thread can hold the
 lock in write mode, and it will block until all the readers are done 
 reading.
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
   int readData(int c1, int c2) {              // glib usage example
     g_static_rw_lock_reader_lock (&rwlock);
     int result = data[c1] + data[c2];
@@ -353,7 +424,7 @@ reading.
     data[c1] += value; data[c2] -= value;
     g_static_rw_lock_writer_unlock (&rwlock);
   }
-\end{verbatim}
+\end{lstlisting}
 
 \paragraph{Semaphores/condition variables.} 
 While semaphores can keep track of a counter and can implement
@@ -394,7 +465,7 @@ incrementing {\tt value}.
 \end{itemize}
 
 \paragraph{Semaphore Usage.} Here are the relevant API calls.
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 #include <semaphore.h>
 
 int sem_init(sem_t *sem, int pshared, unsigned int value);
@@ -402,7 +473,7 @@ int sem_destroy(sem_t *sem);
 int sem_post(sem_t *sem);
 int sem_wait(sem_t *sem);
 int sem_trywait(sem_t *sem);
-  \end{verbatim}
+  \end{lstlisting}
 
 This API is a lot like the mutex API:
   \begin{itemize}
@@ -422,7 +493,7 @@ How could you use a {\tt semaphore} as a {\tt mutex}?
 Here's an example from the book. How would you make this always print
 ``Thread 1'' then ``Thread 2'' using semaphores?
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 #include <semaphore.h>
@@ -441,11 +512,11 @@ int main(int argc, char *argv[])
     pthread_join(thread[1], NULL);
     return EXIT_SUCCESS;
 }
-\end{verbatim}
+\end{lstlisting}
 
 \paragraph{Proposed Solution.} Is it actually correct?
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 sem_t sem;
 void* p1 (void* arg) {
   printf("Thread 1\n");
@@ -466,7 +537,7 @@ int main(int argc, char *argv[])
     pthread_join(thread[1], NULL);
     sem_destroy(&sem);
 }
-\end{verbatim}
+\end{lstlisting}
 
 Well, let's reason through it.  
   \begin{itemize}
@@ -491,19 +562,19 @@ a read appears (i.e. the compiler can't optimize away the read). It
 does not prevent re-ordering nor does it protect against races.
 
 Here's an example.
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 int i = 0;
 
 while (i != 255) { ... }
-  \end{verbatim}
+  \end{lstlisting}
 
 {\tt volatile} prevents this from being optimized to:
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 int i = 0;
 
 while (true) { ... }
-  \end{verbatim}
+  \end{lstlisting}
 
 Note that the variable will not actually be {\tt volatile} in the
 critical section; most of the time, it only prevents useful
