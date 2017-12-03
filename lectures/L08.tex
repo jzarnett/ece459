@@ -20,11 +20,11 @@ Let's start with some juicy quotes.
 
 To motivate the need for non-blocking I/O, consider some standard I/O code:
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
     fd = open(...);
     read(...);
     close(fd);
-\end{verbatim}
+\end{lstlisting}
 
 This isn't very performant. The problem is that the {\tt read} call will
 {\em block}. So, your program doesn't get to use the zillions of CPU cycles that
@@ -48,11 +48,11 @@ one could start on my computer.
 \paragraph{Non-blocking I/O.} The main point of this lecture, though,
 is non-blocking/asynchronous I/O. The simplest example:
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
     fd = open(..., O_NONBLOCK);
     read(...); // returns instantly!
     close(fd);
-\end{verbatim}
+\end{lstlisting}
 
 In principle, the {\tt read} call is supposed to return instantly,
 whether or not results are ready. That was easy!
@@ -89,9 +89,9 @@ wait for events to happen. In particular:
 Let's run through these steps in order.
 
 \paragraph{Creating an {\tt epoll} instance.} Just use the API:
-    \begin{verbatim}
+    \begin{lstlisting}[language=C]
    int epfd = epoll_create1(0);
-    \end{verbatim}
+    \end{lstlisting}
 
 The return value {\tt epfd} is typed like a UNIX file
 descriptor---{\tt int}---but doesn't represent any files; instead, use
@@ -103,26 +103,26 @@ is {\tt EPOLL\_CLOEXEC}. Not interesting to you.
 \paragraph{Populating the {\tt epoll} instance.} Next, you'll want
 {\tt epfd} to do something. The obvious thing is to add some {\tt fd}
 to the set of descriptors watched by {\tt epfd}:
-    \begin{verbatim}
+    \begin{lstlisting}[language=C]
    struct epoll_event event;
    int ret;
    event.data.fd = fd;
    event.events = EPOLLIN | EPOLLOUT;
    ret = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &event);
-    \end{verbatim}
+    \end{lstlisting}
 
 You can also use {\tt epoll\_ctl} to modify and delete descriptors from {\tt epfd}; read the manpage to find out how.
 
 \paragraph{Waiting on an {\tt epoll} instance.} Having completed
 the setup, we're ready to wait for events on any file descriptor in {\tt epfd}.
-    \begin{verbatim}
+    \begin{lstlisting}[language=C]
   #define MAX_EVENTS 64
 
   struct epoll_event events[MAX_EVENTS];
   int nr_events;
 
   nr_events = epoll_wait(epfd, events, MAX_EVENTS, -1);
-    \end{verbatim}
+    \end{lstlisting}
 
 The given {\tt -1} parameter means to wait potentially forever;
 otherwise, the parameter indicates the number of milliseconds to wait.
@@ -214,7 +214,7 @@ and {\tt select}, you need to set up the {\tt select}. The curl call {\tt curl\_
 sets up the parameters for the {\tt select}, while {\tt curl\_multi\_timeout} gives you
 the proper timeout to hand to {\tt select}.
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
     // zero the fd-sets
     FD_ZERO(&fdread); FD_ZERO(&fdwrite); FD_ZERO(&fdexcep);
     // retrieve the fds, check for error
@@ -223,17 +223,17 @@ the proper timeout to hand to {\tt select}.
     if (maxfd < -1) abort_("multi_fdset: couldn't wait for fds");
     // retrieve the timeout
     curl_multi_timeout(multi_handle, &curl_timeout);
-\end{verbatim}
+\end{lstlisting}
 
 In an API infelicity, you have to convert the {\tt curl\_timeout} into a
 {\tt struct timeval} for use by {\tt select}.
 
 \paragraph{Calling {\tt select}.}
 The call itself is fairly straightforward:
-\begin{verbatim}
+\begin{lstlisting}[language=C]
   rc = select(maxfd + 1, &fdread, &fdwrite, &fdexcep, &timeout);
   if (rc == -1) abort_("[main] select error");
-\end{verbatim}
+\end{lstlisting}
 This waits for one of the file descriptors to become ready, or for the
 timeout to elapse (whichever happens first).
 
@@ -243,9 +243,9 @@ happened, but you haven't done the work yet. So you then need to call
 
 Finally, you get the results of {\tt curl\_multi\_perform} by calling
 {\tt curl\_multi\_info\_read}. It also tells you how many messages are left.
-\begin{verbatim}
+\begin{lstlisting}[language=C]
   msg = curl_multi_info_read(multi_handle, &msgs_left);
-\end{verbatim}
+\end{lstlisting}
 The return value \verb+msg->msg+ can be either {\tt CURLMSG\_DONE} or an error.
 The handle \verb+msg->easy_handle+ tells you which handle finished. You may have
 to look that up in your collection of handles.
@@ -402,7 +402,7 @@ The basic workflow is as follows:
    \end{enumerate}
 
 Some code which uses the Linux asynchronous I/O model is:
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 #include <aio.h>
 
 int main() {
@@ -433,7 +433,7 @@ int main() {
     // clean up
     delete[] buffer;
     close(file);
-\end{verbatim}
+\end{lstlisting}
 
 \paragraph{Using Select/Poll.} The idea is to improve performance
 by letting each thread handle multiple connections.
@@ -452,7 +452,7 @@ for JavaScript and a contender for Go).  Instead of select/poll, you
 pass a callback to the I/O routine, which is to be executed upon
 success or failure.
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 void new_connection_cb (int cfd)
 {
   if (cfd < 0) {
@@ -470,7 +470,7 @@ void new_connection_cb (int cfd)
   fdcb (cfd, selread, wrap (&read_http_cb, cfd, c, true,
                  wrap(&read_req_complete_cb)));
 }
-\end{verbatim}
+\end{lstlisting}
 
 
 \paragraph{{\tt node.js}: A Superficial View.} We'll wrap up today 
@@ -480,21 +480,21 @@ Given that JavaScript doesn't have threads, the only way to write servers
 is using non-blocking I/O.
 
 The canonical example from the {\tt node.js} homepage:
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 var http = require('http');
 http.createServer(function (req, res) {
   res.writeHead(200, {'Content-Type': 'text/plain'});
   res.end('Hello World\n');
 }).listen(1337, '127.0.0.1');
 console.log('Server running at http://127.0.0.1:1337/');
-\end{verbatim}
+\end{lstlisting}
 
 Note the use of the callback---it's called upon each connection.
 
 However, usually we don't want to handle the fields in the request manually.
 We'd prefer a higher-level view. One option is expressjs\footnote{\url{http://expressjs.com}},
 and here's an an example from the Internet~\cite{nod.js}:
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 app.post('/nod', function(req, res) {
   loadAccount(req,function(account) {
     if(account && account.username) {
@@ -508,7 +508,7 @@ app.post('/nod', function(req, res) {
     }
   });
 });
-\end{verbatim}
+\end{lstlisting}
 
 
 \input{bibliography.tex}

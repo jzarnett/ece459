@@ -32,7 +32,7 @@ commandline. To ensure C++11 support in GCC, use \verb!-std=c++11!.
 
 {\small
   \begin{minipage}{.55\textwidth}
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 
@@ -45,10 +45,10 @@ int main() {
   pthread_create(&thread, NULL, &run, NULL);
   printf("In main\n");
 }
-\end{verbatim}
+\end{lstlisting}
   \end{minipage} 
   \begin{minipage}{.4\textwidth}
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 #include <thread>
 #include <iostream>
 
@@ -61,17 +61,17 @@ int main() {
   std::cout << "In main\n";
   t1.join(); // see below
 }
-\end{verbatim}
+\end{lstlisting}
   \end{minipage}
 }
 
 From the man page, here's how you use \verb+pthread_create+:
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int pthread_create(pthread_t* thread, 
                    const pthread_attr_t* attr,
                    void* (*start_routine)(void*),
                    void* arg);
-\end{verbatim}
+\end{lstlisting}
 
 \begin{itemize}
 \item  {\bf thread}: creates a handle to a thread at pointer location
@@ -89,7 +89,7 @@ which case the contents of *thread are undefined).
 \paragraph{Waiting for Threads to Finish.} If you want to join the threads
 of execution, use the {\tt pthread\_join} call. Let's improve our example.
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 
@@ -103,7 +103,7 @@ int main() {
   printf("In main\n");
   pthread_join(thread, NULL);
 }
-\end{verbatim}
+\end{lstlisting}
 
 The main thread now waits for the newly created thread to terminate
 before it terminates. (C++11 requires threads to be either joined or
@@ -111,9 +111,9 @@ detached when they go out of scope; we'll see the meaning of detach below.)
 
 Here's the syntax for {\tt pthread\_join}:
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int pthread_join(pthread_t thread, void** retval)
-\end{verbatim}
+\end{lstlisting}
 ~\vspace*{-3em}
 \begin{itemize}
 \item  {\bf thread}: wait for this thread to terminate (thread must be~joinable).
@@ -131,11 +131,11 @@ This function returns 0 on success, error number otherwise.
 \paragraph{Inter-thread communication.} Recall that the {\tt pthread\_create} 
 call allows you to pass data to the new thread. Let's see how we might do that\ldots
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int i;
 for (i = 0; i < 10; ++i)
   pthread_create(&thread[i], NULL, &run, (void*)&i);
-\end{verbatim}
+\end{lstlisting}
 
 {\bf Wrong!} This is a \emph{terrible} idea. Why?
 \begin{enumerate}
@@ -144,17 +144,17 @@ for (i = 0; i < 10; ++i)
           the time the thread executes.
 \end{enumerate}
 On the other hand, you can pull off something similar with C++11 threads:
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int i;
 for (i = 0; i < 10; ++i) {
   std::thread t(run, i);
   t.detach();
 }
-\end{verbatim}
+\end{lstlisting}
 This is OK because we pass {\tt i} by value, which doesn't work for Pthreads.
 
 In Pthreads-land, this is marginally acceptable:
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int i;
 for (i = 0; i < 10; ++i)
   pthread_create(&thread[i], NULL, &run, (void*)i);
@@ -163,7 +163,7 @@ for (i = 0; i < 10; ++i)
 
 void* run(void* arg) {
   int id = (int)arg;
-\end{verbatim}
+\end{lstlisting}
 It's not ideal, though.
   \begin{itemize}
     \item Beware size mismatches between arguments: you have
@@ -175,7 +175,7 @@ It's not ideal, though.
 
   The idiomatic way of returning data from threads in C++11 appears to be using
   futures. {\tt std::async} provides support for this:
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 #include <thread>
 #include <iostream>
 #include <future>
@@ -188,7 +188,7 @@ int main() {
   std::future<int> t1_retval = std::async(std::launch::async, run);
   std::cout << t1_retval.get();
 }
-\end{verbatim}
+\end{lstlisting}
 This launches your thread for you. The {\tt get()} call waits until the answer
 is ready and returns it to you.
 
@@ -200,9 +200,9 @@ hand, you can also create \emph{detached} threads, which release
 resources when they terminate, without being joined. We've seen C++11 detached
 threads above.
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int pthread_detach(pthread_t thread);
-\end{verbatim}
+\end{lstlisting}
 ~\vspace*{-3em}
 \begin{itemize}
 \item  {\bf thread}: marks the thread as detached
@@ -216,9 +216,9 @@ behaviour.
 \paragraph{Finishing a thread.} A thread finishes when its {\tt start\_routine}
 returns. But it's also possible to explicitly end a thread from within:
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 void pthread_exit(void *retval);
-\end{verbatim}
+\end{lstlisting}
 ~\vspace*{-3em}
 \begin{itemize}
 \item  {\bf retval}: return value passed to function which called {\tt pthread\_join}
@@ -248,31 +248,31 @@ Basically, you create and destroy attributes objects with {\tt
 respectively. You can pass attributes objects to {\tt
   pthread\_create}. For instance,
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 size_t stacksize;
 pthread_attr_t attributes;
 pthread_attr_init(&attributes);
 pthread_attr_getstacksize(&attributes, &stacksize);
 printf("Stack size = %i\n", stacksize);
 pthread_attr_destroy(&attributes);
-  \end{verbatim}
+  \end{lstlisting}
 
 Running this on a laptop produces:
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 jon@riker examples master % ./stack_size 
 Stack size = 8388608
-  \end{verbatim}
+  \end{lstlisting}
 
 Once you have a thread attribute object, you can set the thread state to joinable:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 pthread_attr_setdetachstate(&attributes,
                             PTHREAD_CREATE_JOINABLE);
-  \end{verbatim}
+  \end{lstlisting}
 
 \paragraph{Warning about detached threads.} Consider the following code.
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 
@@ -286,12 +286,12 @@ int main() {
   pthread_detach(thread);
   printf("In main\n");
 }
-\end{verbatim}
+\end{lstlisting}
 
   When I run it, it just prints ``In main''. Why?
 
 \paragraph{Solution.} Use {\tt pthread\_exit} to quit if you have any detached threads.
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 
@@ -307,12 +307,12 @@ int main() {
   pthread_exit(NULL); // This waits for all detached
                       // threads to terminate
 }
-  \end{verbatim}
+  \end{lstlisting}
 (There is no C++11 equivalent.)
 
 %% \paragraph{Three useful Pthread calls.} You may find these helpful.
 
-%% \begin{verbatim}
+%% \begin{lstlisting}[language=C]
 %% pthread_t pthread_self(void);
 
 %% int pthread_equal(pthread_t t1, pthread_t t2);
@@ -320,7 +320,7 @@ int main() {
 %% int pthread_once(pthread_once_t* once_control,
 %%                  void (*init_routine)(void));
 %% pthread_once_t once_control = PTHREAD_ONCE_INIT;
-%% \end{verbatim}
+%% \end{lstlisting}
 
 %% \begin{itemize}
 %% \item {\tt pthread\_self} returns the handle of the currently running thread.
