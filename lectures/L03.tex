@@ -8,7 +8,7 @@
 
 The compiler (and the CPU) take a look at code that results in branch instructions  such as loops, conditionals, or the dreaded \texttt{goto}\footnote{Which I still maintain is a swear word in C.}, and it will take an assessment of what it thinks is likely to happen. By default I think it's assumed that backward branches are taken and forward branches are not taken (but that may be wrong).  Well, how did we get here anyway?
 
-In the beginning the CPUs and compilers didn't really think about this sort of thing, they would just come across instructions one at a time and do them and that was that. If one of them required a branch, it was no real issue. Then we had pipelining: the CPU would fetch the next instruction while decoding the previous one, and while executing the instruction before. That means if evaluation of an instruction results in a branch, we might go somewhere else and therefore throw away the contents of the pipeline. Thus we'd have wasted some time and effort. If the pipeline is short, this is not very expensive. But pipelines keep getting longer... 
+In the beginning the CPUs and compilers didn't really think about this sort of thing, they would just come across instructions one at a time and do them and that was that. If one of them required a branch, it was no real issue. Then we had pipelining: the CPU would fetch the next instruction while decoding the previous one, and while executing the instruction before. That means if evaluation of an instruction results in a branch, we might go somewhere else and therefore throw away the contents of the pipeline. Thus we'd have wasted some time and effort. If the pipeline is short, this is not very expensive. But pipelines keep getting longer\ldots
 
 So then we got to the subject of branch prediction. The compiler and CPU look at instructions on their way to be executed and analyze whether it thinks it's likely the branch is taken. This can be based on several things, including the recent execution history. If we guess correctly, this is great, because it minimizes the cost of the branch. If we guess wrong, we have to flush the pipeline and take the performance penalty.
 
@@ -86,6 +86,8 @@ How sure do we have to be? The answer depends dramatically on the code, the CPU 
 
 Conclusion: it's hard to outsmart the compiler. Maybe it's better not to try.
 
+\section*{How does branch prediction work, anyway?}
+We can write software. The hardware will make it fast. If we understand the hardware, we can understand when it has trouble making our software fast. Let's talk about how branch prediction works. Notes based on a transcript of a talk by Dan Luu~\cite{branchprediction}.
 
 \section*{Limits to parallelization}
 I mentioned briefly in Lecture 1 that programs often have a sequential
@@ -153,10 +155,16 @@ Let us consider an example from~\cite{mte241}: Suppose we have a task that can b
 	\end{tabular}
 \end{center}
 
+   \paragraph{Empirically estimating parallel speedup $P$.}
+Assuming that you know things that are actually really hard to know, here's a formula for estimating speedup. You don't have to commit it to memory:
+  \[P_{\mbox{\scriptsize estimated}} = \frac{\frac{1}{\mbox{\em speedup}}-1}{\frac{1}{N}-1}.\]
+
+It's just an estimation, but you can use it to guess the fraction of parallel code, given $N$ and the speedup. You can then use $P_{\mbox{\scriptsize estimated}}$ to predict speedup for a different number of processors.
+
 \paragraph{Consequences of Amdahl's Law.}
 For over 30 years, most performance gains did indeed come from
 increasing single-processor performance. The main reason that we're
-here today is that, as we saw in the video,
+here today is that, as we saw last time,
 single-processor performance gains have hit the wall.
 
 By the way, note that we didn't talk about the cost of synchronization
@@ -171,58 +179,53 @@ Why is that? Amdahl's Law assumes that:
     \item that we can accurately measure runtimes---i.e. that overheads don't matter.
 \end{itemize}
 
-\paragraph{Generalizing Amdahl's Law.} We made a simplification,
-which was that programs only have one parallel part and one serial part.
-Of course, this is not true. The program may have many parts,
-each of which we can tune to a different degree.
+% replace Amdahl's law with how branch predictors work
+%% \paragraph{Generalizing Amdahl's Law.} We made a simplification,
+%% which was that programs only have one parallel part and one serial part.
+%% Of course, this is not true. The program may have many parts,
+%% each of which we can tune to a different degree.
 
-Let's generalize Amdahl's Law:
+%% Let's generalize Amdahl's Law:
 
-\begin{itemize}
-\item  $f_1, f_2, \ldots, f_n$: fraction of time in part $n$
-\item  $S_{f_1}, S_{f_n}, \ldots, S_{f_n}$: speedup for part $n$
-\end{itemize}
+%% \begin{itemize}
+%% \item  $f_1, f_2, \ldots, f_n$: fraction of time in part $n$
+%% \item  $S_{f_1}, S_{f_n}, \ldots, S_{f_n}$: speedup for part $n$
+%% \end{itemize}
 
-Then,
-\[\mbox{\em speedup} = \frac{1}{\frac{f_1}{S_{f_1}} + \frac{f_2}{S_{f_2}} + \ldots +
-    \frac{f_n}{S_{f_n}}}.\]
+%% Then,
+%% \[\mbox{\em speedup} = \frac{1}{\frac{f_1}{S_{f_1}} + \frac{f_2}{S_{f_2}} + \ldots +
+%%     \frac{f_n}{S_{f_n}}}.\]
 
-\paragraph{Example.} Consider a program with 4 parts in the following scenario:
+%% \paragraph{Example.} Consider a program with 4 parts in the following scenario:
 
-\begin{center}
-    \begin{tabular}{r|r|r|r}
-    \multicolumn{2}{l}{} & \multicolumn{2}{|c}{Speedup} \\
-    Part & Fraction of Runtime & Option 1 & Option 2\\
-    \hline
-    1 & 0.55 & 1  & 2\\
-    2 & 0.25 & 5  & 1\\
-    3 & 0.15 & 3  & 1\\
-    4 & 0.05  & 10 & 1\\
-    \end{tabular}
-\end{center}
+%% \begin{center}
+%%     \begin{tabular}{r|r|r|r}
+%%     \multicolumn{2}{l}{} & \multicolumn{2}{|c}{Speedup} \\
+%%     Part & Fraction of Runtime & Option 1 & Option 2\\
+%%     \hline
+%%     1 & 0.55 & 1  & 2\\
+%%     2 & 0.25 & 5  & 1\\
+%%     3 & 0.15 & 3  & 1\\
+%%     4 & 0.05  & 10 & 1\\
+%%     \end{tabular}
+%% \end{center}
 
-    (Note: these speedups don't have to be speedups from parallelization.)
+%%     (Note: these speedups don't have to be speedups from parallelization.)
     
-  We can implement either Option 1 or Option 2. 
-  Which option is better?
+%%   We can implement either Option 1 or Option 2. 
+%%   Which option is better?
 
-  ``Plug and chug'' the numbers:
-\begin{itemize}
-\item  {\bf Option 1.}
+%%   ``Plug and chug'' the numbers:
+%% \begin{itemize}
+%% \item  {\bf Option 1.}
 
-  \[ \mbox{\em speedup} = \frac{1}{0.55 + \frac{0.25}{5} + \frac{0.15}{3} + \frac{0.05}{5}}
-    = 1.53  \]
+%%   \[ \mbox{\em speedup} = \frac{1}{0.55 + \frac{0.25}{5} + \frac{0.15}{3} + \frac{0.05}{5}}
+%%     = 1.53  \]
 
-\item  {\bf Option 2.}
+%% \item  {\bf Option 2.}
 
-  \[\mbox{\em speedup} = \frac{1}{\frac{0.55}{2} + 0.45} = 1.38 \hspace*{5.5em}\]
-\end{itemize}
-
-   \paragraph{Empirically estimating parallel speedup $P$.}
-Assuming that you know things that are actually really hard to know, here's a formula for estimating speedup. You don't have to commit it to memory:
-  \[P_{\mbox{\scriptsize estimated}} = \frac{\frac{1}{\mbox{\em speedup}}-1}{\frac{1}{N}-1}.\]
-
-It's just an estimation, but you can use it to guess the fraction of parallel code, given $N$ and the speedup. You can then use $P_{\mbox{\scriptsize estimated}}$ to predict speedup for a different number of processors.
+%%   \[\mbox{\em speedup} = \frac{1}{\frac{0.55}{2} + 0.45} = 1.38 \hspace*{5.5em}\]
+%% \end{itemize}
 
 \subsection*{A more optimistic point of view}
 In 1988, John Gustafson pointed
