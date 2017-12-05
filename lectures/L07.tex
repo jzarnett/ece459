@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{ 7 --- Use of Locks, Lock Convoys }{\term}{Jeff Zarnett}
+\lecture{ 7 --- Use of Locks, Lock Convoys, Atomics }{\term}{Jeff Zarnett}
 
 \section*{Appropriate Use of Locking}
 
@@ -161,6 +161,101 @@ In short, we try to lock the mutex some number of times (up to a maximum of \tex
 Why does this work? It looks like polling for the critical section. The limit on the number of tries helps in case the critical section belongs to a low priority thread and we need the current thread to be blocked so the low priority thread can run. Under this scheme, if $A$ is going to release the critical section, $B$ does not immediately become the owner and $A$ may keep running and $A$ might even get the critical section again before $B$ tries again to acquire the lock (and may succeed). Even if the spin limit is as low as 2, this means two threads can recover from contention without creating a convoy~\cite{lockconvoys}. 
 
 \paragraph{The Thundering Herd Problem.} The lock convoy has some similarities with a different problem called the \textit{thundering herd problem}. In the thundering herd problem, some condition is fulfilled (e.g., broadcast on a condition variable) and it triggers a large number of threads to wake up and try to take some action. It is likely they can't all proceed, so some will get blocked and then awoken again all at once in the future. In this case it would be better to wake up one thread at a time instead of all of them.
+
+\section*{Atomics}
+What if we could find a way to get rid of locks and waiting altogether? That would avoid the lock convoy problem as well as any potential for deadlock, starvation, et cetera. In previous courses, you have learned about test-and-set operations and possibly compare-and-swap and those are atomic operations supported through hardware. They are uninterruptible and therefore will either completely succeed or not run at all. Is there a way that we could use those sorts of indivisible operations? Yes!
+
+Atomics are a lower-overhead alternative to
+locks as long as you're doing suitable operations. Remember that what we wanted sometimes with locks and mutexes and all that is that operations are indivisible: an update to a variable doesn't get interfered with by another update. Remember the key idea is: an \textit{atomic operation} is indivisible. Other threads see state before or after the operation; nothing in between.
+
+
+We are only going to talk about atomics with sequential consistency. If you use the default {\tt std::memory\_order}, that's what you get. What do I mean by that? Well, in the header file \texttt{atomic} (C++11 here) there is an enumeration of memory orders and I am suggesting that using the default is pretty nice, compared to the alternative which may or may not be a Lovecraftian Horror to understand (or prove correctness). If you'd like to know about all the options, take a look at~\cite{cppatomics}, but here's a quick summary from~\cite{bmref1} (which is much more concise than the C++ Atomics listing):
+
+\begin{center}
+	\begin{tabular}{l|p{12cm}}
+	\textbf{Value} & \textbf{Explanation} \\ \hline
+		\texttt{memory\_order\_acquire} &  Subsequent loads are not moved before the current load or any preceding loads.\\ \hline
+		\texttt{memory\_order\_release} &  Preceding stores are not moved past the current store or any subsequent stores. \\ \hline
+		\texttt{memory\_order\_acq\_rel} & Combine the acquire and release guarantees\\ \hline
+		\texttt{memory\_order\_consume} & A potentially weaker form of memory\_order\_acquire that enforces ordering of the current load before other operations that are data-dependent on it (for instance, when a load of a pointer is marked memory\_order\_consume, subsequent operations that dereference this pointer won't be moved before it (yes, even that is not guaranteed on all platforms!).\\ \hline
+	
+	\texttt{memory\_order\_relaxed} & All reordering are okay; only atomicity is required of this operation. \\ \hline
+\texttt{memory\_order\_seq\_cst} & Same as \texttt{memory\_order\_acq\_rel}, plus a single total order exists in which all threads observe all modifications in the same order.\\ 
+	\end{tabular}
+
+\end{center}
+
+
+
+The C++11 standard includes both strong and weak atomics. The weak ones are the ones where you get to specify the the memory ordering of load and store operating in a way that is not sequentially consistent. But we care about the standard, sequentially consistent kind of operation. \textit{Don't} use relaxed atomics unless you're an expert! Basically, a value that is seen from a memory load may come from the past or from the future (it's all relative, of course). If you want to dig into the details about an example, I recommend~\cite{bmref2}, which goes into the details of just how difficult it is to prove correctness. If that doesn't talk you out of it, I'm not sure what will.
+
+
+\paragraph{Atomic Flags.} The simplest form of C++11 atomic is the {\tt atomic\_flag}.
+Not surprisingly, this represents a boolean flag. You can clear the flag and test-and-set it.
+
+
+\begin{lstlisting}[language=C++]
+#include <atomic>
+
+atomic_flag f = ATOMIC_FLAG_INIT;
+int foo() {
+  f.clear();
+  if (f.test_and_set()) {
+    // was true
+  }
+}
+\end{lstlisting}
+
+This returns the previous value. There is no assignment (=) operator for {\tt atomic\_flag}s. Although I guess in C++ you could define one if you wanted. This is kind of a dangerous thing about C++. If in C you see a line of code like \texttt{z = x + y;} you can have a pretty good idea about what it does and you can infer that there's some sort of natural meaning to the + operator there, like addition or concatenation. In C++, however, this same line of code tells you nothing, unless you know (1) the type of \texttt{x}, (2) the type of \texttt{y}, and (3) how the \texttt{+} operator is defined on those two operands \textit{in that order}. But I'm digressing.
+
+\paragraph{More general C++ atomics.} Boolean flags are nice, but we want more.
+C++11 supports arbitrary types as atomic. Here'a an example declaration:
+
+\begin{lstlisting}[language=C++]
+#include <atomic>
+atomic<int> x;
+\end{lstlisting}
+
+The C++11 library implements atomics using lock-free operations for small types
+and using mutexes for large types. The general types of operations that you can do with atomics are three: reads, writes, and RMW (read-modify-write) operations. C++ has syntax to make these all transparent.
+
+\begin{lstlisting}[language=C++]
+// atomic reads and writes
+#include <atomic>
+#include <iostream>
+
+std::atomic<int> ai;
+int i;
+
+int main() {
+    ai = 4;
+    i = ai;
+    ai = i;
+    std::cout << i;
+}
+\end{lstlisting}
+If you want, you can also use {\tt i = ai.load()} and {\tt ai.store(i)}.
+
+As for RMW operations, consider {\tt ai++}. This is really
+
+\begin{lstlisting}[language=C++]
+tmp = ai.read(); 
+tmp++; 
+ai.write(tmp);
+\end{lstlisting}
+But, hardware can do that atomically. It can also do other RMWs: {\tt +-, \&=, etc, compare-and-swap}.
+
+More info on C++11 atomics:\\
+\url{http://preshing.com/20130618/atomic-vs-non-atomic-operations/}
+
+We talked about C++11 atomics. Is there a pthread equivalent? Nope, not really.
+
+OS X has atomics via OS calls: \\
+\url{https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/Multithreading/ThreadSafety/ThreadSafety.html}
+
+The Linux kernel provides a number of atomic operations (but that doesn't really make them portable). Reference:
+\url{http://stackoverflow.com/questions/1130018/unix-portable-atomic-operations}
+
 
 \input{bibliography.tex}
 
