@@ -34,7 +34,7 @@ The final wall is the universal speed limit: the speed of light (curse you Einst
 
 But let's go back to the subject of ILP. Branch prediction and pipelining have been touched upon but there is so much more to it. The idea with ILP is not having more cycles to work with, but instead, doing more in each clock cycle. And there's a lot of clever ideas. 
 
-Pipelining: you may have heard a bit about his already, especially so if you are taking ECE~429 this term as well. To complete an instruction there are five basic steps: (1) fetch the instruction from memory, (2) decode the instruction, (3) fetch needed operands, (4) perform the operation, and (5) write the result. So to do an instruction like \texttt{ADD R1, R2}, we need to fetch the instruction, decode it and figure out what is to be done, read the values from \texttt{R1} and \texttt{R2}, do the addition, and then write the result to \texttt{R1}. Thus even a simple instruction takes more than one clock cycle, but the good news is that the stages can overlap:
+Pipelining: you may have heard a bit about this already, especially so if you have taken ECE~429. To complete an instruction there are five basic steps: (1) fetch the instruction from memory, (2) decode the instruction, (3) fetch needed operands, (4) perform the operation, and (5) write the result. So to do an instruction like \texttt{ADD R1, R2}, we need to fetch the instruction, decode it and figure out what is to be done, read the values from \texttt{R1} and \texttt{R2}, do the addition, and then write the result to \texttt{R1}. Thus even a simple instruction takes more than one clock cycle, but the good news is that the stages can overlap:
 
 \begin{center}
 \includegraphics[width=0.4\textwidth]{images/pipelining}
@@ -46,7 +46,7 @@ But there are pipeline hazards: sometimes you need the result of a previous step
 
 The next idea relates to getting items from memory. If we do a load from memory, and we are lucky, it is found in the fastest cache and is available in perhaps 2-3 clock cycles. If we must go to memory, it may be 200-300 cycles. If it is in level 2 or level 3 cache it will be somewhere in between. The key idea, though, is if we are trying to put something in register \texttt{R7}, it will take time until that value is actually present in that register. The simplest approach is to just wait around until that value has arrived, and then go on to the next instruction. That works, but we can do better.
 
-That better idea is: continue executing until \texttt{R7} is used somewhere. This allows us to get some useful work done in the meantime. Hardware keeps track of the fact that the register is not quite ready yet, but the work can get done in what is called the ``miss shadow''. It's possible to have more than one load in flight at a time, two or more can be done in various CPU architectures, but it is of course hardware dependant. 
+That better idea is: continue executing until \texttt{R7} is used somewhere. This allows us to get some useful work done in the meantime. Hardware keeps track of the fact that the register is not quite ready yet, but the work can get done in what is called the ``miss shadow''. It's possible to have more than one load in flight at a time. Two or more can be done in various CPU architectures, but it is of course hardware dependant. 
 
 Branch prediction has come up already, but if we have a load followed by a compare used as a branch, we can then, well, guess. If we are wrong, there is the need to cleanup. But the good news is that branch prediction is usually right most of the time, perhaps 95\% or more (we'll definitely return to this later).
 
@@ -61,27 +61,29 @@ MOV R2, R9 + 64
 ADD R3, R2
 \end{verbatim}
 
-Under normal circumstances, we cannot do instruction 3 until instruction 2 has been completed because we need the value of \texttt{R2} that was put in there (taken from memory somewhere) to be added to \texttt{R1}. Except, with register renaming, behind the scenes the first two instructions may replace \texttt{R2} with \texttt{RK} and the second pair of instructions have \texttt{R2} replaced with \texttt{RY} and these things can take place in parallel, or without a stall, at the very least.
+Under normal circumstances, we cannot do instruction 3 until instruction 2 has been completed because we need the value of \texttt{R2} that was put in there (taken from memory somewhere) to be added to \texttt{R1}. Except, with register renaming, behind the scenes the first two instructions may replace \texttt{R2} with \texttt{RX} and the second pair of instructions have \texttt{R2} replaced with \texttt{RY} and these things can take place in parallel, or without a stall, at the very least.
 
-This has a certain synergy with the branch prediction. If we predict a branch, we can do speculative changes into one set of registers while we keep the ``old'' register values around too. When we figure out whether the branch prediction is correct, we can then get rid of the ones we don't need: the originals if predicted correctly, and the new values otherwise. So we get better recovery if there is a misprediction. Actually, I bet students wish they could do this: write down both answers to a question and let the TA pick the correct one at the end...
+This has a certain synergy with branch prediction. If we predict a branch, we can do speculative changes into one set of registers while we keep the ``old'' register values around too. When we figure out whether the branch prediction is correct, we can then get rid of the ones we don't need: the originals if predicted correctly, and the new values otherwise. So we get better recovery if there is a misprediction. Actually, I bet students wish they could do this: write down both answers to a question and let the TA pick the correct one at the end...
 
 Most importantly, it allows us to get past a cache miss and keep going; the goal here is to run until we can start the next cache miss, because the sooner that starts the sooner it's over, and the faster the program executes, ultimately. A quick example from the presentation demonstrates this, in x86 assembly~\cite{modern-hardware}:
 
 \begin{verbatim}
-ld rax, rbx+16
-add rbx, 16
-cmp rax, 0
-jeq null_chk
-st rbx-16, rcx
-ld rcx, rdx
-ld rax, rax+8
+ld rax, rbx+16   ; assume cache miss
+add rbx, 16      ; carry on anyway, ADD doesn't need rax value from LD
+                 ; register renaming => LD (write)/ADD (read) don't interfere
+cmp rax, 0       ; needs rax value, queue till available
+jeq null_chk     ; oops! need cmp result
+                 ; speculate: assume branch not taken
+st rbx-16, rcx   ; speculatively store to store buf (not L1)
+ld rcx, rdx      ; unrelated cache miss: 2 misses now active, 1 speculative
+ld rax, rax+8    ; now must wait for result of first LD
 \end{verbatim}
 
-Let's assume \texttt{rax} (register A) is not available and the first instruction is a cache miss and it will take 300 cycles to get it. So we carry on. Then the instruction next is unrelated so we can go on. It doesn't matter that \texttt{rbx} is read in the first two instructions, because we can do register renaming so that internally it's reading from register 4 and writing to register 12. The compare cannot proceed because the first load's value is not available, but it will be queued up to be done later. Then we have a branch, but we don't know what the flags are, because we can't compare, because the load isn't done. The branch predictor will say in this example that we will not take the branch and go on to the store instruction (\texttt{st}). The store is speculative because the branch may have been taken (so it goes in a store buffer temporarily and not to L1 cache, until we are sure it's okay to let it go to memory). We have now made it to the second last line and we have another unrelated cache miss, and we have two cache misses running in parallel (the second of which is speculative). Finally, the last instruction has to wait for the first instruction to fill the register \texttt{rax} and we can no longer speculate.
+%Let's assume \texttt{rax} (register A) is not available and the first instruction is a cache miss and it will take 300 cycles to get it. So we carry on. Then the instruction next is unrelated so we can go on. It doesn't matter that \texttt{rbx} is read in the first two instructions, because we can do register renaming so that internally it's reading from register 4 and writing to register 12. The compare cannot proceed because the first load's value is not available, but it will be queued up to be done later. Then we have a branch, but we don't know what the flags are, because we can't compare, because the load isn't done. The branch predictor will say in this example that we will not take the branch and go on to the store instruction (\texttt{st}). The store is speculative because the branch may have been taken (so it goes in a store buffer temporarily and not to L1 cache, until we are sure it's okay to let it go to memory). We have now made it to the second last line and we have another unrelated cache miss, and we have two cache misses running in parallel (the second of which is speculative). Finally, the last instruction has to wait for the first instruction to fill the register \texttt{rax} and we can no longer speculate.
 
-To summarize: there are seven operations we were trying to do here with two cache misses. The cache misses complete in cycles 300 and 304 (maybe 302 if we have dual issue), so in total we complete 7 operations in about 305 cycles. All the trickery and cleverness got us to that second miss which means we complete in 305. If we did not manage that, it would take about 600 cycles to complete it all. So we did double performance, even though in this example our overall performance was very, very low.
+To summarize: there are seven operations we were trying to do here with two cache misses. The cache misses complete in cycles 300 and 304 (maybe 302 if we have dual issue), so in total we complete 7 operations in about 305 cycles. All the trickery and cleverness got us to that second miss which means we complete in 305. If we did not manage that, it would take about 600 cycles to complete it all. So we did double performance, even though in this example our overall performance was terrible.
  
-For years Intel was trying to push its Itanium processors (which were so unsuccessful they got the nickname ``Itanic''. Ouch). The goal of these was to find static (compile-time) parallelism: if a machine has infinite registers, can speculate infinitely, etc, the program gets sped up. Run all possibilities in parallel and at the end figure out which is right (wasn't this a Nicolas Cage movie?). Unfortunately it didn't work out very well because this requires the right kind of program and an super smart compiler. Oh yes, and infinite registers requires infinite space as well as infinite money. So instead the quest has turned to how we can get better performance out of x86...
+For years Intel was trying to push its Itanium processors (which were so unsuccessful they got the nickname ``Itanic''. Ouch). The goal of these was to find static (compile-time) parallelism: if a machine has infinite registers, can speculate infinitely, etc, the program gets sped up. Run all possibilities in parallel and at the end figure out which is right (wasn't this a Nicolas Cage movie?). Unfortunately it didn't work out very well because this requires the right kind of program and an super smart compiler. Oh yes, and infinite registers requires infinite space as well as infinite money. So instead the quest has turned to how we can get better performance out of x86\ldots
 
 The x86 approach tries to maximize dynamic (run-time) parallelism. This has been done incrementally, with more pipelining, re-order buffers, adding more functional units, and so on. But the walls are still there: cache miss rates and branch mispredicts continue to dominate performance, even though the rates are very low, because a miss costs so much. 
 
@@ -96,7 +98,7 @@ The image below (from Sun World Wide Analyst Conference in 2003) is obviously a 
 
 DRAM is, however, not the only kind of memory. There is SRAM (Static RAM) which is fast but expensive, the kind of stuff that goes on the CPU die, and it is six transistors per bit. Compare against DRAM which is much cheaper, but slow: one transistor and one capacitor per bit. Improvements in DRAM have not really improved latency but have improved bandwidth; DDR (Dual Data Rate... not Dance Dance Revolution) means there are two transfers per cycle, but it still takes significant time to get any data out. And DRAM needs occasional refreshes (capacitors...) so sometimes we have to wait for that.
 
-In the Operating Systems course you probably learned that disk is the slowest thing and the limiting factor. That's true, as Obi-Wan Kenobi would say, from a certain point of view. Now that we live in the world of Solid State Drives (SSDs), ``disk'' reads are about as fast as memory reads and memory reads are the rate-limiting step in the system. More is the new more, orange is the new black, and memory is the new disk.
+In the Operating Systems course you probably learned that disk is the slowest thing and the limiting factor. That's true, as Obi-Wan Kenobi would say, from a certain point of view. Now that we live in the world of Solid State Drives (SSDs), ``disk'' reads are about as fast as memory reads and memory reads are the rate-limiting step in the system. Nonvolatile memory looks to be even faster. More is the new more, orange is the new black, and memory is the new disk.
 
 To get memory access speed up there are things we can do, like relax coherency constraints, more synchronization through locks... all of which we will come back to in some upcoming lectures. 
 
@@ -112,7 +114,7 @@ Effective Access Time = $h \times t_{c} + (1-h) \times t_{m}$
 
 Where $h$ is the hit ratio, $t_{c}$ is the time required to load a page from cache, and $t_{m}$ is the time to load a page from memory. Of course, we would like the hit ratio to be as high as possible. 
 
-Caches have limited size, because faster caches are more expensive. With infinite money we might put everything in registers, but that is rather unrealistic. Caches for memory are very often multileveled; Intel 64-bit CPUs tend to have L1, L2, and L3 caches. L1 is the smallest and L3 is the largest. Obviously, the effective access time formula needs to be updated and expanded, when we have multiple levels of cache with different access times and hit rates. See the diagram below:
+Caches have limited size, because faster caches are more expensive. With infinite money we might put everything in registers, but that is rather unrealistic. Caches for memory are very often multileveled; Intel 64-bit CPUs tend to have L1, L2, and L3 caches. L1 is the smallest and L3 is the largest. Obviously, the effective access time formula needs to be updated and expanded when we have multiple levels of cache with different access times and hit rates. See the diagram below:
 
 \begin{center}
 \includegraphics[width=0.6\textwidth]{images/caches.png}\\

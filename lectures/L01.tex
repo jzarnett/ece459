@@ -23,6 +23,8 @@ any one particular task: we can call this the latency or response time.
 It doesn't tend to get measured as often as bandwidth, but it's especially
 important for tasks where people are involved. Google cares a lot about
 latency, which is why they provide the {\tt 8.8.8.8} DNS servers.
+(Aside: when dealing with users, 100ms is the maximum latency for
+systems that purport to respond instantaneously~\cite{nielsen93:_respon_times}.)
 
 \paragraph{Examples.} Say you need to make
 100 paper airplanes. What's the fastest way of doing this?
@@ -78,14 +80,14 @@ work. Two (related) ways of omitting work are to avoid calculating
 intermediate results that you don't actually need; and computing
 results to only the accuracy that you need in the final output.
 
-Interesting to note: producing text output to a log file or to a console screen is surprisingly expensive for the computer. Sometimes one of the best ways to avoid unnecessary work is to spend less time logging and reporting. It might make debugging harder, yes, but once the code is correct (or close enough), removing the logging and debugging statements can actually make a difference.
+Interesting to note: producing text output to a log file or to a console screen is surprisingly expensive for the computer. Sometimes one of the best ways to avoid unnecessary work is to spend less time logging and reporting. It might make debugging harder, yes, but once the code is correct (or close enough), removing the logging and debugging statements can actually make a difference. Especially in a multithreaded context, logging and debugging often incur synchronization cost.
 
 A hybrid between ``do less work'' and ``be smarter'' is caching, where
 you store the results of expensive, side-effect-free, operations
 (potentially I/O and computation) and reuse them as long as you
 know that they are still valid. Caching is really important in certain situations.
 
-\paragraph{Be prepared.} If you know something that the user is going to ask for in advance, you can have it at the ready to provide upon request. Example from that other job of mine: users often want an Excel export of various statistics on their customs declarations. If the user asks for the report, generating it takes a while, and it means a long wait. If, however, the report data is pre-generated and stored in the database (and updated as necessary) then putting it in the Excel output file is simple and the report is available quickly.
+\paragraph{Be prepared.} If you know something that the user is going to ask for in advance, you can have it at the ready to provide upon request. Example from that other job of mine [JZ]: users often want an Excel export of various statistics on their customs declarations. If the user asks for the report, generating it takes a while, and it means a long wait. If, however, the report data is pre-generated and stored in the database (and updated as necessary) then putting it in the Excel output file is simple and the report is available quickly.
 
 \paragraph{Be smarter.} You can also use a better algorithm. This is probably ``low hanging fruit'' and by the time it's time for P4P techniques this has already been done. But if your sorting algorithm is $\Theta(n^{3})$ and you can replace it with one that is $\Theta(n^{2})$, it's a tremendous improvement even there are yet better algorithms out there. An improved algorithm includes better asymptotic performance
 as well as smarter data structures and smaller constant factors.
@@ -98,12 +100,12 @@ libraries: you might use a more specialized library which does the
 task you need more quickly. The build structure can also help, i.e. which parts of the code are in libraries and which are in the main executable. It's a hard decision sometimes: libraries may be better and more reliable than the code you can write yourself. Or it might be better to write your own implementation that is optimized especially for your use case.
 
 \paragraph{Improve the hardware.} Once upon a time, it was okay to write code with terrible performance on the theory that next year's CPUs would make it acceptably, and spending a ton of time optimizing your code to run on today's processors was a waste of time. Well, those days seem to be over; CPUs are not getting much faster these days (evolutionary rather than revolutionary change). But sometimes the CPU is not the limiting factor: your code might be I/O-bound, so you might be able
-to improve things dramatically by going to solid-state drives; or you might be swapping
-out to disk, which kills performance (add RAM). Profiling is key here, to find out what the slow parts of execution are. When it comes down to it, spending a few thousand dollars on better hardware is often much cheaper than paying programmers to spend their time to optimize the code.
+to improve things dramatically by going to solid-state drives or non-volatile memory (e.g. Optane/3DXpoint); or you might be swapping
+out to disk, which kills performance (add RAM). Profiling is key here, to find out what the slow parts of execution are. When it comes down to it, spending a few thousand dollars on better hardware is often much cheaper than paying programmers to spend their time to optimize the code. (Programmers are super expensive.)
 
-\paragraph{On using assembly.} Not that long ago, compilers were not very smart and expert programmers could outsmart the compiler and produce better assembly by hand. This tends to be a bad idea these days. Compilers are going to be better at generating assembly than you are. Furthermore, CPUs may accept the commands in x86 assembly (or whatever your platform is) but internally they don't operate on those commands directly; they rearrange and reinterpret and do their own thing. Still, it's important to understand what the compiler is doing, and why it can't optimize certain things (we'll discuss that), but you don't need to do it yourself.
+\paragraph{On using assembly.} Not that long ago, compilers were not very smart and expert programmers could outsmart the compiler and produce better assembly by hand. This tends to be a bad idea these days. Compilers are going to be better at generating assembly than you are. Furthermore, CPUs may accept the commands in x86 assembly (or whatever your platform is) but internally they don't operate on those commands directly; they rearrange and reinterpret and do their own thing. Still, it's important to understand what the compiler is doing, and why it can't optimize certain things (we'll discuss that), but you don't need to do it yourself. However, giving hints to the compiler about e.g. vector instructions can be helpful.
 
-\paragraph{Anecdote time.} Recently I was presented with a ticket that read as follows: ``the report generation has been running for three hours; I think it's stuck.'' Turns out the report had not been running for that long, it reached a 30 minute time limit and the server had killed the task (and it just looked like it was running). So now I have a puzzle: how do I speed up this task to get it under the 30 minute time limit?
+\paragraph{Anecdote time.} Recently I [JZ] was presented with a ticket that read as follows: ``the report generation has been running for three hours; I think it's stuck.'' Turns out the report had not been running for that long, it reached a 30 minute time limit and the server had killed the task (and it just looked like it was running). So now I have a puzzle: how do I speed up this task to get it under the 30 minute time limit?
 
 How does the report work? It selects the transactions for a given period from the database. Then for each transaction, it looks up the latest article data, recomputes the transaction's worth based on the most up to date currency exchange rate, and then stores the updated transaction in the database again.
 
@@ -143,8 +145,8 @@ number of CPUs: we can use multicore processors, SMP (symmetric
 multiprocessor) systems, or a cluster or machines. We get different
 communication latencies with each of these choices.
 
-We can also use more exotic hardware, like graphics processing units
-(GPUs).
+We can also use more hardware, like vector processing units built into all modern
+chips (SIMD) or graphics processing units (GPUs).
 
 \subsection*{Difficulties with using parallelism}
 You may have noticed that it is easier to do a project when it's just
