@@ -23,9 +23,23 @@ on most systems, including Pthreads Win32 (which I don't recommend).
 Use Linux, and our provided server, for this course. C++ 11 also includes threads
 in its specification.
 
-Here's a quick {\tt pthreads} refresher. To compile a C or C++ program
+
+Here's a quick {\tt pthreads} refresher~\cite{mos}:
+
+\begin{itemize}
+	\item \texttt{pthread\_create} -- Create a new thread. 
+	\item \texttt{pthread\_exit} -- Terminate the calling thread. It ends execution and returns a value.
+	\item \texttt{pthread\_join} -- Wait for a specific thread to exit. The caller cannot proceed until the thread it is waiting for calls \texttt{pthread\_exit}. Note that it is an error to join a thread that has already been joined.
+	\item \texttt{pthread\_yield} -- Release the CPU and let another thread run. We expect that threads want to co-operate rather then compete for CPU time and threads can make decisions about when it would be ideal to let some other thread run instead.
+	\item \texttt{pthread\_attr\_init} -- Create and initialize a thread's attributes. The attributes contain things like the priority of the thread.
+	\item \texttt{pthread\_attr\_destroy} -- Clean up a thread's attributes. Free up the memory holding the thread's attributes. This does not terminate the threads.
+	\item \texttt{pthread\_cancel} -- Signal cancellation to a thread; this can be asynchronous or deferred, depending on the thread's attributes.
+\end{itemize}
+
+
+To compile a C or C++ program
 with pthreads, add the {\tt -pthread} parameter to the compiler
-commandline. To ensure C++11 support in GCC, use \verb!-std=c++11!.
+commandline. If you want C99 for C, add \texttt{-std=c99}. To ensure C++11 support in GCC, use \verb!-std=c++11!.
 
 \paragraph{Starting a new thread.} You can start a thread with
 \verb+pthread_create()+ or by creating a \verb+std::thread+:
@@ -42,7 +56,7 @@ void* run(void*) {
 
 int main() {
   pthread_t thread;
-  pthread_create(&thread, NULL, &run, NULL);
+  pthread_create(&thread, NULL, run, NULL);
   printf("In main\n");
 }
 \end{lstlisting}
@@ -133,8 +147,9 @@ call allows you to pass data to the new thread. Let's see how we might do that\l
 
 \begin{lstlisting}[language=C]
 int i;
-for (i = 0; i < 10; ++i)
-  pthread_create(&thread[i], NULL, &run, (void*)&i);
+for (i = 0; i < 10; ++i) {
+  pthread_create(&thread[i], NULL, run, &i);
+}
 \end{lstlisting}
 
 {\bf Wrong!} This is a \emph{terrible} idea. Why?
@@ -143,6 +158,20 @@ for (i = 0; i < 10; ++i)
     \item The memory for {\tt i} may be out of scope, and therefore invalid by
           the time the thread executes.
 \end{enumerate}
+The worst part is that in a simple program where you just write most of the pthread launch logic in main, then \texttt{i} will not go out of scope and it will seem like everything is fine... Instead we need to do this:
+
+\begin{lstlisting}[language=C]
+int i;
+int*
+for (i = 0; i < 10; ++i) {
+  arg = malloc( sizeof( int ) );
+  *arg = i;
+  pthread_create(&thread[i], NULL, run, arg);
+}
+\end{lstlisting}
+
+And then \texttt{arg} needs to be deallocated at some point by the thread.
+
 On the other hand, you can pull off something similar with C++11 threads:
 \begin{lstlisting}[language=C]
 int i;
