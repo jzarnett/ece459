@@ -15,17 +15,17 @@ What outputs are possible from this example?
 \begin{tabular}{ll}
       \begin{minipage}{.2\textwidth}
         Thread 1:
-        \begin{verbatim}
+        \begin{lstlisting}[language=C]
   foo = 7;
   bar = 42;
-        \end{verbatim}
+        \end{lstlisting}
       \end{minipage} &
       \begin{minipage}{.4\textwidth}
         Thread 2:
-        \begin{verbatim}
+        \begin{lstlisting}[language=C]
   printf("%d\n", foo);
   printf("%d\n", bar);
-        \end{verbatim}
+        \end{lstlisting}
       \end{minipage}
 \end{tabular}
 
@@ -56,17 +56,17 @@ A good exam question: if {\tt foo} is atomic, what are the possible outputs?
     \begin{tabular}{ll}
       \begin{minipage}{.25\textwidth}
         Thread 1:
-        \begin{verbatim}
+        \begin{lstlisting}[language=C]
   foo.store(7);
   bar.store(42);
-        \end{verbatim}
+        \end{lstlisting}
       \end{minipage} &
       \begin{minipage}{.45\textwidth}
         Thread 2:
-        \begin{verbatim}
+        \begin{lstlisting}[language=C]
   printf("%d\n", foo.load());
   printf("%d\n", bar.load());
-        \end{verbatim}
+        \end{lstlisting}
       \end{minipage}
     \end{tabular}
 
@@ -82,7 +82,7 @@ In some languages (like C++), it can be.
 
 \paragraph{Why? Overloading.} In C++, you can overload the {\tt ++} and {\tt --} operators.
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 class X {
 public:
   X& operator++();
@@ -93,25 +93,25 @@ public:
 X x;
 ++x; // x.operator++();
 x++; // x.operator++(0);
-  \end{verbatim}
+  \end{lstlisting}
 
 Prefix is also known as {\bf increment and fetch}, and might be implemented like this:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 X& X::operator++() {
   *this += 1;
   return *this;
 }
-  \end{verbatim}
+  \end{lstlisting}
 
   Postfix is also known as {\bf fetch and increment}. Note that you have to make a copy of
 the old value:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 const X X::operator++(int) {
   const X old = *this;
   ++(*this);
   return old;
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 So, if you're the least concerned about efficiency (and why else would you be
 taking programming for performance?), always use
@@ -119,191 +119,6 @@ taking programming for performance?), always use
   
 Mind you, if you're doing something like \texttt{array[i++]} or something similarly ``clever'', you might want to think twice about this. There's a lot of potential for error or misunderstanding in a code review. Remember, clever is hard to grep for.
 
-\section*{Locking Granularity}
-
-Alright, we already know that locks prevent data races. If this is news to you, how did you pass the operating systems course?! So we need to use them to prevent data races, but it's not as simple as it sounds. We have choices about the granularity of locking, and it is a trade-off (like always).
-
-\textit{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. \textit{
-Fine-grained locking} requires more careful design,
-increases locking overhead and is more prone to bugs (deadlock etc).  
-Locks' extents constitute their {\it granularity}. In coarse-grained locking, you
-lock large sections of your program with a big lock; in fine-grained
-locking, you divide the locks and protect smaller sections with multiple smaller locks.
-
-We'll discuss three major concerns when using locks:
-  \begin{itemize}
-    \item overhead;
-    \item contention; and
-    \item deadlocks.
-  \end{itemize}
-We aren't even talking about under-locking (i.e., remaining race conditions). We'll assume there are adequate locks and that data accesses are protected. 
-
-\paragraph{Lock Overhead.}
-  Using a lock isn't free. You pay:
-  \begin{itemize}
-    \item allocated memory for the locks;
-    \item initialization and destruction time; and
-    \item acquisition and release time.
-  \end{itemize}
-  These costs scale with the number of locks that you have.
-
-\paragraph{Lock Contention.}
- Most locking time is wasted waiting for the lock to become available.
-We can fix this by:
-      \begin{itemize}
-        \item making the locking regions smaller (more granular); or
-        \item making more locks for independent sections.
-      \end{itemize}
-
-\paragraph{Deadlocks.} Finally, the more locks you have, the more you have to worry about deadlocks.
-
-As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
-
-Okay, in a formal sense, the four conditions for deadlock are:
-
-\begin{enumerate}
-	\item \textbf{Mutual Exclusion}: A resource belongs to, at most, one process at a time.
-	\item \textbf{Hold-and-Wait}: A process that is currently holding some resources may request additional resources and may be forced to wait for them.
-	\item \textbf{No Preemption}: A resource cannot be ``taken'' from the process that holds it; only the process currently holding that resource may release it.
-	\item \textbf{Circular-Wait}: A cycle in the resource allocation graph.
-\end{enumerate}
-
-
-Consider, for instance, two processors trying to get two locks.
-
-\begin{center}
-  \begin{tabular}{ll}
-\begin{minipage}{.4\textwidth}
-      {\bf Thread 1}
-
-      \verb+Get Lock 1+
-
-      \verb+Get Lock 2+
-
-      \verb+Release Lock 2+
-
-      \verb+Release Lock 1+
-\end{minipage} & 
-\begin{minipage}{.4\textwidth}
-      {\bf Thread 2}
-
-      \verb+Get Lock 2+
-
-      \verb+Get Lock 1+
-
-      \verb+Release Lock 1+
-
-      \verb+Release Lock 2+
-\end{minipage}
-\end{tabular}
-\end{center}
-
- Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops! They
- both wait for each other. (Deadlock!).
-
-To avoid deadlocks, always be careful if your code {\bf acquires a
-  lock while holding one}.  You have two choices: (1) ensure
-consistent ordering in acquiring locks; or (2) use trylock.
-
-As an example of consistent ordering:
-\begin{center}
-\begin{tabular}{ll}
-\begin{minipage}{.4\textwidth}
-  \begin{verbatim}
-void f1() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-\end{verbatim}
-\end{minipage}&
-\begin{minipage}{.4\textwidth}
-\begin{verbatim}
-void f2() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-  \end{verbatim}
-\end{minipage}
-\end{tabular}
-\end{center}
-This code will not deadlock: you can only get {\bf l2} if you have
-{\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
-identity is not statically visible.
-
-Or another example, with threads $P$ and $Q$ attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
-
-To generalize and formalize this principle, if the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
-
-
-Alternately, you can use trylock. Recall that Pthreads' {\tt trylock}
-returns 0 if it gets the lock. But if it doesn't, your thread doesn't get blocked. Checking the return value is important, but at the very least, this code also won't deadlock: it will give up {\bf l1} if it can't get {\bf l2}.
-  \begin{verbatim}
-void f1() {
-    lock(&l1);
-    while (trylock(&l2) != 0) {
-        unlock(&l1);
-        // wait
-        lock(&l1);
-    }
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-  \end{verbatim}
-  (Incidentaly, using trylocks can also help you measure lock contention.)
-  
-This prevents the hold and wait condition, which was one of the four conditions. A process attempts to lock a group of resources at once, and if it does not get everything it needs, it releases the locks it received and tries again. Thus a process does not wait while holding resources.
-
-\subsection*{Coarse-Grained Locking}
-One way of avoiding problems due to locking is to use few locks
-(perhaps just one!). This is \emph{coarse-grained locking}.
-It does have a couple of advantages:
-  \begin{itemize}
-    \item it is easier to implement;
-    \item with one lock, there is no chance of deadlocking; and
-    \item it has the lowest memory usage and setup time possible.
-  \end{itemize}
-
-It also, however, has one big disadvantage in terms of programming for performance: your parallel program will quickly become sequential.
-
-\paragraph{Example: Python (and other interpreters).}
-Python puts a lock around the whole interpreter (known as the
-\emph{global interpreter lock}).  This is the main reason (most)
-scripting languages have poor parallel performance; Python's just an
-example.
-
-Two major implications:
-\begin{itemize}
-\item The only performance benefit you'll see from threading is if one of the threads is
-      waiting for IO.
-\item But: any non-I/O-bound threaded program will be {\bf slower} than the sequential
-      version (plus, the interpreter will slow down your system).
-\end{itemize}
-
-You might think ``this is stupid, who would ever do this?'' - a lot of OS kernels do in fact have (or at least had) a ``big kernel lock'', including Linux and the Mach Microkernel. This lasted in Linux for quite a while, from the advent of SMP support up until sometime in 2011. As much as this ruins performance, correctness is more important. We don't have a class ``programming for correctness'' (software testing? Hah!) because correctness is kind of assumed. What we want to do here is speed up our program as much as we can while maintaining correctness...
-
-\subsection*{Fine-Grained Locking}
-On the other end of the spectrum is \emph{fine-grained locking}. The big
-advantage: it maximizes parallelization in your program.
-
-However, it also comes with a number of disadvantages:
-  \begin{itemize}
-    \item if your program isn't very parallel, it'll be mostly wasted memory and setup time;
-    \item plus, you're now prone to deadlocks; and
-    \item fine-grained locking is generally more error-prone (be sure you grab the right lock!)
-  \end{itemize}
-
-\paragraph{Examples.}
-
-    Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
-
-    You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
 
 \input{bibliography.tex}
 
