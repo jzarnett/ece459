@@ -1,6 +1,6 @@
 \input{configuration}
 
-\title{Lecture 5 --- Creating Processes \& Threads }
+\title{Lecture 5 --- Working with Threads }
 
 \author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{p.lam@ece.uwaterloo.ca} \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -15,133 +15,7 @@
 
  \end{frame}
 
-\begin{frame}
-\frametitle{UNIX Workflow}
 
-Parent spawns the child process with the \texttt{fork} system call. 
-
-If waiting for the child process to finish, \texttt{wait}.\\
-\quad Alternatively, carry on.
-
-When the child process is finished, it returns a value with \texttt{exit} 
-
-The parent gets this as the return value of \texttt{wait} and may proceed.
-\end{frame}
-
-\begin{frame}
-\frametitle{About \texttt{fork}}
-
-Note: \texttt{fork} creates a new process as a copy of itself.
-
-Both parent and child continue after that statement.
-
-The call \texttt{fork} can return a value:\\
-\quad A negative value means the fork failed.\\
-\quad A zero value means this process is the child.\\
-\quad A positive value: this is the parent; the value is the child \texttt{pid}.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{After the \texttt{fork}, the \texttt{exec}}
-
-
-After the \texttt{fork}, one of the processes may use the \texttt{exec} system call.
-
-This will replace its memory space with a new program. 
-
-There's no rule that says this must happen\\
-\quad a child can continue to be a clone of its parent if it wishes.
-
-The \texttt{exec} invocation loads a binary file into memory \& starts execution. 
-
-At this point, the programs can go their separate ways.
-
-Or the parent might want to wait for the child to finish.
-
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Putting it Together}
-
-{\scriptsize
-\begin{verbatim}
-int main()
-{
-  pid_t pid;
-  int childStatus;
-
-  /* fork a child process */
-  pid = fork();
-  
-  if (pid < 0) { 
-  
-    /* error occurred */ 
-    fprintf(stderr, "Fork Failed"); 
-    return 1;
-    
- } else if (pid == 0) { 
-    /* child process */
-    execlp("/bin/ls","ls",NULL);
-    
-  } else { 
-    /* parent process */
-    /* parent will wait for the child to complete */
-    wait(&childStatus);
-    printf("Child Complete with status: %i \n", childStatus);
-    
-  }
-  return 0;
-}
-\end{verbatim}
-}
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Code Output}
-
-Thus, the output is:
-\begin{verbatim}
-jz@Freyja:~/fork$ ./fork 
-fork   fork.c
-Child Complete with status: 0
-jz@Freyja:~/fork$ 
-\end{verbatim}
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Fork Visually}
-
-Or, to represent this visually:
-
-\begin{center}
-\includegraphics[width=\textwidth]{images/fork-syscall.png}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-  \frametitle{Assumptions}
-
-
-  First, we'll see how to use threads on ``embarrassingly parallel problems''.
-  \begin{itemize}
-    \item mostly-independent sub-problems (little synchronization); and
-    \item strong locality (little communication).
-  \end{itemize}
-  \vfill
-  Later, we'll see:
-  \begin{itemize}
-    \item which problems can be parallelized (\structure{dependencies})
-    \item alternative parallelization patterns\\(right now, just use one thread
-          per sub-problem)
-  \end{itemize}
-
-\end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \begin{frame}
@@ -158,6 +32,24 @@ Or, to represent this visually:
     \vfill
     \item Compile with pthread flag \\ ({\tt gcc -pthread prog.c -o prog})
   \end{itemize}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Pthread Functions}
+
+\begin{itemize}
+	\item \texttt{pthread\_create}
+	\item \texttt{pthread\_exit}
+	\item \texttt{pthread\_join}
+	\item \texttt{pthread\_yield} 
+	\item \texttt{pthread\_attr\_init}
+	\item \texttt{pthread\_attr\_destroy}
+	\item \texttt{pthread\_cancel}
+\end{itemize}
+
 
 \end{frame}
 
@@ -183,7 +75,7 @@ Or, to represent this visually:
   \frametitle{Pthreads: Creating Threads}
 
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 int pthread_create(pthread_t* thread, 
                    const pthread_attr_t* attr,
                    void* (*start_routine)(void*),
@@ -209,7 +101,7 @@ int pthread_create(pthread_t* thread,
   \frametitle{Creating Threads---Pthreads Example}
 
 
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 
@@ -219,7 +111,7 @@ void* run(void*) {
 
 int main() {
   pthread_t thread;
-  pthread_create(&thread, NULL, &run, NULL);
+  pthread_create(&thread, NULL, run, NULL);
   printf("In main\n");
 }
 \end{lstlisting}
@@ -235,7 +127,7 @@ int main() {
   \frametitle{Creating Threads---C++11 Example}
 
 
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 #include <thread>
 #include <iostream>
 
@@ -259,7 +151,7 @@ int main() {
   \frametitle{Waiting for Threads}
 
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 int pthread_join(pthread_t thread,
                  void** retval)
   \end{lstlisting}
@@ -283,7 +175,7 @@ int pthread_join(pthread_t thread,
   \frametitle{Waiting for Threads---Pthreads example}
 
 
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 
@@ -293,7 +185,7 @@ void* run(void*) {
 
 int main() {
   pthread_t thread;
-  pthread_create(&thread, NULL, &run, NULL);
+  pthread_create(&thread, NULL, run, NULL);
   printf("In main\n");
   pthread_join(thread, NULL);
 }
@@ -309,7 +201,7 @@ int main() {
   \frametitle{Creating Threads---C++11 Example}
 
 
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 #include <thread>
 #include <iostream>
 
@@ -334,10 +226,10 @@ int main() {
 
 Consider this snippet:
 \vfill
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 int i;
 for (i = 0; i < 10; ++i)
-  pthread_create(&thread[i], NULL, &run, (void*)&i);
+  pthread_create(&thread[i], NULL, run, (void*)&i);
 \end{lstlisting}
   \vfill
   This is a \alert{terrible} idea. Why?
@@ -355,13 +247,34 @@ for (i = 0; i < 10; ++i)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
   \frametitle{Passing Data to Pthreads threads}
+  
+Correct:
 
+
+\begin{lstlisting}[language=C]
+int i;
+int*
+for (i = 0; i < 10; ++i) {
+  arg = malloc( sizeof( int ) );
+  *arg = i;
+  pthread_create(&thread[i], NULL, run, arg);
+}
+\end{lstlisting}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}[fragile]
+\frametitle{\texttt{int*} and \texttt{int} are always the same size, right guys?}
 
 What about:
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 int i;
 for (i = 0; i < 10; ++i)
-  pthread_create(&thread[i], NULL, &run, (void*)i);
+  pthread_create(&thread[i], NULL, run, (void*)i);
 
 ...
 
@@ -382,14 +295,13 @@ void* run(void* arg) {
 
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
   \frametitle{Passing Data to C++11 threads}
 
 It's easier to get data to threads in C++11:
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 #include <thread>
 #include <iostream>
 
@@ -415,7 +327,7 @@ int main() {
 
     \ldots but it's harder to get data back.\\
     Use {\tt async} and {\tt future} abstractions:
-    \begin{lstlisting}
+    \begin{lstlisting}[language=C]
 #include <thread>
 #include <iostream>
 #include <future>
@@ -446,7 +358,7 @@ int main() {
   {\it Detached} threads release their resources when they terminate, without
   being joined.
   \vfill
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 int pthread_detach(pthread_t thread);
   \end{lstlisting}
   \vfill
@@ -466,7 +378,7 @@ int pthread_detach(pthread_t thread);
   \frametitle{Thread Termination}
 
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 void pthread_exit(void *retval);
   \end{lstlisting}
   \vfill
@@ -511,7 +423,7 @@ void pthread_exit(void *retval);
   \frametitle{Attributes---Example}
 
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 size_t stacksize;
 pthread_attr_t attributes;
 pthread_attr_init(&attributes);
@@ -539,7 +451,7 @@ pthread_attr_setdetachstate(&attributes,
   \frametitle{Detached Threads: Warning!}
 
 
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 
@@ -549,7 +461,7 @@ void* run(void*) {
 
 int main() {
   pthread_t thread;
-  pthread_create(&thread, NULL, &run, NULL);
+  pthread_create(&thread, NULL, run, NULL);
   pthread_detach(thread);
   printf("In main\n");
 }
@@ -565,7 +477,7 @@ int main() {
 \begin{frame}[fragile]
   \frametitle{Detached Threads: Solution to Problem}
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 
@@ -575,7 +487,7 @@ void* run(void*) {
 
 int main() {
   pthread_t thread;
-  pthread_create(&thread, NULL, &run, NULL);
+  pthread_create(&thread, NULL, run, NULL);
   pthread_detach(thread);
   printf("In main\n");
   pthread_exit(NULL); // This waits for all detached
