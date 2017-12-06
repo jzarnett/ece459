@@ -37,7 +37,7 @@ the previous iteration. For instance, consider this code to
 compute whether a complex number $x_0 + iy_0$ belongs to the Mandelbrot
 set.
 
-{\small \begin{verbatim}
+{\small \begin{lstlisting}[language=C]
     // Repeatedly square input, return number of iterations before 
     // absolute value exceeds 4, or 1000, whichever is smaller.
     int inMandelbrot(double x0, double y0) {
@@ -51,7 +51,7 @@ set.
       }
       return iterations;
     }
-\end{verbatim} }
+\end{lstlisting} }
 In this case, it's impossible to parallelize loop iterations, because
 each iteration \emph{depends} on the $(x, y)$ values calculated in the
 previous iteration. For any particular $x_0 + iy_0$, you have to run the
@@ -67,12 +67,12 @@ On the other hand, a memory-carried dependency is one where the result
 of a computation \emph{depends} on the order in which two memory accesses
 occur. For instance:
 
-{\small \begin{verbatim}
+{\small \begin{lstlisting}[language=C]
     int val = 0;
 
     void g() { val = 1; }
     void h() { val = val + 2; }
-\end{verbatim} }
+\end{lstlisting} }
 
 {\sf What are the possible outcomes after executing {\tt g()} and {\tt h()}
 in parallel threads?} \\[1em]
@@ -86,10 +86,10 @@ at a couple of examples.
 Initially, {\tt a[0]} and {\tt a[1]} are 1.
 Can we run these lines in parallel?
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
      a[4] = a[0] + 1;
      a[5] = a[1] + 2;
-\end{verbatim}
+\end{lstlisting}
 
 \url{http://www.youtube.com/watch?v=jjXyqcx-mYY}. (This one is legit! Really!)
 
@@ -99,16 +99,16 @@ an atypical use of arrays. Let's look at more typical uses.
 
 What about this? (Again, all elements initially 1.)
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
     for (int i = 1; i < 12; ++i)
         a[i] = a[i-1] + 1;
-\end{verbatim}
+\end{lstlisting}
 
 Nope! We can unroll the first two iterations:
-\begin{verbatim}
+\begin{lstlisting}[language=C]
     a[1] = a[0] + 1
     a[2] = a[1] + 1
-\end{verbatim}
+\end{lstlisting}
 
 Depending on the execution order, either {\tt a[2] = 3} or {\tt a[2] =
   2}.  In fact, no out-of-order execution here is safe---statements depend
@@ -119,10 +119,10 @@ to play more complicated games to parallelize this.
 
   Now consider this example---is it parallelizable? (Again, all elements initially 1.)
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
     for (int i = 4; i < 12; ++i)
         a[i] = a[i-4] + 1;
-\end{verbatim}
+\end{lstlisting}
 
 Yes, to a degree. We can execute 4 statements in parallel at a time:
 \begin{itemize}
@@ -138,7 +138,7 @@ dependencies between iterations.
 \paragraph{Larger loop-carried dependency example.}
 Now consider the following function.
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
   // Repeatedly square input, return number of iterations before 
   // absolute value exceeds 4, or 1000, whichever is smaller.
   int inMandelbrot(double x0, double y0) {
@@ -152,7 +152,7 @@ Now consider the following function.
     }
     return iterations;
   }
-\end{verbatim}
+\end{lstlisting}
 
 How do we parallelize this?
 
@@ -193,7 +193,7 @@ which we'll call speculative execution, the other value speculation.
 start up a thread to compute a result that you may or may not need.
 Consider the following code:
 
-{\small \begin{verbatim}
+{\small \begin{lstlisting}[language=C]
   void doWork(int x, int y) {
     int value = longCalculation(x, y);
     if (value > threshold) {
@@ -203,7 +203,7 @@ Consider the following code:
       return value;
     }
   }
-\end{verbatim} }
+\end{lstlisting} }
 Without more information, you don't know whether you'll have to execute
 {\tt secondLongCalculation} or not; it depends on the return value of
 {\tt longCalculation}. 
@@ -212,7 +212,7 @@ Fortunately, the arguments to {\tt secondLongCalculation} do not
 depend on {\tt longCalculation}, so we can call it at any point. 
 Here's one way to speculatively thread the work:
 
-{\small \begin{verbatim}
+{\small \begin{lstlisting}[language=C]
   void doWork(int x, int y) {
     thread_t t1, t2;
     point p(x,y);
@@ -227,7 +227,7 @@ Here's one way to speculatively thread the work:
       return v1;
     }
   }
-\end{verbatim} }
+\end{lstlisting} }
 We now execute both of the calculations in parallel and return the same
 result as before.
 
@@ -254,16 +254,16 @@ there is a (true) dependency between the result of a computation
 and its successor:
 % note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
 
-{\small \begin{verbatim}
+{\small \begin{lstlisting}[language=C]
   void doWork(int x, int y) {
     int value = longCalculation(x, y);
     return secondLongCalculation(value);
   }
-\end{verbatim} }
+\end{lstlisting} }
 If the result of {\tt value} is predictable, then we can speculatively
 execute {\tt secondLongCalculation} based on the predicted value.
 (Most values in programs are indeed predictable).
-{\small \begin{verbatim}
+{\small \begin{lstlisting}[language=C]
 void doWork(int x, int y) {
     thread_t t1, t2;
     point p(x,y);
@@ -280,7 +280,7 @@ void doWork(int x, int y) {
       return secondLongCalculation(v1);
     }
 }
-\end{verbatim}
+\end{lstlisting}
 }
 Note that this is somewhat similar to memoization, except with 
 parallelization thrown in. In this case, the original running time is
@@ -310,7 +310,7 @@ Side effects are sort of undesirable, but not necessarily bad. Printing to conso
 
 The trivial example of a non-reentrant C function:
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int tmp;
 
 void swap( int x, int y ) {
@@ -318,7 +318,7 @@ void swap( int x, int y ) {
     y = x;
     x = tmp;
 }
-\end{verbatim}
+\end{lstlisting}
 
 Why is this non-reentrant? Because there is a global variable \texttt{tmp} and it is changed on every invocation of the function. We can make the code reentrant by moving the declaration of \texttt{tmp} inside the function, which would mean that every invocation is independent of every other. And thus it would be thread safe, too.
 
@@ -326,7 +326,7 @@ Remember that in things like interrupt subroutines (ISRs) having the code be ree
 
 Let us also draw a distinction between thread safe code and reentrant code. A thread safe operation is one that can be performed from more than one thread at the same time. On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. Or it can be re-started without affecting the outcome. See this code example from~\cite{tont:threadsafe}:
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int length = 0;
 char *s = NULL;
 
@@ -354,7 +354,7 @@ void AddToString(int ch)
   }
   LeaveCriticalSection(&someCriticalSection);
 }
-\end{verbatim}
+\end{lstlisting}
 
 Is it thread safe? Sure - there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
 
