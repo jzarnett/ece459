@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{14 --- Memory Consistency}{\term}{Patrick Lam and Jeff Zarnett}
+\lecture{14 --- Memory Consistency, C/C++11 Memory Model}{\term}{Patrick Lam and Jeff Zarnett}
 
 \section*{Memory Consistency, Memory Barriers, and Reordering}
 Today we'll talk a bit more about memory consistency, memory barriers
@@ -15,10 +15,10 @@ things to happen in the order that you wrote them. So, consider this code,
 where variables are initialized to 0:
 
 \begin{center}
-\begin{verbatim}
+\begin{lstlisting}[language=C]
     T1: x = 1; r1 = y;
     T2: y = 1; r2 = x;
-\end{verbatim}
+\end{lstlisting}
 \end{center}
 We would expect that we would always query the memory and get a state
 where some subset of these partially-ordered statements would have executed.
@@ -77,13 +77,13 @@ When it can prove that a reordering is safe with respect to the
 programming language semantics, the {\bf compiler} may reorder instructions (so it's not just the hardware).
 
 For example, say we want thread 1 to print value set in thread 2.
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
                             f = 0
 
 /* thread 1 */                          /* thread 2 */
 while (f == 0) /* spin */;              x = 42;
 printf("%d", x);                        f = 1;
-  \end{verbatim}
+  \end{lstlisting}
 
 If thread 2 reorders its instructions, will we get our intended
 result? \emph{No!}
@@ -118,14 +118,14 @@ another CPU will have to execute an {\tt lfence} or {\tt mfence} to
 read the stores in the right order.
 
 Consider the example again:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
                          f = 0
 
 /* thread 1 */                     /* thread 2 */
 while (f == 0) /* spin */;         x = 42;
 // memory fence                    // memory fence
 printf("%d", x);                   f = 1;
-  \end{verbatim}
+  \end{lstlisting}
 This now prevents reordering, and we get the expected result.
 
 You can use the {\tt mfence} instruction to implement \emph{acquire
@@ -142,17 +142,17 @@ First: Don't use volatile in C/C++ on variables~\cite{so:volatile}. Remember tha
 
 \begin{itemize}
   \item Microsoft Visual Studio C++ Compiler:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 _ReadWriteBarrier()
-  \end{verbatim}
+  \end{lstlisting}
   \item Intel Compiler:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
     __memory_barrier()
-  \end{verbatim}
+  \end{lstlisting}
   \item GNU Compiler:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 __asm__ __volatile__ ("" ::: "memory");
-  \end{verbatim}
+  \end{lstlisting}
 \end{itemize}
 
 The compiler also shouldn't reorder across e.g. Pthreads mutex calls.
@@ -160,13 +160,13 @@ The compiler also shouldn't reorder across e.g. Pthreads mutex calls.
 \paragraph{Aside: {\tt gcc} Inline Assembly.}
 Just as an aside, here's {\tt gcc}'s inline assembly format
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 __asm__ ( assembler template 
        : output operands                  /* optional */
        : input operands                   /* optional */
        : list of clobbered registers      /* optional */
        );
-  \end{verbatim}
+  \end{lstlisting}
 
 Note that we've just seen {\bf \_\_volatile\_\_} with  \_\_asm\_\_. This isn't the same as the normal C volatile. It means:
 \begin{itemize}
@@ -196,7 +196,7 @@ However, other atomic instructions exist, and we've seen the C++11 ones earlier 
 
 \paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86).
 Here's some pseudocode for it.
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 int compare_and_swap (int* reg, int oldval, int newval) 
 {
   int old_reg_val = *reg;
@@ -204,14 +204,14 @@ int compare_and_swap (int* reg, int oldval, int newval)
      *reg = newval;
   return old_reg_val;
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it.
 
 
 \paragraph{Implementing a Spinlock.}
 You can use compare-and-swap to implement spinlock:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 void spinlock_init(int* lock) { *lock = 0; }
 
 void spinlock_lock(int* lock) {
@@ -223,7 +223,7 @@ void spinlock_unlock(int* lock) {
     __asm__ ("mfence");
     *lock = 0;  
 }
-  \end{verbatim}
+  \end{lstlisting}
 You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
 
 \section*{ABA Problem}
@@ -247,6 +247,120 @@ You can combat this by ``tagging'': modify value with nonce upon each
 write.  You can also keep the value separately from the nonce; double
 compare and swap atomically swaps both value and nonce.
 
+\section*{C/C++11 Memory Model}
+
+We have talked about memory models in the context of OpenMP. Let's
+talk about the core languages now---that is, C and C++~\cite{quora:cppthr, cppconcurrency}---when
+not using OpenMP.
+
+What outputs are possible from this example?
+
+\begin{tabular}{ll}
+      \begin{minipage}{.2\textwidth}
+        Thread 1:
+        \begin{lstlisting}[language=C]
+  foo = 7;
+  bar = 42;
+        \end{lstlisting}
+      \end{minipage} &
+      \begin{minipage}{.4\textwidth}
+        Thread 2:
+        \begin{lstlisting}[language=C]
+  printf("%d\n", foo);
+  printf("%d\n", bar);
+        \end{lstlisting}
+      \end{minipage}
+\end{tabular}
+
+You might think ``undefined'', but actually it's worse than that. The 
+C11 and C++11 language definitions don't even say what a thread is.
+Of course, there is Pthreads, but that is a library, not the language itself.
+So you can't even ask this question when talking about pre-C11/C++11 versions
+of C and C++. Well. Okay. You can ask, but the question makes no sense. Sort of like
+putting your hand up in class and saying ``Where did you bury your oranges?''.
+It's a syntactically valid question and it describes something that's possible,
+but it still makes no sense.
+
+The older standards made no reference to any kind of CPU, memory architecture, cache
+strategy, or anything like that. Which on the one hand is nice and general, but on the other hand, it leads to problems. The ``abstract machine'' that the C and C++ standards refer to is inherently single threaded, making it actually impossible to write a portable multithreaded C or C++ program~\cite{quora:cppthr}. The part that's impossible is that word ``portable'' -- people write multithreaded C and C++ programs all the time (in this class, even) but they have system specific code and implementation-defined behaviour. Open up a pthreads library or some equivalent and sure enough, you will find something architecture specific in there.
+
+C++11 (and C11) have improved the situation, though. There is actually
+a memory model (based on an abstract machine) and threading primitives
+such as mutexes, atomics, and memory barriers---the concepts that we
+have seen in this course. Now there are rules! Yes. We like rules. Okay. I, at least, like rules. C++11 defines how a compiler can generate code that accesses memory even when there is concurrency. There are also standard mutex operations and atomics and barriers and all those lovely things.
+
+Now, we can ask the question about the behaviour of the above example.
+It does have undefined behaviour, since there is contended access to
+the variables {\tt foo} and {\tt bar}. How can we fix that?
+
+\paragraph{Atomics.}
+A good exam question: if {\tt foo} is atomic, what are the possible outputs? 
+    
+    \begin{tabular}{ll}
+      \begin{minipage}{.25\textwidth}
+        Thread 1:
+        \begin{lstlisting}[language=C]
+  foo.store(7);
+  bar.store(42);
+        \end{lstlisting}
+      \end{minipage} &
+      \begin{minipage}{.45\textwidth}
+        Thread 2:
+        \begin{lstlisting}[language=C]
+  printf("%d\n", foo.load());
+  printf("%d\n", bar.load());
+        \end{lstlisting}
+      \end{minipage}
+    \end{tabular}
+
+Alright, we have some defined behaviour now.  Honestly, it depends how these things are scheduled, but the answer is one of the following set: \{0/0, 7/42, 7/0,  0/42\}. The answer depends on how they are interleaved. But at least we get some certainty that the output will be one of those four things and there's no chance of garbage because the print takes place during an assignment operation. 
+
+We probably still don't like this because we don't have mutual exclusion here and we can get several different answers, some of which are probably ``wrong'' (for whatever definition of a correct answer is), but at least our set of potential wrong answers is smaller. So that's a start. Compilers have to follow the new rules in generating code, so their output will behave as if the architecture followed the standard memory model. That's something. 
+
+\section*{Good C++ Practice}
+Lots of people use postfix ({\tt i++}) out of habit, but prefix ({\tt ++i}) is better.
+
+In C, this isn't a problem. 
+In some languages (like C++), it can be.
+
+\paragraph{Why? Overloading.} In C++, you can overload the {\tt ++} and {\tt --} operators.
+
+  \begin{lstlisting}[language=C]
+class X {
+public:
+  X& operator++();
+  const X operator++(int);
+...
+};
+
+X x;
+++x; // x.operator++();
+x++; // x.operator++(0);
+  \end{lstlisting}
+
+Prefix is also known as {\bf increment and fetch}, and might be implemented like this:
+  \begin{lstlisting}[language=C]
+X& X::operator++() {
+  *this += 1;
+  return *this;
+}
+  \end{lstlisting}
+
+  Postfix is also known as {\bf fetch and increment}. Note that you have to make a copy of
+the old value:
+  \begin{lstlisting}[language=C]
+const X X::operator++(int) {
+  const X old = *this;
+  ++(*this);
+  return old;
+}
+  \end{lstlisting}
+
+So, if you're the least concerned about efficiency (and why else would you be
+taking programming for performance?), always use
+  \emph{prefix} increments/decrements instead of defaulting to postfix. This isn't really an issue if the operator is in a statement all on its own (e.g. a standalone line, or the last part of a for loop) because the compiler is (presumably) smart enough to know that this can be optimized as the return value is not assigned. Only use {\tt postfix} when you really mean it, to be on the safe side.
+  
+Mind you, if you're doing something like \texttt{array[i++]} or something similarly ``clever'', you might want to think twice about this. There's a lot of potential for error or misunderstanding in a code review. Remember, clever is hard to grep for.
 
 \input{bibliography.tex}
 

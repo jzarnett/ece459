@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 19 --- Reentrancy, Thread-Safety, Inlining, HLL }
+\title{Lecture 19 --- Single Thread Performance, Compiler Optimizations}
 
-\author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
+\author{Patrick Lam \small \texttt{p.lam@ece.uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -16,53 +16,124 @@
  \end{frame}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Language Support: Before C/C++11}
 
-\part{Reentrancy}
-\frame{\partpage}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Reentrancy}
+%http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C
 
   
-    $\Rightarrow$ A function can be suspended in the middle and \\ {\bf re-entered}
-      (called again) before the previous execution returns.\\[1em]
+    Before C/C++11: \\ \qquad no language-level definition of threads.\\[1em]
+
+    Not even a well-formed question to ask what this means:\\[.5em]
+    \begin{tabular}{ll}
+      \begin{minipage}{.2\textwidth}
+        Thread 1:
+        \begin{lstlisting}
+  foo = 7;
+  bar = 42;
+        \end{lstlisting}
+      \end{minipage} &
+      \begin{minipage}{.4\textwidth}
+        Thread 2:
+        \begin{lstlisting}
+  printf("%d\n", foo);
+  printf("%d\n", bar);
+        \end{lstlisting}
+      \end{minipage}
+    \end{tabular}
+    ~\\[1em]
+    \only<2>{pre C/C++11: no such thing as a thread!}
     
-     Does not always mean {\bf thread-safe} (although it usually is).
-      \begin{itemize}
-        \item Recall: {\bf thread-safe} is essentially ``no data races''.
-      \end{itemize}
- ~\\[1em]
-  Moot point if the function only modifies local data, e.g. {\tt sin()}.
+  
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Language Support in C++11: Defining the Question}
+
+  
+
+    Now\footnote{\url{http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C}}:
+    \begin{itemize}
+    \item a memory model
+    \item primitives: mutexes, atomics, memory barriers.
+    \end{itemize}
+
+    Previous example has undefined behaviour \\ \qquad per C++11. (why?)
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Reentrancy Example}
+  \frametitle{Language Support in C++11: Atomics}
+
+  
+    We've seen the notion of atomics. Here's the C++11 notation:
+
+    \begin{lstlisting}
+      atomic<int> foo, bar;      
+    \end{lstlisting}
+    
+    \begin{tabular}{ll}
+      \begin{minipage}{.25\textwidth}
+        Thread 1:
+        \begin{lstlisting}
+  foo.store(7);
+  bar.store(42);
+        \end{lstlisting}
+      \end{minipage} &
+      \begin{minipage}{.45\textwidth}
+        Thread 2:
+        \begin{lstlisting}
+  printf("%d\n", foo.load());
+  printf("%d\n", bar.load());
+        \end{lstlisting}
+      \end{minipage}
+    \end{tabular}
+
+    What are the possible outputs? (good exam question!)
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Prefix and Postfix}
 
   
 
-  Courtesy of Wikipedia (with modifications):
+  Lots of people use postfix out of habit, but prefix is better.\\[2em]
+
+  In C, this isn't a problem. \\[1em]
+  In some languages (like C++), it can be.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Why? Overloading}
+
+  
+
+  In C++, you can overload the {\tt ++} and {\tt --} operators.
+
   \begin{lstlisting}
-int t;
- 
-void swap(int *x, int *y) {
-    t = *x;
-    *x = *y;
-    // hardware interrupt might invoke isr() here!
-    *y = t;
-}
- 
-void isr() {
-    int x = 1, y = 2;
-    swap(&x, &y);
-}
+class X {
+public:
+  X& operator++();
+  const X operator++(int);
 ...
-int a = 3, b = 4;
-...
-    swap(&a, &b);
+};
+
+X x;
+++x; // x.operator++();
+x++; // x.operator++(0);
   \end{lstlisting}
   
 \end{frame}
@@ -70,152 +141,30 @@ int a = 3, b = 4;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Reentrancy Example---Explained (a trace)}
+  \frametitle{Common Increment Implementations}
 
   
+
+  Prefix is also known as {\bf increment and fetch}.
+
   \begin{lstlisting}
-call swap(&a, &b);
- t = *x;                // t = 3 (a)
- *x = *y;               // a = 4 (b)
- call isr();
-    x = 1; y = 2;
-    call swap(&x, &y)
-    t = *x;             // t = 1 (x)
-    *x = *y;            // x = 2 (y)
-    *y = t;             // y = 1
- *y = t;                // b = 1
-
-Final values:
-a = 4, b = 1
-
-Expected values:
-a = 4, b = 3
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reentrancy Example, Fixed}
-
-  
-  \begin{lstlisting}[escapechar=@]
-int t;
- 
-void swap(int *x, int *y) {
-    int s;
- 
-    @\alert{s = t}@;  // save global variable
-    t = *x;
-    *x = *y;
-    // hardware interrupt might invoke isr() here!
-    *y = t;
-    @\alert{t = s}@;  // restore global variable
-}
- 
-void isr() {
-    int x = 1, y = 2;
-    swap(&x, &y);
-}
-...
-int a = 3, b = 4;
-...
-    swap(&a, &b);
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reentrancy Example, Fixed---Explained (a trace)}
-
-  
-  \begin{lstlisting}
-call swap(&a, &b);
-s = t;                 // s = UNDEFINED
-t = *x;                // t = 3 (a)
-*x = *y;               // a = 4 (b)
-call isr();
-    x = 1; y = 2;
-    call swap(&x, &y)
-    s = t;             // s = 3
-    t = *x;            // t = 1 (x)
-    *x = *y;           // x = 2 (y)
-    *y = t;            // y = 1
-    t = s;             // t = 3
-*y = t;                // b = 3
-t = s;                 // t = UNDEFINED
-
-Final values:
-a = 4, b = 3
-
-Expected values:
-a = 4, b = 3
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Previous Example: thread-safety}
-
-  
-  Is the previous reentrant code also thread-safe?\\
-
-  (This is more what we're concerned about in this course.)\\[1em]
-
-  Let's see:
-  \begin{lstlisting}
-int t;
-
-void swap(int *x, int *y) {
-    int s;
- 
-    s = t;  // save global variable
-    t = *x;
-    *x = *y;
-    // hardware interrupt might invoke isr() here!
-    *y = t;
-    t = s;  // restore global variable
+X& X::operator++()
+{
+  *this += 1;
+  return *this;
 }
   \end{lstlisting}
-  
-  Consider two calls: {\tt swap(a, b)}, {\tt swap(c, d)} with\\
-  \quad {\tt a = 1, b = 2, c = 3, d = 4}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+~\\[1em]
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Previous Example: thread-safety trace}
+  Postfix is also known as {\bf fetch and increment}.
 
-  
   \begin{lstlisting}
-global: t
-
-/* thread 1 */                       /* thread 2 */
-a = 1, b = 2;
-s = t;    // s = UNDEFINED
-t = a;    // t = 1
-                                     c = 3, d = 4;
-                                     s = t;    // s = 1
-                                     t = c;    // t = 3
-                                     c = d;    // c = 4
-                                     d = t;    // d = 3
-a = b;    // a = 2
-b = t;    // b = 3
-t = s;    // t = UNDEFINED
-                                     t = s;    // t = 1
-
-Final values:
-a = 2, b = 3, c = 4, d = 3, t = 1
-
-Expected values:
-a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
+const X X::operator++(int)
+{
+  const X old = *this;
+  ++(*this);
+  return old;
+}
   \end{lstlisting}
   
 \end{frame}
@@ -223,268 +172,198 @@ a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Reentrancy vs Thread-Safety (1)}
+  \frametitle{Efficiency}
 
   
-  \begin{itemize}
-    \item Re-entrant does not always mean thread-safe (as we saw)
-      \begin{itemize}
-        \item But, for most sane implementations, it is thread-safe
-      \end{itemize}
-  \end{itemize}~\\[1em]
+  If you're the least concerned about efficiency, always use
+  {\bf prefix} increments/decrements instead of defaulting to postfix.\\[1em]
 
-  Ok, but are {\bf thread-safe} functions reentrant?
+  Only use {\tt postfix} when you really mean it, to be on the safe side.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reentrancy vs Thread-Safety (2)}
+\begin{frame}
+  \frametitle{Digression: The Wayside}
 
-  
-  Are {\bf thread-safe} functions reentrant? \alert{Nope.} Consider:
+  \begin{center}
+    \includegraphics[width=.7\textwidth]{images/The_Wayside_Concord_Massachusetts}
+% http://en.wikipedia.org/wiki/File:The_Wayside_Concord_Massachusetts.jpg
+  \end{center}
+\hfill (Daderot, Wikimedia Commons)
 
-  \begin{lstlisting}
-int f() {
-    lock();
-    // protected code
-    unlock();
-}
-  \end{lstlisting}
-
-  Recall: {\bf Reentrant functions can be suspended in the middle of execution
-    and called again before the previous execution completes.}\\[1em]
-
-  {\tt f()} obviously isn't reentrant. Plus, it will deadlock.\\[1em]
-
-  Interrupt handling is more for systems programming, so the topic of reentrancy may or may not come
-  up again.
-  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Summary of Reentrancy vs Thread-Safety}
+  \frametitle{It's Not Just Software}
 
-  
-  Difference between reentrant and thread-safe functions:\\[1em]
 
-  {\bf Reentrancy}
-  \begin{itemize}
-    \item Has nothing to do with threads---assumes a {\bf single thread}.
-    \item Reentrant means the execution can context switch at any point in
-      in a function, call the {\bf same function}, and {\bf complete} before
-      returning to the original function call.
-    \item Function's result does not depend on where the context switch happens.
-  \end{itemize}
-  \vfill
-  {\bf Thread-safety}
-  \begin{itemize}
-    \item Result does not depend on any interleaving of threads from
-      concurrency or parallelism.
-    \item No unexpected results from multiple concurrent executions of the function.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Another Definition of Thread-Safe Functions}
-
-  
+Nathaniel Hawthorne wrote:
 
 \begin{quote}
-  ``A function whose effect, when called by two or more threads, is guaranteed to
-  be as if the threads each executed the function one after another, in an
-  undefined order, even if the actual execution is interleaved.''
+I have been equally unsuccessful in my architectural projects; and have transformed a simple and small old farm-house into the absurdest anomaly you ever saw; but I really was not so much to blame here as the \sout{programmer} village-carpenter, who took the matter into his own hands, and produced an unimaginable sort of thing instead of what I asked for. (January 1864)
 \end{quote}
-  
+
+
+\begin{tabular}{lrr}
+Original budget:& \$500 &(\$7540 inflation-adjusted)\\
+Actual cost: &\$2000 &(\$30160 inflation-adjusted)
+\end{tabular}
+
+
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Good Example of an Exam Question}
+%% Using locks also involves a trade-off between coarse-grained locking,
+%% which can significantly reduce opportunities for parallelism, and
+%% fine-grained locking, which requires more careful design, increases
+%% locking overhead and is more prone to bugs.
 
-  
-
-  \begin{lstlisting}
-void swap(int *x, int *y) {
-    int t;
-    t = *x;
-    *x = *y;
-    *y = t;
-}  
-  \end{lstlisting}
-  \vfill
-  \begin{itemize}
-    \item Is the above code thread-safe?
-    \vfill
-    \item Write some expected results for running two calls in parallel.
-    \vfill
-    \item Argue these expected results always hold, or show an example where
-      they do not.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\part{Good Practices}
-\frame{\partpage}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Inlining}
+  \frametitle{Locking}
 
   
+  Locks prevent data races.
 
-  We have seen the notion of inlining:
   \begin{itemize}
-    \item Instructs the compiler to just insert the function code in-place,
-      instead of calling the function.
-    \item Hence, no function call overhead!
-    \item Compilers can also do better---context-sensitive---operations they couldn't
-      have done before.
+    \item Locks' extents constitute their {\bf granularity}---do you lock large sections of your program with a big lock, or do you divide the locks and protect smaller sections?
   \end{itemize}
-  \vfill
-  No overhead\ldots~ sounds like better performance\ldots~ \\let's inline everything!
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Inlining in C++}
+  Concerns when using locks:
 
-  
-  Implicit inlining (defining a function inside a class definition):
-  \begin{lstlisting}
-class P {
-public:
-    int get_x() const { return x; }
-...
-private:
-    int x;
-};
-  \end{lstlisting}
-  \vfill
-Explicit inlining:
-  \begin{lstlisting}
-inline max(const int& x, const int& y) {
-    return x < y ? y : x;
-}
-  \end{lstlisting}
+  \begin{itemize}
+    \item overhead;
+    \item contention; and
+    \item deadlocks.
+  \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{The Other Side of Inlining}
+  \frametitle{Locking: Overhead}
 
   
 
-  One big downside:
+  Using a lock isn't free. You pay:
   \begin{itemize}
-    \item Your program size is going to increase.
+    \item allocated memory for the locks;
+    \item initialization and destruction time; and
+    \item acquisition and release time.
   \end{itemize}
-   This is worse than you think:
+
+  These costs scale with the number of locks that you have.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Locking: Contention}
+
+  
+    Most locking time is wasted waiting for the lock to become available.
+
+    How can we fix this?
       \begin{itemize}
-        \item Fewer cache hits.
-        \item More trips to memory.
+        \item Make the locking regions smaller (more granular);
+        \item Make more locks for independent sections.
       \end{itemize}
-   Some inlines can grow very rapidly (C++ extended constructors).\\[1em]
-  Just from this your performance may go down easily.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Compilers on Inlining}
+  \frametitle{Locking: Deadlocks}
 
   
+  The more locks you have, the more you have to worry about deadlocks.\\[1em]
 
-  Inlining is merely a suggestion to compilers.\\
-  They may ignore you.\\[1em]
+  Key condition: \\ 
+\qquad waiting for a lock held by process $X$ \\while holding
+a lock held by process $X'$. ($X = X'$ allowed).
+  
 
-  For example:
-n  \begin{itemize}
-    \item taking the address of an ``inline'' function and using it; or
-    \item virtual functions (in C++),
-  \end{itemize}
-  will get you ignored quite fast.
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Formal Deadlock Definition}
+
+The four conditions for deadlock are:
+
+\begin{enumerate}
+	\item \textbf{Mutual Exclusion}
+	\item \textbf{Hold-and-Wait}
+	\item \textbf{No Preemption}
+	\item \textbf{Circular-Wait}
+\end{enumerate}
+
+
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[containsverbatim]
+  \frametitle{Does this look familiar?}
+
+  
+     Consider two processors trying to get two {\it locks}:
+     
+     \vfill
+  \begin{columns}
+    \column{0.4\textwidth}
+      {\bf Thread 1}
+
+      \verb+Get Lock 1+
+
+      \verb+Get Lock 2+
+
+      \verb+Release Lock 2+
+
+      \verb+Release Lock 1+
+    \column{0.4\textwidth}
+      {\bf Thread 2}
+
+      \verb+Get Lock 2+
+
+      \verb+Get Lock 1+
+
+      \verb+Release Lock 1+
+
+      \verb+Release Lock 2+
+    \end{columns}~\\[1em]
+     Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops!
+          They both wait for each other \structure{(deadlock)}.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{From a Usability Point-of-View}
+  \frametitle{Key to Preventing Deadlock}
 
   
-  Debugging is more difficult (e.g. you can't set a breakpoint in a function that
-  doesn't actually exist).
+
+  Always be careful if \\
+your code {\bf acquires a lock while holding one}.\\[1em]
+
+  Here's how to prevent a deadlock:
+  
   \begin{itemize}
-    \item Most compilers simply won't inline code with debugging symbols on.
-    \item Some do, but typically it's more of a pain.
-  \end{itemize}~\\[1em]
-
-  Library design:
-  \begin{itemize}
-    \item If you change any inline function in your library, any users
-      of that library have to {\bf recompile} their program if the
-      library updates. (non-binary-compatible change!)
-  \end{itemize}
-  Not a problem for non-inlined functions---programs execute the new function
-      dynamically at runtime.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Introduction}
-
-  
-    So far, we've only seen C---we haven't seen anything 
-      complex.\\[1em]
-
-    C is low level, which is good for learning what's
-    really going on.\\[2em]
-
-    Writing compact, readable code in C is hard. \\ Common C sights:
-      \begin{itemize}
-        \item {\bf \#define macros}
-        \item {\bf void*}
-      \end{itemize}
-    C++11 has made major strides towards readability and efficiency
-      (it provides light-weight abstractions).
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\section{Sorting}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Goal}
-
-
-  
-  Sort a bunch of integers.\\[1em]
-  In {\bf C}, usually use qsort from {\tt stdlib.h}.
-
-  \begin{lstlisting}
-void qsort (void* base, size_t num, size_t size,
-            int (*comparator) (const void*, const void*));
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item A fairly ugly definition (as usual, for generic C functions)
+    \item Ensure consistent ordering in acquiring locks; or
+    \item Use {\tt trylock}.
   \end{itemize}
   
 \end{frame}
@@ -492,259 +371,167 @@ void qsort (void* base, size_t num, size_t size,
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{How ugly? {\tt qsort} usage}
+  \frametitle{Preventing Deadlocks---Ensuring Consistent Ordering}
 
   
   \begin{lstlisting}
-#include <stdlib.h>
-
-int compare(const void* a, const void* b)
-{
-    return (*((int*)a) - *((int*)b));
+void f1() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
 }
 
-int main(int argc, char* argv[])
-{
-    int array[] = {4, 3, 5, 2, 1};
-    qsort(array, 5, sizeof(int), compare);
+void f2() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
 }
   \end{lstlisting}
 
-  \begin{itemize}
-    \item This looks like a nightmare, and is more likely to have bugs.
-  \end{itemize}
+     This code will not deadlock: you can only get {\bf l2} if you have
+      {\bf l1}.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{C++ {\tt sort}}
 
-  
-  C++ has a sort with a much nicer interface\footnote{\ldots nicer to use, after you get over templates (they're useful, I swear).}$\ldots$
 
-  \begin{lstlisting}
-template <class RandomAccessIterator>
-void sort (
-    RandomAccessIterator first,
-    RandomAccessIterator last
-);
+\begin{frame}
+\frametitle{Formal Lock Ordering}
 
-template <class RandomAccessIterator, class Compare>
-void sort (
-    RandomAccessIterator first,
-    RandomAccessIterator last,
-    Compare comp
-);
-  \end{lstlisting}
-  
+
+If the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$:
+
+Assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. 
+
+This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. 
+
+If the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). 
+
+To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. 
+
+If these two protocols are followed, then a circular-wait condition cannot hold.
+
+
+
 \end{frame}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{C++ {\tt sort} Usage}
+  \frametitle{Preventing Deadlocks---Using {\tt trylock}}
 
   
-  \begin{lstlisting}
-#include <vector>
-#include <algorithm>
+  Recall: Pthreads' {\tt trylock} returns 0 if it gets the lock.
 
-int main(int argc, char* argv[])
-{
-    std::vector<int> v = {4, 3, 5, 2, 1};
-    std::sort(v.begin(), v.end());
+  \begin{lstlisting}
+void f1() {
+    lock(&l1);
+    while (trylock(&l2) != 0) {
+        unlock(&l1);
+        // wait
+        lock(&l1);
+    }
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
 }
   \end{lstlisting}
-  \vfill
 
-  {\bf Note:} Your compare function can be a function or a functor. \\By~default,
-  {\tt sort} uses {\tt operator$<$} on the objects being sorted.
+    This code also won't deadlock: it will give up {\bf l1} if it can't get
+    {\bf l2}.\\[1em]
 
-  \begin{itemize}
-    \item Which is less error prone?
-    \item Which is {\bf faster}?
-  \end{itemize}
+    (BTW: trylocks also enable measuring lock contention.)
+
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Timing Various Sorts}
-
-  
-  \begin{center}
-    [Shown: actual runtimes of {\tt qsort} vs {\tt sort}]\\[1em]
-  \end{center}
-
-     The C++ version is {\bf twice} as fast. Why?
-      \begin{itemize}
-        \item The C version just operates on memory---it has no clue about the
-          data.
-        \item We're throwing away useful information about what's being sorted.
-        \item A C function-pointer call prevents inlining of the compare function.
-      \end{itemize}
-     OK. What if we write our own sort in C, specialized for the data?
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Custom Sort}
-
+  \frametitle{Coarse-Grained Locking (1)}
 
   \begin{center}
-    [Shown: actual runtimes of custom sort vs {\tt sort}]
-  \end{center}
+    \includegraphics[scale=0.5]{images/lock-all-the-things}
 
-  \begin{itemize}
-    \item The C++ version is still faster (although it's close).
-    \item However, this is quickly going to become a maintainability nightmare.
-      \begin{itemize}
-        \item Would you rather read a custom sort or 1 line?
-        \item What (who) do you trust more?
-      \end{itemize}
-  \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Lesson}
-  
-\Huge
-    Abstractions will not make your program slower. \\[1em]
-
-    They 
-      allow speedups and are much easier to maintain and read.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Lecture Fun}
-
-  \begin{center}
-\Large
-    Let's throw Java-style programming (or at least collections) into the mix and see what happens.
+    (with one lock)
   \end{center}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\section{Vectors vs. Lists}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Vectors vs. Lists: Problem}
-  
-  
-
-    1. Generate {\bf N} random integers and insert them into (sorted)
-      sequence.
-      
-  
-
-      {\bf Example:} 3 4 2 1
-      
-      \begin{itemize}
-        \item 3
-        \item 3 4
-        \item 2 3 4
-        \item 1 2 3 4
-      \end{itemize}
-  
-
-    2. Remove {\bf N} elements one at a time by going to a random position
-      and removing the element.
+  \frametitle{Coarse-Grained Locking (2)}
 
   
-      {\bf Example:} 2 0 1 0
-      
-      \begin{itemize}
-        \item 1 2 4
-        \item 2 4
-        \item 2
-        \item 
-      \end{itemize}
-  
-  For which {\bf N} is it better to use a list than a vector (or array)?
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Complexity}
+  {\bf Advantages:}
   
   \begin{itemize}
-    \item {\bf Vector}
-      \begin{itemize}
-        \item Inserting
-          \begin{itemize}
-            \item $O(\log n)$ for binary search
-            \item $O(n)$ for insertion (on average, move half the elements)
-          \end{itemize}
-        \item Removing
-          \begin{itemize}
-            \item $O(1)$ for accessing
-            \item $O(n)$ for deletion (on average, move half the elements)
-          \end{itemize}
-      \end{itemize}
-
-    \item {\bf List}
-      \begin{itemize}
-        \item Inserting
-          \begin{itemize}
-            \item $O(n)$ for linear search
-            \item $O(1)$ for insertion
-          \end{itemize}
-        \item Removing
-          \begin{itemize}
-            \item $O(n)$ for accessing
-            \item $O(1)$ for deletion
-          \end{itemize}
-      \end{itemize}
+    \item Easier to implement;
+    \item No chance of deadlocking;
+    \item Lowest memory usage / setup time.
   \end{itemize}
   \vfill
-  Therefore, based on their complexity, lists should be better.
+  {\bf Disadvantages:}
+  \begin{itemize}
+    \item Your parallel program can quickly become sequential.
+  \end{itemize}
+  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Reality}
+  \frametitle{Coarse-Grained Locking Example---Python GIL}
+
   
+  This is the main reason (most) scripting languages have poor parallel
+  performance; Python's just an example.
+
+  \begin{itemize}
+    \item Python puts a lock around the whole interpreter\\ \quad (global interpreter lock).
+
+    \item Only performance benefit you'll see from threading is if a thread is
+      waiting for IO.
+
+    \item Any non-I/O-bound threaded program will be {\bf slower} than the sequential
+      version (plus, it'll slow down your system).
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Fine-Grained Locking (1)}
+
   \begin{center}
-    [Shown: actual runtimes of vectors and lists]
+    \includegraphics[scale=0.5]{images/lock-all-the-things}
+
+    (with all different locks)
   \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Fine-Grained Locking (2)}
 
   
-  {\bf Vectors} dominate lists, performance wise. Why?
-  \vfill
+  {\bf Advantages:}
+  
   \begin{itemize}
-    \item Binary search vs. linear search complexity dominates.
-    \vfill
-    \item Lists use far more memory.
-
-      {\bf On 64 bit machines:}
-      \begin{itemize}
-        \item Vector: 4 bytes per element.
-        \item List: At least 20 bytes per element.
-      \end{itemize}
-    \vfill
-    \item Memory access is slow, and results arrive in blocks:
-      \begin{itemize}
-        \item Lists' elements are all over memory, hence many
-          cache misses.
-        \item A cache miss for a vector will bring a lot more usable data.
-      \end{itemize}
+    \item Maximizes parallelization in your program.
+  \end{itemize}
+  \vfill
+  {\bf Disadvantages}
+  \begin{itemize}
+    \item May be mostly wasted memory / setup time.
+    \item Prone to deadlocks.
+    \item Generally more error-prone (be sure you grab the right lock!)
   \end{itemize}
   
 \end{frame}
@@ -752,62 +539,39 @@ int main(int argc, char* argv[])
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Performance Tips: Bullets}
+  \frametitle{Fine-Grained Locking Examples}
 
   
-  \begin{itemize}
-    \item Don't store unnecessary data in your program.
-    \vfill
-    \item Keep your data as compact as possible.
-    \vfill
-    \item Access memory in a predictable manner.
-    \vfill
-    \item Use vectors instead of lists by default.
-    \vfill
-    \item Programming abstractly can save a lot of time.
-  \end{itemize}
+    The Linux kernel used to have {\bf one big lock}\\ that essentially made
+      the kernel sequential. 
+    \begin{itemize}
+      \item (worked fine for single-processor systems!)
+    \end{itemize}
+    Now uses finer-grained locks for performance.\\[2em]
+
+    Databases may lock fields / records / tables.\\
+    \qquad  (fine-grained $\rightarrow$ coarse-grained).\\[1em]
+
+    Can lock individual objects.
   
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 
 \section{}
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Summary (Reentrancy)}
-
-
-  \begin{itemize}
-    \item Reentrancy vs thread-safety.
-    \item Inlining: limit your inlining to trivial functions:
-      \begin{itemize}
-        \item makes debugging easier and improves usability;
-        \item won't slow down your program before you even start optimizing it.
-      \end{itemize}
-    \item Tell the compiler high-level information but think low-level.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Programming for Performance with the Compiler}
+  \frametitle{Summary}
 
   
+ C++11 memory model.\\
+ 
+ Good increment practice. \\
 
-  \begin{itemize}
-    \item Often, telling the compiler more gives you better code.
-    \vfill
-    \item Data structures can be critical, sometimes more than complexity.
-    \vfill
-    \item {\bf Low-level code != Efficient}.
-    \vfill
-    \item Think at a low level if you need to optimize anything.
-    \vfill
-    \item Readable code is good code---\\ different hardware needs different
-      optimizations.
-  \end{itemize}
+ Lock granularity.
+
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

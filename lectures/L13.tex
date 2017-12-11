@@ -21,7 +21,7 @@ the OpenMP model and why it's a problem.
 
 \paragraph{Memory Model Pitfall.} Consider this code.
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
                     a = b = 0
 /* thread 1 */                      /* thread 2 */
 
@@ -30,7 +30,7 @@ atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
 if (tmp == 0) then                  if (tmp == 0) then
     // protected section                // protected section
 end if                              end if
-  \end{verbatim}
+  \end{lstlisting}
 
 Does this code actually prevent simultaneous execution?
 Let's reason about possible states.
@@ -90,7 +90,7 @@ must run statements in this order:
   \end{enumerate}
 
 Let's revise the example again.
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
                     a = b = 0
 /* thread 1 */                      /* thread 2 */
 
@@ -101,7 +101,7 @@ atomic(tmp = a)                     atomic(tmp = b)
 if (tmp == 0) then                  if (tmp == 0) then
     // protected section                // protected section
 end if                              end if
-  \end{verbatim}
+  \end{lstlisting}
 
 OK. Will this now prevent simultaneous access?
 
@@ -113,7 +113,7 @@ protected section, we will not get our intended operation.
 
 \paragraph{Correct Example.} We have to provide a list of variables
 to {\tt flush} to prevent re-ordering:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
                     a = b = 0
 /* thread 1 */                      /* thread 2 */
 
@@ -123,7 +123,7 @@ atomic(tmp = a)                     atomic(tmp = b)
 if (tmp == 0) then                  if (tmp == 0) then
     // protected section                // protected section
 end if                              end if
-  \end{verbatim}
+  \end{lstlisting}
 
 \paragraph{Where There's No Implicit Flush:}
   \begin{itemize}
@@ -176,7 +176,7 @@ Generates a task for a thread in the team to run.
     Included tasks are undeferred and also execute immediately in the same thread.
 
 Let's look at some examples of these clauses.
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 void foo () {
     int i;
     #pragma omp task if(0) // This task is undeferred
@@ -199,7 +199,7 @@ void foo () {
         }
     }
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 \paragraph{{\tt untied} and {\tt mergeable} Clauses.}
 
@@ -226,7 +226,7 @@ void foo () {
 
 \paragraph{Bad {\tt mergeable} Example.}
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 #include <stdio.h>
 void foo () {
     int x = 2;
@@ -237,7 +237,7 @@ void foo () {
     #pragma omp taskwait
     printf("%d\n",x); // prints 2 or 3
 }
-  \end{verbatim}
+  \end{lstlisting}
   
     This is an incorrect usage of {\bf mergeable}: the output depends
       on whether or not the task got merged.
@@ -253,7 +253,7 @@ This directive specifies that the current task can be suspended in favour of ano
 
   Here's a good use of {\bf taskyield}.
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 void foo (omp_lock_t * lock, int n) {
     int i;
     for ( i = 0; i < n; i++ )
@@ -267,7 +267,7 @@ void foo (omp_lock_t * lock, int n) {
         omp_unset_lock(lock);
     }
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 \paragraph{Taskwait.}
   \begin{center}
@@ -281,7 +281,7 @@ We are next going to look at a sequence of examples showing
 how to use OpenMP.
 
 \paragraph{Tree Traversal.}
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 struct node {
     struct node *left;
     struct node *right;
@@ -301,7 +301,7 @@ void traverse(struct node *p) {
     }
     process(p);
 }    
-  \end{verbatim}
+  \end{lstlisting}
 
 If we want to guarantee a post-order traversal,
 we simply need to insert an explicit \verb+#pragma omp taskwait+
@@ -313,7 +313,7 @@ call to {\tt process}.
 tasks to process linked list entries. It's hard to
 use two threads to traverse the list, though.
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 // node struct with data and pointer to next
 extern void process(node* p);
 
@@ -333,12 +333,12 @@ void increment_list_items(node* head) {
         }
     }
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 \paragraph{Using Lots of Tasks.} Let's see what happens
 if we spawn lots of tasks in a {\tt single} directive.
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 #define LARGE_NUMBER 10000000
 double item[LARGE_NUMBER];
 extern void process(double);
@@ -357,7 +357,7 @@ int main() {
         }
     }
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 In this case, the main loop generates tasks, which are all assigned to the executing thread as it becomes available (because of {\tt single}).
 When too many tasks get generated, OpenMP suspends the main thread, runs some tasks, then resumes the loop in the main thread.
@@ -375,7 +375,7 @@ Let's consider nesting of parallel constructs.
   \end{itemize}
 
 Here's something that OpenMP does allow:
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 void good_nesting(int n)
 {
     int i, j;
@@ -392,7 +392,7 @@ void good_nesting(int n)
         }
     }
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 \section*{Why Your Code is Slow}
 Code too slow? Want it to run faster? Avoid these pitfalls:
@@ -409,9 +409,9 @@ Code too slow? Want it to run faster? Avoid these pitfalls:
     \item Too many entries into critical sections.
   \end{enumerate}
 
-\paragraph{Example: Too Many Entries into Critical Sections.}
+\paragraph{Example: Too Many Entries into Critical Sections.}~
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 #pragma omp parallel for
 for (i = 0; i < N; ++i) { 
     #pragma omp critical
@@ -419,11 +419,11 @@ for (i = 0; i < N; ++i) {
         if (arr[i] > max) max = arr[i];
     } 
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 would be better as:
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 #pragma omp parallel for
 for (i = 0 ; i < N; ++i) { 
     #pragma omp flush(max)
@@ -434,7 +434,9 @@ for (i = 0 ; i < N; ++i) {
           }
     }
 }
-\end{verbatim}
+\end{lstlisting}
+
+
 \input{bibliography.tex}
 
 \end{document}
