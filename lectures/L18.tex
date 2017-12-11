@@ -2,297 +2,509 @@
 
 \begin{document}
 
-\lecture{18 --- Critical Paths, Data \& Task Parallelism}{\term}{Patrick Lam}
+\lecture{18 --- Reentrancy, Thread-Safety, Inlining, HLL}{\term}{Patrick Lam}
 
-\section*{Critical Paths}
-You should be familiar with the concept of a critical path from previous
-courses; it is the minimum amount of time to complete the task, taking
-dependencies into account, and without speculating.
+\section*{Reentrancy versus Thread-Safety}
+On a different note, we're going to discuss the distinction, in slightly more detail, between reentrant functions and thread-safe functions. There is overlap, but these terms are actually different.
 
-Consider the following diagram, which illustrates dependencies between
-tasks (shown on the arrows). 
-Note that B depends on A, and D depends on B and C, but C does
-not depend on anything, so it could be done in parallel with
-everything else. You can also compute expected execution times
-for different strategies.
+A function is \emph{reentrant} if it can be suspended in the middle
+and re-entered, or called again, before the previous execution
+returns.
+    
+Reentrant does not always mean {\bf thread-safe} (although it usually is).\
+Recall: {\bf thread-safe} is essentially ``no data races''. The distinction is moot if the function only modifies local data, e.g. {\tt sin()}.
+Those functions are both reentrant and thread-safe.
+
+\paragraph{Example.} Courtesy of Wikipedia (with modifications), here's a program (to the left) and its trace (to right):
 \begin{center}
-\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
-                    semithick,initial text=]
-  \node[initial,block] (s0) {Start};
-  \node[block] (s1) [right=of s0] {S1};
-  \node[block] (s2) [right=of s1] {S2};
-  \node[bw] (s3) [right=of s2] {Finish};
-
-  \path (s0) edge node {A} (s1)
-        (s1) edge node {B} (s2)
-        (s2) edge node {D} (s3)
-        (s0) edge[bend left=30] node {C} (s2);
-\end{tikzpicture}
-\end{center}
-
-\section*{Data and Task Parallelism}
-There are two broad categories of paralellism: data parallelism and
-task parallelism. An analogy to data parallelism is hiring a call
-center to (incompetently) handle large volumes of support calls,
-\emph{all in the same way}. Assembly lines are an analogy to task
-parallelism: each worker does a \emph{different} thing.
-
-More precisely, in data parallelism, multiple threads perform the
-\emph{same} operation on separate data items. For instance, you have a
-big array and want to double all of the elements. Assign part of the
-array to each thread. Each thread does the same thing: double array
-elements.
-
-In task parallelism, multiple threads perform \emph{different}
-operations on separate data items. So you might have a thread that
-renders frames and a thread that compresses frames and combines them
-into a single movie file.
-
-We'll continue by looking at a number of parallelization patterns,
-examples of how to apply them, and situations where they might apply.
-
-\subsection*{Data Parallelism with SIMD}
-The ``typical'' boring standard uniprocessor is Single Instruction Single Data (SISD) but since the mid-1980s we've had more options than that. We'll talk about single-instruction multiple-data (SIMD) later on in
-this course, but here's a quick look. Each SIMD
-instruction operates on an entire vector of data. These instructions
-originated with supercomputers in the 70s. More recently, GPUs; the
-x86 SSE instructions; the SPARC VIS instructions; and the
-Power/PowerPC AltiVec instructions all implement SIMD.
-
-\paragraph{Code.} Let's look at an application of SIMD instructions.
-
-\begin{verbatim}
-void vadd(double * restrict a, double * restrict b, int count) {
-  for (int i = 0; i < count; i++)
-    a[i] += b[i];
+\begin{tabular}{ll}
+\begin{minipage}{.5\textwidth}
+  \begin{lstlisting}[language=C]
+int t;
+ 
+void swap(int *x, int *y) {
+    t = *x;
+    *x = *y;
+    // interrupt might invoke isr() here!
+    *y = t;
 }
-\end{verbatim}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+\end{minipage}
+&
+\begin{minipage}{.4\textwidth}
+  \begin{lstlisting}
+call swap(&a, &b);
+ t = *x;                // t = 3 (a)
+ *x = *y;               // a = 4 (b)
+ call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    t = *x;             // t = 1 (x)
+    *x = *y;            // x = 2 (y)
+    *y = t;             // y = 1
+ *y = t;                // b = 1
 
-Compiling this without SIMD on a 32-bit x86 ({\tt gcc -m32 -march=i386 -S}) might give this:
-\begin{verbatim}
-loop:
-  fldl  (%edx)
-  faddl (%ecx)
-  fstpl (%edx)
-  addl  8, %edx
-  addl  8, %ecx
-  addl  1, %esi
-  cmp   %eax, %esi
-  jle   loop
-\end{verbatim}
+Final values:
+a = 4, b = 1
 
-We can instead compile to SIMD instructions ({\tt gcc -m32 -march=prescott -mfpmath=sse})
-and get something like this:
-\begin{verbatim}
-loop:
-  movupd (%edx),%xmm0
-  movupd (%ecx),%xmm1
-  addpd  %xmm1,%xmm0
-  movpd  %xmm0,(%edx)
-  addl   16,%edx
-  addl   16,%ecx
-  addl   2,%esi
-  cmp    %eax,%esi
-  jle    loop
-\end{verbatim}
-The \emph{packed} operations ({\tt p}) operate on multiple data
-elements at a time (what kind of parallelism is this?)
-The implication is that the loop only needs to loop half as many times.
-Also, the instructions themselves are more efficient, because they're
-not stack-based x87 instructions.
-
-SIMD is different from the other types of parallelization we're
-looking at, since there aren't multiple threads working at once.
-It is complementary to using threads, and good for cases
-where loops operate over vectors of data. These loops could also be
-parallelized; multicore chips can do both, achieving high throughput.
-SIMD instructions also work well on small data sets, where thread startup
-cost is too high, while registers are just there to use.
-
-
-\subsection*{Parallelization using Threads or Processes}
-We'll be looking at thread-based or process-based parallelization for the
-next bit. We don't care about the distinction between threads and processes
-for the moment. In fact, we could even distribute work over multiple systems.
-
-\paragraph{Pattern 1: Multiple Independent Tasks.} If you're just trying to maximize
-system utilization, you can use one system to run a number of independent
-tasks; for instance, you can put both a web server and database on
-one machine. If the web server happens to be memory-bound while the
-database is I/O-bound, then both can use system resources. If the web
-server isn't talking to the database (rare these days!), then the tasks
-would not get in each others' way.
-
-Most services probably ought to be run under virtualization these
-days, unless they're trivial or not mission-critical.
-
-A more relevant example of multiple independent tasks occurs in
-cluster/grid/cloud computing: the cloud might run a number of
-independent tasks, and each node would run some of the tasks. The
-cloud can retry a task (on a different node, perhaps) if it fails on
-some node. Note that the performance ought to increase linearly with
-the number of threads, since there shouldn't be communication between
-the tasks.
-
-\paragraph{Pattern 2: Multiple Loosely-Coupled Tasks.} Some applications contain
-tasks which aren't quite independent (so there is some inter-task
-communication), but not much.  In this case, the tasks may be
-different from each other. The communication might be from the tasks
-to a controller or status monitor; it would usually be asynchronous or
-be limited to exceptional situations.
-
-Refactoring an application this way can help with latency: if you 
-split off the CPU-intensive computations into a sub-thread, then
-the main thread can respond to user input more quickly.
-
-Here's an example. Assume that an application needs to receive and
-forward network packets, and also must log packet activity to disk.
-Then the two tasks are clear: receive/forward, and log. Since logging
-to disk is a high-latency event, a single-threaded application might
-incur latency while writing to disk. Splitting into subtasks allows
-the receive/forward to run without waiting for previous packets to be
-logged, thus increasing the throughput of the system.
-
-\paragraph{Pattern 3: Multiple Copies of the Same Task.} A common variant of
-multiple independent tasks is multiple copies of the same task
-(presumably on different data). In this case, we'd require there to be
-no communication between the different copies, which would enable
-linear speedup. An example is a rendering application running on
-multiple distinct animations. We gain throughput, but need to wait
-just as long for each task to complete.
-
-\paragraph{Pattern 4: Single Task, Multiple Threads.} This is the classic
-vision of ``parallelization'': for instance, distribute array
-processing over multiple threads, and let each thread compute the
-results for a subset of the array.
-
-This pattern, unlike many of the others before it, can actually
-decrease the time needed to complete a unit of work, since it gets
-multiple threads involved in doing the single unit simultaneously.
-The result is improved latency and therefore increased throughput.
-Communication can be a problem, if the data is not nicely
-array-structured, or has dependencies between different array parts.
-
-Other names and variations for this pattern include ``fork-join'',
-where the main process forks its execution and gives work to all of
-the threads, with the join synchronizing threads and combining the
-results; and ``divide-and-conquer'', where a thread spawns subthreads
-to compute smaller and smaller parts of the solution.
-
-\paragraph{Pattern 5: Pipeline of Tasks.} We've seen pipelining in the context of
-computer architecture. It can also work for software. For instance,
-you can use pipelining for packet-handling software, where multiple
-threads, as above, might confound the order. If you use a three-stage
-pipeline, then you can have three packets in-flight at the same time,
-and you can improve throughput by a factor of 3 (given appropriate
-hardware).  Latency would tend to remain the same or be worse (due to
-communication overhead).
-
-Some notes and variations on the pipeline: 1) if a stage is
-particularly slow, then it can limit the performance of the entire
-pipeline, if all of the work has to go through that stage; and 2) you
-can duplicate pipeline stages, if you know that a particular stage is
-going to be the bottleneck.
-
-\paragraph{Pattern 6: Client-Server.} Botnets work this way (as does \verb+SETI@Home+,
-etc). To execute some large computation, a server is ready to tell
-clients what to do.  Clients ask the server for some work, and the
-server gives work to the clients, who report back the results. Note
-that the server doesn't need to know the identity of the clients for
-this to work.
-
-A single-machine example is a GUI application where the server part
-does the backend, while the client part contains the user interface.
-One could imagine symbolic algebra software being designed that way.
-Window redraws are an obvious candidate for tasks to run on clients.
-
-Note that the single server can arbitrate access to shared resources.
-For instance, the clients might all need to perform network access.
-The server can store all of the requests and send them out in an
-orderly fashion.
-
-The client-server pattern enables different threads to share work
-which can somehow be parcelled up, potentially improving
-throughput. Typically, the parallelism is somewhere between single
-task, multiple threads and multiple loosely-coupled tasks. It's also a
-design pattern that's easy to reason about.
-
-\paragraph{Pattern 7: Producer-Consumer.} The producer-consumer is 
-a variant on the pipeline and client-server models. In this case, the
-producer generates work, and the consumer performs work. An example is
-a producer which generates rendered frames, and a consumer which
-orders these frames and writes them to disk. There can be any number
-of producers and consumers. This approach can improve throughput
-and also reduces design complexity.
-
-\paragraph{Combining Strategies.} If one of the patterns suffices,
-then you're done. Otherwise, you may need to combine strategies.
-For instance, you might often start with a pipeline, and then 
-use multiple threads in a particular pipeline stage to handle one
-piece of data. Or, as I alluded to earlier, you can replicate
-pipeline stages to handle different data items simultaneously.
-
-Note also that you can get synergies between different patterns.
-For instance, consider a task which takes 100 seconds. First, you
-take 80 seconds and parallelize it 4 ways (so, 20 seconds). This
-reduces the runtime to 40 seconds. Then, you can take the serial 
-20 seconds and split it into two threads. This further reduces 
-runtime to 30 seconds. You get a $2.5\times$ speedup from the
-first transformation and $1.3\times$ from the second, if you do it
-after the first. But, if you only did the second parallelization,
-you'd only get a $1.1\times$ speedup.
-
-\subsection*{How to Parallelize Code}
-Here's a four-step outline of what you need to do.
-\begin{enumerate}
-\item Profile the code.
-\item Find dependencies in hotspots. For each dependency chain in
-a hotspot, figure out if you can execute the chain as
-multiple parallel tasks or a loop over multiple parallel iterations.
-Think about changing the algorithm, if that would help.
-\item Estimate benefits. 
-\item If they're not good enough (e.g. far from linear speedup),
-step back and see if you can parallelize something else up the
-call chain, or at a higher level of absraction.
-(Think Mandelbrot sets and computing different points in parallel).
-\end{enumerate}
-Try to reduce the amuont of synchronization that you have to do
-(waiting for parallel tasks to finish), because that always slows
-you down.
-
-\section*{Thread Pools} We talked about ``single task, multiple threads''
-last week. The idea behind a \emph{thread pool} is that it's relatively
-expensive to start a thread; it costs resources to keep the threads
-running at the operating system level; and the threads won't run
-optimally anyway, because they'll spend too much time swapping state
-in and out of the cache.  Instead, you start an appropriate number of
-threads, which each grab work from a work queue, do the work,
-and report the results back. Web servers are a good application of
-thread pools\footnote{Apache does this: \url{http://httpd.apache.org/docs/2.0/mod/worker.html}. Also see an assignment where the students write thread-pooled web servers: \url{http://www.cse.nd.edu/~dthain/courses/cse30341/spring2009/project4/project4.html}.}.
-
-A key question is: how many threads should you create?  This depends
-on which resources your threads use; if you are writing
-computationally-intensive threads, then you probably want to have
-fewer threads than the number of virtual CPUs. You can also use
-Amdahl's Law to estimate the maximum useful number of threads, as
-discussed previously.
-
-Here's a longer discussion of thread pools:
-
-\begin{center}
-\url{http://www.ibm.com/developerworks/library/j-jtp0730.html}
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+\end{minipage}
+\end{tabular}
 \end{center}
 
-Modern languages provide thread pools; Java's
-\url{java.util.concurrent.ThreadPoolExecutor}~\cite{java:threadpoolexecutor}, C\#'s
-\url{System.Threading.ThreadPool}~\cite{csharp:threadpool}, and GLib's {\tt GThreadPool}~\cite{gnome:threadpool} all implement thread pools. 
 
-\paragraph{GLib.} 
-GLib is a C library developed by the GTK team. It provides many useful
-features that you might otherwise have to implement yourself in C.
-Consider using GLib's thread pool in your assignment 2, unless you
-want to implement the work queue yourself.  (I see no reason to do
-that!)
+We can fix the example by storing the global variable in stack variable
+{\tt s}, as follows.
+\begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.5\textwidth}
+  \begin{lstlisting}[escapechar=@,language=C]
+int t;
+ 
+void swap(int *x, int *y) {
+    int s;
+ 
+    @{\bf s = t}@;  // save global variable
+    t = *x;
+    *x = *y;
+    // interrupt might invoke isr() here!
+    *y = t;
+    @{\bf t = s}@;  // restore global variable
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+\end{minipage} &
+\begin{minipage}{.5\textwidth}
+  \begin{lstlisting}
+call swap(&a, &b);
+s = t;                 // s = UNDEFINED
+t = *x;                // t = 3 (a)
+*x = *y;               // a = 4 (b)
+call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    s = t;             // s = 3
+    t = *x;            // t = 1 (x)
+    *x = *y;           // x = 2 (y)
+    *y = t;            // y = 1
+    t = s;             // t = 3
+*y = t;                // b = 3
+t = s;                 // t = UNDEFINED
+
+Final values:
+a = 4, b = 3
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+\end{minipage}
+\end{tabular}
+\end{center}
+
+The obvious question: is the previous reentrant code also thread-safe?
+(This is more what we're concerned about in this course.)
+
+  Let's see. Consider two calls to the reentrant swap:\\ \verb+    swap(a, b)+, {\tt swap(c, d)} with {\tt a = 1, b = 2, c = 3, d = 4}.
+
+  \begin{lstlisting}
+    global: t
+
+    /* thread 1 */                       /* thread 2 */
+    a = 1, b = 2;
+    s = t;    // s = UNDEFINED
+    t = a;    // t = 1
+                                         c = 3, d = 4;
+                                         s = t;    // s = 1
+                                         t = c;    // t = 3
+                                         c = d;    // c = 4
+                                         d = t;    // d = 3
+    a = b;    // a = 2
+    b = t;    // b = 3
+    t = s;    // t = UNDEFINED
+                                         t = s;    // t = 1
+
+    Final values:
+    a = 2, b = 3, c = 4, d = 3, t = 1
+
+    Expected values:
+    a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
+  \end{lstlisting}
+
+To recap what we know so far: re-entrant does not always mean thread-safe. (But, for most sane implementations, reentrant is also thread-safe.)
+
+But, are {\bf thread-safe} functions reentrant?
+Nope! Consider:
+
+  \begin{lstlisting}[language=C]
+int f() {
+    lock();
+    // protected code
+    unlock();
+}
+  \end{lstlisting}
+
+Recall:  Reentrant functions can be suspended in the middle of execution
+    and called again before the previous execution completes.
+
+{\tt f()} obviously isn't reentrant. Plus, it will deadlock\footnote{I'm talking about lock implementations which don't maintain a lock counter; you can request Java locks multiple times in the same thread and everything will be fine, but not pthreads locks.}.
+
+Interrupt handling is more for systems programming, so the topic of reentrancy may or may not come
+up again.
+
+To sum up, here's the difference between reentrant and thread-safe functions:
+
+  {\bf Reentrancy.}
+  \begin{itemize}
+    \item Has nothing to do with threads---assumes a {\bf single thread}.
+    \item Reentrant means the execution can context switch at any point in
+      in a function, call the {\bf same function}, and {\bf complete} before
+      returning to the original function call.
+    \item Function's result does not depend on where the context switch happens.
+  \end{itemize}
+
+  {\bf Thread-safety.}
+  \begin{itemize}
+    \item Result does not depend on any interleaving of threads from
+      concurrency or parallelism.
+    \item No unexpected results from multiple concurrent executions of the function.
+  \end{itemize}
+
+If it helps, here's another definition of thread-safety.
+\begin{quote}
+  ``A function whose effect, when called by two or more threads, is guaranteed to
+  be as if the threads each executed the function one after another, in an
+  undefined order, even if the actual execution is interleaved.''
+\end{quote}
+
+\paragraph{Good Example of an Exam Question.} Consider the following function.
+
+  \begin{lstlisting}[language=C]
+void swap(int *x, int *y) {
+    int t;
+    t = *x;
+    *x = *y;
+    *y = t;
+}  
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item Is the above code thread-safe?
+    \item Write some expected results for running two calls in parallel.
+    \item Argue these expected results always hold, or show an example where
+      they do not.
+  \end{itemize}
+
+\section*{Good Programming Practices: Inlining}
+We have seen the notion of inlining:
+  \begin{itemize}
+    \item Instructs the compiler to just insert the function code in-place,
+      instead of calling the function.
+    \item Hence, no function call overhead!
+    \item Compilers can also do better---context-sensitive---operations they couldn't
+      have done before.
+  \end{itemize}
+
+OK, so inlining removes overhead. Sounds like better performance! Let's inline everything!
+There are two ways of inlining in C++.
+
+\paragraph{Implicit inlining.} (defining a function inside a class definition):
+  \begin{lstlisting}[language=C]
+class P {
+public:
+    int get_x() const { return x; }
+...
+private:
+    int x;
+};
+  \end{lstlisting}
+
+\paragraph{Explicit inlining.} Or, we can be explicit:
+  \begin{lstlisting}[language=C]
+inline max(const int& x, const int& y) {
+    return x < y ? y : x;
+}
+  \end{lstlisting}
+
+\paragraph{The Other Side of Inlining.}
+Inlining has one big downside:
+  \begin{itemize}
+    \item Your program size is going to increase.
+  \end{itemize}
+   This is worse than you think:
+      \begin{itemize}
+        \item Fewer cache hits.
+        \item More trips to memory.
+      \end{itemize}
+   Some inlines can grow very rapidly (C++ extended constructors).
+  Just from this your performance may go down easily.
+
+  Note also that inlining is merely a suggestion to compilers~\cite{gcc:inlining}.
+  They may ignore you.
+  For example:
+  \begin{itemize}
+    \item taking the address of an ``inline'' function and using it; or
+    \item virtual functions (in C++),
+  \end{itemize}
+  will get you ignored quite fast.
+
+\paragraph{Implications of inlining.} Inlining can make your life worse in two ways.
+First, debugging is more difficult (e.g. you can't set a breakpoint in a function that
+  doesn't actually exist).
+ Most compilers simply won't inline code with debugging symbols on.
+ Some do, but typically it's more of a pain.
+
+Second, it can be a problem for library design:
+  \begin{itemize}
+    \item If you change any inline function in your library, any users
+      of that library have to {\bf recompile} their program if the
+      library updates. (Congratulations, you made a non-binary-compatible change!)
+  \end{itemize}
+This would not be a problem for non-inlined functions---programs execute the new function
+dynamically at runtime.
+
+\section*{High-Level Language Performance Tweaks}
+So far, we've only seen C---we haven't seen anything complex, and C is
+low level, which is good for learning what's really going on.
+
+ Writing compact, readable code in C is hard, especially when \#define
+macros and {\tt void *} beckon.
+
+    C++11 has made major strides towards readability and
+    efficiency---it provides light-weight abstractions. We'll look at
+    a couple of examples.
+
+\paragraph{Sorting.} Our goal is simple: we'd like to sort a bunch of integers.
+In C, you would usually just use qsort from {\tt stdlib.h}.
+
+  \begin{lstlisting}
+void qsort (void* base, size_t num, size_t size,
+            int (*comparator) (const void*, const void*));
+  \end{lstlisting}
+
+This is a fairly ugly definition (as usual, for generic C functions). How ugly is it?
+Let's look at a usage example.
+  \begin{lstlisting}[language=C]
+#include <stdlib.h>
+
+int compare(const void* a, const void* b)
+{
+    return (*((int*)a) - *((int*)b));
+}
+
+int main(int argc, char* argv[])
+{
+    int array[] = {4, 3, 5, 2, 1};
+    qsort(array, 5, sizeof(int), compare);
+}
+  \end{lstlisting}
+This looks like a nightmare, and is more likely to have bugs than what we'll see next.
+
+
+C++ has a sort with a much nicer interface\footnote{\ldots well, nicer to use, after you get over templates.}:
+
+  \begin{lstlisting}[language=C++]
+template <class RandomAccessIterator>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last
+);
+
+template <class RandomAccessIterator, class Compare>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last,
+    Compare comp
+);
+  \end{lstlisting}
+It is, in fact, easier to use:
+  \begin{lstlisting}[language=C++]
+#include <vector>
+#include <algorithm>
+
+int main(int argc, char* argv[])
+{
+    std::vector<int> v = {4, 3, 5, 2, 1};
+    std::sort(v.begin(), v.end());
+}
+  \end{lstlisting}
+
+{\bf Note:} Your compare function can be a function or a functor. (Don't know what functors
+are? In C++, they're functions with state.) By default,
+  {\tt sort} uses {\tt operator$<$} on the objects being sorted.
+
+  \begin{itemize}
+    \item Which is less error prone?
+    \item Which is {\bf faster}?
+  \end{itemize}
+
+The second question is empirical. Let's see. We generate an array of 2 million ints
+and sort it (10 times, taking the average).
+
+\begin{itemize}
+\item qsort: 0.49 seconds
+\item C++ sort: 0.21 seconds
+\end{itemize}
+
+The C++ version is {\bf twice} as fast. Why?
+      \begin{itemize}
+        \item The C version just operates on memory---it has no clue about the
+          data.
+        \item We're throwing away useful information about what's being sorted.
+        \item A C function-pointer call prevents inlining of the compare function.
+      \end{itemize}
+OK. What if we write our own sort in C, specialized for the data?
+
+\begin{itemize}
+\item Custom C sort: 0.29 seconds
+\end{itemize}
+
+Now the C++ version is still faster (but it's close). But, this is
+quickly going to become a maintainability nightmare.
+      \begin{itemize}
+        \item Would you rather read a custom sort or 1 line?
+        \item What (who) do you trust more?
+      \end{itemize}
+
+\subsection*{Lesson}
+Abstractions will not make your program slower. 
+
+\noindent
+They allow speedups and are much easier to maintain and read.
+
+\subsection*{Vectors vs Lists}
+Consider two
+problems.
+
+\begin{enumerate}
+\item Generate {\bf N} random integers and insert them into (sorted)
+      sequence.
+      
+      {\bf Example:} 3 4 2 1
+      
+      \begin{itemize}
+        \item 3
+        \item 3 4
+        \item 2 3 4
+        \item 1 2 3 4
+      \end{itemize}
+
+\item Remove {\bf N} elements one-at-a-time by going to a random position
+      and removing the element.
+
+      {\bf Example:} 2 0 1 0
+      
+      \begin{itemize}
+        \item 1 2 4
+        \item 2 4
+        \item 2
+        \item 
+      \end{itemize}
+\end{enumerate}
+
+For which {\bf N} is it better to use a list than a vector (or array)?
+
+ 
+\paragraph{Complexity analysis.} As good computer scientists, let's analyze
+the complexity.  
+
+{\bf Vector}:\\[-2em]
+      \begin{itemize}
+        \item Inserting\\[-2em]
+          \begin{itemize}
+            \item $O(\log n)$ for binary search
+            \item $O(n)$ for insertion (on average, move half the elements)
+          \end{itemize}
+        \item Removing\\[-2em]
+          \begin{itemize}
+            \item $O(1)$ for accessing
+            \item $O(n)$ for deletion (on average, move half the elements)
+          \end{itemize}
+      \end{itemize}
+
+{\bf List}:\\[-2em]
+      \begin{itemize}
+        \item Inserting\\[-2em]
+          \begin{itemize}
+            \item $O(n)$ for linear search
+            \item $O(1)$ for insertion
+          \end{itemize}
+        \item Removing\\[-2em]
+          \begin{itemize}
+            \item $O(n)$ for accessing
+            \item $O(1)$ for deletion
+          \end{itemize}
+      \end{itemize}
+
+Therefore, based on their complexity, lists should be better.
+
+\paragraph{Reality.} OK, here's what happens. 
+\begin{verbatim}
+$ ./vector_vs_list 50000
+Test 1
+======
+vector: insert 0.1s   remove 0.1s   total 0.2s
+list:   insert 19.44s   remove 5.93s   total 25.37s
+Test 2
+======
+vector: insert 0.11s   remove 0.11s   total 0.22s
+list:   insert 19.7s   remove 5.93s   total 25.63s
+Test 3
+======
+vector: insert 0.11s   remove 0.1s   total 0.21s
+list:   insert 19.59s   remove 5.9s   total 25.49s
+\end{verbatim}
+
+{\bf Vectors} dominate lists, performance wise. Why?
+  \begin{itemize}
+    \item Binary search vs. linear search complexity dominates.
+    \item Lists use far more memory.
+      {\bf On 64 bit machines:}
+      \begin{itemize}
+        \item Vector: 4 bytes per element.
+        \item List: At least 20 bytes per element.
+      \end{itemize}
+    \item Memory access is slow, and results arrive in blocks:
+      \begin{itemize}
+        \item Lists' elements are all over memory, hence many
+          cache misses.
+        \item A cache miss for a vector will bring a lot more usable data.
+      \end{itemize}
+  \end{itemize}
+
+So, here are some tips for getting better performance.
+  \begin{itemize}
+    \item Don't store unnecessary data in your program.
+    \item Keep your data as compact as possible.
+    \item Access memory in a predictable manner.
+    \item Use vectors instead of lists by default.
+    \item Programming abstractly can save a lot of time.
+    \item Often, telling the compiler more gives you better code.
+    \item Data structures can be critical, sometimes more than complexity.
+    \item {\bf Low-level code != Efficient}.
+    \item Think at a low level if you need to optimize anything.
+    \item Readable code is good code---different hardware needs different
+      optimizations.
+  \end{itemize}
+
 
 \input{bibliography.tex}
 

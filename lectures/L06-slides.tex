@@ -1,4 +1,5 @@
 \input{configuration}
+\usepackage{multirow}
 
 \title{Lecture 6 --- Race Conditions \& Synchronization }
 
@@ -88,7 +89,7 @@ In other situations (e.g., processor design) these are sometimes referred to as 
 Race conditions typically arise between variables shared
 between threads.
 {\scriptsize
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
@@ -116,7 +117,7 @@ int main(int argc, char *argv[])
     free(x);
     return EXIT_SUCCESS;
 }
-\end{verbatim}
+\end{lstlisting}
 }
 
 \end{frame}
@@ -127,7 +128,7 @@ int main(int argc, char *argv[])
 \frametitle{It's a Kind of Hazard II}
 
 {\scriptsize
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int main(int argc, char *argv[])
 {
     int* x = malloc(sizeof(int));
@@ -141,7 +142,7 @@ int main(int argc, char *argv[])
     free(x);
     return EXIT_SUCCESS;
 }
-\end{verbatim}
+\end{lstlisting}
 }
 
 Now do we have a race?
@@ -157,12 +158,12 @@ What are the possible outputs? (Assume that initially {\tt *x} is 1.)
 We'll look at compiler intermediate code (three-address code) to tell.
 
 \hspace*{.2\textwidth}\begin{minipage}{.8\textwidth}
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 run1                          run2   
 D.1 = *x;                     D.1 = *x;
 D.2 = D.1 + 1;                D.2 = D.1 + 2
 *x = D.2;                     *x = D.2;
-  \end{verbatim}
+  \end{lstlisting}
 \end{minipage}
 
 Memory reads and writes are key in data~races.
@@ -192,6 +193,116 @@ R2 & R1 & W1 & W2 & 3 \\
 
 \end{frame}
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Read After Read (RAR)}
+
+Can we execute these 2 lines in parallel? (initially x is 2)
+\begin{lstlisting}
+y = x + 1
+z = x + 5
+\end{lstlisting}
+\pause
+\structure{Yes.}\\[1em]
+\begin{itemize}
+\item Variables y and z are independent.
+\item Variable x is only read.
+\end{itemize}
+
+RAR dependency allows parallelization.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Read After Write (RAW)}
+
+
+What about these 2 lines? (again, initially x is 2):
+\begin{lstlisting}
+x = 37
+z = x + 5
+\end{lstlisting}
+\pause
+\alert{No, z = 42 or z = 7.}\\[1em]
+
+RAW inhibits parallelization: can't change ordering.\\
+Also known as a \structure{true dependency}.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Write After Read (WAR)}
+
+What if we change the order now? (again, initially x is 2)
+\begin{lstlisting}
+z = x + 5
+x = 37
+\end{lstlisting}
+\pause
+\alert{No. Again, z = 42 or z = 7.}\\[1em]
+\begin{itemize}
+\item WAR is also known as a \structure{anti-dependency}.
+\item But, we can modify this code to enable parallelization.
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Removing Write After Read (WAR) Dependencies}
+
+Make a copy of the variable:
+\begin{lstlisting}
+x_copy = x
+z = x_copy + 5
+x = 37
+\end{lstlisting}
+\pause
+\structure{We can now run the last 2 lines in parallel.}
+\begin{itemize}
+\item Induced a true dependency (RAW) between first 2 lines.
+\item Isn't that bad?
+\end{itemize}
+\pause
+Not always:
+\begin{lstlisting}
+z = very_long_function(x) + 5
+x = very_long_calculation()
+\end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Write After Write (WAW)}
+
+Can we run these lines in parallel? (initially x is 2)
+\begin{lstlisting}
+z = x + 5
+z = x + 40
+\end{lstlisting}
+\pause
+\alert{Nope, z = 42 or z = 7}.\\[1em]
+\begin{itemize}
+\item WAW is also known as an \structure{output dependency}.
+\item We can remove this dependency (like WAR):
+\end{itemize}
+\pause
+\begin{lstlisting}
+z_copy = x + 5
+z = x + 40
+\end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}
@@ -206,7 +317,19 @@ mutual exclusion in Pthreads.
 
 \end{frame}
 
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+\frametitle{Summary of Memory-carried Dependencies}
+\begin{center}
+\begin{tabular}{ll|p{2.8cm}p{3.2cm}}
+& & \multicolumn{2}{c}{Second Access} \\ 
+&  & \bf Read & \bf Write \\ \hline
+\multirow{2}{*}{First Access} & \bf Read & No Dependency Read After Read (RAR)  & Anti-dependency Write After Read (WAR) \\[0.5em]
+& \bf Write & True Dependency Read After Write (RAW) & Output Dependency Write After Write (WAW) \\
+\end{tabular}
+\end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \begin{frame}
 \frametitle{Mutual Exclusion}
@@ -232,7 +355,7 @@ As a reminder:
       \begin{minipage}{.65\textwidth}
         {\bf PThreads}
 {\scriptsize
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 pthread_mutex_t m1_static = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t m2_dynamic;
 
@@ -240,14 +363,14 @@ pthread_mutex_init(&m2_dynamic, NULL);
 ...
 pthread_mutex_destroy(&m1_static);
 pthread_mutex_destroy(&m2_dynamic);
-  \end{verbatim}
+  \end{lstlisting}
   }
       \end{minipage}
       \begin{minipage}{.35\textwidth}
 
         {\bf C++11}
 {\scriptsize
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 mutex m1;
 mutex * m2;
 
@@ -255,7 +378,7 @@ m2 = new mutex();
 // ...
 
 delete (m2);
-  \end{verbatim}
+  \end{lstlisting}
   }
       \end{minipage}
     \end{tabular}
@@ -296,23 +419,23 @@ you need to use the dynamic version.
    \begin{tabular}{ll}
       \begin{minipage}{.5\textwidth}
         {\bf PThreads}
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 // code
 pthread_mutex_lock(&m1);
 // protected code
 pthread_mutex_unlock(&m1);
 // more code
-  \end{verbatim}
+  \end{lstlisting}
       \end{minipage}&
       \begin{minipage}{.35\textwidth}
         {\bf C++11 Threads}
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 // code
 m1.lock();
 // protected code
 m1.unlock();
 // more code
-  \end{verbatim}
+  \end{lstlisting}
       \end{minipage}
     \end{tabular}
 
@@ -336,7 +459,7 @@ Why are we bothering with locks? Data races. A data race occurs when
 two concurrent actions access the same variable and at least one of
 them is a {\bf write}. (This shows up on Assignment 1!)
 
-  \begin{verbatim}
+  \begin{lstlisting}[language=C]
 static int counter = 0;
 
 void* run(void* arg) {
@@ -350,7 +473,7 @@ int main(int argc, char *argv[]) {
     // Join 8 threads
     printf("counter = %i\n", counter);
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 
 \end{frame}
@@ -360,7 +483,7 @@ int main(int argc, char *argv[]) {
 \begin{frame}[fragile]
 \frametitle{Use Mutexes}
 
- \begin{verbatim}
+ \begin{lstlisting}[language=C]
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static int counter = 0;
 
@@ -378,7 +501,7 @@ int main(int argc, char *argv[]) {
     pthread_mutex_destroy(&mutex);
     printf("counter = %i\n", counter);
 }
-  \end{verbatim}
+  \end{lstlisting}
 
 \end{frame}
 
@@ -567,7 +690,7 @@ enable experts to write lock-free code.\\[1em]
   \frametitle{Semaphores Usage}
   
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 #include <semaphore.h>
 
 int sem_init(sem_t *sem, int pshared, unsigned int value);
@@ -600,7 +723,7 @@ int sem_trywait(sem_t *sem);
   Here's an example from the book. How would you make this always print
   ``Thread 1'' then ``Thread 2'' using semaphores?
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 #include <pthread.h>
 #include <stdio.h>
 #include <semaphore.h>
@@ -631,7 +754,7 @@ int main(int argc, char *argv[])
 
   Here's their solution. Is it actually correct?
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 sem_t sem;
 void* p1 (void* arg) {
   printf("Thread 1\n");
@@ -695,7 +818,7 @@ Then, if {\tt p2} hits its {\tt sem\_wait} first, it will
     %%   the value (with proper locking you'll never need this, why?)
   \end{itemize}
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 int i = 0;
 
 while (i != 255) {
@@ -704,7 +827,7 @@ while (i != 255) {
 
 {\tt volatile} prevents this from being optimized to:
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 int i = 0;
 
 while (true) {

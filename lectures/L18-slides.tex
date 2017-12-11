@@ -1,6 +1,6 @@
 \input{configuration}
 
-\title{Lecture 18 --- Critical Paths, Data \& Task Parallelism }
+\title{Lecture 18 --- Reentrancy, Thread-Safety, Inlining, HLL }
 
 \author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -15,458 +15,802 @@
 
  \end{frame}
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+\part{Reentrancy}
+\frame{\partpage}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Critical Paths}
+  \frametitle{Reentrancy}
 
   
-
-  Should be familiar with critcal paths from other courses (Gantt charts).\\[1em]
-
-  Consider the following diagram (edges are tasks):
-
-\begin{center}
-\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
-                    semithick,initial text=]
-  \node[initial,block] (s0) {Start};
-  \node[block] (s1) [right=of s0] {S1};
-  \node[block] (s2) [right=of s1] {S2};
-  \node[bw] (s3) [right=of s2] {Finish};
-
-  \path (s0) edge node {A} (s1)
-        (s1) edge node {B} (s2)
-        (s2) edge node {D} (s3)
-        (s0) edge[bend left=30] node {C} (s2);
-\end{tikzpicture}
-\end{center}
-
-  \begin{itemize}
-    \item B depends on A, C has no dependencies, and D depends on B and C.
-    \item Can execute A-then-B in parallel with C.
-    \item Keep dependencies in mind when calculating speedups for more
-      complex programs.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data and Task Parallelism}
-
-  
-     \structure{Data parallelism} is performing \emph{the same} operations on
-      different input.\\
-
-     {\bf Example:} doubling all elements of an array.\\[1em]
-
-     \structure{Task parallelism} is performing \emph{different} operations
-      on different input.
-
-    {\bf Example:} playing a video file: one thread decompresses
-      frames, another renders.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data Parallelism: Single Instruction, Multiple Data}
-
-  
-    We'll discuss SIMD in more detail later. An overview:
-    \begin{itemize}
-    \item You can load a bunch of data and perform 
-      arithmetic.
-    \item Intructions process multiple data items simultaneously.
-      (Exact number is hardware-dependent).
-    \end{itemize}
-    For x86-class CPUs, MMX and SSE extensions provide SIMD instructions.
+    $\Rightarrow$ A function can be suspended in the middle and \\ {\bf re-entered}
+      (called again) before the previous execution returns.\\[1em]
+    
+     Does not always mean {\bf thread-safe} (although it usually is).
+      \begin{itemize}
+        \item Recall: {\bf thread-safe} is essentially ``no data races''.
+      \end{itemize}
+ ~\\[1em]
+  Moot point if the function only modifies local data, e.g. {\tt sin()}.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{SIMD Example}
+  \frametitle{Reentrancy Example}
 
   
-  Consider the following code:
 
-  \begin{lstlisting}
-void vadd(double * restrict a, double * restrict b, 
-          int count) {
-  for (int i = 0; i < count; i++)
-    a[i] += b[i];
-}    
-  \end{lstlisting}
-
-    In this scenario, we have a regular operation over block data.\\[1em]
-
-    We could use threads, but we'll use SIMD.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly without SIMD}
-
-  
-If we compile this without SIMD instructions on a 32-bit x86, (flags {\tt -m32 -march=i386 -S}) we might get this:
-
-  \begin{lstlisting}
-loop:
-  fldl  (%edx)
-  faddl (%ecx)
-  fstpl (%edx)
-  addl  8, %edx
-  addl  8, %ecx
-  addl  1, %esi
-  cmp   %eax, %esi
-  jle   loop
-  \end{lstlisting}
-
-   Just loads, adds, writes and increments.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly with SIMD}
-
-  
- Instead, compiling to SIMD instructions\\ ({\tt -m32 -mfpmath=sse -march=prescott}) gives:
-
-  \begin{lstlisting}
-loop:
-  movupd (%edx),%xmm0
-  movupd (%ecx),%xmm1
-  addpd  %xmm1,%xmm0
-  movpd  %xmm0,(%edx)
-  addl   16,%edx
-  addl   16,%ecx
-  addl   2,%esi
-  cmp    %eax,%esi
-  jle    loop
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item Now processing two elements at a time on the same core.
-    \item Also, no need for stack-based x87 code.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{SIMD Overview}
-
-  
-  \begin{itemize}
-    \item Operations \emph{packed}: operate on multiple data elements 
-      at~the~same~time.
-    \vfill
-    \item On modern 64-bit CPUs, SSE has 16 128-bit registers.
-    \vfill
-    \item Very good if your data can be \emph{vectorized} and performs math.
-    \vfill
-    \item Usual application: image/video processing.
-    \vfill
-    \item We'll see more SIMD as we get into GPU programming: GPUs excel
-       at these types of applications.
-  \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Task-Based Patterns: Overview}
-
-\Large
-  
-  \begin{itemize}
-    \item We'll now look at thread and process-based~parallelization.
-    \item Although threads and processes differ, we don't care for now.
-  \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 1: Multiple Independent Tasks}
-
-  
-    Only useful to maximize system utilization.
-  \begin{itemize}
-    \item Run multiple tasks on the same system \\ ~~~(e.g. database and web server).\\[1em]
-     If one is memory-bound and the other is I/O-bound, for example, you'll
-      get maximum utilization out of your resources.\\[1em]
-     {\bf Example:} cloud computing, each task is independent and can
-      tasks can spread themselves over different nodes.\\[1em]
-    \item Performance can increase linearly with the number of threads.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 2: Multiple Loosely-Coupled Tasks}
-
-  
-    Tasks aren't quite independent, so there needs to be some inter-task
-      communication (but not much).
-  \begin{itemize}
-
-    \item Communication might be from the tasks to a controller or status
-      monitor.
-  \end{itemize}
-
-    Refactoring an application can help with latency. \\
-For instance: split off
-      the CPU-intensive computations into a separate thread---your application may
-      respond more quickly.\\[1em]
-     {\bf Example:} A program (1) receives/forwards packets and (2) logs them. You
-      can split these two tasks into two threads, so you can still
-      receive/forward while waiting for disk. This will increase the
-      \structure{throughput} of the system.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 3: Multiple Copies of the Same Task}
-
-  
-    Variant of multiple independent tasks: run multiple copies of the same task (probably on different data).
-
-  \begin{itemize}
-    \item No communcation between different copies.
-  \end{itemize}
-
-  Again, performance should increase linearly with number of tasks.\\[1em]
-
-  {\bf Example:} In a rendering application, each thread can be
-      responsible for a frame (gain \structure{throughput}; same
-      \structure{latency}).
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 4: Single Task, Multiple Threads}
-
-  
-  Classic vision of ``parallelization''.\\[1em]
-
-  {\bf Example:} Distribute array processing over multiple 
-      threads---each thread computes results for a subset of the array.
-
-  \begin{itemize}
-    \item Can decrease \structure{latency} (and increase
-      \structure{throughput}), as we saw with \structure{Amdahl's Law}.
-    \item Communication can be a problem, if the data is not nicely partitioned.
-    \item Most common implementation is just creating threads and joining them,
-      combining all results at the join.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 5: Pipeline of Tasks}
-
-  
-    Seen briefly in computer architecture.
-
-    \begin{itemize}
-    \item Use multiple stages; each thread handles a stage.\\[1em]
-     {\bf Example:} a program that handles network packets: (1) accepts
-      packets, (2) processes them, and (3) re-transmits them. Could set up the threads such that each packet goes through the threads.
-    \vfill
-    \item Improves \structure{throughput}; may increase \structure{latency} as
-      there's communication between threads.
-    \vfill
-    \item In the best case, you'll have a linear speedup.\\[1em]
-
-     Rare, since the runtime of the stages will vary, and the slow
-      one will be the bottleneck (but you could have 2 instances of the
-      slow stage).
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 6: Client-Server}
-
-  
-    To execute a large computation, the server supplies work to many
-      clients---as many as request it.\\[1em]
-
-    Client computes results and returns them to the server.\\[1em]
-   {\bf Examples:} botnets, {\tt SETI@Home}, GUI application (backend
-      acts as the server).\\[1em]
-   Server can arbitrate access to shared resources (such as network
-      access) by storing the requests and sending them out.\\[1em]
-
-   \begin{itemize}
-    \item Parallelism is somewhere between single task, multiple threads and
-      multiple loosely-coupled tasks  
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Pattern 7: Producer-Consumer}
-
-  
-    Variant on the pipeline and client-server models.\\
-    Producer generates work, and consumer performs work.\\[1em]
-    {\bf Example:} producer which generates rendered frames;
-      consumer which orders these frames and writes them to disk.\\[1em]
-    Any number of producers and consumers.\\[1em]
-
-    \begin{itemize}
-    \item This approach can improve \structure{throughput} and also reduces
-      design complexity
-    \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Combining Strategies}
-
-  
-    Most problems don't fit into one category, so it's often best to combine
-      strategies.\\[1em]
-
-    For instance, you might often start with a pipeline, and then use
-      multiple threads in a particular pipeline stage to handle one piece of
-      data.\\[1em]
-    Tip: estimate to see what divisions of strategies would work best
-      (might have to do more iterations of Amdahl's law depending on the amount
-      of strategies you can use).
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Midterm Questions from 2011 (1)}
-
-
-  For each of the following situations, {\bf name an appropriate parallelization
-  pattern and the granularity at which you would apply it, explain the necessary
-  communication, and explain why your pattern is appropriate}.
-  \begin{itemize}
-  \item build system, e.g. parallel make
-    \begin{itemize}
-      \item<2-> Multiple independent tasks, at a per-file granularity
-    \end{itemize}
-  \item optical character recognition system
-    \begin{itemize}
-      \item<2-> Pipeline of tasks
-      \item<2-> 2 tasks - finding characters and analyzing them
-    \end{itemize}
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Midterm Questions from 2011 (2)}
-
-
-  {\bf Give a concrete example} where you would use the following
-  parallelization patterns. {\bf Explain} the granularity at which you'd apply
-  the pattern.
-  \begin{itemize}
-    \item single task, multiple threads:
-    \begin{itemize}
-      \item<2-> Computation of a mathematical function with independent
-        sub-formulas.
-    \end{itemize}
-    \item producer-consumer (no rendering frames, please):
-    \begin{itemize}
-      \item<2-> Processing of stock-market data:
-        a server might generate raw financial data (quotes) for a
-        particular security. The server would be the producer. Several clients
-        (or consumers) may take the raw data and use them in different ways, e.g. by computing means, generating charts, etc.
-    \end{itemize}
-  \end{itemize}
+  Courtesy of Wikipedia (with modifications):
+  \begin{lstlisting}[language=C]
+int t;
  
+void swap(int *x, int *y) {
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{How To Parallelize Code: Strategy}
-  
-  
-  Four-step outline:
-  \begin{enumerate}
-    \item Profile the code.
-    \item Look at hotspots; find and optimize dependencies; parallelize dependency chains; change the algorithm if you can.
-    \item Estimate benefits.
-    \item If not good enough, step back and try higher level of abstraction.
-  \end{enumerate}
-  Always try to minimize synchronization.
-  
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example---Explained (a trace)}
 
+  
+  \begin{lstlisting}[language=C]
+call swap(&a, &b);
+ t = *x;                // t = 3 (a)
+ *x = *y;               // a = 4 (b)
+ call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    t = *x;             // t = 1 (x)
+    *x = *y;            // x = 2 (y)
+    *y = t;             // y = 1
+ *y = t;                // b = 1
+
+Final values:
+a = 4, b = 1
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed}
+
+  
+  \begin{lstlisting}[language=C][escapechar=@]
+int t;
+ 
+void swap(int *x, int *y) {
+    int s;
+ 
+    @\alert{s = t}@;  // save global variable
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+    @\alert{t = s}@;  // restore global variable
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed---Explained (a trace)}
+
+  
+  \begin{lstlisting}[language=C]
+call swap(&a, &b);
+s = t;                 // s = UNDEFINED
+t = *x;                // t = 3 (a)
+*x = *y;               // a = 4 (b)
+call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    s = t;             // s = 3
+    t = *x;            // t = 1 (x)
+    *x = *y;           // x = 2 (y)
+    *y = t;            // y = 1
+    t = s;             // t = 3
+*y = t;                // b = 3
+t = s;                 // t = UNDEFINED
+
+Final values:
+a = 4, b = 3
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Previous Example: thread-safety}
+
+  
+  Is the previous reentrant code also thread-safe?\\
+
+  (This is more what we're concerned about in this course.)\\[1em]
+
+  Let's see:
+  \begin{lstlisting}[language=C]
+int t;
+
+void swap(int *x, int *y) {
+    int s;
+ 
+    s = t;  // save global variable
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+    t = s;  // restore global variable
+}
+  \end{lstlisting}
+  
+  Consider two calls: {\tt swap(a, b)}, {\tt swap(c, d)} with\\
+  \quad {\tt a = 1, b = 2, c = 3, d = 4}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Previous Example: thread-safety trace}
+
+  
+  \begin{lstlisting}[language=C]
+global: t
+
+/* thread 1 */                       /* thread 2 */
+a = 1, b = 2;
+s = t;    // s = UNDEFINED
+t = a;    // t = 1
+                                     c = 3, d = 4;
+                                     s = t;    // s = 1
+                                     t = c;    // t = 3
+                                     c = d;    // c = 4
+                                     d = t;    // d = 3
+a = b;    // a = 2
+b = t;    // b = 3
+t = s;    // t = UNDEFINED
+                                     t = s;    // t = 1
+
+Final values:
+a = 2, b = 3, c = 4, d = 3, t = 1
+
+Expected values:
+a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Low-level Implementation Tactic: Thread Pools}
+  \frametitle{Reentrancy vs Thread-Safety (1)}
+
   
+  \begin{itemize}
+    \item Re-entrant does not always mean thread-safe (as we saw)
+      \begin{itemize}
+        \item But, for most sane implementations, it is thread-safe
+      \end{itemize}
+  \end{itemize}~\\[1em]
+
+  Ok, but are {\bf thread-safe} functions reentrant?
   
-    Instead of creating threads, destroying them and recreating them, you
-      can use a \structure{thread pool}.
-    \begin{itemize}
-    \item It creates $n$ threads; you just {\tt push} work onto them.
-    \end{itemize}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy vs Thread-Safety (2)}
+
+  
+  Are {\bf thread-safe} functions reentrant? \alert{Nope.} Consider:
+
+  \begin{lstlisting}[language=C]
+int f() {
+    lock();
+    // protected code
+    unlock();
+}
+  \end{lstlisting}
+
+  Recall: {\bf Reentrant functions can be suspended in the middle of execution
+    and called again before the previous execution completes.}\\[1em]
+
+  {\tt f()} obviously isn't reentrant. Plus, it will deadlock.\\[1em]
+
+  Interrupt handling is more for systems programming, so the topic of reentrancy may or may not come
+  up again.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary of Reentrancy vs Thread-Safety}
+
+  
+  Difference between reentrant and thread-safe functions:\\[1em]
+
+  {\bf Reentrancy}
+  \begin{itemize}
+    \item Has nothing to do with threads---assumes a {\bf single thread}.
+    \item Reentrant means the execution can context switch at any point in
+      in a function, call the {\bf same function}, and {\bf complete} before
+      returning to the original function call.
+    \item Function's result does not depend on where the context switch happens.
+  \end{itemize}
+  \vfill
+  {\bf Thread-safety}
+  \begin{itemize}
+    \item Result does not depend on any interleaving of threads from
+      concurrency or parallelism.
+    \item No unexpected results from multiple concurrent executions of the function.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Another Definition of Thread-Safe Functions}
+
+  
+
+\begin{quote}
+  ``A function whose effect, when called by two or more threads, is guaranteed to
+  be as if the threads each executed the function one after another, in an
+  undefined order, even if the actual execution is interleaved.''
+\end{quote}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Good Example of an Exam Question}
+
+  
+
+  \begin{lstlisting}[language=C]
+void swap(int *x, int *y) {
+    int t;
+    t = *x;
+    *x = *y;
+    *y = t;
+}  
+  \end{lstlisting}
+  \vfill
+  \begin{itemize}
+    \item Is the above code thread-safe?
+    \vfill
+    \item Write some expected results for running two calls in parallel.
+    \vfill
+    \item Argue these expected results always hold, or show an example where
+      they do not.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Good Practices}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Inlining}
+
+  
+
+  We have seen the notion of inlining:
+  \begin{itemize}
+    \item Instructs the compiler to just insert the function code in-place,
+      instead of calling the function.
+    \item Hence, no function call overhead!
+    \item Compilers can also do better---context-sensitive---operations they couldn't
+      have done before.
+  \end{itemize}
+  \vfill
+  No overhead\ldots~ sounds like better performance\ldots~ \\let's inline everything!
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Inlining in C++}
+
+  
+  Implicit inlining (defining a function inside a class definition):
+  \begin{lstlisting}[language=C]
+class P {
+public:
+    int get_x() const { return x; }
+...
+private:
+    int x;
+};
+  \end{lstlisting}
+  \vfill
+Explicit inlining:
+  \begin{lstlisting}[language=C]
+inline max(const int& x, const int& y) {
+    return x < y ? y : x;
+}
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{The Other Side of Inlining}
+
+  
+
+  One big downside:
+  \begin{itemize}
+    \item Your program size is going to increase.
+  \end{itemize}
+   This is worse than you think:
+      \begin{itemize}
+        \item Fewer cache hits.
+        \item More trips to memory.
+      \end{itemize}
+   Some inlines can grow very rapidly (C++ extended constructors).\\[1em]
+  Just from this your performance may go down easily.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Compilers on Inlining}
+
+  
+
+  Inlining is merely a suggestion to compilers.\\
+  They may ignore you.\\[1em]
+
+  For example:
+n  \begin{itemize}
+    \item taking the address of an ``inline'' function and using it; or
+    \item virtual functions (in C++),
+  \end{itemize}
+  will get you ignored quite fast.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{From a Usability Point-of-View}
+
+  
+  Debugging is more difficult (e.g. you can't set a breakpoint in a function that
+  doesn't actually exist).
+  \begin{itemize}
+    \item Most compilers simply won't inline code with debugging symbols on.
+    \item Some do, but typically it's more of a pain.
+  \end{itemize}~\\[1em]
+
+  Library design:
+  \begin{itemize}
+    \item If you change any inline function in your library, any users
+      of that library have to {\bf recompile} their program if the
+      library updates. (non-binary-compatible change!)
+  \end{itemize}
+  Not a problem for non-inlined functions---programs execute the new function
+      dynamically at runtime.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Introduction}
+
+  
+    So far, we've only seen C---we haven't seen anything 
+      complex.\\[1em]
+
+    C is low level, which is good for learning what's
+    really going on.\\[2em]
+
+    Writing compact, readable code in C is hard. \\ Common C sights:
+      \begin{itemize}
+        \item {\bf \#define macros}
+        \item {\bf void*}
+      \end{itemize}
+    C++11 has made major strides towards readability and efficiency
+      (it provides light-weight abstractions).
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Sorting}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Goal}
+
+
+  
+  Sort a bunch of integers.\\[1em]
+  In {\bf C}, usually use qsort from {\tt stdlib.h}.
+
+  \begin{lstlisting}[language=C]
+void qsort (void* base, size_t num, size_t size,
+            int (*comparator) (const void*, const void*));
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item A fairly ugly definition (as usual, for generic C functions)
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{How ugly? {\tt qsort} usage}
+
+  
+  \begin{lstlisting}[language=C]
+#include <stdlib.h>
+
+int compare(const void* a, const void* b)
+{
+    return (*((int*)a) - *((int*)b));
+}
+
+int main(int argc, char* argv[])
+{
+    int array[] = {4, 3, 5, 2, 1};
+    qsort(array, 5, sizeof(int), compare);
+}
+  \end{lstlisting}
+
+  \begin{itemize}
+    \item This looks like a nightmare, and is more likely to have bugs.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{C++ {\tt sort}}
+
+  
+  C++ has a sort with a much nicer interface\footnote{\ldots nicer to use, after you get over templates (they're useful, I swear).}$\ldots$
+
+  \begin{lstlisting}[language=C]
+template <class RandomAccessIterator>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last
+);
+
+template <class RandomAccessIterator, class Compare>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last,
+    Compare comp
+);
+  \end{lstlisting}
+  
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{C++ {\tt sort} Usage}
+
+  
+  \begin{lstlisting}[language=C]
+#include <vector>
+#include <algorithm>
+
+int main(int argc, char* argv[])
+{
+    std::vector<int> v = {4, 3, 5, 2, 1};
+    std::sort(v.begin(), v.end());
+}
+  \end{lstlisting}
+  \vfill
+
+  {\bf Note:} Your compare function can be a function or a functor. \\By~default,
+  {\tt sort} uses {\tt operator$<$} on the objects being sorted.
+
+  \begin{itemize}
+    \item Which is less error prone?
+    \item Which is {\bf faster}?
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Timing Various Sorts}
+
+  
+  \begin{center}
+    [Shown: actual runtimes of {\tt qsort} vs {\tt sort}]\\[1em]
+  \end{center}
+
+     The C++ version is {\bf twice} as fast. Why?
+      \begin{itemize}
+        \item The C version just operates on memory---it has no clue about the
+          data.
+        \item We're throwing away useful information about what's being sorted.
+        \item A C function-pointer call prevents inlining of the compare function.
+      \end{itemize}
+     OK. What if we write our own sort in C, specialized for the data?
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Custom Sort}
+
 
   \begin{center}
-    \includegraphics[scale=0.4]{images/thread-pool}
+    [Shown: actual runtimes of custom sort vs {\tt sort}]
   \end{center}
 
   \begin{itemize}
-    \item Only question is: How many threads should you create? (Experiment to find out).
-    \item Implementation from GLib: {\tt GThreadPool}.
+    \item The C++ version is still faster (although it's close).
+    \item However, this is quickly going to become a maintainability nightmare.
+      \begin{itemize}
+        \item Would you rather read a custom sort or 1 line?
+        \item What (who) do you trust more?
+      \end{itemize}
   \end{itemize}
   
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Lesson}
+  
+\Huge
+    Abstractions will not make your program slower. \\[1em]
+
+    They 
+      allow speedups and are much easier to maintain and read.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Lecture Fun}
+
+  \begin{center}
+\Large
+    Let's throw Java-style programming (or at least collections) into the mix and see what happens.
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Vectors vs. Lists}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Vectors vs. Lists: Problem}
+  
+  
+
+    1. Generate {\bf N} random integers and insert them into (sorted)
+      sequence.
+      
+  
+
+      {\bf Example:} 3 4 2 1
+      
+      \begin{itemize}
+        \item 3
+        \item 3 4
+        \item 2 3 4
+        \item 1 2 3 4
+      \end{itemize}
+  
+
+    2. Remove {\bf N} elements one at a time by going to a random position
+      and removing the element.
+
+  
+      {\bf Example:} 2 0 1 0
+      
+      \begin{itemize}
+        \item 1 2 4
+        \item 2 4
+        \item 2
+        \item 
+      \end{itemize}
+  
+  For which {\bf N} is it better to use a list than a vector (or array)?
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Complexity}
+  
+  \begin{itemize}
+    \item {\bf Vector}
+      \begin{itemize}
+        \item Inserting
+          \begin{itemize}
+            \item $O(\log n)$ for binary search
+            \item $O(n)$ for insertion (on average, move half the elements)
+          \end{itemize}
+        \item Removing
+          \begin{itemize}
+            \item $O(1)$ for accessing
+            \item $O(n)$ for deletion (on average, move half the elements)
+          \end{itemize}
+      \end{itemize}
+
+    \item {\bf List}
+      \begin{itemize}
+        \item Inserting
+          \begin{itemize}
+            \item $O(n)$ for linear search
+            \item $O(1)$ for insertion
+          \end{itemize}
+        \item Removing
+          \begin{itemize}
+            \item $O(n)$ for accessing
+            \item $O(1)$ for deletion
+          \end{itemize}
+      \end{itemize}
+  \end{itemize}
+  \vfill
+  Therefore, based on their complexity, lists should be better.
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reality}
+  
+  \begin{center}
+    [Shown: actual runtimes of vectors and lists]
+  \end{center}
+
+  
+  {\bf Vectors} dominate lists, performance wise. Why?
+  \vfill
+  \begin{itemize}
+    \item Binary search vs. linear search complexity dominates.
+    \vfill
+    \item Lists use far more memory.
+
+      {\bf On 64 bit machines:}
+      \begin{itemize}
+        \item Vector: 4 bytes per element.
+        \item List: At least 20 bytes per element.
+      \end{itemize}
+    \vfill
+    \item Memory access is slow, and results arrive in blocks:
+      \begin{itemize}
+        \item Lists' elements are all over memory, hence many
+          cache misses.
+        \item A cache miss for a vector will bring a lot more usable data.
+      \end{itemize}
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Performance Tips: Bullets}
+
+  
+  \begin{itemize}
+    \item Don't store unnecessary data in your program.
+    \vfill
+    \item Keep your data as compact as possible.
+    \vfill
+    \item Access memory in a predictable manner.
+    \vfill
+    \item Use vectors instead of lists by default.
+    \vfill
+    \item Programming abstractly can save a lot of time.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary (Reentrancy)}
+
+
+  \begin{itemize}
+    \item Reentrancy vs thread-safety.
+    \item Inlining: limit your inlining to trivial functions:
+      \begin{itemize}
+        \item makes debugging easier and improves usability;
+        \item won't slow down your program before you even start optimizing it.
+      \end{itemize}
+    \item Tell the compiler high-level information but think low-level.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Programming for Performance with the Compiler}
+
+  
+
+  \begin{itemize}
+    \item Often, telling the compiler more gives you better code.
+    \vfill
+    \item Data structures can be critical, sometimes more than complexity.
+    \vfill
+    \item {\bf Low-level code != Efficient}.
+    \vfill
+    \item Think at a low level if you need to optimize anything.
+    \vfill
+    \item Readable code is good code---\\ different hardware needs different
+      optimizations.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \end{document}
 

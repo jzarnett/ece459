@@ -2,372 +2,297 @@
 
 \begin{document}
 
-\lecture{17 --- Dependencies and Speculation }{\term}{Patrick Lam and Jeff Zarnett}
+\lecture{17 --- Critical Paths, Data \& Task Parallelism}{\term}{Patrick Lam}
 
-\section*{Dependencies}
-Some computations appear to be ``inherently sequential''. There are plenty of real-life analogies:
+\section*{Critical Paths}
+You should be familiar with the concept of a critical path from previous
+courses; it is the minimum amount of time to complete the task, taking
+dependencies into account, and without speculating.
 
-\begin{itemize}
-\item must extract bicycle from garage before closing garage door
- 
-\item must close washing machine door before starting the cycle
- 
-\item must be called on before answering questions? (sort of, some people shout out...)
- 
-\item students must submit assignment before course staff can mark the assignment (also sort of... I can assign you a grade of zero if you didn't submit an assignment!)
-\end{itemize}
+Consider the following diagram, which illustrates dependencies between
+tasks (shown on the arrows). 
+Note that B depends on A, and D depends on B and C, but C does
+not depend on anything, so it could be done in parallel with
+everything else. You can also compute expected execution times
+for different strategies.
+\begin{center}
+\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
+                    semithick,initial text=]
+  \node[initial,block] (s0) {Start};
+  \node[block] (s1) [right=of s0] {S1};
+  \node[block] (s2) [right=of s1] {S2};
+  \node[bw] (s3) [right=of s2] {Finish};
 
-There are some prerequisite steps that need to be taken before a given step can take place. The problem is that we need some result or state from an earlier step before we can go on to the next step. Interestingly, in many of the analogies, sometimes if you fail to respect the dependency, nothing physically stops the next step from taking place, but the outcome might not be what you want (... you don't want zero on your assignment, right?).
+  \path (s0) edge node {A} (s1)
+        (s1) edge node {B} (s2)
+        (s2) edge node {D} (s3)
+        (s0) edge[bend left=30] node {C} (s2);
+\end{tikzpicture}
+\end{center}
 
-The same with dependencies in computation. If you need the result of the last step you will have to wait for it to be available before you can go on to the next. And if you jump the gun and try to do it early, you will get the wrong result (if any at all).
+\section*{Data and Task Parallelism}
+There are two broad categories of paralellism: data parallelism and
+task parallelism. An analogy to data parallelism is hiring a call
+center to (incompetently) handle large volumes of support calls,
+\emph{all in the same way}. Assembly lines are an analogy to task
+parallelism: each worker does a \emph{different} thing.
 
-Note that, in this lecture, we are going to assume that memory accesses follow the
-sequentially consistent memory model. For instance, if you declared all variables
-to be C++11 atomics, that would be fine. This reasoning is not guaranteed to work
-in the presence of undefined behaviour, which exists when you have data races.
+More precisely, in data parallelism, multiple threads perform the
+\emph{same} operation on separate data items. For instance, you have a
+big array and want to double all of the elements. Assign part of the
+array to each thread. Each thread does the same thing: double array
+elements.
 
-\paragraph{Main Idea.} A \emph{dependency} prevents parallelization
-when the computation $XY$ produces a different result from the
-computation $YX$.
+In task parallelism, multiple threads perform \emph{different}
+operations on separate data items. So you might have a thread that
+renders frames and a thread that compresses frames and combines them
+into a single movie file.
 
-\paragraph{Loop- and Memory-Carried Dependencies.} We distinguish
-between \emph{loop-carried} and \emph{memory-carried} dependencies.
-In a loop-carried dependency, an iteration depends on the result of
-the previous iteration. For instance, consider this code to
-compute whether a complex number $x_0 + iy_0$ belongs to the Mandelbrot
-set.
+We'll continue by looking at a number of parallelization patterns,
+examples of how to apply them, and situations where they might apply.
 
-{\small \begin{verbatim}
-    // Repeatedly square input, return number of iterations before 
-    // absolute value exceeds 4, or 1000, whichever is smaller.
-    int inMandelbrot(double x0, double y0) {
-      int iterations = 0;
-      double x = x0, y = y0, x2 = x*x, y2 = y*y;
-      while ((x2+y2 < 4) && (iterations < 1000)) {
-        y = 2*x*y + y0;
-        x = x2 - y2 + x0;
-        x2 = x*x; y2 = y*y;
-        iterations++;
-      }
-      return iterations;
-    }
-\end{verbatim} }
-In this case, it's impossible to parallelize loop iterations, because
-each iteration \emph{depends} on the $(x, y)$ values calculated in the
-previous iteration. For any particular $x_0 + iy_0$, you have to run the
-loop iterations sequentially.
+\subsection*{Data Parallelism with SIMD}
+The ``typical'' boring standard uniprocessor is Single Instruction Single Data (SISD) but since the mid-1980s we've had more options than that. We'll talk about single-instruction multiple-data (SIMD) later on in
+this course, but here's a quick look. Each SIMD
+instruction operates on an entire vector of data. These instructions
+originated with supercomputers in the 70s. More recently, GPUs; the
+x86 SSE instructions; the SPARC VIS instructions; and the
+Power/PowerPC AltiVec instructions all implement SIMD.
 
-Note that you can parallelize the Mandelbrot set calculation
-by computing the result simultaneously over many points at
-once. Indeed, that is a classic ``embarassingly parallel'' problem,
-because the you can compute the result for all of the points
-simultaneously, with no need to communicate.
-
-On the other hand, a memory-carried dependency is one where the result
-of a computation \emph{depends} on the order in which two memory accesses
-occur. For instance:
-
-{\small \begin{verbatim}
-    int val = 0;
-
-    void g() { val = 1; }
-    void h() { val = val + 2; }
-\end{verbatim} }
-
-{\sf What are the possible outcomes after executing {\tt g()} and {\tt h()}
-in parallel threads?} \\[1em]
-
-\section*{Loop-carried Dependencies}
-A loop-carried dependency is one where an
-iteration depends on the result of the previous iteration. Let's look
-at a couple of examples.
-
-
-Initially, {\tt a[0]} and {\tt a[1]} are 1.
-Can we run these lines in parallel?
+\paragraph{Code.} Let's look at an application of SIMD instructions.
 
 \begin{verbatim}
-     a[4] = a[0] + 1;
-     a[5] = a[1] + 2;
-\end{verbatim}
-
-\url{http://www.youtube.com/watch?v=jjXyqcx-mYY}. (This one is legit! Really!)
-
-It turns out that there are no dependencies between the two lines. But this is
-an atypical use of arrays. Let's look at more typical uses.
-
-
-What about this? (Again, all elements initially 1.)
-
-\begin{verbatim}
-    for (int i = 1; i < 12; ++i)
-        a[i] = a[i-1] + 1;
-\end{verbatim}
-
-Nope! We can unroll the first two iterations:
-\begin{verbatim}
-    a[1] = a[0] + 1
-    a[2] = a[1] + 1
-\end{verbatim}
-
-Depending on the execution order, either {\tt a[2] = 3} or {\tt a[2] =
-  2}.  In fact, no out-of-order execution here is safe---statements depend
-on previous loop iterations, which exemplifies the notion of a
-\emph{loop-carried dependency}. You would have
-to play more complicated games to parallelize this.
-
-
-  Now consider this example---is it parallelizable? (Again, all elements initially 1.)
-
-\begin{verbatim}
-    for (int i = 4; i < 12; ++i)
-        a[i] = a[i-4] + 1;
-\end{verbatim}
-
-Yes, to a degree. We can execute 4 statements in parallel at a time:
-\begin{itemize}
-  \item a[4] = a[0] + 1, a[8] = a[4] + 1
-  \item a[5] = a[1] + 1, a[9] = a[5] + 1
-  \item a[6] = a[2] + 1, a[10] = a[6] + 1
-  \item a[7] = a[3] + 1, a[11] = a[7] + 1
-\end{itemize}  
-We can say that the array accesses have stride 4---there are no
-dependencies between adjacent array elements. In general, consider
-dependencies between iterations.
-
-\paragraph{Larger loop-carried dependency example.}
-Now consider the following function.
-
-\begin{verbatim}
-  // Repeatedly square input, return number of iterations before 
-  // absolute value exceeds 4, or 1000, whichever is smaller.
-  int inMandelbrot(double x0, double y0) {
-    int iterations = 0;
-    double x = x0, y = y0, x2 = x*x, y2 = y*y;
-    while ((x2+y2 < 4) && (iterations < 1000)) {
-      y = 2*x*y + y0;
-      x = x2 - y2 + x0;
-      x2 = x*x; y2 = y*y;
-      iterations++;
-    }
-    return iterations;
-  }
-\end{verbatim}
-
-How do we parallelize this?
-
-Well, that's a trick question. There's not much that you can do with that
-function. What you can do is to run this function sequentially for each
-point, and parallelize along the different points.
-
-As mentioned in class, but one potential problem with that
-approach is that one point may take disproportionately long. The safe thing to do is to parcel out the work
-at a finer granularity. There are
-(unsafe!) techniques for dealing with that too. We'll talk about that
-later.
-
-%What I did do in class was to actually live-code a parallelization
-%of the Mandelbrot code. I had to first refactor the code, creating
-%an array to hold the output. Then I added a struct to pass the offset and
-%stride to the thread. Finally, I invoked pthread to create and join threads.
-
-%In class, I live-coded a parallelization
-%of the Mandelbrot code. I had to first refactor the code, creating
-%an array to hold the output. Then I added a struct to pass the offset and
-%stride to the thread. Finally, I invoked pthread to create and join threads.
-
-\section*{Breaking Dependencies with Speculation}
-Let's go back to a real life analogy of speculation. Under normal circumstances, the coffee shop staff waits for you to place your order (``medium double double'') before they start making your order. Sensible. If you go to a certain coffee shop enough, then the staff start to know you and know your typical order and they might speculate about your order and start preparing it in advance, even before you get up to the counter. If they're right, time is saved: your order is ready sooner. If they're wrong, the staff did some unnecessary work and they'll throw away that result and start again with what you did order. If they can predict with high accuracy what you want, then most of the time this is a benefit, and that's what we want.
-
-Recall that computer architects often use speculation to predict branch
-targets: the direction of the branch depends on the condition codes
-when executing the branch code. To get around having to wait, the processor
-speculatively executes one of the branch targets, and cleans up if it
-has to.
-
-We can also use speculation at a coarser-grained level and
-speculatively parallelize code. We discuss two ways of doing so: one
-which we'll call speculative execution, the other value speculation.
-
-\subsection*{Speculative Execution for Threads.} The idea here is to
-start up a thread to compute a result that you may or may not need.
-Consider the following code:
-
-{\small \begin{verbatim}
-  void doWork(int x, int y) {
-    int value = longCalculation(x, y);
-    if (value > threshold) {
-      return value + secondLongCalculation(x, y);
-    }
-    else {
-      return value;
-    }
-  }
-\end{verbatim} }
-Without more information, you don't know whether you'll have to execute
-{\tt secondLongCalculation} or not; it depends on the return value of
-{\tt longCalculation}. 
-
-Fortunately, the arguments to {\tt secondLongCalculation} do not
-depend on {\tt longCalculation}, so we can call it at any point. 
-Here's one way to speculatively thread the work:
-
-{\small \begin{verbatim}
-  void doWork(int x, int y) {
-    thread_t t1, t2;
-    point p(x,y);
-    int v1, v2;
-    thread_create(&t1, NULL, &longCalculation, &p);
-    thread_create(&t2, NULL, &secondLongCalculation, &p);
-    thread_join(t1, &v1);
-    thread_join(t2, &v2);
-    if (v1 > threshold) {
-      return v1 + v2;
-    } else {
-      return v1;
-    }
-  }
-\end{verbatim} }
-We now execute both of the calculations in parallel and return the same
-result as before.
-
-{\sf Intuitively: when is this code faster? When is it slower? How
-  could you improve the use of threads?}\\[4em]
-
-We can model the above code by estimating the probability $p$ that
-the second calculation needs to run, the time $T_1$ that it takes
-to run {\tt longCalculation}, the time $T_2$ that it takes to run
-{\tt secondLongCalculation}, and synchronization overhead $S$.
-Then the original code takes time
-\[ T = T_1 + p T_2, \]
-while the speculative code takes time
-\[ T_s = \max(T_1, T_2) + S.\]
-
-\paragraph{Exercise.} Symbolically compute when it's profitable to do the
-speculation as shown above. There are two cases: $T_1 > T_2$ and $T_1
-< T_2$. (You can ignore $T_1 = T_2$.)
-
-
-\subsection*{Value Speculation}
-The other kind of speculation is value speculation. In this case,
-there is a (true) dependency between the result of a computation 
-and its successor:
-% note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
-
-{\small \begin{verbatim}
-  void doWork(int x, int y) {
-    int value = longCalculation(x, y);
-    return secondLongCalculation(value);
-  }
-\end{verbatim} }
-If the result of {\tt value} is predictable, then we can speculatively
-execute {\tt secondLongCalculation} based on the predicted value.
-(Most values in programs are indeed predictable).
-{\small \begin{verbatim}
-void doWork(int x, int y) {
-    thread_t t1, t2;
-    point p(x,y);
-    int v1, v2, last_value;
-    thread_create(&t1, NULL, &longCalculation, &p);
-    thread_create(&t2, NULL, &secondLongCalculation,
-                  &last_value);
-    thread_join(t1, &v1);
-    thread_join(t2, &v2);
-    if (v1 == last_value) {
-      return v2;
-    } else {
-      last_value = v1;
-      return secondLongCalculation(v1);
-    }
-}
-\end{verbatim}
-}
-Note that this is somewhat similar to memoization, except with 
-parallelization thrown in. In this case, the original running time is
-\[ T = T_1 + T_2, \]
-while the speculatively parallelized code takes time
-\[ T_s = \max(T_1, T_2) + S + pT_2,\]
-where $S$ is still the synchronization overhead, and $p$ is the probability that
-\verb+v1 != last_value+.
-
-\paragraph{Exercise.} Do the same computation as for speculative execution.
-
-\subsection*{When can we speculate?}
-Speculation isn't always safe. We need the following conditions:
-  \begin{itemize}
-    \item {\tt longCalculation} and {\tt secondLongCalculation} must not call
-      each other.
-    \item {\tt secondLongCalculation} must not depend on
-      any values set or modified by {\tt longCalculation}.
-    \item The return value of {\tt longCalculation} must be deterministic.
-  \end{itemize}
-
-As a general warning: Consider the \emph{side effects} of function calls. Oh, let's talk about side effects. Why not. They have a big impact on parallelism. Side effects are problematic, but why? For one thing they're kind of unpredictable (why does calling this function result in unexpected changes elsewhere?!). Side effects are changes in state that do not depend on the function input. Calling a function or expression has a side effect if it has some visible effect on the outside world. Some things necessarily have side effects, like printing to the console. Others are side effects which may be avoidable if we can help it, like modifying a global variable.
-
-Code that allows multiple concurrent invocations without affecting the outcome is called reentrant or ``pure'' (and the use of the word pure shouldn't imply any sort of moral judgement on the code). It is a desirable property to have code that is reentrant if we want to parallelize things. If a function is not reentrant, it may not be possible to make it thread safe. And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
-
-Side effects are sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's what we want. Nevertheless, it should be obvious that when printing we can't have reentrant behaviour because two threads trying to write at the same time to the console would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
-
-The trivial example of a non-reentrant C function:
-
-\begin{verbatim}
-int tmp;
-
-void swap( int x, int y ) {
-    tmp = y;
-    y = x;
-    x = tmp;
+void vadd(double * restrict a, double * restrict b, int count) {
+  for (int i = 0; i < count; i++)
+    a[i] += b[i];
 }
 \end{verbatim}
 
-Why is this non-reentrant? Because there is a global variable \texttt{tmp} and it is changed on every invocation of the function. We can make the code reentrant by moving the declaration of \texttt{tmp} inside the function, which would mean that every invocation is independent of every other. And thus it would be thread safe, too.
-
-Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted (or we're going to break off handling what we're doing and call the same ISR in the middle of the current one). Either way, if the code is not reentrant we will run into problems.
-
-Let us also draw a distinction between thread safe code and reentrant code. A thread safe operation is one that can be performed from more than one thread at the same time. On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. Or it can be re-started without affecting the outcome. See this code example from~\cite{tont:threadsafe}:
-
+Compiling this without SIMD on a 32-bit x86 ({\tt gcc -m32 -march=i386 -S}) might give this:
 \begin{verbatim}
-int length = 0;
-char *s = NULL;
-
-// Note: Since strings end with a 0, if we want to
-// add a 0, we encode it as "\0", and encode a
-// backslash as "\\".
-
-
-// WARNING! This code is buggy - do not use!
-
-
-void AddToString(int ch)
-{
-  EnterCriticalSection(&someCriticalSection);
-  // +1 for the character we're about to add
-  // +1 for the null terminator
-  char *newString = realloc(s, (length+1) * sizeof(char));
-  if (newString) {
-    if (ch == '\0' || ch == '\\') {
-      AddToString('\\'); // escape prefix
-    }
-    newString[length++] = ch;
-    newString[length] = '\0';
-    s = newString;
-  }
-  LeaveCriticalSection(&someCriticalSection);
-}
+loop:
+  fldl  (%edx)
+  faddl (%ecx)
+  fstpl (%edx)
+  addl  8, %edx
+  addl  8, %ecx
+  addl  1, %esi
+  cmp   %eax, %esi
+  jle   loop
 \end{verbatim}
 
-Is it thread safe? Sure - there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
+We can instead compile to SIMD instructions ({\tt gcc -m32 -march=prescott -mfpmath=sse})
+and get something like this:
+\begin{verbatim}
+loop:
+  movupd (%edx),%xmm0
+  movupd (%ecx),%xmm1
+  addpd  %xmm1,%xmm0
+  movpd  %xmm0,(%edx)
+  addl   16,%edx
+  addl   16,%ecx
+  addl   2,%esi
+  cmp    %eax,%esi
+  jle    loop
+\end{verbatim}
+The \emph{packed} operations ({\tt p}) operate on multiple data
+elements at a time (what kind of parallelism is this?)
+The implication is that the loop only needs to loop half as many times.
+Also, the instructions themselves are more efficient, because they're
+not stack-based x87 instructions.
+
+SIMD is different from the other types of parallelization we're
+looking at, since there aren't multiple threads working at once.
+It is complementary to using threads, and good for cases
+where loops operate over vectors of data. These loops could also be
+parallelized; multicore chips can do both, achieving high throughput.
+SIMD instructions also work well on small data sets, where thread startup
+cost is too high, while registers are just there to use.
 
 
-Interestingly, functional programming languages (by which I do NOT mean procedural programming languages like C) such as Haskell and Scala and so on, lend themselves very nicely to being parallelized. Why? Because a purely functional program has no side effects and they are very easy to parallelize. If a function is impure, its functions signature will indicate so. Thus spake Joel\footnote{``Thus Spake Zarathustra'' is a book by Nietzsche, and this was not a spelling error.}:
+\subsection*{Parallelization using Threads or Processes}
+We'll be looking at thread-based or process-based parallelization for the
+next bit. We don't care about the distinction between threads and processes
+for the moment. In fact, we could even distribute work over multiple systems.
 
-\begin{quote}
-\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}~\cite{joel:functional}
-\end{quote}
+\paragraph{Pattern 1: Multiple Independent Tasks.} If you're just trying to maximize
+system utilization, you can use one system to run a number of independent
+tasks; for instance, you can put both a web server and database on
+one machine. If the web server happens to be memory-bound while the
+database is I/O-bound, then both can use system resources. If the web
+server isn't talking to the database (rare these days!), then the tasks
+would not get in each others' way.
 
-This assumes of course that there is no data dependency between functions. Obviously, if we need a computation result, then we have to wait. 
+Most services probably ought to be run under virtualization these
+days, unless they're trivial or not mission-critical.
 
-Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
+A more relevant example of multiple independent tasks occurs in
+cluster/grid/cloud computing: the cloud might run a number of
+independent tasks, and each node would run some of the tasks. The
+cloud can retry a task (on a different node, perhaps) if it fails on
+some node. Note that the performance ought to increase linearly with
+the number of threads, since there shouldn't be communication between
+the tasks.
+
+\paragraph{Pattern 2: Multiple Loosely-Coupled Tasks.} Some applications contain
+tasks which aren't quite independent (so there is some inter-task
+communication), but not much.  In this case, the tasks may be
+different from each other. The communication might be from the tasks
+to a controller or status monitor; it would usually be asynchronous or
+be limited to exceptional situations.
+
+Refactoring an application this way can help with latency: if you 
+split off the CPU-intensive computations into a sub-thread, then
+the main thread can respond to user input more quickly.
+
+Here's an example. Assume that an application needs to receive and
+forward network packets, and also must log packet activity to disk.
+Then the two tasks are clear: receive/forward, and log. Since logging
+to disk is a high-latency event, a single-threaded application might
+incur latency while writing to disk. Splitting into subtasks allows
+the receive/forward to run without waiting for previous packets to be
+logged, thus increasing the throughput of the system.
+
+\paragraph{Pattern 3: Multiple Copies of the Same Task.} A common variant of
+multiple independent tasks is multiple copies of the same task
+(presumably on different data). In this case, we'd require there to be
+no communication between the different copies, which would enable
+linear speedup. An example is a rendering application running on
+multiple distinct animations. We gain throughput, but need to wait
+just as long for each task to complete.
+
+\paragraph{Pattern 4: Single Task, Multiple Threads.} This is the classic
+vision of ``parallelization'': for instance, distribute array
+processing over multiple threads, and let each thread compute the
+results for a subset of the array.
+
+This pattern, unlike many of the others before it, can actually
+decrease the time needed to complete a unit of work, since it gets
+multiple threads involved in doing the single unit simultaneously.
+The result is improved latency and therefore increased throughput.
+Communication can be a problem, if the data is not nicely
+array-structured, or has dependencies between different array parts.
+
+Other names and variations for this pattern include ``fork-join'',
+where the main process forks its execution and gives work to all of
+the threads, with the join synchronizing threads and combining the
+results; and ``divide-and-conquer'', where a thread spawns subthreads
+to compute smaller and smaller parts of the solution.
+
+\paragraph{Pattern 5: Pipeline of Tasks.} We've seen pipelining in the context of
+computer architecture. It can also work for software. For instance,
+you can use pipelining for packet-handling software, where multiple
+threads, as above, might confound the order. If you use a three-stage
+pipeline, then you can have three packets in-flight at the same time,
+and you can improve throughput by a factor of 3 (given appropriate
+hardware).  Latency would tend to remain the same or be worse (due to
+communication overhead).
+
+Some notes and variations on the pipeline: 1) if a stage is
+particularly slow, then it can limit the performance of the entire
+pipeline, if all of the work has to go through that stage; and 2) you
+can duplicate pipeline stages, if you know that a particular stage is
+going to be the bottleneck.
+
+\paragraph{Pattern 6: Client-Server.} Botnets work this way (as does \verb+SETI@Home+,
+etc). To execute some large computation, a server is ready to tell
+clients what to do.  Clients ask the server for some work, and the
+server gives work to the clients, who report back the results. Note
+that the server doesn't need to know the identity of the clients for
+this to work.
+
+A single-machine example is a GUI application where the server part
+does the backend, while the client part contains the user interface.
+One could imagine symbolic algebra software being designed that way.
+Window redraws are an obvious candidate for tasks to run on clients.
+
+Note that the single server can arbitrate access to shared resources.
+For instance, the clients might all need to perform network access.
+The server can store all of the requests and send them out in an
+orderly fashion.
+
+The client-server pattern enables different threads to share work
+which can somehow be parcelled up, potentially improving
+throughput. Typically, the parallelism is somewhere between single
+task, multiple threads and multiple loosely-coupled tasks. It's also a
+design pattern that's easy to reason about.
+
+\paragraph{Pattern 7: Producer-Consumer.} The producer-consumer is 
+a variant on the pipeline and client-server models. In this case, the
+producer generates work, and the consumer performs work. An example is
+a producer which generates rendered frames, and a consumer which
+orders these frames and writes them to disk. There can be any number
+of producers and consumers. This approach can improve throughput
+and also reduces design complexity.
+
+\paragraph{Combining Strategies.} If one of the patterns suffices,
+then you're done. Otherwise, you may need to combine strategies.
+For instance, you might often start with a pipeline, and then 
+use multiple threads in a particular pipeline stage to handle one
+piece of data. Or, as I alluded to earlier, you can replicate
+pipeline stages to handle different data items simultaneously.
+
+Note also that you can get synergies between different patterns.
+For instance, consider a task which takes 100 seconds. First, you
+take 80 seconds and parallelize it 4 ways (so, 20 seconds). This
+reduces the runtime to 40 seconds. Then, you can take the serial 
+20 seconds and split it into two threads. This further reduces 
+runtime to 30 seconds. You get a $2.5\times$ speedup from the
+first transformation and $1.3\times$ from the second, if you do it
+after the first. But, if you only did the second parallelization,
+you'd only get a $1.1\times$ speedup.
+
+\subsection*{How to Parallelize Code}
+Here's a four-step outline of what you need to do.
+\begin{enumerate}
+\item Profile the code.
+\item Find dependencies in hotspots. For each dependency chain in
+a hotspot, figure out if you can execute the chain as
+multiple parallel tasks or a loop over multiple parallel iterations.
+Think about changing the algorithm, if that would help.
+\item Estimate benefits. 
+\item If they're not good enough (e.g. far from linear speedup),
+step back and see if you can parallelize something else up the
+call chain, or at a higher level of absraction.
+(Think Mandelbrot sets and computing different points in parallel).
+\end{enumerate}
+Try to reduce the amuont of synchronization that you have to do
+(waiting for parallel tasks to finish), because that always slows
+you down.
+
+\section*{Thread Pools} We talked about ``single task, multiple threads''
+last week. The idea behind a \emph{thread pool} is that it's relatively
+expensive to start a thread; it costs resources to keep the threads
+running at the operating system level; and the threads won't run
+optimally anyway, because they'll spend too much time swapping state
+in and out of the cache.  Instead, you start an appropriate number of
+threads, which each grab work from a work queue, do the work,
+and report the results back. Web servers are a good application of
+thread pools\footnote{Apache does this: \url{http://httpd.apache.org/docs/2.0/mod/worker.html}. Also see an assignment where the students write thread-pooled web servers: \url{http://www.cse.nd.edu/~dthain/courses/cse30341/spring2009/project4/project4.html}.}.
+
+A key question is: how many threads should you create?  This depends
+on which resources your threads use; if you are writing
+computationally-intensive threads, then you probably want to have
+fewer threads than the number of virtual CPUs. You can also use
+Amdahl's Law to estimate the maximum useful number of threads, as
+discussed previously.
+
+Here's a longer discussion of thread pools:
+
+\begin{center}
+\url{http://www.ibm.com/developerworks/library/j-jtp0730.html}
+\end{center}
+
+Modern languages provide thread pools; Java's
+\url{java.util.concurrent.ThreadPoolExecutor}~\cite{java:threadpoolexecutor}, C\#'s
+\url{System.Threading.ThreadPool}~\cite{csharp:threadpool}, and GLib's {\tt GThreadPool}~\cite{gnome:threadpool} all implement thread pools. 
+
+\paragraph{GLib.} 
+GLib is a C library developed by the GTK team. It provides many useful
+features that you might otherwise have to implement yourself in C.
+Consider using GLib's thread pool in your assignment 2, unless you
+want to implement the work queue yourself.  (I see no reason to do
+that!)
 
 \input{bibliography.tex}
 
