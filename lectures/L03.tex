@@ -87,7 +87,209 @@ How sure do we have to be? The answer depends dramatically on the code, the CPU 
 Conclusion: it's hard to outsmart the compiler. Maybe it's better not to try.
 
 \section*{How does branch prediction work, anyway?}
-We can write software. The hardware will make it fast. If we understand the hardware, we can understand when it has trouble making our software fast. Let's talk about how branch prediction works. Notes based on a transcript of a talk by Dan Luu~\cite{branchprediction}.
+We can write software. The hardware will make it fast. If we understand the hardware, we can understand when it has trouble making our software fast.
+
+You've seen how branch prediction works in ECE 222. However, we'll talk about it today in the context of performance. Notes based on a transcript of a talk by Dan Luu~\cite{branchprediction}.
+
+I want you to pick up two points from this discussion:
+\begin{itemize}
+\item how branch predictors work---this helps you understand some of the apparent randomness in your
+execution times, and possibly helps you make your code more predictable; and,
+\item applying a (straightforward) expected value computation to predict performance.
+\end{itemize}
+
+Let's consider the following assembly code:
+\begin{lstlisting}
+branch_if_not_equal x, 0, else_label
+// Do stuff
+goto end_label
+else_label:
+// Do things
+end_label:
+// whatever happens later
+\end{lstlisting}
+The {\tt branch} instruction may be followed by either ``stuff'' or ``things''.
+The pipeline needs to know what the next instruction is, for instance to fetch it.
+But it can't know the next instruction until it almost finishes executing the branch.
+Let's look at some pictures, assuming a 2-stage pipeline.
+
+With no prediction, we need to serialize:
+
+\begin{center}
+\begin{tabular}{c|c|c|c}
+bne.1 & bne.2 \\ \hline
+& & things.1 & things.2
+\end{tabular}
+\end{center}
+
+\begin{minipage}{.49\textwidth}
+Let's predict that ``things'' gets taken.
+If our prediction is correct, we save time.
+
+\begin{center}
+\begin{tabular}{c|c|c}
+bne.1 & bne.2 \\ \hline
+& things.1 & things.2 \\
+\\
+\end{tabular}
+\end{center}
+\end{minipage} \hspace*{.02\textwidth} \begin{minipage}{.49\textwidth}
+But we might be wrong and need to throw out the bad prediction.
+
+\begin{center}
+\begin{tabular}{c|c|c|c}
+bne.1 & bne.2 \\ \cline{1-2}
+& \sout{things.1} \\ \hline
+& & stuff.1 & stuff.2
+\end{tabular}
+\end{center}
+\end{minipage}
+
+\paragraph{Cartoon model.} We need to quantify the performance.
+For the purpose of this lecture, let's pretend that our pipelined
+CPU executes, on average, one instruction per clock;
+mispredicted branches cost 20 cycles, while correctly-predicted
+branches cost 1 cycle. We'll also assume that the instruction
+mix contains 80\% non-branches and 20\% branches. So we can predict
+average cycles per instruction.
+
+With no prediction (or always-wrong prediction):
+\[
+\mathrm{branch\_\%} \times 1 \mathrm{~cycle} + \mathrm{non\_branch\_\%} \times 20 \mathrm{~cycles} = 4.8 \mathrm{~cycles}.
+\]
+With perfect branch prediction:
+\[
+\mathrm{branch\_\%} \times 1 \mathrm{~cycle} + \mathrm{non\_branch\_\%} \times 1 \mathrm{~cycle} = 1 \mathrm{~cycle}.
+\]
+So we can make our code run 4.8$\times$ faster with branch prediction!
+
+\paragraph{Predict taken.} What's the simplest possible thing? We can
+predict that a branch is always taken. (Loop branches, for instance,
+account for many of the branches in an execution, and are often taken.)
+If we got 70\% accuracy, then our cycles per instruction would be:
+\[
+(0.8 + 0.7 \times 0.2) \times 1 \mathrm{~cycle} + (0.3 \times 0.2) \times 20 \mathrm{~cycles} = 2.14 \mathrm{~cycles}.
+\]
+The simplest possible thing already greatly improves the CPU's average throughput.
+
+\paragraph{Backwards taken, forwards not taken (BTFNT).}
+Let's leverage that observation about loop branches to do better.
+Loop branches are, by definition, backwards (go back to previous
+code). So we can design a branch predictor which predicts ``taken''
+for backwards and ``not taken'' for forwards. The compiler can then
+use this information to encode what it thinks about forwards branches
+(that is, making the not-taken branch the one it thinks is more likely).
+Let's say that this might get us to 80\% accuracy.
+\[
+(0.8 + 0.8 \times 0.2) \times 1 \mathrm{~cycle} + (0.2 \times 0.2) \times 20 \mathrm{~cycles} = 1.76 \mathrm{~cycles}.
+\]
+The PPC 601 (1993) and 603 used this scheme.
+
+\paragraph{Going dynamic: using history for branch prediction.}
+So far, we will always make the same prediction at each branch---known as a
+\emph{static} scheme. But we can do better by using what recently happened to
+improve our predictions. This is particularly important when program execution
+contains distinct phases, with distinct behaviours.
+We therefore move to \emph{dynamic} schemes.
+
+Once again, let's start with the simplest possible thing. For every branch,
+we record whether it was taken or not last time it executed (a 1-bit scheme).
+Of course, we can't store all branches. So let's use the low 6 bits of the address
+to identify branches. Doing so raises the prospect of \emph{aliasing}:
+different branches (with different behaviour) map to the same spot in the table.
+
+We might get 85\% accuracy with such a scheme.
+
+\[
+(0.8 + 0.85 \times 0.2) \times 1 \mathrm{~cycle} + (0.15 \times 0.2) \times 20 \mathrm{~cycles} = 1.57 \mathrm{~cycles}.
+\]
+
+At the cost of more hardware, we get noticeable performance improvements. The DEC EV4 (1992) and
+MIPS R8000 (1994) used this one-bit scheme.
+
+\paragraph{Two-bit schemes.}
+What if a branch is almost always taken but occasionally not taken (e.g. TTTTTTNTTTT)?
+We get penalized twice
+for that misprediction: once when we mispredict the not taken, and once when we mispredict the
+next taken. So, let's store whether a branch is ``usually'' taken, using a so-called
+2-bit saturating counter.
+
+Every time we see a taken branch, we increment the counter for that
+branch; every time we see a not-taken branch, we decrement. Saturating
+means that we don't overflow or underflow. We instead stay at 11 or
+00, respectively.
+
+If the counter is 00 or 01, we predict ``not taken''; if it is 10 or
+11, we predict ``taken''.
+
+With a two-bit counter, we can have fewer entries at the same size, but they'll do better.
+It would be reasonable to expect 90\% accuracy.
+
+\[
+(0.8 + 0.9 \times 0.2) \times 1 \mathrm{~cycle} + (0.1 \times 0.2) \times 20 \mathrm{~cycles} = 1.38 \mathrm{~cycles}.
+\]
+
+This was used in a number of chips, from the LLNL S-1 (1977) through the Intel Pentium (1993).
+
+\paragraph{Two-level adaptive, global.}
+We're still not taking patterns into account. Consider the following {\tt for} loop.
+\begin{lstlisting}[language=C]
+for (int i = 0; i < 3; ++i) {
+  // code
+}
+\end{lstlisting}
+The last three executions of the branch determine the next direction:
+\begin{verbatim}
+ TTT => N
+ TTN => T
+ TNT => T
+ NTT => T
+\end{verbatim}
+Let's store what happened the last few times we were at a particular address---the
+\emph{branch history}. From a branch address and history, we derive an index, which
+points to a table of 2-bit saturating counters. What's changed from the two-bit scheme
+is that the history helps determine the index and hence the prediction.
+
+After we take a branch, we add its direction to the history, so that the next lookup
+gets sent to a different table entry.
+
+This scheme might give something like 93\% accuracy.
+
+\[
+(0.8 + 0.93 \times 0.2) \times 1 \mathrm{~cycle} + (0.07 \times 0.2) \times 20 \mathrm{~cycles} = 1.27 \mathrm{~cycles}.
+\]
+
+The Pentium MMX (1996) used a 4-bit global branch history.
+
+\paragraph{Two-level adaptive, local.}
+The change here is that the CPU keeps a separate history for each branch.
+So the branch address determines which branch history gets used.
+We concatenate the address and history to get the index, which then points to a
+2-bit counter again. We are starting to encounter dminishing returns, but we might
+get 94\% accuracy:
+
+\[
+(0.8 + 0.94 \times 0.2) \times 1 \mathrm{~cycle} + (0.06 \times 0.2) \times 20 \mathrm{~cycles} = 1.23 \mathrm{~cycles}.
+\]
+
+The Pentium Pro (1996), Pentium II (1997) and Pentium III (1999) use this.
+
+\paragraph{gshare.}
+Instead of concatenating the address and history, we can xor them. This allows
+us to use more bits for both the history and address. This keeps the accuracy the same,
+but simplifies the design.
+
+\paragraph{Other predictors.} We can build (and people have built) more sophisticated predictors.
+These predictors could, for instance, better handle aliasing, where
+different branches/histories map to the same index in the table. But we'll stop here.
+
+\paragraph{Summary of branch prediction.} We can summarize as follows.
+Branch prediction enables pipelining and hence increased performance.
+We can create a model to estimate just how critical branch prediction
+is for modern processors. Fortunately, most branches are predictable
+now. Aliasing (multiple branches mapping to the same entry in a
+prediction table) can be a problem, but processors are pretty good at
+dealing with that too.
 
 \section*{Limits to parallelization}
 I mentioned briefly in Lecture 1 that programs often have a sequential
