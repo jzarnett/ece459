@@ -1,6 +1,6 @@
 \input{configuration}
 
-\title{Lecture 8 --- C++ Atomics, Compiler Hints, Restrict}
+\title{Lecture 8 --- Lock Convoys, Atomics, Lock-Freedom}
 
 \author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{p.lam@ece.uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -15,7 +15,210 @@
 
  \end{frame}
  
+
+\begin{frame}
+\frametitle{Lock Convoys}
+We'd like to avoid a situation called a \alert{lock convoy}. 
+
+This happens when we have at least two threads that are contending for a lock of some sort. 
+
+And it's sort of like a lock traffic jam.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Lock Convoys}
+
+It occurs when 2+ threads at the same priority frequently (several times per quantum) acquire a synchronization object. 
+
+It's bad even if they only hold that object for a very short amount of time. 
+
+We get into trouble if a thread's time slice expires while it's holding the lock.
+
+Then we get all the threads jammed up...
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock Convoys}
+Why is it called a convoy? 
+
+A convoy is when a grouping of vehicles, usually trucks or ships, travels all closely together.
+
+This is also sometimes called the ``boxcar'' problem.
+
+Ultimately far too much CPU time is spent handling context switches!
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Weird Side Effects of Lock Convoys}
+
+Threads acquire the lock frequently and they are running for very short periods of time before blocking. 
+
+Other, unrelated threads of the same priority get to run for an unusually large percentage of the (wall-clock) time. 
+
+This can lead you to thinking that some other process is the real offender.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Unfairness is Fair?}
+
+In Windows Vista and later versions, the problem is solved because locks are unfair. 
+
+Windows XP: if a lock $l$ is unlocked by $A$ and there is a thread $B$ waiting, then the lock is modified so that it looks like $B$ owns it.
+
+Then $B$ is no longer blocked, and $B$ already owns the lock when it wakes up.
+
+The lock can never be ``stolen''; hence ``fair''.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Fair is Unfair}
+
+There is a period of time where the lock is held by $B$, but $B$ is not running.
+
+Would it be so bad to allow another thread $C$ to sneak in there?
+
+If it wants the lock why should it not get it and release it before $B$ gets its turn?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Diagnosing Lock Convoys}
+
+Sign of a convoy: a lock that has some nonzero number of waiting threads but nobody appears to own it. 
+
+It just so happens that we're in the middle of a handover. 
+
+Some thread has signalled but the other thread has not yet woken up to run yet.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Starvation?}
+
+Changing the locks to be unfair does risk starvation. 
+
+Windows does give a thread priority boost, temporarily, after it gets unblocked, to see to it that the unblocked thread does actually get a chance to run.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Do Your Own Dirty Work}
+
+Although it can be nice to be able to give away such a problem to the OS developers, we might have to solve it for ourselves. 
+
+Options:
+
+\begin{itemize}
+	\item Sleep
+	\item Share
+	\item Cache
+	\item Trylock
+\end{itemize}
+
+\end{frame}
  
+
+\begin{frame}
+\frametitle{Sleep, Data, Sleep}
+
+We could make the threads that are NOT in the lock convoy call a sleep() system call fairly regularly to give other threads a chance to run. 
+
+This solution is lame, though, because we're changing the threads that are not the offenders.
+
+It just band-aids the situation so the convoy does not totally trash performance. 
+
+Still, we are doing a lot of thread switches, which themselves are expensive as outlined above.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Sharing is Caring}
+
+The next idea is sharing: can we use a reader-writer lock to allow much more concurrency than we would get if everything used exclusive locking? 
+
+If there will be a lot of writes then there's limited benefit to this speedup, but if reads are the majority of operations then it is worth doing. 
+
+We can also try to find a way to break a critical section up into two or more smaller ones, if that can be done correctly!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Nevermind, I wanted something else...}
+
+The next idea has to do with changing when (and how) you need the data. 
+
+Shrink the critical section to just pull a copy of the shared data and operate on the shared data. 
+ 
+ 
+But you saw the earlier discussion about critical section sizes, right? So you did that already...?
+
+
+\end{frame} 
+
+
+\begin{frame}[fragile]
+\frametitle{Try, Try Again}
+
+The last solution suggested is to use try-lock primitives:
+
+\begin{lstlisting}[language=C]
+int retries = 0;
+while(pthread_mutex_trylock( &lock ) != 0 ) { /* 0 indicates lock acquired */
+  if ( retries < SPIN_LIMIT ) {
+    retries++;
+    sleep(0);
+    continue;
+  }
+  pthread_mutex_lock( &lock );
+  break;
+}
+\end{lstlisting}
+
+If we reach the limit then we just give up and enter the queue!
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Polling?!}
+
+It looks like polling for the critical section. 
+
+The limit on the number of tries helps in case the critical section belongs to a low priority thread and we need the current thread to be blocked.
+
+Under this scheme, if $A$ is going to release the critical section, $B$ does not immediately become the owner. 
+
+$A$ may keep running and $A$ might even get the critical section again before $B$ tries again to acquire the lock (and may succeed). 
+
+Even if the spin limit is as low as 2, this means two threads can recover from contention without creating a convoy
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{You've been... THUNDERSTRUCK!}
+
+The lock convoy has some similarities with a different problem called the \alert{thundering herd problem}. 
+
+In the thundering herd problem, some condition is fulfilled (e.g., broadcast on a condition variable) and it triggers a large number of threads to wake up. 
+
+It is likely they can't all proceed, so some will get blocked and then awoken again all at once in the future. 
+
+In this case it would be better to wake up one thread at a time instead of all of them.
+
+\end{frame}
+
+
 
 \begin{frame}
 \frametitle{Locks and Atomics}
@@ -65,7 +268,7 @@ Remember the key idea is: an \alert{atomic operation} is indivisible.\\
 \begin{frame}[fragile]
   \frametitle{Really, don't use C++ relaxed atomics!}
   \begin{center}
-    \includegraphics[width=.8\textwidth]{images/look_of_disapproval}
+    \includegraphics[width=.8\textwidth]{images/disapproving-bird}\footnote{Photo Credit: Danielle Guerard}
   \end{center}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -226,6 +429,134 @@ Can also use {\tt i = ai.load()} and {\tt ai.store(i)}.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+
+\begin{frame}
+\frametitle{Lock Freedom}
+
+Suppose we'd like to operate in a world in which there are no locks. 
+
+Research has gone into the idea of lock-free data structures. 
+
+If you have a map and it will be shared between threads, the normal thing would be to protect access to the map with a mutex (lock). 
+
+But what if the data structure was written in such a way that we didn't have to do that? 
+
+That would be a lock-free data structure.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Use Locks Wisely!}
+
+For a great many situations, the normal locking and unlocking behaviour is sufficient.
+
+We likely want to use it when we need to guarantee that progress is made. 
+
+Or: when we really can't use locks (e.g., signal handler), or where a thread dying while holding a lock results in the whole system hanging.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Non-Blocking Data Structure}
+
+A non-blocking data structure is one where none of the operations can result in being blocked. 
+
+In a language like Java there might be some concurrency-controlled data structures in which locking and unlocking is handled for you, but those can still be blocking. 
+
+Lock-free data structures are always inherently non-blocking. 
+
+A spin lock or busy-waiting approach is not lock free, because if the thread holding the lock is suspended then everyone else is stuck!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock-Free Data Structure}
+A lock-free data structure doesn't use any locks (duh) but there's also some implication that this is also thread-safe.
+
+You can't make all your data structures lock-free ones by just deleting all the mutex code (sorry). 
+
+Lock free also doesn't mean it's a free-for-all; there can be restrictions. 
+
+For example, a queue that allows one thread to append to the end while another removes from the front, but not 2 removals at the same time.
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Lock-Free Data Structure}
+
+The actual definition of lock-free is more formal. 
+
+If any thread performing an operation gets suspended during the operation, then other threads accessing the data structure are still able to complete their tasks.
+
+This is distinct from the idea of waiting, though; an operation might still have to wait its turn or might get restarted.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Wait-Free Data Structures}
+
+You might need wait-free data structures. 
+
+This does not mean that nothing ever has to wait! 
+
+It does mean that each thread trying to perform some operation will complete it within a bounded number of steps regardless of what any other threads do. 
+
+This means that a compare-and-swap routine with infinite retries is not wait free, because a very unlucky thread could potentially take infinite tries...
+
+The wait free data structures tend to be very complicated...
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Example Lock-Free Algorithm}
+
+\begin{lstlisting}[language=C]
+void stack_push(stack* s, node* n) {
+    node* head;
+    do
+    {
+        head = s->head;
+        n->next = head;
+    }
+    while ( !atomic_compare_exchange(s->head, head, n) );
+} 
+\end{lstlisting}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Example Wait-Free Algorithm}
+
+\begin{lstlisting}[language=C]
+void increment_reference_counter(rc_base* obj) {
+    atomic_increment(obj->rc);
+}
+
+void decrement_reference_counter(rc_base* obj) {
+    if (0 == atomic_decrement(obj->rc))
+        delete obj;
+} 
+\end{lstlisting}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{To Lock Free, or Not to Lock Free}
+
+Are lock-free programming techniques somehow better for performance? Maybe!
+
+Lock free algorithms are about ensuring there is forward progress in the system and not really specifically about speed. 
+
+A particular algorithm implementation might be faster under lock-free algorithms.
+
+But often they are not. In fact, the lock free algorithms could be slower, in which case you use them because you must, not because it is particularly speedy.
+
+\end{frame}
 
 
 \end{document}
