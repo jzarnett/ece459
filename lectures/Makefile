@@ -3,7 +3,7 @@
 NOTES := $(shell ls *.tex | grep -v \- | grep L)
 SLIDES := $(shell ls *-slides.tex | grep \- | grep L*-slides)
 
-SLIDES_PO := $(SLIDES:%.tex=%-slides.pdf)
+SLIDES_PO := $(SLIDES:%.tex=%.pdf)
 
 NOTES_T := $(NOTES:%.tex=%.pdf)
 
