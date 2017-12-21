@@ -1,0 +1,506 @@
+\input{configuration}
+\usepackage{multirow}
+
+\title{Lecture 7 --- Use of Locks, Lock Convoys }
+
+\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
+\institute{Department of Electrical and Computer Engineering \\
+  University of Waterloo}
+\date{\today}
+
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+
+ \end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Use of Locks}
+
+In previous courses you learned about locking and how it all works, then we did a quick recap of what you need to know about it.
+
+In earlier scenarios it was sufficient to just avoid all the bad stuff.
+
+That's important but is no longer enough.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Critical Section Size}
+
+Critical sections should be as large as they need to be but no larger. 
+
+That is to say, if we have some shared data that needs to be protected by some mutual exclusion constructs, we need to consider carefully where to place the statements. 
+
+The critical section must contain all of the shared accesses, both reads \textit{and} writes.
+
+But no extraneous statements (those that don't operate on shared data).
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Rewrite This Block}
+
+This can mean that a block of code or contents of a function need to be re-arranged.
+
+Move some statements up or down so they are no longer in the critical section. 
+
+Sometimes control flow or other very short statements might get swept into the critical section.
+
+Those should be the exception rather than the rule.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Remember the Producer-Consumer Problem?}
+
+Let's consider a short code example from the producer-consumer problem.
+
+\begin{lstlisting}[language=C]
+sem_t spaces;
+sem_t items;
+int counter;
+int* buffer;
+int pindex = 0;
+int cindex = 0;
+int ctotal = 0;
+pthread_mutex_t prod_mutex;
+pthread_mutex_t con_mutex;
+
+void consume( int to_consume );
+
+\end{lstlisting}
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Remember the Producer-Consumer Problem?}
+
+And then here is our single-threaded code for the consumer:
+
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( ctotal < MAX_ITEMS_CONSUMED ) {
+    sem_wait( &items );
+    consume( buffer[cindex] );
+    buffer[cindex] = -1;
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    sem_post( &spaces );
+  }
+}
+\end{lstlisting}
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Multiple Consumers}
+To this we need to add some mutual exclusion if we want to allow multiple consumers at the same time. 
+
+One approach we could take is that which allows exactly one consumer to run at a time, as below. But what's wrong with this?
+
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( ctotal < MAX_ITEMS_CONSUMED ) {
+    pthread_mutex_lock( &con_mutex );
+    sem_wait( &items );
+    consume( buffer[cindex] );
+    buffer[cindex] = -1;
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    sem_post( &spaces );
+    pthread_mutex_lock( &con_mutex );
+  }
+}
+\end{lstlisting}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Anything to Kick Out?}
+
+At first glance it is probably not very obvious but the \texttt{consume} function takes a regular integer, any old integer, not a pointer of some sort. 
+
+So we could, inside the critical section, read the value of the buffer at the current index into a temp variable. 
+
+That temp variable then can be given to the \texttt{consume} function at any time... outside of the critical section. 
+
+Everything else inside our lock and unlock statements seems to be shared data: operates on \texttt{cindex} or \texttt{ctotal}.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Updated Code}
+
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( ctotal < MAX_ITEMS_CONSUMED ) {
+    pthread_mutex_lock( &con_mutex );
+    sem_wait( &items );
+    int temp = buffer[cindex];
+    buffer[cindex] = -1;
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    sem_post( &spaces );
+    pthread_mutex_lock( &con_mutex );
+    consume( temp );
+  }
+}
+\end{lstlisting}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Did We Get Everything?}
+
+The condition of the while loop checks the value of \texttt{ctotal} and that is a read of shared data. 
+
+Now we maybe have a problem. How do we get that inside the critical section?
+
+One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing...
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Not Forgetting The Loop Condition}
+
+ Instead what I'd recommend is to make the loop a while true loop and then have a test of the value to determine when we should break out of the loop.
+ 
+ \begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( 1 ) { 
+    pthread_mutex_lock( &con_mutex );  
+    if ( ctotal == MAX_ITEMS_CONSUMED ) {
+      pthread_mutex_unlock( &con_mutex );
+      break;
+    }   
+    sem_wait( &items );
+    int temp = buffer[cindex];
+    buffer[cindex] = -1; 
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    pthread_mutex_unlock( &con_mutex );
+    sem_post( &spaces );
+    consume( temp );
+  }
+  pthread_exit( NULL );
+}
+\end{lstlisting}
+
+Are we done?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Locks Have Costs}
+
+Keeping the critical section as small as possible is important because it speeds up performance (reduces the serial portion of your program). 
+
+But that's not the only reason. 
+
+The lock is a resource, and contention for that resource is itself expensive.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Locking Granularity}
+Alright, we already know that locks prevent data races.
+
+So we need to use them to prevent data races, but it's not as simple as it sounds. 
+
+We have choices about the granularity of locking, and it is a trade-off.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Coarse-Grained vs Fine-Grained Locking}
+
+\alert{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. 
+
+\alert{Fine-grained locking} requires more careful design,
+increases locking overhead and is more prone to bugs (deadlock etc).  
+
+
+Locks' extents constitute their granularity. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock Concerns}
+
+We'll discuss three major concerns when using locks:
+  \begin{itemize}
+    \item overhead;
+    \item contention; and
+    \item deadlocks.
+  \end{itemize}
+  
+  
+We aren't even talking about under-locking (i.e., remaining race conditions).
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock Overhead}
+
+  Using a lock isn't free. You pay:
+  \begin{itemize}
+    \item allocated memory for the locks;
+    \item initialization and destruction time; and
+    \item acquisition and release time.
+  \end{itemize}
+
+
+  These costs scale with the number of locks that you have.
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Lock Contention}
+
+ Most locking time is wasted waiting for the lock to become available.
+We can fix this by:
+      \begin{itemize}
+        \item making the locking regions smaller (more granular); or
+        \item making more locks for independent sections.
+      \end{itemize}
+
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Deadlocks}
+
+Finally, the more locks you have, the more you have to worry about deadlocks.
+
+As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
+
+Okay, in a formal sense, the four conditions for deadlock are:
+
+\begin{enumerate}
+	\item \textbf{Mutual Exclusion}
+	\item \textbf{Hold-and-Wait}
+	\item \textbf{No Preemption}
+	\item \textbf{Circular-Wait}
+\end{enumerate}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Simple Deadlock Example}
+
+Consider, for instance, two processors trying to get two locks.
+
+\begin{center}
+  \begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 1}
+
+      \verb+Get Lock 1+
+
+      \verb+Get Lock 2+
+
+      \verb+Release Lock 2+
+
+      \verb+Release Lock 1+
+\end{minipage} & 
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 2}
+
+      \verb+Get Lock 2+
+
+      \verb+Get Lock 1+
+
+      \verb+Release Lock 1+
+
+      \verb+Release Lock 2+
+\end{minipage}
+\end{tabular}
+\end{center}
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Avoiding Deadlocks}
+
+To avoid deadlocks, always be careful if your code {\bf acquires a lock while holding one}.  
+  
+You have two choices: (1) ensure consistent ordering in acquiring locks; or (2) use trylock.
+
+As an example of consistent ordering:
+\begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+void f1() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&l1);    
+}
+\end{lstlisting}
+\end{minipage}&
+\begin{minipage}{.4\textwidth}
+\begin{lstlisting}[language=C]
+void f2() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&l1);    
+}
+  \end{lstlisting}
+\end{minipage}
+\end{tabular}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Why Ordering Works}
+
+If the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. 
+
+Let us define this function as $f(R_{i})$, that maps a resource to an integer value. 
+
+This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. 
+
+Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once.
+
+To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. 
+
+If these two protocols are followed, then a circular-wait condition cannot hold.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Trylock}
+
+Alternately, you can use trylock. 
+
+Recall that Pthreads' {\tt trylock} returns 0 if it gets the lock. 
+
+But if it doesn't, your thread doesn't get blocked. 
+
+\begin{lstlisting}[language=C]
+void f1() {
+    lock(&l1);
+    while (trylock(&l2) != 0) {
+        unlock(&l1);
+        // wait
+        lock(&l1);
+    }
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+\end{lstlisting}
+
+This prevents the hold and wait condition.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Coarse-Grained Locking}
+
+One way of avoiding problems due to locking is to use few locks
+(1?). 
+
+This is \emph{coarse-grained locking}; it does have a couple of advantages:
+  \begin{itemize}
+    \item it is easier to implement;
+    \item with one lock, there is no chance of deadlocking; and
+    \item it has the lowest memory usage and setup time possible.
+  \end{itemize}
+
+Your parallel program will quickly become sequential.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Python}
+
+Python puts a lock around the whole interpreter (known as the
+\emph{global interpreter lock}).  
+
+This is the main reason (most) scripting languages have poor parallel performance; Python's just an example.
+
+Two major implications:
+\begin{itemize}
+\item The only performance benefit you'll see from threading is if one of the threads is
+      waiting for IO.
+\item But: any non-I/O-bound threaded program will be {\bf slower} than the sequential
+      version (plus, the interpreter will slow down your system).
+\end{itemize}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Fine-Grained Locking}
+
+On the other end of the spectrum is \emph{fine-grained locking}. 
+
+The big
+advantage: it maximizes parallelization in your program.
+
+However, it also comes with a number of disadvantages:
+  \begin{itemize}
+    \item if your program isn't very parallel, it'll be mostly wasted memory and setup time;
+    \item plus, you're now prone to deadlocks; and
+    \item fine-grained locking is generally more error-prone (be sure you grab the right lock!)
+  \end{itemize}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock Scope Examples}
+
+
+    Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
+
+    You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
+
+
+
+\end{frame}
+
+
+
+
+
+
+\end{document}
+
