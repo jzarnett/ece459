@@ -2,11 +2,15 @@
 
 \begin{document}
 
-\lecture{20 --- Compiler Optimizations}{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{20 --- Compiler Optimizations}{\term}{Patrick Lam}
 
-\section*{Compiler Optimizations: Link-Time Optimizations}
-Are economies of scale a real thing? In this context, does a
+\section*{Compiler Optimizations: Interprocedural Analysis and Link-Time Optimizations}
+\hfill ``Are economies of scale real?''
+
+In this context, does a
 whole-program optimization really improve your program?
+We'll start by first talking about some information that is critical for
+whole-program optimizations.
 
 \subsection*{Alias and Pointer Analysis}
 As we've seen in the above analyses, compiler optimizations often need
@@ -42,7 +46,7 @@ virtual function calls to direct calls.  Virtual method calls have the
 potential to be slow, because there is effectively a branch to
 predict. If the branch prediction goes well, then it doesn't impose
 more runtime cost. However, the branch prediction might go poorly.  (In
-general for C++, the program must read the object's vtable. Plus, virtual
+general for C++, the program must read the object's vtable.) Plus, virtual
 calls impede other optimizations. Compilers can help by doing
 sophisticated analyses to compute the call graph and by replacing
 virtual method calls with nonvirtual method calls.  Consider the
@@ -109,13 +113,79 @@ compiler level. Consider this example, courtesy of Wikipedia:
 }
 
 For both calls, to {\tt B} and {\tt bar}, we don't need to return control
-to the calling {\tt bar()} before returning to its caller. This avoids
+to the calling {\tt bar()} before returning to its caller (because {\tt bar()}
+is done anyway). This avoids
 function call overhead and reduces call stack use.
 
 \noindent \emph{Enabled with {\tt -foptimize-sibling-calls}.} Also supports
 sibling calls as well as tail-recursive calls.
 
+\section*{Link-Time Optimizations}
+Next up: mechanics of interprocedural optimizations in modern open-source
+compilers. Conceptually, interprocedural optimizations have been well-understood
+for a while. But practical implementations in open-source compilers are still
+relatively new; Hubi\v{c}ka~\cite{hubicka14:_linkt_gcc} summarizes recent history.
+In 2004, the only real interprocedural optimization in gcc was inlining, and it was
+quite ad-hoc.
 
+The biggest challenge for interprocedural optimizations is scalability, so 
+it fits right in as a topic of discussion for this course.
+Here's an outline of how it works:
+\begin{itemize}[noitemsep]
+\item local generation (parallelizable): compile to Intermediate Representation. Must generate compact
+IR for whole-program analysis phase.
+\item whole-program analysis (hard to parallelize!): create call graph, make transformation decisions. Possibly partition
+the program.
+\item local transformations (parallelizable): carry out transformations to local IRs, generate object code.
+Perhaps use call graph partitions to decide optimizations. 
+\end{itemize}
+There were a number of conceptually-uninteresting implementation
+challenges to be overcome before gcc could have its intermediate code available for
+interprocedural analysis (i.e. there was no stable on-disk IR format). The transformations look like this:
+\begin{itemize}[noitemsep]
+\item global decisions, local transformations:
+\begin{itemize}[noitemsep]
+\item devirtualization
+\item dead variable elimination/dead function elimination
+\item field reordering, struct splitting/reorganization
+\end{itemize}
+\item global decisions, global transformations:
+\begin{itemize}[noitemsep]
+\item cross-module inlining
+\item virtual function inlining
+\item interprocedural constant propagation
+\end{itemize}
+\end{itemize}
+The interesting issues arise from making the whole-program analysis scalable. Firefox, the Linux kernel,
+and Chromium contain tens of millions of lines of code. Whole-program analysis requires that all of 
+this code (in IR) be available to the analysis and that at least some summary of the code be in memory, 
+along with the call graph.
+(Since it's a whole-program analysis, any part of the program may affect other parts). The first problem
+is getting it into memory; loading the IR for tens of millions of lines of code is a non-starter.
+Clearly, anything that is more expensive than linear time can cause problems. Partitioning the program
+can help.
+
+How did gcc get better?
+Hubi\v{c}ka~\cite{hubicka15:_link_gcc} explains how. In line with what I've said earlier, it's
+avoiding unnecessary work.
+\begin{itemize}[noitemsep]
+\item gcc 4.5: initial version of LTO;
+\item gcc 4.6: parallelization; partitioning of the call graph (put closely-related functions together, approximate functions in other partitions); the bottleneck: streaming in types and declarations;
+\item gcc 4.7--4.9: improve build times, memory usage [``chasing unnecessary data away''.]
+\end{itemize}
+As far as I can tell, today's gcc, with {\tt -flto}, does work and includes
+optimizations including constant propagation and function
+specialization.
+
+\paragraph{Impact.} gcc CTO appears to give 3--5\% improvements in performance, which compiler experts consider good.
+Like we discussed last time, this allows developers to shift their attention from 
+manual factoring of translation units to letting the compiler do it. (This is kind of like going
+from manual transmissions to automatic transmissions for cars\ldots).
+
+The LLVM project provides more details at~\cite{project17:_llvm_link_time_optim}, while gcc details
+can be found at~\cite{novillo09:_linkt}.
+
+%\url{https://gcc.gnu.org/wiki/LightweightIpo}
 
 \input{bibliography.tex}
 
