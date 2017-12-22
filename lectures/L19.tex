@@ -11,9 +11,9 @@
 The performance improvements we've seen to date have been leveraging parallelism
 to improve throughput. Decreasing latency is trickier---it often requires domain-specific
 tweaks. We'll look at one example of decreasing latency today, Stream VByte~\cite{LEMIRE20181}.
-Even this example leverages some parallelism in the form of vector instructions. But there
-are some sequential improvements. For instance, Stream VByte takes care to be a predictable
-workload for the branch predictor.
+Even this example leverages parallelism---it uses vector instructions. But there
+are some sequential improvements, e.g. Stream VByte takes care to be predictable
+for the branch predictor.
 
 \paragraph{Context.} We can abstract the problem to that of storing a sequence of small integers.
 Such sequences are important, for instance, in the context of inverted indexes, which allow
@@ -52,6 +52,7 @@ bytes to store integers.  This makes sense when most integers are
 small, and especially on today's 64-bit processors.
 
 VByte works like this:
+\vspace*{-1em}
 \begin{itemize}
 \item $x$ between 0 and $2^7-1$, e.g. $17 = 0b10001$: $0xxx xxxx$, e.g. $0001 0001$;
 \item $x$ between $2^7$ and $2^{14}-1$, e.g. $1729 = 0b110 11000001$:
@@ -60,8 +61,7 @@ VByte works like this:
 \item etc.
 \end{itemize}
 That is, the control bit, or high-order bit, is 0 if you have finished representing the integer,
-and 1 if more bits remain. (UTF-8 does something similar, but with a different
-representation.)
+and 1 if more bits remain. (UTF-8 encodes the length, from 1 to 4, in high-order bits of the first byte.)
 
 It might seem that dealing with variable-byte integers might be
 harder than dealing fixed-byte integers, and it is. But there are performance benefits: because we are
@@ -95,8 +95,9 @@ this iteration will use 9 bytes; it advances the data pointer by 9. It then uses
 ``shuffle'' instruction to put the decoded integers from the data stream at known positions in the
 128-bit SIMD register; in this case, it pads the first 3-byte integer with 1 byte, then
 the next 1-byte integer with 3 bytes, etc. Let's say that the input is
-$0xf823~e127~2524~9748~1b..~....~....~....$. The 128-bit output is
-$0x00f8~23e1/0000~0027/2524 9748/0000/001b$. The shuffle mask is precomputed and, at
+{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. The 128-bit output is
+{\tt 0x00f8~23e1/0000~0027/2524 9748/0000/001b}, with the /s denoting separation
+between outputs. The shuffle mask is precomputed and, at
 execution time, read from an array.
 
 The core of the implementation uses three SIMD instructions:
@@ -114,9 +115,9 @@ Let's discuss how it achieves this performance.
 
 \begin{itemize}
 \item control bytes are sequential: the processor can always prefetch the next control byte, because
-its location is super predictable;
-\item data bytes are sequential and loaded with high throughput;
-\item shuffling takes 1 cycle;
+its location is predictable;
+\item data bytes are sequential and loaded at high throughput;
+\item shuffling exploits the instruction set so that it takes 1 cycle;
 \item control-flow is regular (executing only the tight loop which retrieves/decodes control
 and data; there are no conditional jumps).
 \end{itemize}
@@ -124,6 +125,7 @@ We're exploiting SIMD, so this isn't quite strictly single-threaded performance.
 Considering branch prediction and caching issues, though,
 certainly improves single-threaded performance.
 
+\newpage
 \section*{Compiler Optimizations}
 
 \hfill ``Is there any such thing as a free lunch?''
