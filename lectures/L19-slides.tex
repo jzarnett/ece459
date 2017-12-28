@@ -13,568 +13,675 @@
 \begin{frame}
   \titlepage
 
- \end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Language Support: Before C/C++11}
-
-%http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C
-
-  
-    Before C/C++11: \\ \qquad no language-level definition of threads.\\[1em]
-
-    Not even a well-formed question to ask what this means:\\[.5em]
-    \begin{tabular}{ll}
-      \begin{minipage}{.2\textwidth}
-        Thread 1:
-        \begin{lstlisting}
-  foo = 7;
-  bar = 42;
-        \end{lstlisting}
-      \end{minipage} &
-      \begin{minipage}{.4\textwidth}
-        Thread 2:
-        \begin{lstlisting}
-  printf("%d\n", foo);
-  printf("%d\n", bar);
-        \end{lstlisting}
-      \end{minipage}
-    \end{tabular}
-    ~\\[1em]
-    \only<2>{pre C/C++11: no such thing as a thread!}
-    
-  
 \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\part{Single-Thread Performance}
+
+
 \begin{frame}
-  \frametitle{Language Support in C++11: Defining the Question}
-
-  
-
-    Now\footnote{\url{http://www.quora.com/C++-programming-language/How-are-the-threading-and-memory-models-different-in-C++-as-compared-to-C}}:
-    \begin{itemize}
-    \item a memory model
-    \item primitives: mutexes, atomics, memory barriers.
-    \end{itemize}
-
-    Previous example has undefined behaviour \\ \qquad per C++11. (why?)
-  
+\partpage
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Language Support in C++11: Atomics}
-
-  
-    We've seen the notion of atomics. Here's the C++11 notation:
-
-    \begin{lstlisting}
-      atomic<int> foo, bar;      
-    \end{lstlisting}
-    
-    \begin{tabular}{ll}
-      \begin{minipage}{.25\textwidth}
-        Thread 1:
-        \begin{lstlisting}
-  foo.store(7);
-  bar.store(42);
-        \end{lstlisting}
-      \end{minipage} &
-      \begin{minipage}{.45\textwidth}
-        Thread 2:
-        \begin{lstlisting}
-  printf("%d\n", foo.load());
-  printf("%d\n", bar.load());
-        \end{lstlisting}
-      \end{minipage}
-    \end{tabular}
-
-    What are the possible outputs? (good exam question!)
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Prefix and Postfix}
+\frametitle{Single-Thread Performance}
 
-  
+``Can you run faster just by trying harder?''
 
-  Lots of people use postfix out of habit, but prefix is better.\\[2em]
+\begin{center}
+\includegraphics[width=0.7\textwidth]{images/theflash.jpg}
+\end{center}
 
-  In C, this isn't a problem. \\[1em]
-  In some languages (like C++), it can be.
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Why? Overloading}
 
-  
-
-  In C++, you can overload the {\tt ++} and {\tt --} operators.
-
-  \begin{lstlisting}
-class X {
-public:
-  X& operator++();
-  const X operator++(int);
-...
-};
-
-X x;
-++x; // x.operator++();
-x++; // x.operator++(0);
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Common Increment Implementations}
-
-  
-
-  Prefix is also known as {\bf increment and fetch}.
-
-  \begin{lstlisting}
-X& X::operator++()
-{
-  *this += 1;
-  return *this;
-}
-  \end{lstlisting}
-~\\[1em]
-
-  Postfix is also known as {\bf fetch and increment}.
-
-  \begin{lstlisting}
-const X X::operator++(int)
-{
-  const X old = *this;
-  ++(*this);
-  return old;
-}
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Efficiency}
+\frametitle{Single-Thread Performance}
 
-  
-  If you're the least concerned about efficiency, always use
-  {\bf prefix} increments/decrements instead of defaulting to postfix.\\[1em]
+The performance improvements we've seen to date have been leveraging parallelism
+to improve throughput. 
 
-  Only use {\tt postfix} when you really mean it, to be on the safe side.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Decreasing latency is trickier---it often requires domain-specific
+tweaks. 
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Digression: The Wayside}
-
-  \begin{center}
-    \includegraphics[width=.7\textwidth]{images/The_Wayside_Concord_Massachusetts}
-% http://en.wikipedia.org/wiki/File:The_Wayside_Concord_Massachusetts.jpg
-  \end{center}
-\hfill (Daderot, Wikimedia Commons)
+We'll look at one example of decreasing latency today, Stream VByte.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{It's Not Just Software}
+\frametitle{I have a cunning plan...}
+
+Even this example leverages parallelism---it uses vector instructions. 
+
+But there
+are some sequential improvements, e.g. Stream VByte takes care to be predictable
+for the branch predictor.
 
 
-Nathaniel Hawthorne wrote:
+\end{frame}
+\begin{frame}
+\frametitle{Problem Context}
 
-\begin{quote}
-I have been equally unsuccessful in my architectural projects; and have transformed a simple and small old farm-house into the absurdest anomaly you ever saw; but I really was not so much to blame here as the \sout{programmer} village-carpenter, who took the matter into his own hands, and produced an unimaginable sort of thing instead of what I asked for. (January 1864)
-\end{quote}
+We can abstract the problem to that of storing a sequence of small integers.
 
 
-\begin{tabular}{lrr}
-Original budget:& \$500 &(\$7540 inflation-adjusted)\\
-Actual cost: &\$2000 &(\$30160 inflation-adjusted)
+Such sequences are important in the context of inverted indexes, which allow fast lookups by term, and support boolean queries which combine terms.
+
+Here is a list of documents and some terms that they contain:
+\begin{center}
+\begin{tabular}{r|l}
+docid & terms \\ \hline
+1 & dog, cat, cow\\
+2 & cat\\
+3 & dog, goat\\
+4 & cow, cat, goat\\
 \end{tabular}
-
+\end{center}
 
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%% Using locks also involves a trade-off between coarse-grained locking,
-%% which can significantly reduce opportunities for parallelism, and
-%% fine-grained locking, which requires more careful design, increases
-%% locking overhead and is more prone to bugs.
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Locking}
+\frametitle{Problem Context}
 
-  
-  Locks prevent data races.
+The inverted index looks like this:
+\begin{center}
+\begin{tabular}{r|l}
+term & docs \\ \hline
+dog & 1, 3 \\
+cat & 1, 2, 4 \\
+cow & 1, 4 \\
+goat & 3, 4
+\end{tabular}
+\end{center}
 
-  \begin{itemize}
-    \item Locks' extents constitute their {\bf granularity}---do you lock large sections of your program with a big lock, or do you divide the locks and protect smaller sections?
-  \end{itemize}
+Inverted indexes contain many small integers in their lists.
 
-  Concerns when using locks:
+The deltas are typically small if the list of doc ids is sorted.
 
-  \begin{itemize}
-    \item overhead;
-    \item contention; and
-    \item deadlocks.
-  \end{itemize}
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Locking: Overhead}
+\frametitle{VByte}
 
-  
+VByte is one of a number of schemes that use a variable number of
+bytes to store integers.  
 
-  Using a lock isn't free. You pay:
-  \begin{itemize}
-    \item allocated memory for the locks;
-    \item initialization and destruction time; and
-    \item acquisition and release time.
-  \end{itemize}
+This makes sense when most integers are
+small, and especially on today's 64-bit processors.
 
-  These costs scale with the number of locks that you have.
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Locking: Contention}
+\frametitle{VByte}
 
-  
-    Most locking time is wasted waiting for the lock to become available.
+VByte works like this:
 
-    How can we fix this?
-      \begin{itemize}
-        \item Make the locking regions smaller (more granular);
-        \item Make more locks for independent sections.
-      \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{itemize}
+\item $x$ between 0 and $2^7-1$, e.g. $17 = 0b10001$: $0xxx xxxx$, e.g. $0001 0001$;
+\item $x$ between $2^7$ and $2^{14}-1$, e.g. $1729 = 0b110 11000001$:
+                   $1xxx xxxx/0xxx xxxx$, e.g. $1100 0001/0000 1101$;
+\item $x$ between $2^{14}$ and $2^{21}-1$: $0xxx xxxx/1xxx xxxx/1xxx xxxx$;
+\item etc.
+\end{itemize}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Locking: Deadlocks}
+That is, the control bit, or high-order bit, is 0 if you have finished representing the integer, and 1 if more bits remain.
 
-  
-  The more locks you have, the more you have to worry about deadlocks.\\[1em]
-
-  Key condition: \\ 
-\qquad waiting for a lock held by process $X$ \\while holding
-a lock held by process $X'$. ($X = X'$ allowed).
-  
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 
 \begin{frame}
-\frametitle{Formal Deadlock Definition}
+\frametitle{VByte}
 
-The four conditions for deadlock are:
+It might seem that dealing with variable-byte integers might be
+harder than dealing fixed-byte integers, and it is. 
 
-\begin{enumerate}
-	\item \textbf{Mutual Exclusion}
-	\item \textbf{Hold-and-Wait}
-	\item \textbf{No Preemption}
-	\item \textbf{Circular-Wait}
-\end{enumerate}
+But there are performance benefits: because we are using fewer bits! 
 
+We can fit more information into our limited RAM and
+cache, and even get higher throughput. 
 
+Storing and reading 0s isn't an effective use of resources. 
+
+However, a naive algorithm to decode VByte also gives lots of branch mispredictions.
 
 \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{Does this look familiar?}
-
-  
-     Consider two processors trying to get two {\it locks}:
-     
-     \vfill
-  \begin{columns}
-    \column{0.4\textwidth}
-      {\bf Thread 1}
-
-      \verb+Get Lock 1+
-
-      \verb+Get Lock 2+
-
-      \verb+Release Lock 2+
-
-      \verb+Release Lock 1+
-    \column{0.4\textwidth}
-      {\bf Thread 2}
-
-      \verb+Get Lock 2+
-
-      \verb+Get Lock 1+
-
-      \verb+Release Lock 1+
-
-      \verb+Release Lock 2+
-    \end{columns}~\\[1em]
-     Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops!
-          They both wait for each other \structure{(deadlock)}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Key to Preventing Deadlock}
+\frametitle{Stream VByte}
 
-  
+Stream VByte is a variant of VByte which works using SIMD instructions.
 
-  Always be careful if \\
-your code {\bf acquires a lock while holding one}.\\[1em]
 
-  Here's how to prevent a deadlock:
-  
-  \begin{itemize}
-    \item Ensure consistent ordering in acquiring locks; or
-    \item Use {\tt trylock}.
-  \end{itemize}
-  
+Science is incremental, and Stream VByte builds on earlier work---masked VByte
+as well as {\sc varint}-GB and {\sc varint}-G8IU. 
+
+The innovation in Stream VByte is to store the control and data streams separately.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+\frametitle{Stream VByte}
+
+Stream VByte's control stream uses two bits per integer to represent the size of the integer:
+\begin{center}
+\vspace*{-1em}
+\begin{tabular}{ll@{~~~~~~~~}ll}
+00 & 1 byte & 10 & 3 bytes\\
+01 & 2 bytes & 11 & 4 bytes
+\end{tabular}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Stream VByte}
+
+Each decode iteration reads a byte from the control stream and 16 bytes of data from memory.
+
+
+It uses a lookup table over the possible values of the control stream to decide how many
+bytes it needs out of the 16 bytes it has read.
+
+It then uses SIMD instructions to shuffle
+the bits each into their own integers. 
+
+Note that, unlike VByte, Stream VByte uses all 8 bits
+of each data byte as data.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Stream VByte Example}
+
+For instance, if the control stream contains $0b1000~1100$, then the data stream
+contains the following sequence of integer sizes: $3, 1, 4, 1$. 
+
+Out of the 16 bytes read,
+this iteration will use 9 bytes; it advances the data pointer by 9. 
+
+It then uses the SIMD
+``shuffle'' instruction to put the decoded integers from the data stream at known positions in the
+128-bit SIMD register. 
+
+In this case, it pads the first 3-byte integer with 1 byte, then
+the next 1-byte integer with 3 bytes, etc. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Stream VByte Example}
+
+Let's say that the input is
+{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. 
+
+The 128-bit output is
+{\tt 0x00f8~23e1/0000~0027/2524 9748/0000/001b}, with the /s denoting separation
+between outputs. 
+
+The shuffle mask is precomputed and, at
+execution time, read from an array.
+
+\end{frame}
+
 \begin{frame}[fragile]
-  \frametitle{Preventing Deadlocks---Ensuring Consistent Ordering}
+\frametitle{SIMD Instructions}
 
-  
-  \begin{lstlisting}
-void f1() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
+The core of the implementation uses three SIMD instructions:
+\begin{lstlisting}[language=C]
+  uint8_t C = lengthTable[control];
+  __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
+  __m128i Shuf = _mm_loadu_si128(shuffleTable[control]);
+  Data = _mm_shuffle_epi8(Data, Shuf);
+  databytes += C; control++;
+\end{lstlisting}
 
-void f2() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{But Does It Work?!}
+
+Stream VByte performs better than previous techniques on a realistic input.
+
+
+Let's discuss how it achieves this performance.
+
+\begin{itemize}
+\item control bytes are sequential: the processor can always prefetch the next control byte, because
+its location is predictable;
+\item data bytes are sequential and loaded at high throughput;
+\item shuffling exploits the instruction set so that it takes 1 cycle;
+\item control-flow is regular (executing only the tight loop which retrieves/decodes control
+and data; there are no conditional jumps).
+\end{itemize}
+
+\end{frame}
+
+\part{Compiler Optimizations}
+
+
+\begin{frame}
+\partpage
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Lunch Time, Already?}
+
+``Is there any such thing as a free lunch?''
+
+Compiler optimizations really do feel like a free lunch.
+
+
+But what does it really mean when you say {\tt -O2}?
+
+
+We'll see some representative compiler optimizations and discuss how
+they can improve program performance. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{You Do Your Job...}
+
+I'll point out cases that stop compilers
+from being able to optimize your code. 
+
+In general, it's better if the
+compiler automatically does a performance-improving transformation
+rather than you doing it manually.
+
+It's probably a waste of time for
+you and it also makes your code less readable.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{References}
+
+Many pages on the Internet describe
+optimizations. 
+
+Here's one that contains good examples:
+
+$\qquad \qquad$ \url{http://www.digitalmars.com/ctg/ctgOptimizer.html}
+
+You can find a full list of {\tt gcc} options here:
+
+$\qquad \qquad$ \url{http://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{About Compiler Optimizations}
+
+First of all, ``optimization'' is
+a bit of a misnomer. 
+
+Compilers generally don't generate ``optimal'' code. They generate \emph{better} code.
+
+\begin{center}
+\includegraphics[width=0.7\textwidth]{images/bender.jpg}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Optimization Levels}
+
+Here's what {\tt -On} means for
+{\tt gcc}. Other compilers have similar (but not identical) optimization flags.
+
+\begin{itemize}
+\item {\tt -O0} (default): Fastest compilation time. Debugging works as expected.
+\item {\tt -O1} ({\tt -O}): Reduce code size and execution time.
+ No optimizations that increase compiliation time.
+\item {\tt -O2}: All optimizations except space vs. speed tradeoffs.
+\item {\tt -O3}: All optimizations.
+\item {\tt -Ofast}: All {\tt -O3} optimizations, plus non-standards compliant optimizations,
+      particularly {\tt -ffast-math}.
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Scalar Optimizations: Constant Folding}
+
+Tag line: ``Why do later something you can do now?''
+
+\begin{center}
+\vspace*{-1em}
+\begin{tabular}{lll}
+i = 1024 * 1024 &
+$\Longrightarrow$ &
+i = 1048576
+\end{tabular}
+\end{center}
+
+\noindent \emph{Enabled at all optimization levels.} 
+
+The compiler will not emit code that does the multiplication at runtime.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Common Subexpression Elimination}
+
+We can do common subexpression elimination
+when the same expression {\tt x~op~y} is computed more than once. 
+
+Neither {\tt x} nor {\tt y} may change between the two computations. 
+
+\begin{lstlisting}[language=C]
+   a = (c + d) * y;
+   b = (c + d) * z;
+
+   w = 3;
+   x = f(); y = x;
+   z = w + y;
+
+\end{lstlisting}
+
+\emph{Enabled at {\tt -O2}, {\tt -O3} or with {\tt -fgcse}}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Constant Propagation}
+
+Moves constant values from definition to
+use. 
+
+The transformation is valid if there are no redefinitions of the
+variable between the definition and its use.
+
+ In the above example,
+we can propagate the constant value 3 to its use in {\tt z = w + y},
+yielding {\tt z = 3 + y}.
+
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Copy Propagation}
+
+A bit more sophisticated than constant
+propagation---telescopes copies of variables from their definition to
+their use. 
+
+Using it, we can replace the
+last statement with {\tt z = w + x}. 
+
+If we run both constant and copy
+propagation together, we get {\tt z = 3 + x}.
+
+These scalar optimizations are more complicated in the presence
+of pointers, e.g. {\tt z = *w + y}.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Redundant Code Optimizations}
+
+Dead code elimination: removes code that is guaranteed to not execute.
+
+\begin{center}
+\vspace*{-2em}
+\begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=C]
+  int f(int x) {
+    return x * 2;
+  }
   \end{lstlisting}
-
-     This code will not deadlock: you can only get {\bf l2} if you have
-      {\bf l1}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{Formal Lock Ordering}
-
-
-If the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$:
-
-Assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. 
-
-This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. 
-
-If the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). 
-
-To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. 
-
-If these two protocols are followed, then a circular-wait condition cannot hold.
-
-
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Preventing Deadlocks---Using {\tt trylock}}
-
-  
-  Recall: Pthreads' {\tt trylock} returns 0 if it gets the lock.
-
-  \begin{lstlisting}
-void f1() {
-    lock(&l1);
-    while (trylock(&l2) != 0) {
-        unlock(&l1);
-        // wait
-        lock(&l1);
+  \end{minipage} \begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=C]
+  int g() {
+    if (f(5) % 2 == 0) {
+      // do stuff...
+    } else {
+      // do other stuff
     }
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
+  }
+\end{lstlisting}
+\end{minipage}
+\end{center}
+
+The general problem, as with many other compiler problems, is undecidable.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Loop Optimizations}
+
+Loop optimizations are particularly profitable when loops execute
+often. 
+
+This is often a win, because programs spend a lot of time looping.
+
+
+The trick is to find which loops are going to be the important ones.
+
+A loop induction variable is a variable that varies on each iteration
+of the loop. 
+
+The loop variable is definitely a loop induction variable
+but there may be others. 
+
+\emph{Induction variable elimination} gets
+rid of extra induction variables.
+
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Scalar Replacement}
+
+\emph{Scalar replacement} replaces an array read {\tt a[i]}
+occuring multiple times with a single read {\tt temp = a[i]} and references
+to {\tt temp} otherwise. 
+
+It needs to know that {\tt a[i]} won't change
+between reads.
+
+Sane languages include array bounds checks. 
+
+Loop optimizations
+can eliminate array bounds checks if they can prove that the loop
+never iterates past the array bounds.
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Unrolling}
+
+This
+lets the processor run more code without having to branch
+as often. 
+
+\emph{Software pipelining} is a synergistic optimization,
+which allows multiple iterations of a loop to proceed in parallel.
+
+
+This optimization is also useful for SIMD. Here's an example.
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 4; ++i)
+    f(i)
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+f(0); f(1); f(2); f(3);
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+\noindent \emph{Enabled with {\tt -funroll-loops}.}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Interchange}
+
+This optimization can give big wins
+for caches (which are key); it changes the nesting of loops to
+coincide with the ordering of array elements in memory. 
+
+
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < N; ++i)
+    for (int j = 0; j < M; ++j)
+        a[j][i] = a[j][i] * c
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int j = 0; j < M; ++j)
+    for (int i = 0; i < N; ++i)
+        a[j][i] = a[j][i] * c
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+  since C is \emph{row-major} (meaning a[1][1] is beside a[1][2]),
+rather than \emph{column-major}.
+
+\noindent
+\emph{Enabled with {\tt -floop-interchange}.}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Fusion}
+
+This optimization is like the OpenMP collapse
+construct; we transform
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i)
+    a[i] = 4
+
+for (int i = 0; i < 100; ++i)
+    b[i] = 7
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i) {
+    a[i] = 4
+    b[i] = 7
 }
   \end{lstlisting}
-
-    This code also won't deadlock: it will give up {\bf l1} if it can't get
-    {\bf l2}.\\[1em]
-
-    (BTW: trylocks also enable measuring lock contention.)
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Coarse-Grained Locking (1)}
-
-  \begin{center}
-    \includegraphics[scale=0.5]{images/lock-all-the-things}
-
-    (with one lock)
+  \end{minipage}
   \end{center}
+There's a trade-off between data locality and loop overhead.
+
+Sometimes the inverse transformation, \emph{loop fission}, will
+improve performance.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Coarse-Grained Locking (2)}
+\begin{frame}[fragile]
+\frametitle{Loop-Invariant Code Motion}
 
-  
-  {\bf Advantages:}
-  
-  \begin{itemize}
-    \item Easier to implement;
-    \item No chance of deadlocking;
-    \item Lowest memory usage / setup time.
-  \end{itemize}
-  \vfill
-  {\bf Disadvantages:}
-  \begin{itemize}
-    \item Your parallel program can quickly become sequential.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Coarse-Grained Locking Example---Python GIL}
-
-  
-  This is the main reason (most) scripting languages have poor parallel
-  performance; Python's just an example.
-
-  \begin{itemize}
-    \item Python puts a lock around the whole interpreter\\ \quad (global interpreter lock).
-
-    \item Only performance benefit you'll see from threading is if a thread is
-      waiting for IO.
-
-    \item Any non-I/O-bound threaded program will be {\bf slower} than the sequential
-      version (plus, it'll slow down your system).
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Fine-Grained Locking (1)}
-
-  \begin{center}
-    \includegraphics[scale=0.5]{images/lock-all-the-things}
-
-    (with all different locks)
+ Also known as \emph{Loop hoisting},
+this optimization moves calculations out of a loop. 
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i) {
+    s = x * y;
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+s = x * y;
+for (int i = 0; i < 100; ++i) {
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage}
   \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+This reduces the amount of work we have to do for each iteration of the loop.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Miscellaneous Low-Level Optimizations}
+
+Some optimizations affect low level code generation; here are two examples.
+
+{\tt gcc} attempts to guess the probability of each branch to
+best order the code. (For an {\tt if}, fall-through is most efficient. Why?)
+
+This isn't quite an optimization, but you can use {\tt
+  \_\_builtin\_expect(expr, value)} to help gcc, if you know the runtime behaviour...
+  
+  In the Linux Kernel:
+  \begin{lstlisting}[language=C]
+#define likely(x)       __builtin_expect((x),1)
+#define unlikely(x)     __builtin_expect((x),0)
+  \end{lstlisting}
+
+
+
+\end{frame}
+
+
 \begin{frame}
-  \frametitle{Fine-Grained Locking (2)}
+\frametitle{Architecture-Specific}
 
-  
-  {\bf Advantages:}
-  
-  \begin{itemize}
-    \item Maximizes parallelization in your program.
-  \end{itemize}
-  \vfill
-  {\bf Disadvantages}
-  \begin{itemize}
-    \item May be mostly wasted memory / setup time.
-    \item Prone to deadlocks.
-    \item Generally more error-prone (be sure you grab the right lock!)
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+{\tt gcc} can also generate code tuned to particular
+processors. 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Fine-Grained Locking Examples}
+You can specify this using {\tt
+  -march} and {\tt -mtune}. ({\tt -march} implies {\tt -mtune}).
 
-  
-    The Linux kernel used to have {\bf one big lock}\\ that essentially made
-      the kernel sequential. 
-    \begin{itemize}
-      \item (worked fine for single-processor systems!)
-    \end{itemize}
-    Now uses finer-grained locks for performance.\\[2em]
 
-    Databases may lock fields / records / tables.\\
-    \qquad  (fine-grained $\rightarrow$ coarse-grained).\\[1em]
+This will enable specific instructions that not all CPUs support (e.g. SSE4.2).
+For example, {\tt -march=corei7}.
 
-    Can lock individual objects.
-  
+\noindent
+Good to use on your local machine or your cloud servers, not ideal for code you ship to others.
+
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 
-\section{}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary}
 
-  
- C++11 memory model.\\
- 
- Good increment practice. \\
-
- Lock granularity.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \end{document}
 
