@@ -16,6 +16,297 @@
 \end{frame}
 
 
+\begin{frame}
+\frametitle{Interprocedural Analysis and Link-Time Optimizations}
+
+``Are economies of scale real?''
+
+In this context, does a
+whole-program optimization really improve your program?
+
+
+We'll start by first talking about some information that is critical for
+whole-program optimizations.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Alias and Pointer Analysis}
+
+Compiler optimizations often need
+to know about what parts of memory each statement reads to.  
+
+This is
+easy when talking about scalar variables which are stored on the
+stack. 
+
+This is much harder when talking about pointers or arrays
+(which can alias). 
+
+\alert{Alias analysis} helps by declaring that a
+given variable {\tt p} does not alias {\tt q}.
+
+\alert{Pointer analysis} tracks what regions of the heap each variable points to.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Alias Analysis}
+
+When we know that two pointers don't alias, then we know that their
+effects are independent, so it's correct to move things around.
+
+We used {\tt restrict} so that the
+compiler wouldn't have to do as much pointer analysis. 
+
+Shape analysis
+builds on pointer analysis to determine that data structures are indeed
+trees rather than lists.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Call Graph}
+Many interprocedural analyses require accurate call graphs. 
+
+A \alert{call graph} is a directed graph showing relationships between
+functions. 
+
+It's easy to compute a call graph when you have C-style
+function calls. 
+
+It's much harder when you have virtual methods, as in
+C++ or Java, or even C function pointers. 
+
+In particular, you need pointer
+analysis information to construct the call graph.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Devirtualization}
+
+This optimization attempts to convert virtual function calls to direct calls.  
+
+Virtual method calls have the potential to be slow, because there is effectively a branch to predict. 
+
+(In general for C++, the program must read the object's vtable.) 
+
+Plus, virtual calls impede other optimizations.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Devirtualization}
+
+Compilers can help by doing sophisticated analyses to compute the call graph and by replacing virtual method calls with nonvirtual method calls.  
+
+
+  \begin{lstlisting}[language=C]
+class A {
+    virtual void m();
+};
+
+class B : public A {
+    virtual void m();
+}
+
+int main(int argc, char *argv[]) {
+
+    std::unique_ptr<A> t(new B);
+    t.m();
+}
+  \end{lstlisting}
+
+Devirtualization could eliminate vtable access; instead, we could just call B's {\tt m} method
+directly.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Devirtualization}
+
+`Rapid Type Analysis'' analyzes the entire program, observes that
+only {\tt B} objects are ever instantiated, and enables devirtualization
+of the {\tt b.m()} call.
+
+\emph{Enabled with {\tt -O2}, {\tt -O3}, or with {\tt -fdevirtualize}.}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Inlining}
+
+ Compilers can inline following compiler directives, but usually more based on heuristics. 
+ 
+ Devirtualization enables more inlining. 
+ 
+ The compiler always inlines functions marked with the {\tt always\_inline} attribute.
+
+\noindent \emph{Enabled with {\tt -O2} and {\tt -O3}.}
+
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Devirtualization and Inlining}
+
+Obviously, inlining and devirtualization require call graphs. 
+
+But so
+does any analysis that needs to know about the heap effects of
+functions that get called.
+
+
+\begin{lstlisting}[language=C]
+  int n;
+
+  int f() { /* opaque */ }
+
+  int main() {
+    n = 5;
+    f();
+    printf("%d\n", n);
+  }
+\end{lstlisting}
+
+We could propagate the constant value 5, as long as we know that {\tt
+  f()} does not write to {\tt n}.
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Tail Recursion Elimination}
+
+This optimization is mandatory in some functional languages; we replace a call by a {\tt goto} at the compiler level.
+
+{\small
+\begin{lstlisting}[language=C]
+  int bar(int N) {
+    if (A(N))
+      return B(N);
+    else
+      return bar(N);
+  }
+\end{lstlisting}
+}
+
+For both calls, to {\tt B} and {\tt bar}, we don't need to return control
+to the calling {\tt bar()} before returning to its caller (because {\tt bar()}
+is done anyway). 
+
+This avoids function call overhead and reduces call stack use.
+
+\noindent \emph{Enabled with {\tt -foptimize-sibling-calls}.} Also supports
+sibling calls as well as tail-recursive calls.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Link-Time Optimization}
+
+The biggest challenge for interprocedural optimizations is scalability, so 
+it fits right in as a topic of discussion for this course.
+
+Here's an outline of how it works:
+\begin{itemize}
+\item local generation (parallelizable)
+\item whole-program analysis (hard to parallelize!)
+\item local transformations (parallelizable)
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Transformations in Code}
+
+The transformations look like this:
+\begin{itemize}
+\item global decisions, local transformations:
+\begin{itemize}
+\item devirtualization
+\item dead variable elimination/dead function elimination
+\item field reordering, struct splitting/reorganization
+\end{itemize}
+\item global decisions, global transformations:
+\begin{itemize}
+\item cross-module inlining
+\item virtual function inlining
+\item interprocedural constant propagation
+\end{itemize}
+\end{itemize}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Whole Program Analysis}
+
+The interesting issues arise from making the whole-program analysis scalable. 
+
+Firefox, the Linux kernel, Chromium contain tens of millions of lines of code. 
+
+Whole-program analysis requires that all of 
+this code (in IR) be available to the analysis; some summary of the code be in memory,  along with the call graph.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Whole Program Analysis}
+
+
+Since it's a whole-program analysis, any part of the program may affect other parts. 
+
+The first problem
+is getting it into memory; loading the IR for tens of millions of lines of code is a non-starter.
+
+
+Clearly, anything that is more expensive than linear time can cause problems. 
+
+Partitioning the program can help.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{gcc Whole Program Analysis}
+
+How did gcc get better?  Avoiding unnecessary work.
+
+\begin{itemize}
+\item gcc 4.5: initial version of LTO;
+\item gcc 4.6: parallelization; partitioning of the call graph (put closely-related functions together, approximate functions in other partitions); the bottleneck: streaming in types and declarations;
+\item gcc 4.7--4.9: improve build times, memory usage [``chasing unnecessary data away''.]
+\end{itemize}
+
+Today's gcc, with {\tt -flto}, does work and includes
+optimizations including constant propagation and function
+specialization.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{It Works!}
+
+gcc CTO appears to give 3--5\% improvements in performance, which compiler experts consider good.
+
+
+Like we discussed last time, this allows developers to shift their attention from 
+manual factoring of translation units to letting the compiler do it.
+
+\end{frame}
+
+
 
 
 
