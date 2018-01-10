@@ -23,7 +23,7 @@ In the linux \texttt{compiler.h} header there are two neat little shortcuts defi
 
 These are nice ways of saying that we expect \texttt{x} to be true (likely) or false (unlikely). These hints tell the compiler some information about how it should predict. It will then arrange the instructions in such a way that, if the prediction is right, the instructions in the pipeline will be executed. But if we're wrong, then the instructions will have to be flushed.
 
-It's noteworthy that we have to compile with at least optimization level 2 (\texttt{-O2}) to get the compiler to take these hints at all. Otherwise they won't do anything. 
+Compile with at least optimization level 2 (\texttt{-O2}) for the compiler to take these hints. Otherwise they won't do anything. 
 
 It takes a bit of trickery to force branch mispredicts. {\tt gcc} extensions allow hinting, but usually {\tt gcc} or the processor is smart enough to ignore bad hints. This code from~\cite{mispredict} worked in 2013, though:
 
@@ -48,7 +48,6 @@ It takes a bit of trickery to force branch mispredicts. {\tt gcc} extensions all
               }
             }
           }
-
           printf("%d, %d\n", m1, m2);
         }
 \end{lstlisting}
@@ -70,17 +69,17 @@ real	0m3.938s
 user	0m3.868ss
 sys	0m0.000s
 \end{lstlisting}
-{\tt gcc} seems to have gotten smart enough to reject bogus hints in the interim.
+Some versions of {\tt gcc} seem to have gotten smart enough to reject bogus hints since then. In 2018, gcc 7.2.0 does show a difference of 2.12s (correct guess) vs 2.47s (wrong guess, no guess) on Linux 4.14.12 (post-mitigation) running on a Pentium G645.
 
 In the original source~\cite{mispredict} the author reports the following results: scanning a one million element array, with all elements initially zero, the results are:
-
-\begin{itemize}
+\vspace*{-1em}
+\begin{itemize}[noitemsep]
 	\item No use of hints: \texttt{0:02.68 real,  2.67 user, 0.00 sys}
 	\item Good prediction: \texttt{0:02.28 real,  2.28 user, 0.00 sys}
 	\item Bad prediction: \texttt{0:04.19 real,  4.18 user, 0.00 sys}
 \end{itemize}
 
-\paragraph{Using the hints.} From these results we can see pretty clearly that if we're wrong, the penalty is pretty large (assuming the compiler does not look at your hint and think ``stupid human, I know better''). Under a lot of circumstances then, it's probably best just to leave it alone, unless we're really, really, really sure. 
+\paragraph{Using the hints.} From these results we can see pretty clearly that if we're wrong, the penalty can be pretty large (assuming the compiler does not look at your hint and think ``stupid human, I know better''). Under a lot of circumstances then, it's probably best just to leave it alone, unless we're really, really, really sure. 
 
 How sure do we have to be? The answer depends dramatically on the code, the CPU you're using, the compiler, and all those little details. But~\cite{mispredict} to the rescue here again, because there are some tests here. To cut to the chase, when about one in ten thousand values in the array is nonzero, then it's roughly the ``break-even'' point for the setup as described.
 
@@ -92,14 +91,16 @@ We can write software. The hardware will make it fast. If we understand the hard
 You've seen how branch prediction works in ECE 222. However, we'll talk about it today in the context of performance. Notes based on a transcript of a talk by Dan Luu~\cite{branchprediction}.
 
 I want you to pick up two points from this discussion:
-\begin{itemize}
+\vspace*{-1em}
+\begin{itemize}[noitemsep]
 \item how branch predictors work---this helps you understand some of the apparent randomness in your
 execution times, and possibly helps you make your code more predictable; and,
 \item applying a (straightforward) expected value computation to predict performance.
 \end{itemize}
 
 Let's consider the following assembly code:
-\begin{lstlisting}
+
+\hspace*{2em} \begin{minipage}{.4\textwidth} \begin{lstlisting}
 branch_if_not_equal x, 0, else_label
 // Do stuff
 goto end_label
@@ -108,6 +109,8 @@ else_label:
 end_label:
 // whatever happens later
 \end{lstlisting}
+\end{minipage}
+
 The {\tt branch} instruction may be followed by either ``stuff'' or ``things''.
 The pipeline needs to know what the next instruction is, for instance to fetch it.
 But it can't know the next instruction until it almost finishes executing the branch.
@@ -179,8 +182,7 @@ code). So we can design a branch predictor which predicts ``taken''
 for backwards and ``not taken'' for forwards. The compiler can then
 use this information to encode what it thinks about forwards branches
 (that is, making the not-taken branch the one it thinks is more likely).
-Let's say that this might get us to 80\% accuracy.
-\[
+Let's say that this might get us to 80\% accuracy. \[
 (0.8 + 0.8 \times 0.2) \times 1 \mathrm{~cycle} + (0.2 \times 0.2) \times 20 \mathrm{~cycles} = 1.76 \mathrm{~cycles}.
 \]
 The PPC 601 (1993) and 603 used this scheme.
@@ -199,7 +201,6 @@ to identify branches. Doing so raises the prospect of \emph{aliasing}:
 different branches (with different behaviour) map to the same spot in the table.
 
 We might get 85\% accuracy with such a scheme.
-
 \[
 (0.8 + 0.85 \times 0.2) \times 1 \mathrm{~cycle} + (0.15 \times 0.2) \times 20 \mathrm{~cycles} = 1.57 \mathrm{~cycles}.
 \]
@@ -224,7 +225,6 @@ If the counter is 00 or 01, we predict ``not taken''; if it is 10 or
 
 With a two-bit counter, we can have fewer entries at the same size, but they'll do better.
 It would be reasonable to expect 90\% accuracy.
-
 \[
 (0.8 + 0.9 \times 0.2) \times 1 \mathrm{~cycle} + (0.1 \times 0.2) \times 20 \mathrm{~cycles} = 1.38 \mathrm{~cycles}.
 \]
@@ -251,10 +251,9 @@ points to a table of 2-bit saturating counters. What's changed from the two-bit 
 is that the history helps determine the index and hence the prediction.
 
 After we take a branch, we add its direction to the history, so that the next lookup
-gets sent to a different table entry.
+maps to a different table entry.
 
 This scheme might give something like 93\% accuracy.
-
 \[
 (0.8 + 0.93 \times 0.2) \times 1 \mathrm{~cycle} + (0.07 \times 0.2) \times 20 \mathrm{~cycles} = 1.27 \mathrm{~cycles}.
 \]
@@ -267,7 +266,6 @@ So the branch address determines which branch history gets used.
 We concatenate the address and history to get the index, which then points to a
 2-bit counter again. We are starting to encounter dminishing returns, but we might
 get 94\% accuracy:
-
 \[
 (0.8 + 0.94 \times 0.2) \times 1 \mathrm{~cycle} + (0.06 \times 0.2) \times 20 \mathrm{~cycles} = 1.23 \mathrm{~cycles}.
 \]
@@ -290,6 +288,17 @@ is for modern processors. Fortunately, most branches are predictable
 now. Aliasing (multiple branches mapping to the same entry in a
 prediction table) can be a problem, but processors are pretty good at
 dealing with that too.
+
+\section*{Cache side-channel attacks}
+
+In early 2018, the Spectre~\cite{Kocher2018spectre} and Meltdown~\cite{Lipp2018meltdown} attacks were disclosed. These attacks leverage performance features of modern CPUs to break process isolation guarantees---in principle, a process shouldn't be able to read memory that belongs to the kernel or to other processes.
+
+The concept of cache side-channel attacks has been known for a while. If an attacker can get some memory loaded into the cache, then it can extract that memory using a cache side-channel attack.
+
+Spectre and Meltdown can cause privileged memory to be loaded into the cache, and then extracted using a cache side-channel attack. We'll talk about Spectre (variant 2), since it attacks branch prediction in particular. My explanation follows~\cite{masters18:_what_meltd_spect} by Jon Masters of RedHat. However, you should now have enough background to follow the Google Project Zero description at~\cite{horn18:_readin}.
+
+We know that at a branch, the CPU will start speculatively executing code at the inferred target of the branch. To exploit this vulnerability, the attack code convinces the CPU to speculatively execute code of its choice. The speculatively-executed attack code reads secret data (e.g. from the hypervisor kernel) and puts it in the cache. Once the data is in the cache, the attack proceeds by extracting the data from the cache.
+\newpage
 
 \section*{Limits to parallelization}
 I mentioned briefly in Lecture 1 that programs often have a sequential
@@ -375,7 +384,7 @@ between threads here. That can drag the performance down even more.
 \paragraph{Amdahl's Assumptions.}
 Despite Amdahl's pessimism, we still all have multicore computers today.
 Why is that? Amdahl's Law assumes that:
-\begin{itemize}
+\begin{itemize}[noitemsep]
     \item problem size is fixed (read on);
     \item the program, or the underlying implementation, behaves the same on 1 processor as on $N$ processors; and
     \item that we can accurately measure runtimes---i.e. that overheads don't matter.
