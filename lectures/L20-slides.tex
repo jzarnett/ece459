@@ -2,7 +2,7 @@
 
 \title{Lecture 20 --- Compiler Optimizations }
 
-\author{Patrick Lam \\ \small \texttt{p.lam@ece.uwaterloo.ca}}
+\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -13,391 +13,99 @@
 \begin{frame}
   \titlepage
 
- \end{frame}
+\end{frame}
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Last Time}
-  
-    Investigated impact of using abstractions.\\[1em]
-    Today: how compilers actually make code faster.
-  
+\frametitle{Interprocedural Analysis and Link-Time Optimizations}
+
+``Are economies of scale real?''
+
+In this context, does a
+whole-program optimization really improve your program?
+
+
+We'll start by first talking about some information that is critical for
+whole-program optimizations.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\part{Compiler Optimizations}
-\frame{\partpage}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Introduction}
+\frametitle{Alias and Pointer Analysis}
 
-  
-    We'll be looking at compiler optimizations.\\[1em]
-    Mostly related to performance.\\
-    Better {\tt gcc} than you:
-      \begin{itemize}
-        \item For you, probably a waste of time
-        \item Plus: optimizations make your code less readable.
-      \end{itemize}
-~\\
+Compiler optimizations often need
+to know about what parts of memory each statement reads to.  
 
-    Compilers have a host of optimization options.\\
-     We'll look at {\tt gcc}.
-  
+This is
+easy when talking about scalar variables which are stored on the
+stack. 
+
+This is much harder when talking about pointers or arrays
+(which can alias). 
+
+\alert{Alias analysis} helps by declaring that a
+given variable {\tt p} does not alias {\tt q}.
+
+\alert{Pointer analysis} tracks what regions of the heap each variable points to.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Compiler Optimization}
+\frametitle{Alias Analysis}
 
-  
-    ``Optimization'' is a bit of a misnomer:\\
-      \qquad compilers don't generate ``optimal'' code.\\[1em]
+When we know that two pointers don't alias, then we know that their
+effects are independent, so it's correct to move things around.
 
-    Compilers do generate \structure{better} code, though.\\[1em]
+We used {\tt restrict} so that the
+compiler wouldn't have to do as much pointer analysis. 
 
-    The program you wrote is too slow. \\
-    Contract of a compiler: \\
-    \qquad produce a program with same behaviour, but faster.
-  
+Shape analysis
+builds on pointer analysis to determine that data structures are indeed
+trees rather than lists.
+
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{gcc Optimization Levels}
+\frametitle{Call Graph}
+Many interprocedural analyses require accurate call graphs. 
 
-  
-  {\tt -O1} ({\tt -O})
+A \alert{call graph} is a directed graph showing relationships between
+functions. 
 
-  \begin{itemize}
-    \item Reduce code size and execution time.
-    \item No optimizations that increase compilation time.
-  \end{itemize}
+It's easy to compute a call graph when you have C-style
+function calls. 
 
-  {\tt -O2}
+It's much harder when you have virtual methods, as in
+C++ or Java, or even C function pointers. 
 
-  \begin{itemize}
-    \item All optimizations except space vs. speed tradeoffs.
-  \end{itemize}
-  
-  {\tt -O3}
+In particular, you need pointer
+analysis information to construct the call graph.
 
-  \begin{itemize}
-    \item All optimizations.
-  \end{itemize}
 
-  {\tt -O0} (default)
-
-  \begin{itemize}
-    \item Fastest compilation time, debugging works as expected.
-  \end{itemize}
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Disregard Standards, Acquire Speedup}
 
-  
-  {\tt -Ofast}
-
-  \begin{itemize}
-    \item All {\tt -O3} optimizations and non-standards compliant optimizations,
-      particularly {\tt -ffast-math}. \\ 
- (Like {\tt -fast} on Solaris.)
-  \end{itemize}
-  This turns off exact implementations of IEEE or ISO rules/specifications for math
-  functions.\\[1em]
-
-  Generally, if you don't care about the exact result, you can use this for
-  a speedup
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\section{Scalar Optimizations}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Constant Folding}
-
-  
-  \begin{lstlisting}
-i = 1024 * 1024
-  \end{lstlisting}
-
-  Why do something later you can do now?\\[1em]
-
-  The compiler will not emit code that does the multiplication at runtime.\\
-  It will simply use the computed value
-
-  \begin{lstlisting}
-i = 1048576
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item Enabled at all optimization levels.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Common Subexpression Elimination}
-
-  
-
-  {\tt -fgcse}
-
-  \begin{itemize}
-    \item Perform a global\footnote{across basic blocks} common subexpression elimination pass.
-    \item (Also performs global constant and copy propagation.)
-    \item Enabled at {\tt -O2}, {\tt -O3}.
-  \end{itemize}
-  ~\\[1em]
-
-  {\bf Example:} 
-
-  \begin{lstlisting}
-a = b * c + g;
-d = b * c * d;
-  \end{lstlisting}
-
-  Instead of computing {\tt b * c} twice, we compute it once, and reuse the
-  value in each expression
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Constant Propagation}
-
-  
-
-  Moves constant values from definition to use.
-
-  \begin{itemize}
-    \item Valid if there's no intervening redefinition.
-  \end{itemize}
-  \vfill
-  {\bf Example:}
-  \begin{lstlisting}
-int x = 14;
-int y = 7 - x / 2;
-return y * (28 / x + 2);
-  \end{lstlisting}
-
-  with constant propagation would produce:
-
-  \begin{lstlisting}
-int x = 14;
-int y = 0;
-return 0;
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Copy Propagation}
-
-  
-  Replaces direct assignments with their values. \\
-  Usually runs after
-  common subexpression elimination.\\[1em]
-
-  {\bf Example:}
-  \begin{lstlisting}
-y = x
-z = 3 + y
-  \end{lstlisting}
-
-  with copy propagation would produce:
-
-  \begin{lstlisting}
-z = 3 + x
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Dead Code Elimination}
-
-  
-  {\tt -fdce}
-
-  \begin{itemize}
-    \item Remove any code guaranteed not to execute.
-    \item Enabled at all optimization levels.
-  \end{itemize}
-~\\
-
-  {\bf Example:}
-  \begin{lstlisting}
-if (0) {
-    z = 3 + x;
-}
-  \end{lstlisting}
-  would not be included in the final executable
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\section{Loop Optimizations}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Loop Unrolling}
-
-  
-  {\tt -funroll-loops}
-  \begin{itemize}
-    \item Unroll loops, using a fixed number of iterations.
-  \end{itemize}
-  \vfill
-  {\bf Example:}
-
-  \begin{lstlisting}
-for (int i = 0; i < 4; ++i)
-    f(i)
-  \end{lstlisting}
-
-would be transformed to:
-
-  \begin{lstlisting}
-f(0)
-f(1)
-f(2)
-f(3)
-  \end{lstlisting}
-(Also useful for SIMD).
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Loop Interchange}
-
-  
-  {\tt -floop-interchange}\\
-  Enhances locality; big wins possible.\\[1em]
-
-  {\bf Example:} in C the following:
-  \begin{lstlisting}
-for (int i = 0; i < N; ++i)
-    for (int j = 0; j < M; ++j)
-        a[j][i] = a[j][i] * c
-  \end{lstlisting}
-  would be transformed to this:
-  \begin{lstlisting}
-for (int j = 0; j < M; ++j)
-    for (int i = 0; i < N; ++i)
-        a[j][i] = a[j][i] * c
-  \end{lstlisting}
-  since C is {\bf row-major} (meaning a[1][1] is beside a[1][2]).\\
-  (Other
-  possibility is {\bf column-major}.)
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Loop Fusion}
-
-  
-  {\bf Example:}
-  \begin{lstlisting}
-for (int i = 0; i < 100; ++i)
-    a[i] = 4
-
-for (int i = 0; i < 100; ++i)
-    b[i] = 7
-  \end{lstlisting}
-  would be transformed to this:
-  \begin{lstlisting}
-for (int i = 0; i < 100; ++i) {
-    a[i] = 4
-    b[i] = 7
-}
-  \end{lstlisting}
-  \vfill
-  Trade-off  between data locality and loop overhead; \\ 
-  the inverse is also an optimization, called {\bf loop fission}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Loop-Invariant Code Motion}
-  
-  
-  \begin{itemize}
-    \item Moves invariants out of a loop.
-    \item Also called loop hoisting.
-  \end{itemize}
-
-  {\bf Example:}
-  \begin{lstlisting}
-for (int i = 0; i < 100; ++i) {
-    s = x * y;
-    a[i] = s * i;
-}
-  \end{lstlisting}
-  would be transformed to this:
-  \begin{lstlisting}
-s = x * y;
-for (int i = 0; i < 100; ++i) {
-    a[i] = s * i;
-}
-  \end{lstlisting}
-~\\
-  Reduces the amount of work we have to do for each iteration of the loop.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\section{Other Optimizations}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Devirtualization}
+\frametitle{Devirtualization}
 
-  
-  {\tt -fdevirtualize}
+This optimization attempts to convert virtual function calls to direct calls.  
 
-  \begin{itemize}
-    \item Attempt to convert virtual function calls to direct calls.
-    \item Enabled with {\tt -O2}, {\tt -O3}.
-  \end{itemize}
-~\\[1em]
+Virtual method calls have the potential to be slow, because there is effectively a branch to predict. 
 
-  Virtual functions impose overhead and impede other optimizations.\\[1em]
-  C++: must read
-  the object's vtable and branch to
-  the correct function.
-  
+(In general for C++, the program must read the object's vtable.) 
+
+Plus, virtual calls impede other optimizations.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Devirtualization (example)}
-  
+\frametitle{Devirtualization}
 
-  {\bf Example:}
+Compilers can help by doing sophisticated analyses to compute the call graph and by replacing virtual method calls with nonvirtual method calls.  
 
-  \begin{lstlisting}
+
+  \begin{lstlisting}[language=C]
 class A {
     virtual void m();
 };
@@ -412,315 +120,195 @@ int main(int argc, char *argv[]) {
     t.m();
 }
   \end{lstlisting}
-  Devirtualization could eliminate RTTI access; \\ \qquad instead just call to B's {\tt m}.\\
-  Needs call graph, which can be tricky to compute (more soon).
-  
+
+Devirtualization could eliminate vtable access; instead, we could just call B's {\tt m} method
+directly.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Scalar Replacement of Aggregates}
-
-\begin{center}
-  \includegraphics[width=0.8\textwidth]{images/Censored_rubber_stamp.png}
-\end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Aliasing and Pointer Analysis}
+\frametitle{Devirtualization}
 
-  
+`Rapid Type Analysis'' analyzes the entire program, observes that
+only {\tt B} objects are ever instantiated, and enables devirtualization
+of the {\tt b.m()} call.
 
-     We've seen {\tt restrict}: tell compiler that variables don't
-      alias.\\[1em]
-
-    {\it Pointer analysis} automatically tracks the variables in your program to
-      determine whether or not they alias.\\[1em]
-    
-    If they don't alias, we can reason about side effects, reorder
-    accesses, and do other types of optimizations.
-  
+\emph{Enabled with {\tt -O2}, {\tt -O3}, or with {\tt -fdevirtualize}.}
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Call Graph}
-  
-  
-\begin{itemize}
-\item     A directed graph showing relationships between functions.
-\end{itemize}
-~\\
-     Relatively simple to compute in C\\\qquad (function pointers complicate things).\\
+\frametitle{Inlining}
 
-     Hard for virtual function calls (C++/Java).\\[1em]
+ Compilers can inline following compiler directives, but usually more based on heuristics. 
+ 
+ Devirtualization enables more inlining. 
+ 
+ The compiler always inlines functions marked with the {\tt always\_inline} attribute.
 
-     Virtual calls require pointer analysis to disambiguate.
-  
+\noindent \emph{Enabled with {\tt -O2} and {\tt -O3}.}
+
+
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Importance of Call Graphs}
+\frametitle{Devirtualization and Inlining}
 
-  
+Obviously, inlining and devirtualization require call graphs. 
 
-  The call graph can enable optimization of the following:
+But so
+does any analysis that needs to know about the heap effects of
+functions that get called.
 
-  \begin{lstlisting}
-int n;
 
-int f() { /* opaque */ }
+\begin{lstlisting}[language=C]
+  int n;
 
-int main() {
+  int f() { /* opaque */ }
+
+  int main() {
     n = 5;
     f();
     printf("%d\n", n);
-}
-  \end{lstlisting}
-~\\
-  We could propagate the constant value 5 in {\tt main()},\\ \qquad as long as {\tt f()}
-  does not write to {\tt n}.
-  
+  }
+\end{lstlisting}
+
+We could propagate the constant value 5, as long as we know that {\tt
+  f()} does not write to {\tt n}.
+
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Tail Recursion Elimination}
+\frametitle{Tail Recursion Elimination}
 
-  
+This optimization is mandatory in some functional languages; we replace a call by a {\tt goto} at the compiler level.
 
-  {\tt -foptimize-sibling-calls}
-
-  \begin{itemize}
-    \item Optimize sibling and tail recursive calls.
-    \item Enabled at {\tt -O2} and {\tt -O3}.
-  \end{itemize}
-
-  {\bf Example:}
-
-  \begin{lstlisting}
-int bar(int N) {
+{\small
+\begin{lstlisting}[language=C]
+  int bar(int N) {
     if (A(N))
-        return B(N);
+      return B(N);
     else
-        return bar(N);
+      return bar(N);
+  }
+\end{lstlisting}
 }
-  \end{lstlisting}
 
-  Compiler can just replace the call to {\tt bar} by a {\tt goto}.\\
-  Avoids function call overhead 
-  and reduces call stack use.
-  
+For both calls, to {\tt B} and {\tt bar}, we don't need to return control
+to the calling {\tt bar()} before returning to its caller (because {\tt bar()}
+is done anyway). 
+
+This avoids function call overhead and reduces call stack use.
+
+\noindent \emph{Enabled with {\tt -foptimize-sibling-calls}.} Also supports
+sibling calls as well as tail-recursive calls.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Branch Predictions}
-
-  
-     gcc attempts to guess the probability of each branch to 
-      best order the code.\\
-     (for an {\tt if}, fall-through is most efficient, why?)\\[1em]
-
-     Use {\tt \_\_builtin\_expect(expr, value)} to help GCC, if
-      you know the run-time characteristics of your program.\\[1em]
-  {\bf Example (in the Linux kernel):}
-
-  \begin{lstlisting}
-#define likely(x)       __builtin_expect((x),1)
-#define unlikely(x)     __builtin_expect((x),0)
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Architecture-Specific}
+\frametitle{Link-Time Optimization}
 
-  
-  Two common ones: {\tt -march} and {\tt -mtune}\\ \qquad\qquad ({\tt -march} implies {\tt -mtune}).
+The biggest challenge for interprocedural optimizations is scalability, so 
+it fits right in as a topic of discussion for this course.
 
-  \begin{itemize}
-    \item enable  specific instructions that not all CPUs  support\\
-      \qquad \qquad (SSE4.2, etc.)
-    \vfill
-    \item {\bf Example:} {\tt -march=corei7}
-    \vfill
-    \item Good to use on your local machine, not so much for shipped code.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\part{Profile-Guided Optimization}
-\frame{\partpage}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Moving Beyond Purely-Static Approaches}
-
-  
-    So far: purely-static (compile-time) optimizations.\\[1em]
-
-    Static approach has limitations: 
-    \begin{itemize}
-      \item how aggressively to inline?
-      \item which branch to predict?
-    \end{itemize}
-    \structure{Dynamic} information answers these questions better.
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Profile-Guided Optimization Workflow}
-
-  
-\begin{enumerate}
-\item \structure{Compile} the program; \\
-\hspace*{1em} produce an instrumented binary.
-\item \structure{Run} the instrumented binary:\\
-\hspace*{1em} on a representative test suite;\\
-\hspace*{1em} get run-time profiling information.\\
-\item \structure{Compile} final version, with the profiles you've
-collected.
-\end{enumerate}
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Price of Performance from Profile-Guided Optimization}
-  
-\begin{tabbing}
-    ~\!(--) \hspace*{.4em} \= Complicates the compilation process.\\
-    (+) \> Produces faster code (if inputs are good).\\[1em]
-\end{tabbing}
-
-    How much faster? 5--25\%, per Microsoft.\\[1em]
-
- Solaris, Microsoft VC++, and GNU gcc all
- support profile-guided optimization (to some extent).
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Another Option}
-  
-    Just-in-time compilers (like Java Virtual Machines)
-    automatically do profile-guided optimizations:
+Here's an outline of how it works:
 \begin{itemize}
-\item compile code on-the-fly anyway;
-\item always collecting measurements for the current run.
+\item local generation (parallelizable)
+\item whole-program analysis (hard to parallelize!)
+\item local transformations (parallelizable)
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Transformations in Code}
+
+The transformations look like this:
+\begin{itemize}
+\item global decisions, local transformations:
+\begin{itemize}
+\item devirtualization
+\item dead variable elimination/dead function elimination
+\item field reordering, struct splitting/reorganization
+\end{itemize}
+\item global decisions, global transformations:
+\begin{itemize}
+\item cross-module inlining
+\item virtual function inlining
+\item interprocedural constant propagation
+\end{itemize}
 \end{itemize}
 
 
-  
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Whole Program Analysis}
+
+The interesting issues arise from making the whole-program analysis scalable. 
+
+Firefox, the Linux kernel, Chromium contain tens of millions of lines of code. 
+
+Whole-program analysis requires that all of 
+this code (in IR) be available to the analysis; some summary of the code be in memory,  along with the call graph.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{What's Profiling Data Good For?}
-  
-Synergistic optimizations:
+\frametitle{Whole Program Analysis}
+
+
+Since it's a whole-program analysis, any part of the program may affect other parts. 
+
+The first problem
+is getting it into memory; loading the IR for tens of millions of lines of code is a non-starter.
+
+
+Clearly, anything that is more expensive than linear time can cause problems. 
+
+Partitioning the program can help.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{gcc Whole Program Analysis}
+
+How did gcc get better?  Avoiding unnecessary work.
+
 \begin{itemize}
-\item \structure{Inlining}: inlining rarely-used code is a net lose; \\
-inlining often-executed code is a win, \\
-\qquad enables more optimizations.\\[1em]
-Everyone does this.\\[1em]
-
-\item \structure{Improving Cache Locality}: make commonly-called functions, basic blocks adjacent;\\
-improves branch prediction (below) and with {\tt switch}.
-
+\item gcc 4.5: initial version of LTO;
+\item gcc 4.6: parallelization; partitioning of the call graph (put closely-related functions together, approximate functions in other partitions); the bottleneck: streaming in types and declarations;
+\item gcc 4.7--4.9: improve build times, memory usage [``chasing unnecessary data away''.]
 \end{itemize}
 
+Today's gcc, with {\tt -flto}, does work and includes
+optimizations including constant propagation and function
+specialization.
 
-  
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \begin{frame}
-  \frametitle{More Uses of Profiling Data}
-  
+\frametitle{It Works!}
 
-\begin{itemize}
-\item \structure{Branch Prediction}: a common architecture assumption---\\
-\qquad forward branches not taken, backwards branches taken.\\
-can make these assumptions more true with profiles;\\
-for a forward branch, make sure common case is fall-through.\\[1em]
+gcc CTO appears to give 3--5\% improvements in performance, which compiler experts consider good.
 
-\item \structure{Virtual Call Prediction}: inline the most common target \\ \qquad (guarded by a conditional).
-\end{itemize}
-  
+
+Like we discussed last time, this allows developers to shift their attention from 
+manual factoring of translation units to letting the compiler do it.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\part{Summary}
-\frame{\partpage}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary}
-
-  
-    Got a feel for what the optimization levels do.\\
-    We saw examples of compiler optimizations. For instance:
-\begin{itemize}
-\item Scalar optimizations. \\
-(e.g. common subexpression elimination,\\ \quad constant~propagation, copy propagation).
-\item Redundant code optimizations.\\
-(e.g. dead code elimination).
-\item Loop optimizations.\\
-(e.g. loop interchange, loop fusion, loop fission, \\ \quad software~pipelining).
-\item Alias and pointer analysis; call graphs.\\
-(uses: devirtualization, inlining, tail recursion elimination).
-\end{itemize}
-  
 
 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary II}
 
-  
-     Full list of {\tt gcc} options: \\ ~~~{\small \url{http://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html}}\\
-      More optimization examples: \\ ~~\url{http://www.digitalmars.com/ctg/ctgOptimizer.html}\\[1em]
-  
-  
 
-     Also, profile-guided optimization:\\
-\qquad see what actually happens at runtime, optimize for that.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \end{document}
 
