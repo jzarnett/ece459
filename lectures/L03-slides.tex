@@ -184,6 +184,370 @@ Conclusion: it's hard to outsmart the compiler. Maybe it's better not to try.
 \end{frame}
 
 
+
+\begin{frame}
+\frametitle{More About Branch Prediction}
+
+I want you to pick up two points from this discussion:
+
+\begin{itemize}
+\item How branch predictors work
+\item Applying a (straightforward) expected value computation to predict performance.
+\end{itemize}
+
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Branch Prediction \& Misprediction}
+
+\hspace*{2em} \begin{minipage}{.4\textwidth} \begin{lstlisting}
+branch_if_not_equal x, 0, else_label
+// Do stuff
+goto end_label
+else_label:
+// Do things
+end_label:
+// whatever happens later
+\end{lstlisting}
+\end{minipage}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{No Prediction}
+
+With no prediction, we need to serialize:
+
+\begin{center}
+\begin{tabular}{c|c|c|c}
+bne.1 & bne.2 \\ \hline
+& & things.1 & things.2
+\end{tabular}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Predict Things}
+If our prediction is correct, we save time.
+
+\begin{center}
+\begin{tabular}{c|c|c}
+bne.1 & bne.2 \\ \hline
+& things.1 & things.2 \\
+\\
+\end{tabular}
+\end{center}
+
+But we might be wrong and need to throw out the bad prediction.
+
+\begin{center}
+\begin{tabular}{c|c|c|c}
+bne.1 & bne.2 \\ \cline{1-2}
+& \sout{things.1} \\ \hline
+& & stuff.1 & stuff.2
+\end{tabular}
+\end{center}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Cartoon Model}
+
+We need to quantify the performance.
+
+
+Let's pretend that our pipelined
+CPU executes, on average, one instruction per clock.
+
+Mispredicted branches cost 20 cycles, while correctly-predicted
+branches cost 1 cycle. 
+
+We'll also assume that the instruction
+mix contains 80\% non-branches and 20\% branches. 
+
+So we can predict
+average cycles per instruction.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Prediction Quantification}
+
+With no prediction (or always-wrong prediction):
+\[
+\mathrm{non\_branch\_\%} \times 1 \mathrm{~cycle} + \mathrm{branch\_\%} \times 20 \mathrm{~cycles} = 4.8 \mathrm{~cycles}.
+\]
+With perfect branch prediction:
+\[
+\mathrm{non\_branch\_\%} \times 1 \mathrm{~cycle} + \mathrm{branch\_\%} \times 1 \mathrm{~cycle} = 1 \mathrm{~cycle}.
+\]
+So we can make our code run 4.8$\times$ faster with branch prediction!
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Strategy 1: Predict Taken}
+
+We can predict that a branch is always taken. 
+
+If we got 70\% accuracy, then our cycles per instruction would be:
+\[
+(0.8 + 0.7 \times 0.2) \times 1 \mathrm{~cycle} + (0.3 \times 0.2) \times 20 \mathrm{~cycles} = 2.14 \mathrm{~cycles}.
+\]
+The simplest possible thing already greatly improves the CPU's average throughput.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{BTFNT - Dynamite}
+
+Let's leverage that observation about loop branches to do better.
+Loop branches are, by definition, backwards. 
+
+So we can design a branch predictor which predicts ``taken''
+for backwards and ``not taken'' for forwards. 
+
+Let's say that this might get us to 80\% accuracy. 
+
+\[
+(0.8 + 0.8 \times 0.2) \times 1 \mathrm{~cycle} + (0.2 \times 0.2) \times 20 \mathrm{~cycles} = 1.76 \mathrm{~cycles}.
+\]
+
+
+The PPC 601 (1993) and 603 used this scheme.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Dynamic}
+
+So far, we will always make the same prediction at each branch---known as a
+\alert{static} scheme. 
+
+But we can do better by using what recently happened to
+improve our predictions. 
+
+This is particularly important when program execution
+contains distinct phases, with distinct behaviours.
+
+
+We therefore move to \alert{dynamic} schemes.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Remember Your History}
+
+For every branch,
+we record whether it was taken or not last time it executed (a 1-bit scheme).
+
+
+Of course, we can't store all branches. 
+
+So let's use the low 6 bits of the address
+to identify branches. 
+
+Doing so raises the prospect of \emph{aliasing}:
+different branches (with different behaviour) map to the same spot in the table.
+
+We might get 85\% accuracy with such a scheme.
+\[
+(0.8 + 0.85 \times 0.2) \times 1 \mathrm{~cycle} + (0.15 \times 0.2) \times 20 \mathrm{~cycles} = 1.57 \mathrm{~cycles}.
+\]
+
+At the cost of more hardware, we get noticeable performance improvements. The DEC EV4 (1992) and
+MIPS R8000 (1994) used this one-bit scheme.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Two-Bit Scheme}
+
+What if a branch is almost always taken but occasionally not taken (e.g. TTTTTTNTTTT)?
+
+We get penalized twice
+for that misprediction: once when we mispredict the not taken, and once when we mispredict the next taken. 
+
+So, let's store whether a branch is ``usually'' taken, using a so-called
+2-bit saturating counter.
+
+Every time we see a taken branch, we increment the counter for that
+branch; every time we see a not-taken branch, we decrement. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Two-Bit Scheme}
+
+If the counter is 00 or 01, we predict ``not taken''; if it is 10 or
+11, we predict ``taken''.
+
+With a two-bit counter, we can have fewer entries at the same size, but they'll do better.
+It would be reasonable to expect 90\% accuracy.
+\[
+(0.8 + 0.9 \times 0.2) \times 1 \mathrm{~cycle} + (0.1 \times 0.2) \times 20 \mathrm{~cycles} = 1.38 \mathrm{~cycles}.
+\]
+
+This was used in a number of chips, from the LLNL S-1 (1977) through the Intel Pentium (1993).
+
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Two-Bit Adaptive, Global}
+
+We're still not taking patterns into account. Consider the following {\tt for} loop.
+\begin{lstlisting}[language=C]
+for (int i = 0; i < 3; ++i) {
+  // code
+}
+\end{lstlisting}
+The last three executions of the branch determine the next direction:
+\begin{verbatim}
+ TTT => N
+ TTN => T
+ TNT => T
+ NTT => T
+\end{verbatim}
+
+Let's store what happened the last few times we were at a particular address---the
+\alert{branch history}. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Two-Bit Adaptive, Global}
+
+From a branch address and history, we derive an index, which
+points to a table of 2-bit saturating counters. 
+
+What's changed from the two-bit scheme
+is that the history helps determine the index and hence the prediction.
+
+This scheme might give something like 93\% accuracy.
+\[
+(0.8 + 0.93 \times 0.2) \times 1 \mathrm{~cycle} + (0.07 \times 0.2) \times 20 \mathrm{~cycles} = 1.27 \mathrm{~cycles}.
+\]
+
+The Pentium MMX (1996) used a 4-bit global branch history.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Two-Level Adaptive, Local}
+
+
+The change here is that the CPU keeps a separate history for each branch.
+
+
+So the branch address determines which branch history gets used.
+
+
+We concatenate the address and history to get the index, which then points to a
+2-bit counter again. 
+
+We are starting to encounter diminishing returns, but we might
+get 94\% accuracy:
+\[
+(0.8 + 0.94 \times 0.2) \times 1 \mathrm{~cycle} + (0.06 \times 0.2) \times 20 \mathrm{~cycles} = 1.23 \mathrm{~cycles}.
+\]
+
+The Pentium Pro (1996), Pentium II (1997) and Pentium III (1999) use this.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{gshare}
+
+Instead of concatenating the address and history, we can xor them. 
+
+This allows
+us to use more bits for both the history and address. 
+
+This keeps the accuracy the same,
+but simplifies the design.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Other Predictors}
+
+ We can build (and people have built) more sophisticated predictors.
+
+
+These predictors could, for instance, better handle aliasing, where
+different branches/histories map to the same index in the table.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Cache side-channel attacks}
+
+\begin{center}
+\includegraphics[width=0.25\textwidth]{images/meltdown.jpg}
+\includegraphics[width=0.40\textwidth]{images/spectre.jpg}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Cache side-channel attacks}
+
+\begin{center}
+\includegraphics[width=0.8\textwidth]{images/meltdown-spectre.png}
+\end{center}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Vulnerability Example}
+
+\begin{center}
+\includegraphics[width=0.8\textwidth]{images/cache-sidechannel1.png}
+\end{center}
+
+
+\end{frame}
+
 \begin{frame}
   \frametitle{Limitations of Speedups}
 
