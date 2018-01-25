@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{ 7 --- Use of Locks}{\term}{Jeff Zarnett}
+\lecture{7 --- Use of Locks (version 2, fixed mutex/sema order)}{\term}{Jeff Zarnett}
 
 \section*{Appropriate Use of Locking}
 
@@ -49,14 +49,14 @@ To this we need to add some mutual exclusion if we want to allow multiple consum
 \begin{lstlisting}[language=C]
 void* consumer( void* arg ) { 
   while( ctotal < MAX_ITEMS_CONSUMED ) {
-    pthread_mutex_lock( &con_mutex );
     sem_wait( &items );
+    pthread_mutex_lock( &con_mutex );
     consume( buffer[cindex] );
     buffer[cindex] = -1;
     cindex = (cindex + 1) % BUFFER_SIZE;
     ++ctotal;
-    sem_post( &spaces );
     pthread_mutex_unlock( &con_mutex );
+    sem_post( &spaces );
   }
 }
 \end{lstlisting}
@@ -68,20 +68,20 @@ At first glance it is probably not very obvious but the \texttt{consume} functio
 \begin{lstlisting}[language=C]
 void* consumer( void* arg ) { 
   while( ctotal < MAX_ITEMS_CONSUMED ) {
-    pthread_mutex_lock( &con_mutex );
     sem_wait( &items );
+    pthread_mutex_lock( &con_mutex );
     int temp = buffer[cindex];
     buffer[cindex] = -1;
     cindex = (cindex + 1) % BUFFER_SIZE;
     ++ctotal;
-    sem_post( &spaces );
     pthread_mutex_unlock( &con_mutex );
+    sem_post( &spaces );
     consume( temp );
   }
 }
 \end{lstlisting}
 
-Next question then. With nothing left to take away, is there something left to add? Yes! The condition of the while loop checks the value of \texttt{ctotal} and that is a read of shared data. Now we maybe have a problem. How do we get that inside the critical section? One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing (the end of the loop might be mispredicted...).  Instead what I'd recommend is to make the loop a while true loop and then have a test of the value to determine when we should break out of the loop. See the example below, remembering of course there is the potential pitfall of forgetting to unlock the mutex if we are going to the break statement:
+Next question then. With nothing left to take away, is there something left to add? Yes! The condition of the while loop checks the value of \texttt{ctotal} and that is a read of shared data. Now we maybe have a problem. How do we get that inside the critical section? One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing (the end of the loop might be mispredicted...).  Instead what I'd recommend is to make the loop a while true loop and then have a test of the value to determine when we should break out of the loop. You then do have to move the lock before the sem\_wait. See the example below, remembering of course there is the potential pitfall of forgetting to unlock the mutex if we are going to the break statement:
 
 \begin{lstlisting}[language=C]
 void* consumer( void* arg ) { 
