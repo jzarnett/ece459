@@ -3,7 +3,7 @@
 
 \title{Lecture 7 --- Use of Locks, Lock Granularity }
 
-\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
+\author{Jeff Zarnett \& Patrick Lam \\ \small \texttt{\{jzarnett, patrick.lam\}@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -21,12 +21,14 @@
 
 \begin{frame}
 \frametitle{Use of Locks}
-
-In previous courses you learned about locking and how it all works, then we did a quick recap of what you need to know about it.
+\begin{changemargin}{2cm}
+\vspace*{-3em}
+In previous courses: learned about locking and how it works.
 
 Before: was enough to avoid bad stuff.
 
 Now: Still important, but not enough.
+\end{changemargin}
 
 \end{frame}
 
@@ -34,27 +36,34 @@ Now: Still important, but not enough.
 \begin{frame}
 \frametitle{Critical Section Size}
 
+  \begin{center}
+    \input{images/L07-critsec-size-1}
+  \end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Critical Section Size}
+
+  \begin{center}
+    \input{images/L07-critsec-size-2}
+  \end{center}
+
 Critical sections should be as large as they need to be but no larger. 
 
-That is to say, if we have some shared data that needs to be protected by some mutual exclusion constructs, we need to consider carefully where to place the statements. 
-
-The critical section must contain all of the shared accesses, both reads \textit{and} writes.
-
-But no extraneous statements (those that don't operate on shared data).
 \end{frame}
 
 
 \begin{frame}
 \frametitle{Rewrite This Block}
 
-This can mean that a block of code or contents of a function need to be re-arranged.
-
-Move some statements up or down so they are no longer in the critical section. 
+  \begin{center}
+    \input{images/L07-critsec-size-3}
+  \end{center}
 
 Sometimes control flow or other very short statements might get swept into the critical section.
 
 Those should be the exception rather than the rule.
-
 
 \end{frame}
 
@@ -62,7 +71,7 @@ Those should be the exception rather than the rule.
 \begin{frame}[fragile]
 \frametitle{Remember the Producer-Consumer Problem?}
 
-Let's consider a short code example from the producer-consumer problem.
+Short code example from the producer-consumer problem:
 
 \begin{lstlisting}[language=C]
 sem_t spaces;
@@ -86,7 +95,7 @@ void consume( int to_consume );
 \begin{frame}[fragile]
 \frametitle{Remember the Producer-Consumer Problem?}
 
-And then here is our single-threaded code for the consumer:
+Single-threaded consumer code:
 
 \begin{lstlisting}[language=C]
 void* consumer( void* arg ) { 
@@ -107,9 +116,9 @@ void* consumer( void* arg ) {
 
 \begin{frame}[fragile]
 \frametitle{Multiple Consumers}
-To this we need to add some mutual exclusion if we want to allow multiple consumers at the same time. 
+Must add mutual exclusion to allow multiple simultaneous consumers.
 
-One approach we could take is that which allows exactly one consumer to run at a time, as below. But what's wrong with this?
+Could allow exactly one consumer to run at a time. We can do better\ldots
 
 \begin{lstlisting}[language=C]
 void* consumer( void* arg ) { 
@@ -137,7 +146,7 @@ At first glance it is probably not very obvious but the \texttt{consume} functio
 
 So we could, inside the critical section, read the value of the buffer at the current index into a temp variable. 
 
-That temp variable then can be given to the \texttt{consume} function at any time... outside of the critical section. 
+That temp variable then can be given to the \texttt{consume} function at any time\ldots outside of the critical section. 
 
 Everything else inside our lock and unlock statements seems to be shared data: operates on \texttt{cindex} or \texttt{ctotal}.
 
@@ -146,20 +155,20 @@ Everything else inside our lock and unlock statements seems to be shared data: o
 
 
 \begin{frame}[fragile]
-\frametitle{More-Parallel Code}
+\frametitle{Updated Code}
 
 \begin{lstlisting}[language=C]
 void* consumer( void* arg ) { 
   while( ctotal < MAX_ITEMS_CONSUMED ) {
     pthread_mutex_lock( &con_mutex );
     sem_wait( &items );
-    int temp = buffer[cindex];
+    int temp = buffer[cindex]; // store for now
     buffer[cindex] = -1;
     cindex = (cindex + 1) % BUFFER_SIZE;
     ++ctotal;
     sem_post( &spaces );
     pthread_mutex_unlock( &con_mutex );
-    consume( temp );
+    consume( temp ); // consume outside mutex
   }
 }
 \end{lstlisting}
@@ -171,11 +180,11 @@ void* consumer( void* arg ) {
 \begin{frame}
 \frametitle{Did We Get Everything?}
 
-The condition of the while loop checks the value of \texttt{ctotal} and that is a read of shared data. 
+The while condition checks the value of \texttt{ctotal} and that is a read of shared data. 
 
 Now we maybe have a problem. How do we get that inside the critical section?
 
-One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing...
+One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing\ldots
 
 
 \end{frame}
@@ -235,6 +244,33 @@ We have choices about the granularity of locking, and it is a trade-off.
 
 \end{frame}
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+
+  \begin{center}
+    \includegraphics[scale=0.5]{images/lock-all-the-things}
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{Coarse-Grained Lock}
+
+  \begin{center}
+    \input{images/L07-fine-grained-1}
+  \end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Fine-Grained Locks}
+
+  \begin{center}
+    \input{images/L07-fine-grained-2}
+  \end{center}
+
+\end{frame}
+
 \begin{frame}
 \frametitle{Coarse-Grained vs Fine-Grained Locking}
 
@@ -248,29 +284,6 @@ Locks' extents constitute their granularity.
 
 \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Coarse-Grained Locking}
-
-  \begin{center}
-    \includegraphics[scale=0.5]{images/lock-all-the-things}
-
-    (with one lock)
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Fine-Grained Locking}
-
-  \begin{center}
-    \includegraphics[scale=0.5]{images/lock-all-the-things}
-
-    (with all different locks)
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \begin{frame}
 \frametitle{Lock Concerns}
@@ -290,6 +303,7 @@ We aren't even talking about under-locking (i.e., remaining race conditions).
 \begin{frame}
 \frametitle{Lock Overhead}
 
+\begin{changemargin}{2cm}
   Using a lock isn't free. You pay:
   \begin{itemize}
     \item allocated memory for the locks;
@@ -299,19 +313,23 @@ We aren't even talking about under-locking (i.e., remaining race conditions).
 
 
   These costs scale with the number of locks that you have.
+\end{changemargin}
 \end{frame}
 
 
 \begin{frame}
 \frametitle{Lock Contention}
 
- Most locking time is wasted waiting for the lock to become available.
+\begin{changemargin}{1cm}
+\vspace*{-3em}
+ Most locking time is wasted waiting for the lock to become available.\\[1em]
 We can fix this by:
+\vspace*{-3em}
       \begin{itemize}
         \item making the locking regions smaller (more granular); or
         \item making more locks for independent sections.
       \end{itemize}
-
+\end{changemargin}
 
 
 \end{frame}
