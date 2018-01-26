@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{7 --- Use of Locks (version 2, fixed mutex/sema order)}{\term}{Jeff Zarnett}
+\lecture{7 --- Use of Locks (version 3, add context)}{\term}{Jeff Zarnett}
 
 \section*{Appropriate Use of Locking}
 
@@ -29,7 +29,7 @@ void consume( int to_consume );
 
 \end{lstlisting}
 
-And then here is our single-threaded code for the consumer:
+And then here is our single-threaded code for the consumer. We want our consumer threads to consume exactly {\tt MAX\_ITEMS\_CONSUMED} items and then cleanly exit; we don't want anything to stay stuck at a mutex for instance.
 
 \begin{lstlisting}[language=C]
 void* consumer( void* arg ) { 
@@ -49,27 +49,31 @@ To this we need to add some mutual exclusion if we want to allow multiple consum
 \begin{lstlisting}[language=C]
 void* consumer( void* arg ) { 
   while( ctotal < MAX_ITEMS_CONSUMED ) {
-    sem_wait( &items );
     pthread_mutex_lock( &con_mutex );
+    sem_wait( &items );
     consume( buffer[cindex] );
     buffer[cindex] = -1;
     cindex = (cindex + 1) % BUFFER_SIZE;
     ++ctotal;
-    pthread_mutex_unlock( &con_mutex );
     sem_post( &spaces );
+    pthread_mutex_unlock( &con_mutex );
   }
 }
 \end{lstlisting}
 
 What I recommend is of course to analyze this function one statement at a time and look into which of these access global variables. We're not worried about statements like locking, wait, or post, but let's look at the rest and decide if they really belong. Can any statements be removed from the critical section?
 
+We cannot move the {\tt sem\_wait} before the lock acquisition if we want to consume exactly {\tt MAX\_ITEMS\_CONSUMED} items. If we did, then we could have threads that make it past the {\tt sem\_wait} but get stuck at the lock acquisition. They won't do anything bad, but they also never terminate. Such threads would be tricky to terminate: {\tt pthread\_join} would block the main thread, and thread cancellation (danger! danger!) is not only dangerous, but also difficult, because it's not clear which thread should be cancelled and which one has finished.
+
+We can move the {\tt sem\_post} after the unlock if we're trying to reduce critical sections.
+
 At first glance it is probably not very obvious but the \texttt{consume} function takes a regular integer, any old integer, not a pointer of some sort. So we could, inside the critical section, read the value of the buffer at the current index into a temp variable. That temp variable then can be given to the \texttt{consume} function at any time... outside of the critical section. Everything else inside our lock and unlock statements seems to be shared data: operates on \texttt{cindex} or \texttt{ctotal}.
 
 \begin{lstlisting}[language=C]
 void* consumer( void* arg ) { 
   while( ctotal < MAX_ITEMS_CONSUMED ) {
-    sem_wait( &items );
     pthread_mutex_lock( &con_mutex );
+    sem_wait( &items );
     int temp = buffer[cindex];
     buffer[cindex] = -1;
     cindex = (cindex + 1) % BUFFER_SIZE;
