@@ -11,7 +11,7 @@ Aside from my obvious passion about the subject, why are we talking about Norse 
 
 But all of these, in program form, are analysis tools for your (usually) C and C++ programs. They are absolute murder on performance, but they are wonderful for finding errors in your program. To use them you will start the tool of your choice and instruct it to invoke your program. The target program then runs under the ``supervision'' of the tool. This results in running dramatically slower than normal, but you get additional checks and monitoring of the program. It's important to enable debugging symbols in your compile (\texttt{-g} option if using \texttt{gcc}) if you want stack traces to be useful.
 
-Let's start with quick summary of each of the tools from~\cite{valgrind:tools}, followed by a more detailed explanation.
+Let's start with a quick summary of each of the tools from~\cite{valgrind:tools}, followed by a more detailed explanation.
 
 \subsection*{Valgrind (or Memcheck) }
 Valgrind is the base name of the project and by default what it's going to do is run the memcheck tool. The purpose of memcheck is to look into all memory reads, writes, and to intercept and analyze every call to \texttt{malloc}/\texttt{free} and \texttt{new}/\texttt{delete}. Thus, memcheck will check all memory accesses and allocations/deallocations, and can find problems like:
@@ -22,10 +22,10 @@ Valgrind is the base name of the project and by default what it's going to do is
 	\item Incorrect freeing of memory (double free calls or a mismatch)
 	\item Incorrect use of C standard functions like \texttt{memcpy}
 	\item Using memory after it's been freed.
-	\item Asking for an invalid number of bytes in an allocation (negative?!)
+	\item Asking for an invalid number of bytes in an allocation (negative\textinterrobang)
 \end{itemize}
 
-These errors will be reported to the console when they occur and this will hopefully help you track the source of the problem. 
+These errors will be reported to the console when they occur. Ideally, this will help you find the source of the problem. 
 
 I decided to run Valgrind with memcheck against the solution I wrote to the ECE~254 S15 exam question for searching an array using pthreads. I am happy to report that memcheck reports that the official solution has no memory leaks. If you do things right, you get something that looks like the example below. 
 \begin{verbatim}
@@ -81,7 +81,7 @@ Found at 22 by thread 3
 ==8678== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
 \end{verbatim}
 
-If you take the program's suggestion to use the \texttt{--leak-check=full} then you end up with a bit more detail about where you made the mistake. Of course, it's important to know where to look; in the example below, lines 49 and 24 in the file \texttt{search.c} are the locations of the \texttt{malloc} calls that lack a matching call to \texttt{free}. It can't tell you where the call to \texttt{free} should go, only where the memory that isn't freed was allocated.
+If you take the program's suggestion to use \verb+--leak-check=full+ then you end up with a bit more detail about where you made the mistake. Of course, it's important to know where to look; in the example below, lines 49 and 24 in the file \texttt{search.c} are the locations of the \texttt{malloc} calls that lack a matching call to \texttt{free}. It can't tell you where the call to \texttt{free} should go, only where the memory that isn't freed was allocated.
 
 \begin{verbatim}
 ==8553== 16 bytes in 4 blocks are definitely lost in loss record 1 of 2
@@ -102,7 +102,7 @@ But it's also important to learn what to ignore (or what's out of our hands). I 
 ==8734==      possibly lost: 544 bytes in 2 blocks
 \end{verbatim}
 
-Hmm. Let's dig into that with the \texttt{--leak-check=full} option:
+Hmm. Let's dig into that with the \verb+--leak-check=full+ option:
 
 \begin{verbatim}
 ==8734== 272 bytes in 1 blocks are possibly lost in loss record 1 of 2
@@ -112,36 +112,36 @@ Hmm. Let's dig into that with the \texttt{--leak-check=full} option:
 ==8734==    by 0x400A57: main (mutex.c:64)
 \end{verbatim}
 
-Looking in the file, at that line, we see a call to \texttt{pthread\_create} and this is therefore probably nothing we need to do anything about. Or is it? In class example will tell...
+Looking in the file, at that line, we see a call to \texttt{pthread\_create} and this is therefore probably nothing we need to do anything about. Or is it? In-class example will tell...
 
 From the Valgrind FAQ, how to read the leak summary:
 \begin{itemize}
-	\item \textbf{Definitely lost} - a clear memory leak. Fix it.
-	\item \textbf{Indirectly lost} - a problem with a pointer based structure (e.g., you've lost the head of the linked list, but the rest of the list is indirectly lost. Generally, fixing the definitely lost items should be enough to clear up the indirectly lost stuff).
-	\item \textbf{Possibly lost} - the program is leaking memory unless weird things are going on with pointers where you're pointing them to the middle of an allocated block.
-	\item \textbf{Still reachable} - this is memory that was still allocated that might otherwise have been freed, but references to it exist so it at least wasn't lost.
-	\item \textbf{Suppressed} - you can configure the tool to ignore things and those will appear in the suppressed category.
+	\item \textbf{Definitely lost}: a clear memory leak. Fix it.
+	\item \textbf{Indirectly lost}: a problem with a pointer based structure (e.g., you've lost the head of the linked list, but the rest of the list is indirectly lost.) Generally, fixing the definitely lost items should be enough to clear up the indirectly lost stuff.
+	\item \textbf{Possibly lost}: the program is leaking memory unless weird things are going on with pointers where you're pointing them to the middle of an allocated block.
+	\item \textbf{Still reachable}: this is memory that was still allocated that might otherwise have been freed, but references to it exist so it at least wasn't lost.
+	\item \textbf{Suppressed}: you can configure the tool to ignore things and those will appear in the suppressed category.
 \end{itemize}
 
 
 
 \subsection*{Helgrind}  
-The purpose of Helgrind is to detect errors in the use of POSIX pthreads. In a way, Helgrind is a pretty neat tool for improving performance, even though it doesn't actually directly speed anything up. When we take single-threaded program and split it off into a multithreaded program, we may introduce a lot of errors (or at least, introduce the possibility of a lot of errors). Truthfully, humans are not very good at parallel thinking; we are very much sequential. But a program that is fast and wrong is probably less useful than one that is slow and correct. But can we make it faster and still have it be correct? That's the goal of Helgrind: after you parallelize your code, it will do some automatic checking of the code to determine where, if anywhere, there are concurrency problems. It can't prove that your program is correct (if only) but it can at least catch some of the common problems you might introduce when writing a parallel program. Helgrind will categories errors into three basic categories:
+The purpose of Helgrind is to detect errors in the use of POSIX pthreads. In a way, Helgrind is a pretty neat tool for improving performance, even though it doesn't actually directly speed anything up. When we take a single-threaded program and split it off into a multithreaded program, we may introduce a lot of errors (or at least, introduce the possibility of a lot of errors). Truthfully, humans are not very good at parallel thinking; we are very much sequential. But a program that is fast and wrong is probably less useful than one that is slow and correct. Can we make it faster and still have it be correct? That's the goal of Helgrind: after you parallelize your code, it will do some automatic checking of the code to determine where, if anywhere, there are concurrency problems. It can't prove that your program is correct (if only) but it can at least catch some of the common problems you might introduce when writing a parallel program. Helgrind classifies errors into three basic categories:
 
-\begin{enumerate}
-	\item Misuses of the pthreads API
-	\item Lock ordering problems
-	\item Data races
+\begin{enumerate}[noitemsep]
+	\item Misuses of the pthreads API;
+	\item Lock ordering problems; and
+	\item Data races.
 \end{enumerate}
 
-The first category does not require much explanation these are just some programming errors related to the pthread API calls. Some examples from~\cite{helgrind}
+The first category does not require much explanation. These are just some programming errors related to the pthread API calls. Some examples from~\cite{helgrind}:
 
-\begin{itemize}
-	\item Unlocking a mutex that is unlocked
-	\item Deallocation of memory with a locked mutex in it
-	\item Thread exit while holding a locked lock
+\begin{itemize}[noitemsep]
+	\item Unlocking a mutex that is unlocked;
+	\item Deallocation of memory with a locked mutex in it; or
+	\item Thread exit while holding a lock.
 \end{itemize}
-... and many more.
+\ldots and many more.
 
 A quick example of an error message from Helgrind, also from~\cite{helgrind}:
 
@@ -181,9 +181,9 @@ The second category of errors should be familiar to you from your operating syst
 \end{multicols}
 \vspace{-2em}
 
-In this case, if the interleaving of these happens to work out in a couple of particular ways, then we get deadlock because thread P holds mutex \texttt{a} and thread Q holds mutex \texttt{b} and each waits for the mutex that the other one has. The example is slightly silly, of course, because it's super easy to see; in normal code they would probably be separated by some number of lines, and the mutexes will probably not be called \texttt{a} and \texttt{b} (isn't using meaningful variable names one of those things you were supposed to learn to do in introductory programming?!) and there therefore will not necessarily be an obvious (alphabetical) order.
+In this case, if the interleaving of these happens to work out in a couple of particular ways, then we get deadlock because thread P holds mutex \texttt{a} and thread Q holds mutex \texttt{b} and each waits for the mutex that the other one has. The example is slightly silly, of course, because it's super easy to see; in normal code they would probably be separated by some number of lines, and the mutexes will probably not be called \texttt{a} and \texttt{b} (isn't using meaningful variable names one of those things you were supposed to learn to do in introductory programming\textinterrobang) and there therefore will not necessarily be an obvious (alphabetical) order.
 
-Helgrind builds a directed graph of lock acquisitions, so that when a thread acquires a lock, the graph is checked to see if a cycle exists. If that is the case, then there is potential for a deadlock~\cite{helgrind}. It will report as an error the initial order (the first order seen is the one viewed as ``correct'') and the the ``incorrect'' order that is the source of the potential problem. Really, though, all that matters is consistency: following the same order; you may change either of the acquisition orders to match the other. See the example below~\cite{helgrind}:
+Helgrind builds a directed graph of lock acquisitions. When a thread acquires a lock, Helgrind checks to see whether a cycle exists. If so, then there is potential for a deadlock~\cite{helgrind}. Helgrind will report as an error the initial order (the first order seen is the one viewed as ``correct'') and the ``incorrect'' order that is the source of the potential problem. Really, though, all that matters is consistency---following the same order. You may change either of the acquisition orders to match the other. See the example below~\cite{helgrind}:
 
 \begin{verbatim}
 Thread #1: lock order "0x7FF0006D0 before 0x7FF0006A0" violated
@@ -205,7 +205,7 @@ Required order was established by acquisition of lock at 0x7FF0006D0
    by 0x40079B: main (tc13_laog1.c:18)
 \end{verbatim}
 
-The third category we have discussed already. Recall the earlier definition of a race condition. This is a difficult problem to find sometimes; what Helgrind will do is examine the code for where multiple threads are accessing shared memory without the use of locks. Let's cut to the chase and see it in action:
+The third category we have discussed already. Recall the earlier definition of a race condition. This is a difficult problem to find sometimes; what Helgrind will do is examine where multiple threads are accessing shared memory without the use of locks. Let's cut to the chase and see it in action:
 
 
 \begin{verbatim}
@@ -263,7 +263,7 @@ jz@Loki:~/ece459$ valgrind --tool=helgrind ./datarace
 
 Note that we get two stack traces here: we have a read after write, and a write after write. Why? Because the operation in question is \texttt{var++} which necessitates fetching the current value of \texttt{var} (reading it) and incrementing it (then writing it back).
 
-How does Helgrind work? It examines the use of the standard threading primitives - lock, unlock, signal/post, wait, etc. Anything that implies there might be an ordering between events is taken and added to a directed acyclic graph that represents these dependencies. If memory is accessed from two different threads and there is no path through this directed acyclic graph that indicates an ordering, then a race is reported~\cite{helgrind}. Although obviously at least one of these accesses must be a write (there is no read after read dependency, remember).
+How does Helgrind work? It examines the use of the standard threading primitives---lock, unlock, signal/post, wait, etc. Anything that implies there might be an ordering between events is taken and added to a directed acyclic graph that represents these dependencies. If memory is accessed from two different threads and there is no path through this directed acyclic graph that indicates an ordering, then Helgrind reports a race~\cite{helgrind}. Obviously, at least one of these accesses must be a write. (Recall: there is no read after read dependency).
 
 Also cool: you can ask Helgrind to try to tell you about variable names (if it can) with the command line option \texttt{--read-var-info=yes}. Then it will tell you something interesting like:
 
@@ -274,7 +274,7 @@ Also cool: you can ask Helgrind to try to tell you about variable names (if it c
 
 These will give you indications of where you need to introduce synchronization of some kind (semaphore, mutex, condition variable, etc). The authors of Helgrind assume that if it tells you where the problem is, you will figure out what variables are affected and how to properly prevent data races. You might find this frustrating, in the sense of a serial complainer who thinks that he or she can just moan about what's wrong without bringing forward any suggestions about how to fix the problems. 
 
-A note about Helgrind for later, since we're going to dive into OpenMP. Helgrind + OpenMP + Linux can cause the occasional problem in GCC 4.2 and 4.3 (not sure about later or if this is fixed in newer versions of Helgrind). But the ``futex'' system call in Linux is not visible to Helgrind so it won't figure things out. You can rebuild GCC with the option \texttt{--disable-linux-futex} and that will hopefully work it out.
+A note about Helgrind for later, since we're going to dive into OpenMP. Helgrind + OpenMP + Linux can cause the occasional problem in GCC 4.2 and 4.3 (perhaps fixed in GCC 4.6.3\footnote{\url{http://valgrind-users.narkive.com/QARaSvBN/helgrind-and-openmp-on-gcc}}). But the ``futex'' system call in Linux is not visible to Helgrind so it won't figure things out. If you have old GCC, you can rebuild it with the option \texttt{--disable-linux-futex} and it won't generate ``futex'' syscalls.
 
 \subsection*{Cachegrind}
 
@@ -289,7 +289,7 @@ Cachegrind reports data about:
 	\item The Last Level Cache (LL) [L3 Cache].
 \end{itemize}
 
-Unlike the normal Valgrind operation, you probably want to turn optimizations on (\texttt{-O2} or perhaps \texttt{-O3} in \texttt{gcc}). You still want debugging symbols, of course, but enabling optimizations will tell you more about what is going to happen in the released version of your program.
+Unlike for normal Valgrind operation, you probably want to turn optimizations on (\texttt{-O2} or perhaps \texttt{-O3} in \texttt{gcc}). You still want debugging symbols, of course, but enabling optimizations will tell you more about what is going to happen in the released version of your program.
 
 If I instruct cachegrind to run on the search example (same one from above), using the \texttt{--branch-sim=yes} option because by default it won't show it:
 
@@ -362,9 +362,9 @@ Found at 22 by thread 3
 ==16618== Mispred rate:     10.7% (  10.2%     +   34.7%   )
 \end{verbatim}
 
-Interesting results: our data and instruction miss rates went down marginally but the branch mispredict rates went up! Well sort of - there were fewer branches and thus fewer we got wrong as well as fewer we got right. So the total cycles lost to mispredicts went down. Is this an overall win for the code? Yes. 
+Interesting results: our data and instruction miss rates went down marginally but the branch mispredict rates went up! Well, sort of---there were fewer branches and thus fewer we got wrong as well as fewer we got right. So the total cycles lost to mispredicts went down. Is this an overall win for the code? Yes. 
 
-In some cases it's not so clear cut, and we could do a small calculation. If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400; a decrease of 11~400 cycles. Repeat for each of the measures and sum them up to determine if things got better overall and by how much.
+In some cases it's not so clear cut, and we could do a small calculation. If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400; a decrease of 11~400 cycles. Repeat for each of the measures and sum them up to determine if things got better overall and by how much. Also be sure that you're reasoning about a realistic workload.
 
 Cachegrind also produces a more detailed output file, titled cachegrind.out.<pid> (the PID in the example is 16618). This file is not especially human-readable, but we can ask the associated tool \texttt{cg\_annotate} to break it down for us, and if we have the source code available, so much the better, because it will give you line by line information. That's way too much to show even in the notes, so it's the sort of thing I can show in class (or you can create for yourself) but here's a small excerpt from the \texttt{search.c} example:
 
@@ -385,7 +385,7 @@ Cachegrind also produces a more detailed output file, titled cachegrind.out.<pid
 \end{verbatim}
 }
 
-Cachegrind is very... verbose... and it can be very hard to come up with useful changes based on what you see... assuming your eyes don't glaze over when you see the numbers. Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). They have the highest penalty. You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints about what the likelihood of branch prediction is~\cite{cachegrind}. Of course, to learn more about how Cachegrind actually does what it does and how it runs the simulation, the manual is worth reading. Not that anybody reads manuals anymore... Just give it a shot, when you get stuck, google the problem, click the first stack overflow link result...
+Cachegrind is very\ldots verbose\ldots and it can be very hard to come up with useful changes based on what you see\ldots assuming your eyes don't glaze over when you see the numbers. Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). They have the highest penalty. You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints about what the likelihood of branch prediction is~\cite{cachegrind}. Of course, to learn more about how Cachegrind actually does what it does and how it runs the simulation, the manual is worth reading. Not that anybody reads manuals anymore\ldots Just give it a shot, when you get stuck, google the problem, click the first stack overflow link result\ldots
 
 \input{bibliography.tex}
 
