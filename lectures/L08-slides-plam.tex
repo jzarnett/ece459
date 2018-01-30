@@ -1,0 +1,644 @@
+\input{configuration}
+
+\title{Lecture 8 --- Lock Convoys, Atomics, Lock-Freedom}
+
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\institute{Department of Electrical and Computer Engineering \\
+  University of Waterloo}
+\date{\today}
+
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+
+ \end{frame}
+ 
+
+\begin{frame}
+\frametitle{Question of the Day}
+\begin{center}
+\Large
+\vspace*{-3em}
+Why does it take a long time for a line of cars \\
+to start at a green light?
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Convoys}
+\begin{center}
+\includegraphics[width=\textwidth]{images/L08-DOT-111-convoy.jpg}
+By Roy Luck [CC BY 2.0 (http://creativecommons.org/licenses/by/2.0)], \\
+via Wikimedia Commons
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock Convoys}
+\begin{center}
+\scalebox{0.4}{
+\input{images/L08-convoy-full}}
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Problem}
+\begin{center}
+\Large
+\vspace*{-2em}
+Too much CPU time handling context switches!
+\end{center}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{I didn't do it!}
+
+\begin{center}
+\includegraphics[width=\textwidth]{images/L08-cat-didnt-do-it.jpg}
+By yoppy, \url{https://www.flickr.com/photos/spilt-milk/6111575560}
+\end{center}
+
+\end{frame}
+\begin{frame}
+\frametitle{Weird Side Effects of Lock Convoys}
+
+Threads acquire the lock frequently and they are running for very short periods of time before blocking. 
+
+Other, unrelated threads of the same priority get to run for an unusually large percentage of the (wall-clock) time. 
+
+You might think another process is the real offender.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Unfairness is Fair?}
+
+In Windows Vista and later versions, the problem is solved because locks are unfair.
+
+Windows XP: if a lock $\ell$ is unlocked by $A$ and there is a thread $B$ waiting, then $B$ gets it.
+
+$B$ is no longer blocked, and $B$ already owns the lock when it wakes up.
+
+The lock can never be ``stolen''; hence ``fair''.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Fair is Unfair}
+
+\begin{changemargin}{1.5cm}
+But! There is a period of time where the lock is held by $B$, but $B$ is not running.
+
+If thread $C$ starts to run and requests $\ell$, it gets stuck, and we pay more context switch costs.
+\end{changemargin}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{How Unfairness Mitigates Lock Convoys}
+
+\begin{changemargin}{1.5cm}
+Thread $A$ releases lock $\ell$. $B$ wants it.
+
+Let's be unfair. $B$ doesn't get it.
+
+Say $B$ runs next. Then it requests $\ell$ and gets it.
+
+What if $C$ runs next instead? Then it computes.
+\begin{itemize}
+\item If $C$ wants $\ell$, it gets it; maybe releases before switchout.
+\item If $C$ didn't need $\ell$, nothing to see here.
+\end{itemize}
+\end{changemargin}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Diagnosing Lock Convoys}
+
+\begin{center}
+\input{images/L08-detecting-convoy}
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Starvation?}
+
+Changing the locks to be unfair does risk starvation. 
+
+Windows does give a thread priority boost, temporarily, after it gets unblocked, to see to it that the unblocked thread does actually get a chance to run.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Do Your Own Dirty Work}
+
+Although it can be nice to be able to give away such a problem to the OS developers, we might have to solve it for ourselves. 
+
+Options:
+\vspace*{-3em}
+\begin{itemize}
+	\item Sleep
+	\item Share
+	\item Cache
+	\item Trylock
+\end{itemize}
+
+\end{frame}
+ 
+
+\begin{frame}
+\frametitle{Sleep, Data, Sleep}
+
+We could make the threads that are NOT in the lock convoy call a sleep() system call fairly regularly to give other threads a chance to run. 
+
+This solution is lame, though, because we're changing the threads that are not the offenders.
+
+It just band-aids the situation so the convoy does not totally trash performance. 
+
+Still, we are doing a lot of thread switches, which themselves are expensive as outlined above.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Sharing is Caring}
+
+\begin{center}
+Young toekans sharing food
+
+\includegraphics[width=\textwidth]{images/L08-sharing.jpg}
+
+Credit: Sander van der Wel via Flickr, Wikimedia Commons
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Sharing is Caring}
+
+The next idea is sharing: can we use a reader-writer lock to allow much more concurrency than we would get if everything used exclusive locking? 
+
+If there will be a lot of writes then there's limited benefit to this speedup, but if reads are the majority of operations then it is worth doing. 
+
+We can also try to find a way to break a critical section up into two or more smaller ones, if that can be done correctly!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Nevermind, I wanted something else...}
+
+The next idea has to do with changing when (and how) you need the data. 
+
+Shrink the critical section to just pull a copy of the shared data and operate on the shared data. 
+ 
+ 
+But you saw the earlier discussion about critical section sizes, right? So you did that already...?
+
+
+\end{frame} 
+
+
+\begin{frame}[fragile]
+\frametitle{Try, Try Again}
+
+The last solution suggested is to use try-lock primitives:
+
+\begin{lstlisting}[language=C]
+int retries = 0;
+while(pthread_mutex_trylock( &lock ) != 0 ) { /* 0 indicates lock acquired */
+  if ( retries < SPIN_LIMIT ) {
+    retries++;
+    sleep(0);
+    continue;
+  }
+  pthread_mutex_lock( &lock );
+  break;
+}
+\end{lstlisting}
+
+If we reach the limit then we just give up and enter the queue!
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Polling?!}
+
+It looks like polling for the critical section. 
+
+The limit on the number of tries helps in case the critical section belongs to a low priority thread and we need the current thread to be blocked.
+
+Under this scheme, if $A$ is going to release the critical section, $B$ does not immediately become the owner. 
+
+$A$ may keep running and $A$ might even get the critical section again before $B$ tries again to acquire the lock (and may succeed). 
+
+Even if the spin limit is as low as 2, this means two threads can recover from contention without creating a convoy
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{You've been... THUNDERSTRUCK!}
+
+\begin{center}
+\includegraphics[width=.8\textwidth]{images/L08-thundering-herd.jpg}
+
+Credit: public domain, Famous Players, 1925
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{You've been... THUNDERSTRUCK!}
+
+The lock convoy has some similarities with a different problem called the \alert{thundering herd problem}. 
+
+In the thundering herd problem, some condition is fulfilled (e.g., broadcast on a condition variable) and it triggers a large number of threads to wake up. 
+
+It is likely they can't all proceed, so some will get blocked and then awoken again all at once in the future. 
+
+In this case it would be better to wake up one thread at a time instead of all of them.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Lost Wakeups}
+
+\begin{center}
+\includegraphics[width=.8\textwidth]{images/L08-sleeping-beauty.jpg}
+
+Credit: public domain, John Collier, \emph{Sleeping Beauty}, 1929
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Lost Wakeups}
+
+\begin{changemargin}{2cm}
+\Large
+Beware! Waking up one thread at a time only works when threads are identical.
+
+Otherwise, you're better off waking all the threads just in case, to avoid correctness issues.
+\end{changemargin}
+\end{frame}
+
+\begin{frame}
+\frametitle{Why pay more?}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Locks and Atomics}
+
+ Atomics are a lower-overhead alternative to
+locks as long as you're doing suitable operations. 
+
+Sometimes: just want that operations are indivisible.
+
+Key idea: an \alert{atomic operation} is indivisible.\\
+\quad Other threads see state before or after the operation; nothing in between.
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{About C++ atomics}
+
+\vspace*{-2em}
+\begin{changemargin}{1.5cm}
+\Large
+    Use the default {\tt std::memory\_order}.\\
+    (= sequential consistency)\\[1em]
+
+    \alert{Don't use relaxed atomics unless you're an expert!}\\[1em]
+    \end{changemargin}
+    
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Different Memory Options}
+
+\begin{itemize}
+		\item memory\_order\_acquire
+		\item memory\_order\_release
+		\item memory\_order\_acq\_rel
+		\item memory\_order\_consume
+		\item memory\_order\_relaxed
+		\item memory\_order\_seq\_cst
+\end{itemize}
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Really, don't use C++ relaxed atomics!}
+  \begin{center}
+    \includegraphics[width=.8\textwidth]{images/disapproving-bird}\footnote{Photo Credit: Danielle Guerard}
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{C++ atomics: Key Idea}
+  
+    An \emph{atomic operation} is indivisible.\\[1em]
+    Other threads see state before or after the operation,
+    nothing in between.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Simplest: {\tt atomic\_flag}}
+  
+    Represents a boolean flag.\\[1em]
+    \begin{lstlisting}[language=C]
+#include <atomic>
+
+atomic_flag f = ATOMIC_FLAG_INIT;
+    \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Operations on {\tt atomic\_flag}}
+  
+    Can clear, and can test-and-set:
+    \begin{lstlisting}[language=C]
+#include <atomic>
+
+atomic_flag f = ATOMIC_FLAG_INIT;
+int foo() {
+  f.clear();
+  if (f.test_and_set()) {
+    // was true
+  }
+}
+    \end{lstlisting}
+    ~\\
+    \begin{tabbing}
+      {\tt test\_and\_set}: \= atomically sets to true, \\
+      \> returns previous value.
+    \end{tabbing}
+    No assignment (=) operator.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Yet Another Rant About C++}
+
+Although I guess in C++ you could define one if you wanted. 
+
+This is kind of a dangerous thing about C++. 
+
+If in C you see a line of code like \texttt{z = x + y;} you can have a pretty good idea about what it does and you can infer that there's some sort of natural meaning to the + operator there, like addition or concatenation. 
+
+In C++, however, this same line of code tells you nothing unless you know...\\
+\quad (1) the type of \texttt{x},\\
+\quad (2) the type of \texttt{y}, and\\
+\quad (3) how the \texttt{+} operator is defined on those two operands \textit{in that order}. 
+
+But I'm digressing.
+
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Using more general C++ atomics}
+
+\begin{changemargin}{2cm}
+    Declaring them:
+  
+\begin{lstlisting}[language=C]
+#include <atomic>
+
+atomic<int> x;
+\end{lstlisting}
+
+Library's implementation: \\
+\hspace*{1em} on small types, lock-free operations;\\
+\hspace*{1em} on large types, mutexes.
+\end{changemargin}
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{What to do with Atomics}
+
+  
+\begin{changemargin}{2cm}
+    \Large
+    Kinds of operations:
+    \begin{itemize}
+    \item reads
+    \item writes
+    \item read-modify-write (RMW)
+    \end{itemize}
+    \end{changemargin}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reads and Writes}
+
+  
+    C++ has syntax to make these all transparent:
+\begin{lstlisting}[language=C][language=C++]
+#include <atomic>
+#include <iostream>
+
+std::atomic<int> ai;
+int i;
+
+int main() {
+    ai = 4;
+    i = ai;
+    ai = i;
+    std::cout << i;
+}
+\end{lstlisting}
+Can also use {\tt i = ai.load()} and {\tt ai.store(i)}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Read-Modify-Write (RMW)}
+
+  
+    Consider {\tt ai++}.\\[1em]
+    This is equivalent to (under lock): \\
+    ~~~{\tt tmp = ai.read(); tmp++; ai.write(tmp); }\\[1em]
+    Hardware can do that atomically, and faster.\\[1em]
+    Other RMWs: {\tt +-, \&=, etc, compare-and-swap}\\[2em]
+
+    {\small
+      more info:\\ \url{http://preshing.com/20130618/atomic-vs-non-atomic-operations/}
+      }
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{Do Free Lunches Exist?}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Lock Freedom}
+
+Suppose we'd like to operate in a world in which there are no locks. 
+
+Research has gone into the idea of lock-free data structures. 
+
+If you have a map and it will be shared between threads, the normal thing would be to protect access to the map with a mutex (lock). 
+
+But what if the data structure was written in such a way that we didn't have to do that? 
+
+That would be a lock-free data structure.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Use Locks Wisely!}
+
+Often, normal locking and unlocking behaviour is sufficient.
+
+We likely want to use it when we need to guarantee that progress is made. 
+
+Or: when we really can't use locks (e.g., signal handler), or where a thread dying while holding a lock results in the whole system hanging.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Non-Blocking Data Structure}
+
+A non-blocking data structure is one where none of the operations can result in being blocked. 
+
+In a language like Java there might be some concurrency-controlled data structures in which locking and unlocking is handled for you, but those can still be blocking. 
+
+Lock-free data structures are always inherently non-blocking. 
+
+A spin lock or busy-waiting approach is not lock free, because if the thread holding the lock is suspended then everyone else is stuck!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock-Free Data Structure}
+A lock-free data structure doesn't use any locks (duh) but there's also some implication that this is also thread-safe.
+
+You can't make all your data structures lock-free ones by just deleting all the mutex code (sorry). 
+
+Lock free also doesn't mean it's a free-for-all; there can be restrictions. 
+
+For example, a queue that allows one thread to append to the end while another removes from the front, but not 2 removals at the same time.
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Lock-Free Data Structure}
+
+The actual definition of lock-free is more formal. 
+
+If any thread performing an operation gets suspended during the operation, then other threads accessing the data structure are still able to complete their tasks.
+
+This is distinct from the idea of waiting, though; an operation might still have to wait its turn or might get restarted.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Wait-Free Data Structures}
+
+You might need wait-free data structures. 
+
+This does not mean that nothing ever has to wait! 
+
+It does mean that each thread trying to perform some operation will complete it within a bounded number of steps regardless of what any other threads do. 
+
+This means that a compare-and-swap routine with infinite retries is not wait free, because a very unlucky thread could potentially take infinite tries...
+
+The wait free data structures tend to be very complicated...
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Example Lock-Free Algorithm}
+
+\begin{lstlisting}[language=C]
+void stack_push(stack* s, node* n) {
+    node* head;
+    do
+    {
+        head = s->head;
+        n->next = head;
+    }
+    while ( !atomic_compare_exchange(s->head, head, n) );
+} 
+\end{lstlisting}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Example Wait-Free Algorithm}
+
+\begin{lstlisting}[language=C]
+void increment_reference_counter(rc_base* obj) {
+    atomic_increment(obj->rc);
+}
+
+void decrement_reference_counter(rc_base* obj) {
+    if (0 == atomic_decrement(obj->rc))
+        delete obj;
+} 
+\end{lstlisting}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{To Lock Free, or Not to Lock Free}
+
+Are lock-free programming techniques somehow better for performance? Maybe!
+
+Lock free algorithms are about ensuring there is forward progress in the system and not really specifically about speed. 
+
+A particular algorithm implementation might be faster under lock-free algorithms.
+
+But often they are not. In fact, the lock free algorithms could be slower, in which case you use them because you must, not because it is particularly speedy.
+
+\end{frame}
+
+
+\end{document}
+
