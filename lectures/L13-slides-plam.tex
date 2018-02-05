@@ -1,4 +1,4 @@
-\input{configuration}
+\input{configuration-plam}
 
 \title{Lecture 13 --- OpenMP Memory Model }
 
@@ -16,21 +16,21 @@
  \end{frame}
 
 \begin{frame}
-  \frametitle{Memory Model}
+  \frametitle{OpenMP uses a {\bf relaxed-consistency, shared-memory} model.}
 
-  
-
-  OpenMP uses a {\bf relaxed-consistency, shared-memory} model:
+  \begin{changemargin}{1cm}
+\large
 
   \begin{itemize}
     \item All threads share a single store called
       \structure{memory}.\\ ~~(may not actually represent RAM)\\[1em]
-    \item Each thread can have its own {\it temporary} view of memory.\\[1em]
-    \item A thread's {\it temporary} view of memory is not required to be
+    \item Each thread has its own {\it temporary} view of memory.\\[1em]
+    \item A thread's {\it temporary} view of memory\\ is not required to be
       consistent with memory.
   \end{itemize}~\\
 
   We'll talk more about memory models later.
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -50,15 +50,17 @@ if (tmp == 0) then                  if (tmp == 0) then
 end if                              end if
   \end{lstlisting}
 
-  
+  \begin{changemargin}{1cm}
+\large
  Does this code actually prevent simultaneous execution?
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Possible States for Example}
+  \frametitle{Not seeing the problem.}
 
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
                     a = b = 0
@@ -85,14 +87,17 @@ end if                              end if
   \end{center}
 
   
+  \begin{changemargin}{1cm}
+\large
     Looks like it (at least intuitively).
-  
+  \end{changemargin}
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Memory Model Gotcha}
+  \frametitle{The Memory Model Contains Gotchas.}
 
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
                     a = b = 0
@@ -106,35 +111,42 @@ end if                              end if
   \end{lstlisting}
 
   
+  \begin{changemargin}{1cm}
+\large
     Sorry! With OpenMP's memory model, no guarantees:\\
     the update from one thread may not be seen by the other.
-  
+  \end{changemargin}
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Flush: Ensuring Consistent Views of Memory}
-
+  \frametitle{Flush Ensures Consistent Views of Memory.}
+\large
   \begin{center}
     {\tt \#pragma omp }{\bf flush} {\it[(list)]}
   \end{center}
 
-  
-    Makes the thread's temporary view of memory consistent with main
+\large
+  \begin{changemargin}{1cm}
+    Makes the thread's temporary view of memory \\ consistent with main
       memory; hence:\\[1em]
-    $\bullet$ enforces an order on the memory operations of the variables.\\[1em]
-    The variables in the list are called the {\it flush-set}. 
-    If no variables given, the compiler will determine them for you.
+    $\bullet$ enforces an order on memory operations of variables.\\[1em]
+    The variables in the list are called the {\it flush-set}. \\
+    If no variables given, compiler determines them for you.
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Explaining Flush}
+  \frametitle{Flush: Before is before, after is after.}
 
   
+\large
+  \begin{changemargin}{.5cm}
   Enforcing an order on the memory operations means:
 
   \begin{itemize}
@@ -144,6 +156,7 @@ end if                              end if
       after the {\bf flush} complete after the flush executes.
     \item Flushes with overlapping {\it flush-sets} can not be reordered.
   \end{itemize}
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -152,6 +165,8 @@ end if                              end if
 \begin{frame}
   \frametitle{Flush Correctness}
 
+\Large
+  \begin{changemargin}{1cm}
   
   To show a consistent value for a variable between two threads, 
   OpenMP must run statements in this order:
@@ -162,7 +177,7 @@ end if                              end if
     \item $t_2$ flushes $v$ also;
     \item $t_2$ reads the consistent value from $v$.
   \end{enumerate}
-  
+  \end{changemargin}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -183,15 +198,18 @@ if (tmp == 0) then                  if (tmp == 0) then
 end if                              end if
   \end{lstlisting}
 
+\Large
+  \begin{changemargin}{1cm}
   \begin{itemize}
-    \item OK. Will this now prevent simultaneous access?
+    \item OK. \\ Will this now prevent simultaneous access?
   \end{itemize}
+  \end{changemargin}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{No Luck Yet: Why Flush Fails}
+  \frametitle{No Luck Yet: Flush fails due to reordering.}
 
   
 
@@ -199,6 +217,8 @@ end if                              end if
     \alert{\LARGE No.}
   \end{center}
 
+\Large
+  \begin{changemargin}{1cm}
   \begin{itemize}
     \item The compiler can reorder the {\tt flush(b)} in thread 1 or
       {\tt flush(a)} in thread 2.
@@ -206,6 +226,7 @@ end if                              end if
     \item If {\tt flush(b)} gets reordered to after the protected
       section, we will not get our intended operation.
   \end{itemize}
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -225,7 +246,7 @@ end if                              end if
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Same Example, Finally Correct}
+  \frametitle{Proper use of flush can give correct example.}
 
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
                     a = b = 0
@@ -245,6 +266,8 @@ end if                              end if
 \begin{frame}
   \frametitle{OpenMP Directives Where Flush Is Implied}
 
+\begin{changemargin}{2cm}
+\large
   \begin{itemize}
     \item {\tt omp barrier}
     \item at entry to, and exit from, {\bf omp critical};
@@ -253,15 +276,17 @@ end if                              end if
     \item at exit from {\bf omp sections};
     \item at exit from {\bf omp single}.
   \end{itemize}
+\end{changemargin}
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
+\begin{frame} 
   \frametitle{OpenMP Directives Where Flush Isn't Implied}
 
-  
+\begin{changemargin}{2cm}
+\large
   \begin{itemize}
     \item at entry to {\bf for};
     \item at entry to, or exit from, {\bf master};
@@ -269,48 +294,58 @@ end if                              end if
     \item at entry to {\bf single};
     \item at exit from {\bf for}, {\bf single} or {\bf sections} with a {\bf nowait}
       \begin{itemize}
-        \item {\bf nowait} removes implicit flush along with the implicit barrier
+        \item {\bf nowait} removes implicit flush\\
+ along with the implicit barrier
       \end{itemize}
   \end{itemize}
 
-  This is not true for OpenMP versions before 2.5, so be careful.
-  
+  This is not true for OpenMP versions before 2.5,\\
+ so be careful.
+\end{changemargin}
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{OpenMP Task Directive}
+  \frametitle{How to Create OpenMP Tasks.}
 
   
+\begin{changemargin}{1cm}
+\large
   \begin{center}
     {\tt \#pragma omp }{\bf task} {\it [clause [[,] clause]*]}
   \end{center}~\\
 
-     Generates a task for a thread in the team to run.\\[1em]
+     Generates a task for some thread in the team to run.\\[1em]
      When a thread enters the region it may:
       \begin{itemize}
         \item immediately execute the task; or
         \item defer its execution.\\\qquad  (any other thread may be assigned the task)
       \end{itemize}
 
-  Allowed Clauses: {\bf if, final, untied, default, mergeable, private,
-  firstprivate, shared}
-  
+\begin{tabbing}
+  Allowed Clauses:~\= 
+{\bf if, final, untied, default, mergeable,}\\
+\> {\bf private, firstprivate, shared}.
+\end{tabbing}
+\end{changemargin}
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Tasks: {\tt if} and {\tt final} Clauses}
+  \frametitle{Controlling tasks with {\tt if} and {\tt final} clauses.}
 
-  
+\large
+  \begin{changemargin}{1cm}
   \begin{center}
   {\bf if} {\it(scalar-logical-expression)}
   \end{center}
 
     When expression is {\tt false}, generates an undeferred task---\\
-    the generating task region is suspended until execution of the
+    generating task region is suspended until execution of the
       undeferred task finishes.\\[1em]
 
   \begin{center}
@@ -320,7 +355,7 @@ end if                              end if
     When expression is {\tt true}, generates a final task.\\
     All tasks within a final task are {\it included}.\\
     Included tasks are undeferred and also execute immediately in the same thread.
-  
+  \end{changemargin}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -357,7 +392,7 @@ void foo () {
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{{\tt untied} and {\tt mergeable} Clauses}
+  \frametitle{Controlling tasks with {\tt untied} and {\tt mergeable}.}
 
   
 \begin{center}
@@ -374,8 +409,8 @@ void foo () {
 \end{center}
 
   \begin{itemize}
-    \item For an undeferred or included task,
-    allows the implementation to generate a merged task instead.
+    \item For an undeferred or included task,\\
+    \hspace*{2em} allows the implementation to generate a merged task instead.
     \item In a merged task, the implementation may re-use the environment from its generating task (as if there was no task directive).
   \end{itemize}
 
@@ -386,9 +421,10 @@ void foo () {
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Bad {\tt mergeable} Example}
+  \frametitle{Incorrect Use of {\tt mergeable}.}
 
   
+\begin{changemargin}{1.5cm}  
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
 #include <stdio.h>
 void foo () {
@@ -401,27 +437,26 @@ void foo () {
     printf("%d\n",x); // prints 2 or 3
 }
   \end{lstlisting}
-  
-    This is an incorrect usage of {\bf mergeable}: the output depends
-      on whether or not the task got merged.\\[1em]
-    Merging tasks (when safe) produces more efficient code.
 
-  
+\large
+    This is incorrect because the output depends
+      on whether or not the task got merged.\\[1em]
+    Merging tasks (when safe) produces faster code.
+\end{changemargin}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Taskyield}
+  \frametitle{{\tt taskyield}: Suspend the current task.}
 
-  
+\begin{changemargin}{1.5cm}  
   \begin{center}
     {\tt \#pragma omp }{\bf taskyield}
   \end{center}
-
-    Specifies that the current task can be suspended in favour of another task.\\[1em]
-
-  Here's a good use of {\bf taskyield}.
+\large
+    Specifies that the current task can be suspended \\
+\hspace*{2em} in favour of another task.\\[1em]
 
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
 void foo (omp_lock_t * lock, int n) {
@@ -438,30 +473,31 @@ void foo (omp_lock_t * lock, int n) {
     }
 }
   \end{lstlisting}
-  
+\end{changemargin}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Taskwait}
+  \frametitle{{\tt taskwait}: Wait for children.}
 
-  
-
+\begin{changemargin}{1cm}  
+\large
   \begin{center}
     {\tt \#pragma omp }{\bf taskwait}
-  \end{center}~\\[1em]
+  \end{center}
 
-     Waits for the completion of the current task's child tasks.
-  
+     Waits for completion of the current task's child tasks.
+\end{changemargin}
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{OpenMP Example: Tree Traversal}
+  \frametitle{OpenMP Tasks Example 1: Tree Traversal}
 
+\begin{changemargin}{2cm}
   
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
 struct node {
@@ -484,15 +520,15 @@ void traverse(struct node *p) {
     process(p);
 }    
   \end{lstlisting}
-  
+\end{changemargin}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{OpenMP Example 2: Post-order Tree Traversal}
+  \frametitle{OpenMP Tasks Example 2: Post-order Tree Traversal}
 
-  
+\begin{changemargin}{2cm}
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
 struct node {
     struct node *left;
@@ -516,7 +552,9 @@ void traverse(struct node *p) {
 }    
   \end{lstlisting}
   
+\large
   Note: Used an explicit {\bf taskwait} before processing.
+\end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -524,9 +562,9 @@ void traverse(struct node *p) {
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{OpenMP Example: Parallel Linked List Processing}
+  \frametitle{OpenMP Tasks Example 3: Parallel Linked List Processing}
 
-  
+\begin{changemargin}{2cm}
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
 // node struct with data and pointer to next
 extern void process(node* p);
@@ -548,16 +586,17 @@ void increment_list_items(node* head) {
     }
 }
   \end{lstlisting}
-  
+\end{changemargin}
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{OpenMP Example: Lots of Tasks}
+  \frametitle{OpenMP Tasks Example 4: Lots of Tasks}
 
-  
+  \begin{changemargin}{2cm}
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
 #define LARGE_NUMBER 10000000
 double item[LARGE_NUMBER];
@@ -579,9 +618,9 @@ int main() {
 }
   \end{lstlisting}
 
-
   The main loop generates tasks, which are all assigned to the executing thread as it becomes available.\\[1em]
   When too many tasks generated: suspends main thread, runs some tasks, then resumes the loop in main thread.
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -590,7 +629,7 @@ int main() {
 \begin{frame}[fragile]
   \frametitle{OpenMP Example: Improved version of Lots of Tasks}
 
-  
+  \begin{changemargin}{2cm}
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
 #define LARGE_NUMBER 10000000
 double item[LARGE_NUMBER];
@@ -613,19 +652,20 @@ int main() {
     }
 }
   \end{lstlisting}
-  
+  \large
   \begin{itemize}
     \item {\bf untied} lets another thread take on tasks.
   \end{itemize}
-  
+  \end{changemargin}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{About Nesting: Restrictions}
+  \frametitle{OpenMP imposes restrictions on nesting.}
 
-  
+  \begin{changemargin}{2cm}
+\large
   \begin{itemize}
     \item You cannot nest {\bf for} regions.
     \item You cannot nest {\bf single} inside a {\bf for}.
@@ -650,6 +690,7 @@ void good_nesting(int n)
     }
 }
   \end{lstlisting}
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -658,8 +699,9 @@ void good_nesting(int n)
 \begin{frame}
   \frametitle{Why Your Code is Slow}
 
-  
-  Want it to run faster? Avoid these pitfalls:
+  \begin{changemargin}{1cm}
+  \large
+  Want it to run faster? Avoid these pitfalls:\\
   \begin{enumerate}
     \item Unnecessary flush directives.
     \item Using critical sections or locks instead of atomic.
@@ -672,15 +714,17 @@ void good_nesting(int n)
     \item Too much work in a critical section.
     \item Too many entries into critical sections.
   \end{enumerate}
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Example: Too Many Entries into Critical Sections}
+  \frametitle{Example: Reducing Too Many Entries into Critical Sections}
 
-  
+  \begin{changemargin}{1cm}
+  \large
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
 #pragma omp parallel for
 for (i = 0; i < N; ++i) { 
@@ -705,20 +749,23 @@ for (i = 0 ; i < N; ++i) {
     }
 }
   \end{lstlisting}
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Summary}
+  \frametitle{OpenMP wrap-up: memory model is tricky; \\ tasks enable unstructured parallelism.}
 
-  
-    Finished exploring OpenMP. Key points:
+  \begin{changemargin}{1cm}
+\Large
+    Key points:\\
   \begin{itemize}
     \item How to use {\bf flush} correctly.
-    \item How to use OpenMP {\bf tasks} to parallelize unstructured problems.
+    \item How to use OpenMP {\bf tasks} to\\ \hspace*{2em} parallelize unstructured problems.
   \end{itemize}
+  \end{changemargin}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
