@@ -29,7 +29,7 @@ This is the \emph{sequentially consistent} memory model.
 \end{quote}
 
 {\sf What are the possible values for the variables?}\\[3em]
-?
+
 Another view of sequential consistency:
 \begin{itemize}
       \item each thread induces an \emph{execution trace}.
@@ -76,7 +76,7 @@ That can still be problematic, though.
 When it can prove that a reordering is safe with respect to the
 programming language semantics, the {\bf compiler} may reorder instructions (so it's not just the hardware).
 
-For example, say we want thread 1 to print value set in thread 2.
+For example, say we want thread 1 to print a value set in thread 2.
   \begin{lstlisting}[language=C]
                             f = 0
 
@@ -117,6 +117,7 @@ Note, however, that while an {\tt sfence} makes the stores visible,
 another CPU will have to execute an {\tt lfence} or {\tt mfence} to
 read the stores in the right order.
 
+\pagebreak
 Consider the example again:
   \begin{lstlisting}[language=C]
                          f = 0
@@ -176,8 +177,8 @@ Note that we've just seen {\bf \_\_volatile\_\_} with  \_\_asm\_\_. This isn't t
 
 \paragraph{Back to Memory Reordering in Programs.}
     Fortunately, an OpenMP {\bf flush} (or, better yet, mutexes) also preserve the order of variable accesses.
-    Stops reordering from both the compiler and hardware.
-    For GNU, flush is implemented as
+    That iss, it prevents reordering from both the compiler and hardware.
+    For GNU, flush is available as
       {\tt \_\_sync\_synchronize();}
 
 \paragraph{{\tt volatile}.} This qualifier ensures that the
@@ -243,7 +244,7 @@ The ABA problem is not any sort of acronym nor a reference to this~\cite{abba}. 
 
 It's a ``false positive'' because $P_{1}$'s compare-and-swap operation succeeds even though the value at $L_{i}$ has been modified in the meantime. If this doesn't seem like a bad thing, consider this. If you have a data structure that will be accessed by multiple threads, you might be controlling access to it by the compare-and-swap routine. What should happen is the algorithm should keep trying until the data structure in question has not been modified by any other thread in the meantime. But with a false positive we get the impression that things didn't change, even though they really did.
 
-You can combat this by ``tagging'': modify value with nonce upon each
+You can combat this by ``tagging'': modify value with a nonce upon each
 write.  You can also keep the value separately from the nonce; double
 compare and swap atomically swaps both value and nonce.
 
@@ -282,12 +283,12 @@ It's a syntactically valid question and it describes something that's possible,
 but it still makes no sense.
 
 The older standards made no reference to any kind of CPU, memory architecture, cache
-strategy, or anything like that. Which on the one hand is nice and general, but on the other hand, it leads to problems. The ``abstract machine'' that the C and C++ standards refer to is inherently single threaded, making it actually impossible to write a portable multithreaded C or C++ program~\cite{quora:cppthr}. The part that's impossible is that word ``portable'' -- people write multithreaded C and C++ programs all the time (in this class, even) but they have system specific code and implementation-defined behaviour. Open up a pthreads library or some equivalent and sure enough, you will find something architecture specific in there.
+strategy, or anything like that. Which on the one hand is nice and general, but on the other hand, leads to problems. The ``abstract machine'' that the C and C++ standards refer to is inherently single threaded, making it actually impossible to write a portable multithreaded C or C++ program~\cite{quora:cppthr}. The part that's impossible is that word ``portable'' -- people write multithreaded C and C++ programs all the time (in this class, even) but they have system specific code and implementation-defined behaviour. Open up a pthreads library or some equivalent and sure enough, you will find something architecture specific in there.
 
 C++11 (and C11) have improved the situation, though. There is actually
 a memory model (based on an abstract machine) and threading primitives
 such as mutexes, atomics, and memory barriers---the concepts that we
-have seen in this course. Now there are rules! Yes. We like rules. Okay. I, at least, like rules. C++11 defines how a compiler can generate code that accesses memory even when there is concurrency. There are also standard mutex operations and atomics and barriers and all those lovely things.
+have seen in this course. Now there are rules! Yes. We like rules. Okay. I [JZ], at least, like rules. C++11 defines how a compiler can generate code that accesses memory even when there is concurrency. There are also standard mutex operations and atomics and barriers and all those lovely things.
 
 Now, we can ask the question about the behaviour of the above example.
 It does have undefined behaviour, since there is contended access to
@@ -319,24 +320,26 @@ We probably still don't like this because we don't have mutual exclusion here an
 
 \section*{Good C++ Practice}
 Lots of people use postfix ({\tt i++}) out of habit, but prefix ({\tt ++i}) is better.
-
 In C, this isn't a problem. 
 In some languages (like C++), it can be.
 
-\paragraph{Why? Overloading.} In C++, you can overload the {\tt ++} and {\tt --} operators.
+\paragraph{Why? Overloading.} In C++, you can overload the {\tt ++} and {\tt -\!-} operators.
 
+\vspace*{-1em}
+\begin{minipage}{.5\textwidth}
   \begin{lstlisting}[language=C]
 class X {
 public:
   X& operator++();
   const X operator++(int);
-...
 };
-
+\end{lstlisting}\end{minipage}\begin{minipage}{.5\textwidth}
+  \begin{lstlisting}[language=C]
 X x;
 ++x; // x.operator++();
 x++; // x.operator++(0);
   \end{lstlisting}
+  \end{minipage}
 
 Prefix is also known as {\bf increment and fetch}, and might be implemented like this:
   \begin{lstlisting}[language=C]
