@@ -65,8 +65,8 @@
 \singlespace
 
 \title{\bf ECE 459: Programming for Performance\\Assignment 3}
-\author{Patrick Lam}
-\date{\today ~ (Due: March 24, 2017)}
+\author{Jeff Zarnett \& Patrick Lam}
+\date{\today ~ (Due: March 12, 2018)}
 
 \lstset{basicstyle=\scriptsize, frame=single}
 
@@ -76,142 +76,108 @@
 
 \maketitle
 
-In this assignment, you will write OpenCL code to implement parts of
-an $N$-body simulation.  The first part consists of converting some
-sequential C code into OpenCL, while the second part requires you to
-improve the algorithm by making approximations for points that are far
-away.
+In this assignment, you will convert your code that performs the Coulomb's Law 
+simulation from assignment 2 to use OpenCL. This problem is a great candidate for
+OpenCL because computation of the force on each point $p$ at a given time is
+independent of the computation of any other point at that same time. 
 
-We'll be starting with the code from GPU Gems 3\footnote{\url{http://http.developer.nvidia.com/GPUGems3/gpugems3_ch31.html}}.
-I also found an OpenCL N-body simulation code on the Internet\footnote{\url{http://www.browndeertechnology.com/docs/BDT_OpenCL_Tutorial_NBody-rev3.html}}. Also, you can read Andrew Cooke's notes; they are similar to my OpenCL lecture, but they may make more sense to you\footnote{\url{http://www.acooke.org/cute/APractical0.html}}.
 
-Using OpenCL on ece459-1 should be fairly straightforward as long as
+OpenCL is covered in the lecture notes, but you can read Andrew Cooke's notes; they 
+are similar to the OpenCL lecture, but they may make more sense to you\footnote{\url{http://www.acooke.org/cute/APractical0.html}}.
+
+Using OpenCL on \texttt{ecetesla0} should be fairly straightforward as long as
 you have the right compiler options. The Makefile I've provided
 should work for you. You are also free to use OpenCL on your own
-computer, if you choose. There are C++ as well as C bindings for OpenCL but you should use \textbf{only the C++ bindings}. The C binding has a nasty habit of crashing the machine (and/or rendering OpenCL unusable). If you use the C bindings, you will get 0 marks for that part of the assignment.
+computer, if you choose. There are C++ as well as C bindings for OpenCL but you 
+should use \textbf{only the C++ bindings}. The C binding has a nasty habit of 
+crashing the machine (and/or rendering OpenCL unusable). If you use the C bindings, 
+you will get 0 marks and we will be slightly displeased.
 
-\paragraph{Getting started.} Fork the provided git repository:
+\paragraph{Getting started.} 
+Check \url{git.uwaterloo.ca} for your repository which should 
+be automatically created for you and populated with the starter files. The starter 
+files are just the Makefile and some OpenCL boilerplate that will be necessary.
+Plus also some test cases.
+
+Then you can copy in your source files from assignment 2, question 3. You'll need to 
+modify them extensively but it's probably much better to start with those than to 
+start from scratch. But it's up to you!
+
+\paragraph{What to submit.} Push C++ files as well as your kernel file(s), containing 
+the OpenCL version of your code, along with a brief report (max 1 page).
+
+\section*{Coulomb's Law Problem: Again!}
+
+For a recap of the algorithm is supposed to work, please refer to the assignment 2 PDF (repeating it here only introduces the possibility of inconsistency or error). 
+The input file format and the argument order will be the same at the command line. 
+The arguments mean the same thing as they did in assignment2. 
+The compiled executable file is named slightly differently to note that it's OpenCL. 
+
+
+The output file produced by the 
+OpenCL version should be exactly the same as an output file produced by the OpenMP or
+sequential version for the same input file.
+
+The goal of the assignment is to correctly convert the CPU code from assignment 2 into GPU (OpenCL) code. Correctness counts the most, but efficiency is also a good thing (you don't want it to be massively slower). It might now be clear why we used \texttt{float} in the previous assignment instead of \texttt{double}: because GPUs are very, very good at working with \texttt{float}s. 
+
+\section*{Converting Your Code to OpenCL}
+
+Step one would be to remove all OpenMP annotations as your code should not contain
+OpenMP directives (the goal is, after all, to do work in OpenCL).
+
+The OpenCL kernel is written in a language that is very C-like but it does have some
+significant limitations compared to C. This makes it difficult to use 
+structures like the \texttt{Vec3} that you were provided in assignment 2. But rest 
+assured that we didn't trick you into doing something that would force a massive 
+rewrite later. OpenCL gives you the types \texttt{float3} and \texttt{float4} (and other variants like 2, 8, 16...), which can take the place of \texttt{Vec3}.
+
+A \texttt{float4}, for example, is a grouping of 4 single-precision floating point numbers. It is
+equivalent to a \texttt{struct} composed of 4 \texttt{float} variables. It has
+properties (like \texttt{.x}) to access the components, and there are already
+defined arithmetic and comparison operations on them. So you should be able to drop
+these types into your program, replacing \texttt{Vec3}, without great difficulty.
+The links below should be helpful in getting familiar with the vector types and how 
+to use them. They are both from the same article; the whole article might be worth a 
+read but you should definitely read at least these two pages to understand the 
+types and how the operations on them work:
+
 \begin{center}
-{\tt ssh git@ecgit.uwaterloo.ca fork ece459/1171/a3 ece459/1171/USERNAME/a3}
+
+\url{http://www.informit.com/articles/article.aspx?p=1732873&seqNum=3}
+
+\url{http://www.informit.com/articles/article.aspx?p=1732873&seqNum=10}
+
 \end{center}
-\noindent and then clone the provided files.
 
-To submit, push C++ files containing OpenCL versions (naive and optimized) of
-the $N$-body code, along with a brief report (about half a page).
+Beware, of course, of mismatches such as writing \texttt{float} when you mean 
+\texttt{float4} or similar. Note that the types have slightly different names 
+depending on where you use them: in the OpenCL kernel it's called
+\texttt{float4} but in your C++ code it is \texttt{cl\_float4}, for example. 
 
-\section*{Part 1: Brute-force approach (50 points)}
-The easiest way to do an $N$-body simulation is to compute the effects
-of all points on each other. I've posted some sequential code (based
-on the GPU Gems code) to calculate the forces for one time-step. Your
-first task is to convert this code to OpenCL. We will evaluate the
-correctness and efficiency of your conversion. OpenCL can assign
-workgroups automatically.
+Once you have converted to using the OpenCL vector types, it's probably a good idea 
+to test with some test cases and make sure that nothing was broken by this. Then make 
+a commit to save your work and you'll then go on to the next part, which is handing 
+work over to the GPU. You do set-up and configuration in the host (CPU, C++) code, before giving the work to the GPU and collecting the results back to the host code.
 
-\section*{Part 2: Far-field approximations (50 points)}
+You need to do at least the following operations in GPU (OpenCL kernel). You may \textbf{ not } do these things in CPU code because it defeats the purpose of the assignment: 
 
-Algorithmic improvements are important. In this part, you will
-speed up the force calculation by crudely estimating the forces
-exerted by faraway points. The idea is to divide the points into a
-number of bins. (Real codes would use quadtrees or octrees to store,
-and thus find, the closest points\footnote{For a readable summary
-of the Barnes-Hut algorithm, see \url{http://arborjs.org/docs/barnes-hut}.}
-). You will then compute the center
-of mass for each bin and add the force exerted by the center of mass
-for faraway bins to the force exerted by individual particles for
-nearby particles.
+\begin{enumerate}
+\item the $y_{1}$ computation
+\item the $z_{1}$ computation
+\item checking for error larger than the maximum allowed.
+\end{enumerate} 
 
-To be explicitly clear, each of the three parts below should be done in an OpenCL kernel and not in CPU code. Please note also that you may not modify the sample results or the comparison python script; if the order of points your program outputs is different it means the algorithm has changed in some way and that is an error.
+Hint for item 3:  You might think of this as either a reduction, or as finding the max value...
 
-\paragraph{Computing centers-of-masses for bins (20 points).}
-Instead of finding the $k$ nearest points, we will divide space into a
-fixed number of bins and compute the center of mass of each of these
-bins. For nearby bins, we do the $O(n^2)$ calculation; for further
-bins, we compute forces for each bin. Conveniently, for this assignment
-I've divided space into $[0, 1000]^3$, so we can take bins which are
-cubes of length 100. This gives 1000 bins.
+Your solution should probably consist of three kernels (but could be slightly more or less, depending).
 
-I recommend that you create a 3-dimensional array {\tt cm} of {\tt
-  float4}s\footnote{When I did the assignment, a {\tt float} versus {\tt float4}
-mismatch took me a long time to debug.} to store centers-of-mass. The {\tt x}, {\tt y} and {\tt z}
-components contain the average position of the center of mass of a
-bin, while the {\tt w} component stores the total mass. Compute all of
-the masses in parallel: create one thread per bin, and add a point's
-position if it belongs to the bin, e.g.
+\section*{Report}
+In the report, write about your design choices and results (max half a page). Also 
+write about what worked well in this assignment and where you had difficulties, as
+we could use this in the future to give more guidance (also max half a page). Please use LaTeX for this; a template is provided for you in the base code that you cloned. 
 
-{\small
-\begin{verbatim}
-    int xbin, ybin, zbin; // initialize with bin coordinates
-    int b;
-    for (i = 0; i < POINTS; i++) {
-        if (pts[i] in bin coordinates) {
-            cm[b].x += pts[i].x; // y, z too
-            cm[b].w += 1.0f;
-        }
-    }
-    cm[b].x /= cm[b].w; // etc
-\end{verbatim}
-}
-
-\noindent
-Note that this parallelizes with the number of bins.
-
-\paragraph{Bin Contents (20 points).}
-For the next step, you'll also need to keep track of the points in
-each bin. Fortunately, you've collected the number of points in each
-bin, so you can allocate the appropriate amount of memory to store the
-points in a two-dimensional array {\tt binPts}. In a second phase,
-iterate over all bins again, this time putting coordinates into the
-proper element of {\tt binPts}.
-
-\paragraph{Computing Forces (10 points).}
-The payoff from all these calculations is to save time while
-calculating forces. Let's arbitrarily say that we'll compute exact
-forces for the points in the same bin and the directly-adjacent bins
-in each direction (think of a Rubik's Cube; that makes 27 bins in all,
-with 6 bins sharing a square, 12 bins sharing an edge, and 8 bins
-sharing a point with the center bin). If there is no adjacent bin,
-then there are no points in that bin. 
-
-Using the data that you've
-computed so far, write OpenCL code to estimate forces for each point.
-This has two parts. In the first part, compute forces directly for the 
-points in the 27 adjacent bins. In the second part, 
-sum the forces from the centers of mass. 
-
-There is a caveat: it's easier to add forces from all centers of mass,
-whether nearby or far away. I recommend that you add forces from centers
-of mass, and then subtract away the forces that you're double-counting:
-
-\begin{verbatim}
-  // add negative forces to not double-count adjacent bins
-  negBin.x = 2*myPosition.x-globalCM[bin].x;
-  negBin.y = 2*myPosition.y-globalCM[bin].y;
-  negBin.z = 2*myPosition.z-globalCM[bin].z;
-  negBin.w = globalCM[bin].w;
-  bodyBodyInteraction(myPosition, negBin, pacc);
-\end{verbatim}
-
-Finally, compare the performance of part 1 and part 2.
-
-\paragraph{What to hand in.} Commit and push your code.
-For part 2,
-write about your design choices and results (about half a page), and
-hand that in along with your OpenCL code. Please use LaTeX for this; a template is provided for you in the base code that you fork. 
-
-\section*{Timings}
-Here's some timings from the past.
-
-\paragraph{With 500*64 points.}
-\begin{itemize}
-\item    OpenCL, no approximations (1 kernel): 0.182s
-\item    OpenCL, with approximations (3 kernels): 0.168s
-\end{itemize}
-
-\paragraph{With 5000*64 points.}
-\begin{itemize}
-\item    OpenCL, no approximations (1 kernel): 6.131s
-\item    OpenCL, with approximations (3 kernels): 3.506s
-\end{itemize}
-
+\section*{Grading}
+60\% of the marks for correctness of conversion; 30\% for efficiency; 10\% for report. Efficiency in this case means (1) clean code conversion, (2) leverages the GPU well (i.e., the code isn't executed in a very inefficient way), (3) doesn't do unnecessary work. Your code will be evaluated on \texttt{ecetesla0} so make sure it
+works as expected there. 
 
 \end{document}
