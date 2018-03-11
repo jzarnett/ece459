@@ -1,0 +1,754 @@
+\input{configuration-plam}
+
+\title{Lecture 19 --- Single Thread Performance, Compiler Optimizations}
+
+\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\institute{Department of Electrical and Computer Engineering \\
+  University of Waterloo}
+\date{\today}
+
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+
+\end{frame}
+
+\part{Single-Thread Performance}
+
+
+\begin{frame}
+\partpage
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Single-Thread Performance}
+
+``Can you run faster just by trying harder?''
+
+\begin{center}
+\includegraphics[width=0.7\textwidth]{images/theflash.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Single-Thread Performance}
+\Large
+\begin{changemargin}{2cm}
+Performance improvements to date have \\
+used parallelism
+to improve throughput. 
+
+Decreasing latency is trickier---\\
+often requires domain-specific
+tweaks. 
+
+Today: one example of decreasing latency: \\
+\hspace*{2em} Stream VByte.
+\end{changemargin}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{I have a cunning plan...}
+
+\Large
+\begin{changemargin}{2cm}
+Even Stream VByte uses parallelism:\\
+\hspace*{2em}vector instructions. 
+
+But there
+are sequential improvements, \\
+e.g. Stream VByte takes care to be predictable
+for the branch predictor.
+\end{changemargin}
+
+\end{frame}
+\begin{frame}
+\frametitle{Inverted Indexes (like it's CS 137 again!)}
+
+\Large
+\begin{changemargin}{1cm}
+\vspace*{-1em}
+Abstractly: store a sequence of small integers.
+
+
+Why Inverted indexes?
+
+\hspace*{1cm}allow fast lookups by term;\\
+\hspace*{1cm}support boolean queries combining terms.
+
+\end{changemargin}
+
+\end{frame}
+\begin{frame}
+\frametitle{Dogs, cats, cows, goats. In ur documents.}
+\Large
+\begin{changemargin}{2cm}
+\begin{center}
+\begin{tabular}{r|l}
+docid & terms \\ \hline
+1 & dog, cat, cow\\
+2 & cat\\
+3 & dog, goat\\
+4 & cow, cat, goat\\
+\end{tabular}
+\end{center}
+\end{changemargin}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Inverting the Index}
+
+\large\begin{changemargin}{2cm}
+Here's the index and the inverted index:
+\begin{center}
+\begin{tabular}{r|l}
+docid & terms \\ \hline
+1 & dog, cat, cow\\
+2 & cat\\
+3 & dog, goat\\
+4 & cow, cat, goat\\
+\end{tabular} \hspace*{2em}
+\begin{tabular}{r|l}
+term & docs \\ \hline
+dog & 1, 3 \\
+cat & 1, 2, 4 \\
+cow & 1, 4 \\
+goat & 3, 4
+\end{tabular}
+\end{center}
+
+Inverted indexes contain many small integers.
+
+Deltas typically small if doc ids are sorted.
+\end{changemargin}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Storing inverted index lists: VByte}
+
+\Large\begin{changemargin}{2cm}
+\vspace*{-2em}
+VByte uses a variable number of bytes\\
+to store integers.  
+
+Why? Most integers are
+small,\\
+especially on today's 64-bit processors.
+\end{changemargin}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{How VByte Works}
+
+\large\begin{changemargin}{1cm}
+VByte works like this:
+
+\begin{itemize}
+\item $x$ between 0 and $2^7-1$ (e.g. $17 = 0b10001$):\\
+\hspace*{1em}$0xxx xxxx$, e.g. $0001 0001$;
+\item $x$ between $2^7$ and $2^{14}-1$ (e.g. $1729 = 0b110 11000001$):\\
+\hspace*{1em}                   $1xxx xxxx/0xxx xxxx$ (e.g. $1100 0001/0000 1101$);\\
+\item $x$ between $2^{14}$ and $2^{21}-1$: \\
+\hspace*{1em}$0xxx xxxx/1xxx xxxx/1xxx xxxx$;
+\item etc.
+\end{itemize}
+
+Control bit, or high-order bit, is:\\
+\hspace*{2em}0 once done representing the int,\\
+\hspace*{2em}1 if more bits remain.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Why VByte Helps}
+
+\large\begin{changemargin}{2cm}
+Isn't dealing with variable-byte integers harder?\\
+\hspace*{2em} $\bullet$~ Yup!
+
+But perf improves: \\
+\hspace*{2em} $\bullet$~  We are using fewer bits! 
+
+We fit more information into RAM and
+cache, and can get higher throughput. (think inlining)
+
+Storing and reading 0s isn't good use of resources. 
+
+However, a naive algorithm to decode VByte \\
+gives branch mispredicts.
+\end{changemargin}
+\end{frame}
+
+\begin{frame}
+\frametitle{Stream VByte}
+\vspace*{-2em}
+\large\begin{changemargin}{2cm}
+Stream VByte: a variant of VByte using SIMD.
+
+
+Science is incremental. \\
+Stream VByte builds on earlier work---\\
+\hspace*{2em}masked VByte, {\sc varint}-GB, {\sc varint}-G8IU. 
+
+Innovation in Stream VByte:\\
+\hspace*{2em}\emph{store the control and data streams separately}.
+\end{changemargin}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Control Stream}
+\vspace*{-4em}
+\large\begin{changemargin}{2cm}
+Stream VByte's control stream uses two bits per integer to represent the size of the integer:
+\begin{center}
+\vspace*{-3em}
+\begin{tabular}{ll@{~~~~~~~~}ll}
+00 & 1 byte & 10 & 3 bytes\\
+01 & 2 bytes & 11 & 4 bytes
+\end{tabular}
+\end{center}
+\end{changemargin}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Decoding Stream VByte}
+
+\vspace*{-4em}
+\large\begin{changemargin}{2cm}
+Per decode iteration:\\
+\hspace*{2em} reads 1 byte from the control stream,\\
+\hspace*{2em} and 16 bytes of data.
+
+
+Lookup table on control stream byte: decide how many
+bytes it needs out of the 16 bytes it has read.
+
+SIMD instructions: \\
+\hspace*{2em}shuffle the bits each into their own integers. 
+
+Unlike VByte, \\
+Stream VByte uses all 8 bits
+of data bytes as data.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Stream VByte Example}
+
+\large\begin{changemargin}{2cm}
+Say control stream contains $0b1000~1100$. \\
+Then the data stream
+contains the following sequence of integer sizes: $3, 1, 4, 1$. 
+
+Out of the 16 bytes read,
+this iteration uses 9 bytes; \\
+\hspace*{2em} $\Rightarrow$ it advances the data pointer by 9. 
+
+The SIMD
+``shuffle'' instruction puts decoded integers from data stream at known positions in the
+128-bit SIMD register.
+
+Pad the first 3-byte integer with 1 byte, then
+the next 1-byte integer with 3 bytes, etc. 
+\end{changemargin}
+\end{frame}
+
+\begin{frame}
+\frametitle{Stream VByte: Shuffling the Bits}
+\vspace*{-1em}
+\large\begin{changemargin}{1cm}
+Say the data input is:\\
+{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. 
+
+The 128-bit output is:\\
+{\tt 0x00f8~23e1/0000~0027/2524 9748/0000/001b}\\
+/s denote separation
+between outputs. 
+
+Shuffle mask is precomputed and
+read from an array.
+\end{changemargin}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{SIMD Instructions}
+
+\vspace*{-1em}
+\large\begin{changemargin}{1cm}
+The core of the implementation uses\\
+three SIMD instructions:
+\begin{lstlisting}[language=C]
+  uint8_t C = lengthTable[control];
+  __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
+  __m128i Shuf = _mm_loadu_si128(shuffleTable[control]);
+  Data = _mm_shuffle_epi8(Data, Shuf);
+  databytes += C; control++;
+\end{lstlisting}
+\end{changemargin}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{But Does It Work?!}
+
+\vspace*{-1em}
+\large\begin{changemargin}{1cm}
+Stream VByte performs better than previous techniques on a realistic input.
+
+
+Why?
+
+\begin{itemize}
+\item control bytes are sequential:\\
+\hspace*{1em} CPU can always prefetch the next control byte, \\
+\hspace*{1em} because
+its location is predictable;
+\item data bytes are sequential \\
+\hspace*{1em}and loaded at high throughput;
+\item shuffling exploits the instruction set: \\
+\hspace*{1em}takes 1 cycle;
+\item control-flow is regular \\
+\hspace*{1em}(tight loop which retrieves/decodes control
+\& data;\\
+\hspace*{1em}no conditional jumps).
+\end{itemize}
+\end{changemargin}
+\end{frame}
+
+\part{Compiler Optimizations}
+
+
+\begin{frame}
+\partpage
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Lunch Time, Already?}
+
+``Is there any such thing as a free lunch?''
+
+Compiler optimizations really do feel like a free lunch.
+
+
+But what does it really mean when you say {\tt -O2}?
+
+
+We'll see some representative compiler optimizations and discuss how
+they can improve program performance. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{You Do Your Job...}
+
+I'll point out cases that stop compilers
+from being able to optimize your code. 
+
+In general, it's better if the
+compiler automatically does a performance-improving transformation
+rather than you doing it manually.
+
+It's probably a waste of time for
+you and it also makes your code less readable.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{References}
+
+Many pages on the Internet describe
+optimizations. 
+
+Here's one that contains good examples:
+
+$\qquad \qquad$ \url{http://www.digitalmars.com/ctg/ctgOptimizer.html}
+
+You can find a full list of {\tt gcc} options here:
+
+$\qquad \qquad$ \url{http://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{About Compiler Optimizations}
+
+First of all, ``optimization'' is
+a bit of a misnomer. 
+
+Compilers generally don't generate ``optimal'' code. They generate \emph{better} code.
+
+\begin{center}
+\includegraphics[width=0.7\textwidth]{images/bender.jpg}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Optimization Levels}
+
+Here's what {\tt -On} means for
+{\tt gcc}. Other compilers have similar (but not identical) optimization flags.
+
+\begin{itemize}
+\item {\tt -O0} (default): Fastest compilation time. Debugging works as expected.
+\item {\tt -O1} ({\tt -O}): Reduce code size and execution time.
+ No optimizations that increase compiliation time.
+\item {\tt -O2}: All optimizations except space vs. speed tradeoffs.
+\item {\tt -O3}: All optimizations.
+\item {\tt -Ofast}: All {\tt -O3} optimizations, plus non-standards compliant optimizations,
+      particularly {\tt -ffast-math}.
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Scalar Optimizations: Constant Folding}
+
+Tag line: ``Why do later something you can do now?''
+
+\begin{center}
+\vspace*{-1em}
+\begin{tabular}{lll}
+i = 1024 * 1024 &
+$\Longrightarrow$ &
+i = 1048576
+\end{tabular}
+\end{center}
+
+\noindent \emph{Enabled at all optimization levels.} 
+
+The compiler will not emit code that does the multiplication at runtime.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Common Subexpression Elimination}
+
+We can do common subexpression elimination
+when the same expression {\tt x~op~y} is computed more than once. 
+
+Neither {\tt x} nor {\tt y} may change between the two computations. 
+
+\begin{lstlisting}[language=C]
+   a = (c + d) * y;
+   b = (c + d) * z;
+
+   w = 3;
+   x = f(); y = x;
+   z = w + y;
+
+\end{lstlisting}
+
+\emph{Enabled at {\tt -O2}, {\tt -O3} or with {\tt -fgcse}}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Constant Propagation}
+
+Moves constant values from definition to
+use. 
+
+The transformation is valid if there are no redefinitions of the
+variable between the definition and its use.
+
+ In the above example,
+we can propagate the constant value 3 to its use in {\tt z = w + y},
+yielding {\tt z = 3 + y}.
+
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Copy Propagation}
+
+A bit more sophisticated than constant
+propagation---telescopes copies of variables from their definition to
+their use. 
+
+Using it, we can replace the
+last statement with {\tt z = w + x}. 
+
+If we run both constant and copy
+propagation together, we get {\tt z = 3 + x}.
+
+These scalar optimizations are more complicated in the presence
+of pointers, e.g. {\tt z = *w + y}.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Redundant Code Optimizations}
+
+Dead code elimination: removes code that is guaranteed to not execute.
+
+\begin{center}
+\vspace*{-2em}
+\begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=C]
+  int f(int x) {
+    return x * 2;
+  }
+  \end{lstlisting}
+  \end{minipage} \begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=C]
+  int g() {
+    if (f(5) % 2 == 0) {
+      // do stuff...
+    } else {
+      // do other stuff
+    }
+  }
+\end{lstlisting}
+\end{minipage}
+\end{center}
+
+The general problem, as with many other compiler problems, is undecidable.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Loop Optimizations}
+
+Loop optimizations are particularly profitable when loops execute
+often. 
+
+This is often a win, because programs spend a lot of time looping.
+
+
+The trick is to find which loops are going to be the important ones.
+
+A loop induction variable is a variable that varies on each iteration
+of the loop. 
+
+The loop variable is definitely a loop induction variable
+but there may be others. 
+
+\emph{Induction variable elimination} gets
+rid of extra induction variables.
+
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Scalar Replacement}
+
+\emph{Scalar replacement} replaces an array read {\tt a[i]}
+occuring multiple times with a single read {\tt temp = a[i]} and references
+to {\tt temp} otherwise. 
+
+It needs to know that {\tt a[i]} won't change
+between reads.
+
+Sane languages include array bounds checks. 
+
+Loop optimizations
+can eliminate array bounds checks if they can prove that the loop
+never iterates past the array bounds.
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Unrolling}
+
+This
+lets the processor run more code without having to branch
+as often. 
+
+\emph{Software pipelining} is a synergistic optimization,
+which allows multiple iterations of a loop to proceed in parallel.
+
+
+This optimization is also useful for SIMD. Here's an example.
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 4; ++i)
+    f(i)
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+f(0); f(1); f(2); f(3);
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+\noindent \emph{Enabled with {\tt -funroll-loops}.}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Interchange}
+
+This optimization can give big wins
+for caches (which are key); it changes the nesting of loops to
+coincide with the ordering of array elements in memory. 
+
+
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < N; ++i)
+    for (int j = 0; j < M; ++j)
+        a[j][i] = a[j][i] * c
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int j = 0; j < M; ++j)
+    for (int i = 0; i < N; ++i)
+        a[j][i] = a[j][i] * c
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+  since C is \emph{row-major} (meaning a[1][1] is beside a[1][2]),
+rather than \emph{column-major}.
+
+\noindent
+\emph{Enabled with {\tt -floop-interchange}.}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Fusion}
+
+This optimization is like the OpenMP collapse
+construct; we transform
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i)
+    a[i] = 4
+
+for (int i = 0; i < 100; ++i)
+    b[i] = 7
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i) {
+    a[i] = 4
+    b[i] = 7
+}
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+There's a trade-off between data locality and loop overhead.
+
+Sometimes the inverse transformation, \emph{loop fission}, will
+improve performance.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop-Invariant Code Motion}
+
+ Also known as \emph{Loop hoisting},
+this optimization moves calculations out of a loop. 
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i) {
+    s = x * y;
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+s = x * y;
+for (int i = 0; i < 100; ++i) {
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+
+This reduces the amount of work we have to do for each iteration of the loop.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Miscellaneous Low-Level Optimizations}
+
+Some optimizations affect low level code generation; here are two examples.
+
+{\tt gcc} attempts to guess the probability of each branch to
+best order the code. (For an {\tt if}, fall-through is most efficient. Why?)
+
+This isn't quite an optimization, but you can use {\tt
+  \_\_builtin\_expect(expr, value)} to help gcc, if you know the runtime behaviour...
+  
+  In the Linux Kernel:
+  \begin{lstlisting}[language=C]
+#define likely(x)       __builtin_expect((x),1)
+#define unlikely(x)     __builtin_expect((x),0)
+  \end{lstlisting}
+
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Architecture-Specific}
+
+{\tt gcc} can also generate code tuned to particular
+processors. 
+
+You can specify this using {\tt
+  -march} and {\tt -mtune}. ({\tt -march} implies {\tt -mtune}).
+
+
+This will enable specific instructions that not all CPUs support (e.g. SSE4.2).
+For example, {\tt -march=corei7}.
+
+\noindent
+Good to use on your local machine or your cloud servers, not ideal for code you ship to others.
+
+
+\end{frame}
+
+
+
+
+
+\end{document}
+
