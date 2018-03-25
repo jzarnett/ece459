@@ -1,3 +1,5 @@
+// gcc -fopenmp
+// clang -fopenmp=libomp
 #include <omp.h>
 #include <stdio.h>
 
