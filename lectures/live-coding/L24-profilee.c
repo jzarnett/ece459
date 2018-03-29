@@ -56,4 +56,5 @@ int main() {
         r1 += int_math(x1,y1);
         r2 += float_math(y2,y2);
     }
+    printf("%d %f\n", r1, r2);
 }
