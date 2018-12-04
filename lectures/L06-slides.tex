@@ -1,9 +1,8 @@
 \input{configuration}
-\usepackage{multirow}
 
-\title{Lecture 6 --- Race Conditions \& Synchronization }
+\title{Lecture 6 --- Working with Threads }
 
-\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca} \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -17,791 +16,229 @@
  \end{frame}
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \begin{frame}
-\frametitle{Race Conditions }
+  \frametitle{POSIX Threads}
 
+
+  \begin{itemize}
+    \item Available on most systems
+    \vfill
+    \item Windows has Pthreads Win32, but I wouldn't use it; \\use Linux for
+          this course
+    \vfill
+    \item API available by {\tt \#include <pthread.h>}
+    \vfill
+    \item Compile with pthread flag \\ ({\tt gcc -pthread prog.c -o prog})
+  \end{itemize}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Pthread Functions}
+
+\begin{itemize}
+	\item \texttt{pthread\_create}
+	\item \texttt{pthread\_exit}
+	\item \texttt{pthread\_join}
+	\item \texttt{pthread\_yield} 
+	\item \texttt{pthread\_attr\_init}
+	\item \texttt{pthread\_attr\_destroy}
+	\item \texttt{pthread\_cancel}
+\end{itemize}
+
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}[fragile]
+  \frametitle{C++ 11 Threads}
+
+
+  \begin{itemize}
+    \item Now part of the C++ standard (library)
+    \vfill
+    \item API available with {\tt \#include <thread>}
+    \vfill
+    \item Compile with flags: \\ (\verb!g++ -std=c++11 -pthread prog.c -o prog!)
+  \end{itemize}
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Pthreads: Creating Threads}
+
+
+  \begin{lstlisting}[language=C]
+int pthread_create(pthread_t* thread, 
+                   const pthread_attr_t* attr,
+                   void* (*start_routine)(void*),
+                   void* arg);
+  \end{lstlisting}
+  \vfill
+  {\bf thread}: creates a handle to a thread at pointer location
+
+  {\bf attr}: thread attributes (NULL for defaults, more details later)
+
+  {\bf start\_routine}: function to start execution
+
+  {\bf arg}: value to pass to start\_routine
+  \vfill
+  returns 0 on success, error number otherwise\\(contents of *thread are
+  undefined)
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Creating Threads---Pthreads Example}
+
+
+\begin{lstlisting}[language=C]
+#include <pthread.h>
+#include <stdio.h>
+
+void* run(void*) {
+  printf("In run\n");
+}
+
+int main() {
+  pthread_t thread;
+  pthread_create(&thread, NULL, run, NULL);
+  printf("In main\n");
+}
+\end{lstlisting}
+  \vfill
+  Simply creates a thread and terminates\\(usage isn't really right, as we'll
+  see.)
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Creating Threads---C++11 Example}
+
+
+\begin{lstlisting}[language=C]
+#include <thread>
+#include <iostream>
+
+void run() {
+  std::cout << "In run\n";
+}
+
+int main() {
+  std::thread t1(run);
+  std::cout << "In main\n";
+  t1.join(); // hang in there...
+}
+\end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Waiting for Threads}
+
+
+  \begin{lstlisting}[language=C]
+int pthread_join(pthread_t thread,
+                 void** retval)
+  \end{lstlisting}
+  \vfill
+  {\bf thread}: wait for this thread to terminate (thread must be~joinable).
+
+  {\bf retval}: stores exit status of thread (set by {\tt pthread\_exit}) to
+                 the location pointed by *retval. If cancelled, returns
+                 {\tt PTHREAD\_CANCELED}. {\tt NULL} is ignored.
+  \vfill
+  returns 0 on success, error number otherwise.
+  \vfill
+  {\bf Only call this one time per thread!} Multiple calls on the same thread
+  leads to undefined behaviour.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Waiting for Threads---Pthreads example}
+
+
+\begin{lstlisting}[language=C]
+#include <pthread.h>
+#include <stdio.h>
+
+void* run(void*) {
+  printf("In run\n");
+}
+
+int main() {
+  pthread_t thread;
+  pthread_create(&thread, NULL, run, NULL);
+  printf("In main\n");
+  pthread_join(thread, NULL);
+}
+\end{lstlisting}
+  \vfill
+  This now waits for the newly created thread to terminate.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Creating Threads---C++11 Example}
+
+
+\begin{lstlisting}[language=C]
+#include <thread>
+#include <iostream>
+
+void run() {
+  std::cout << "In run\n";
+}
+
+int main() {
+  std::thread t1(run);
+  std::cout << "In main\n";
+  t1.join(); // aha!
+}
+\end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Passing Data to Pthreads threads\ldots Wrongly}
+
+
+Consider this snippet:
 \vfill
-\begin{quote}
-\textit{
-	``Knock knock.''\\
-	``Race Condition.''\\
-	``Who's there?''
-	}
-\end{quote}
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Define A Race Condition}
-
-A race occurs when you have two concurrent accesses to the
-same memory location, at least one of which is a {\bf write}.
-
-This definition is a little bit strict. 
-
-We could also say that there is a race condition if there is some form of output, such as writing to the console. 
-
-If one thread is going to write ``1'' to the console and another is going to write ``2'', then we could have a race condition. 
-
-If there is no co-ordination, we could get output of ``12'' or ``21''. 
-
-If the order here is unimportant, there's no issue; but if one order is correct, then the appearance of the other is a bug.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Matters of State}
-
-When there's a race, the final state may not be the same as running
-one access to completion and then the other. 
-
-But it ``usually'' is.  It's nondeterministic. 
-
-The fact that the output is often ``12'' and only very occasionally ``21'' may make it very difficult to track down the source of the problem. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Hazards}
-
-In other situations (e.g., processor design) these are sometimes referred to as data hazards or dependencies. 
-
-\begin{enumerate}
-	\item \textbf{RAW} (Read After Write)	
-	\item \textbf{WAR} (Write After Read)
-	\item \textbf{WAW} (Write After Write)
-	\item \textbf{RAR} (Read After Read) - No such hazard! 
-\end{enumerate}
-
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{It's a Kind of Hazard}
-Race conditions typically arise between variables shared
-between threads.
-{\scriptsize
 \begin{lstlisting}[language=C]
-#include <stdlib.h>
-#include <stdio.h>
-#include <pthread.h>
-
-void* run1(void* arg) {
-    int* x = (int*) arg;
-    *x += 1;
-}
-
-void* run2(void* arg) {
-    int* x = (int*) arg;
-    *x += 2;
-}
-
-int main(int argc, char *argv[])
-{
-    int* x = malloc(sizeof(int));
-    *x = 1;
-    pthread_t t1, t2;
-    pthread_create(&t1, NULL, &run1, x);
-    pthread_join(t1, NULL);
-    pthread_create(&t2, NULL, &run2, x);
-    pthread_join(t2, NULL);
-    printf("%d\n", *x);
-    free(x);
-    return EXIT_SUCCESS;
-}
+int i;
+for (i = 0; i < 10; ++i)
+  pthread_create(&thread[i], NULL, run, (void*)&i);
 \end{lstlisting}
-}
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{It's a Kind of Hazard II}
-
-{\scriptsize
-\begin{lstlisting}[language=C]
-int main(int argc, char *argv[])
-{
-    int* x = malloc(sizeof(int));
-    *x = 1;
-    pthread_t t1, t2;
-    pthread_create(&t1, NULL, &run1, x);
-    pthread_create(&t2, NULL, &run2, x);
-    pthread_join(t1, NULL);
-    pthread_join(t2, NULL);
-    printf("%d\n", *x);
-    free(x);
-    return EXIT_SUCCESS;
-}
-\end{lstlisting}
-}
-
-Now do we have a race?
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Trace the Race}
-
-What are the possible outputs? (Assume that initially {\tt *x} is 1.)
-We'll look at compiler intermediate code (three-address code) to tell.
-
-\hspace*{.2\textwidth}\begin{minipage}{.8\textwidth}
-\begin{lstlisting}[language=C]
-run1                          run2   
-D.1 = *x;                     D.1 = *x;
-D.2 = D.1 + 1;                D.2 = D.1 + 2
-*x = D.2;                     *x = D.2;
-  \end{lstlisting}
-\end{minipage}
-
-Memory reads and writes are key in data~races.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Trace the Race}
-Let's call the read and write from {\tt run1} R1 and W1; R2 and W2
-from {\tt run2}.
-
-Here are all possible orderings:
-  \begin{center}
-    \begin{tabular}{llll|l}
-\multicolumn{4}{c|}{Order} & {\tt *x}\\
-\hline
-R1 & W1 & R2 & W2 & 4 \\
-R1 & R2 & W1 & W2 & 3 \\
-R1 & R2 & W2 & W1 & 2 \\
-R2 & W2 & R1 & W1 & 4 \\
-R2 & R1 & W2 & W1 & 2 \\
-R2 & R1 & W1 & W2 & 3 \\
-    \end{tabular}
-  \end{center}
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Read After Read (RAR)}
-
-Can we execute these 2 lines in parallel? (initially x is 2)
-\begin{lstlisting}
-y = x + 1
-z = x + 5
-\end{lstlisting}
-\pause
-\structure{Yes.}\\[1em]
-\begin{itemize}
-\item Variables y and z are independent.
-\item Variable x is only read.
-\end{itemize}
-
-RAR dependency allows parallelization.
-
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Read After Write (RAW)}
-
-
-What about these 2 lines? (again, initially x is 2):
-\begin{lstlisting}
-x = 37
-z = x + 5
-\end{lstlisting}
-\pause
-\alert{No, z = 42 or z = 7.}\\[1em]
-
-RAW inhibits parallelization: can't change ordering.\\
-Also known as a \structure{true dependency}.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Write After Read (WAR)}
-
-What if we change the order now? (again, initially x is 2)
-\begin{lstlisting}
-z = x + 5
-x = 37
-\end{lstlisting}
-\pause
-\alert{No. Again, z = 42 or z = 7.}\\[1em]
-\begin{itemize}
-\item WAR is also known as a \structure{anti-dependency}.
-\item But, we can modify this code to enable parallelization.
-\end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Removing Write After Read (WAR) Dependencies}
-
-Make a copy of the variable:
-\begin{lstlisting}
-x_copy = x
-z = x_copy + 5
-x = 37
-\end{lstlisting}
-\pause
-\structure{We can now run the last 2 lines in parallel.}
-\begin{itemize}
-\item Induced a true dependency (RAW) between first 2 lines.
-\item Isn't that bad?
-\end{itemize}
-\pause
-Not always:
-\begin{lstlisting}
-z = very_long_function(x) + 5
-x = very_long_calculation()
-\end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Write After Write (WAW)}
-
-Can we run these lines in parallel? (initially x is 2)
-\begin{lstlisting}
-z = x + 5
-z = x + 40
-\end{lstlisting}
-\pause
-\alert{Nope, z = 42 or z = 7}.\\[1em]
-\begin{itemize}
-\item WAW is also known as an \structure{output dependency}.
-\item We can remove this dependency (like WAR):
-\end{itemize}
-\pause
-\begin{lstlisting}
-z_copy = x + 5
-z = x + 40
-\end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Synchronization}
-
-You'll need some sort of synchronization to get sane results from
-multithreaded programs. 
-
-We'll start by talking about how to use
-mutual exclusion in Pthreads.
-
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-\frametitle{Summary of Memory-carried Dependencies}
-\begin{center}
-\begin{tabular}{ll|p{2.8cm}p{3.2cm}}
-& & \multicolumn{2}{c}{Second Access} \\ 
-&  & \bf Read & \bf Write \\ \hline
-\multirow{2}{*}{First Access} & \bf Read & No Dependency Read After Read (RAR)  & Anti-dependency Write After Read (WAR) \\[0.5em]
-& \bf Write & True Dependency Read After Write (RAW) & Output Dependency Write After Write (WAW) \\
-\end{tabular}
-\end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\begin{frame}
-\frametitle{Mutual Exclusion}
-
-Mutexes are the most basic type of synchronization.
-As a reminder:
-    \begin{itemize}
-    \item Only one thread can access code protected by a mutex at a time.
-    \item All other threads must wait until the mutex is free before they can
-      execute the protected code.
-    \end{itemize}
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Using a Mutex}
-
-  Here's an example of using mutexes:
-    
-    \begin{tabular}{ll}
-      \begin{minipage}{.65\textwidth}
-        {\bf PThreads}
-{\scriptsize
-  \begin{lstlisting}[language=C]
-pthread_mutex_t m1_static = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t m2_dynamic;
-
-pthread_mutex_init(&m2_dynamic, NULL);
-...
-pthread_mutex_destroy(&m1_static);
-pthread_mutex_destroy(&m2_dynamic);
-  \end{lstlisting}
-  }
-      \end{minipage}
-      \begin{minipage}{.35\textwidth}
-
-        {\bf C++11}
-{\scriptsize
-  \begin{lstlisting}[language=C]
-mutex m1;
-mutex * m2;
-
-m2 = new mutex();
-// ...
-
-delete (m2);
-  \end{lstlisting}
-  }
-      \end{minipage}
-    \end{tabular}
-
-You can initialize mutexes statically (as with {\tt m1\_static}) or
-dynamically ({\tt m2\_dynamic}). 
-
-If you want to include attributes,
-you need to use the dynamic version.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Mutex Attributes}
-
- Both threads and mutexes use the notion of attributes.
- 
-
-  \begin{itemize}
-    \item {\bf Protocol}: specifies the protocol used to prevent priority
-      inversions for a mutex.
-    \item {\bf Prioceiling}: specifies the priority ceiling of a mutex.
-    \item {\bf Process-shared}: specifies the process sharing of a mutex.
-  \end{itemize}
-  
-  You can specify a mutex as {\it process shared} so that you can access it
-  between processes.
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Mutex Example}
-
-   \begin{tabular}{ll}
-      \begin{minipage}{.5\textwidth}
-        {\bf PThreads}
-  \begin{lstlisting}[language=C]
-// code
-pthread_mutex_lock(&m1);
-// protected code
-pthread_mutex_unlock(&m1);
-// more code
-  \end{lstlisting}
-      \end{minipage}&
-      \begin{minipage}{.35\textwidth}
-        {\bf C++11 Threads}
-  \begin{lstlisting}[language=C]
-// code
-m1.lock();
-// protected code
-m1.unlock();
-// more code
-  \end{lstlisting}
-      \end{minipage}
-    \end{tabular}
-
-  \begin{itemize}
-    \item Everything within the {\tt lock} and {\tt unlock} is protected.
-    \item Be careful to avoid deadlocks if you are using multiple mutexes (always
-acquire locks in the same order across threads).
-    \item Another useful primitive is {\tt pthread\_mutex\_trylock}.
-later.
-  \end{itemize}
-
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Locks and Data Races}
-
-Why are we bothering with locks? Data races. A data race occurs when
-two concurrent actions access the same variable and at least one of
-them is a {\bf write}. (This shows up on Assignment 1!)
-
-  \begin{lstlisting}[language=C]
-static int counter = 0;
-
-void* run(void* arg) {
-    for (int i = 0; i < 100; ++i) {
-        ++counter;
-    }
-}
-
-int main(int argc, char *argv[]) {
-    // Create 8 threads
-    // Join 8 threads
-    printf("counter = %i\n", counter);
-}
-  \end{lstlisting}
-
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Use Mutexes}
-
- \begin{lstlisting}[language=C]
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-static int counter = 0;
-
-void* run(void* arg) {
-    for (int i = 0; i < 100; ++i) {
-        pthread_mutex_lock(&mutex);
-        ++counter;
-        pthread_mutex_unlock(&mutex);
-    }
-}
-
-int main(int argc, char *argv[]) {
-    // Create 8 threads
-    // Join 8 threads
-    pthread_mutex_destroy(&mutex);
-    printf("counter = %i\n", counter);
-}
-  \end{lstlisting}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Mutex Recap}
-
-\begin{itemize}
-\item Call {\tt lock} on mutex $\ell_1$. Upon return from
-      {\tt lock}, your thread has exclusive access to $\ell_1$ until it
-      {\tt unlock}s it.
-\item Other calls to {\tt lock} $\ell_1$ will not return
-      until {\tt m1} is available.
-\end{itemize}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Protect the End Zone}
-
-Key idea: locks protect resources; only one thread
-can hold a lock at a time. 
-
-A second thread trying to obtain the lock
-(i.e. \alert{contending} for the lock) has to wait, or \alert{block},
-until the first thread releases the lock. 
-
-So only one thread has
-access to the protected resource at a time. 
-
-The code between the lock
-acquisition and release is known as the \alert{critical region} or \alert{critical section}.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Try, Try Again}
-
-Some mutex implementations also provide a ``try-lock'' primitive.
-
-This grabs the lock if it's available, or returns control to the
-thread if it's not.
-
-This enables the thread to do something else. (Kind of
-like non-blocking I/O!)
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Don't Lock Too Much}
-
-Excessive use of locks can serialize programs. 
-
-Consider two resources
-$A$ and $B$ protected by a single lock $\ell$. 
-
-Then a thread that's
-just interested in $B$ still has acquire $\ell$, which requires it to
-wait for any other thread working with $A$.
-
-Example: Linux Big Kernel Lock
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Spinlocks}
-
-Spinlocks are a variant of mutexes, where the
-waiting thread repeatedly tries to acquire the lock instead of sleeping.
-
-Use spinlocks when you expect critical sections to finish 
-quickly.
-
-Spinning
-for a long time consumes lots of CPU resources.
-
- Many lock
-implementations use both sleeping and spinlocks: spin for a bit,
-then sleep longer.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Why Use Spinlocks?}
-
-When would we ever want to use a spinlock?
-
-What we normally expect is to block until the lock becomes available. 
-
-But that means a process switch, and then a switch back in the future when the lock is available.  This takes nonzero time. 
-
-It's optimal to use a spinlock if the amount of time we expect to wait for the lock is less than the amount of time it would take to do two process switches. 
-
-As long as we have a multicore system.
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Read-Write Locks}
-
-  Two observations:
-  \begin{itemize}
-    \item If there are only reads, there's no datarace.
-    \item Often, writes are relatively rare.
-  \end{itemize}
-  With mutexes/spinlocks, you have to lock the data, even for a read,
-      since a write could happen.\\[1em]
-
-  But, most of the time, reads can happen in parallel, as long as
-      there's no write.\\[1em]
-
-  Solution: Multiple threads can hold a read lock\\ \hspace*{2em} ({\tt pthread\_rwlock\_rdlock})\\
-      but only one thread may hold the associated write lock\\ \hspace*{2em} ({\tt pthread\_rwlock\_wrlock});\\
-      grabbing the write waits until  current readers are done.
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Semaphores}
-
-    Semaphores have a {\tt value}.
-      You specify initial {\tt value}.\\[1em]
-    Semaphores allow sharing of a \# of instances of a resource.\\[1em]
-    Two fundamental operations: {\tt wait} and {\tt post}.\\[1em]
-  \begin{itemize}
-    \item {\tt wait} is like {\tt lock}; reserves the resource and decrements the value.
-      \begin{itemize}
-        \item If value is 0, sleep until value is greater than 0.
-      \end{itemize}
-    \item {\tt post} is like {\tt unlock}; releases the resource and increments the value.
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Barriers}
-
-
-    Allows you to ensure that (some subset of) a collection 
-    of threads all reach the barrier before finishing.\\[1em]
-
-    Pthreads: A barrier is a {\tt pthread\_barrier\_t}.\\[1em]
-
-    Functions: {\tt \_init()} (parameter: how many threads the barrier
-    should wait for) and {\tt \_destroy()}.\\[1em]
-
-    Also {\tt \_wait()}: similar to {\tt pthread\_join()}, but waits
-      for the specified number of threads to arrive at the barrier
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Lock-Free Algorithms}
-
-
-    We'll talk more about this in a few weeks.\\[1em]
-
-    Modern CPUs support atomic operations, such as compare-and-swap, which
-enable experts to write lock-free code.\\[1em]
-
-    Lock-free implementations are extremely complicated and must still contain certain synchronization constructs.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Semaphores Usage}
-  
-
-  \begin{lstlisting}[language=C]
-#include <semaphore.h>
-
-int sem_init(sem_t *sem, int pshared, unsigned int value);
-int sem_destroy(sem_t *sem);
-int sem_post(sem_t *sem);
-int sem_wait(sem_t *sem);
-int sem_trywait(sem_t *sem);
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item Also must link with {\tt -pthread} (or {\tt -lrt} on Solaris).
-    \item All functions return {\tt 0} on success.
-    \item Same usage as mutexes in terms of passing pointers.
-  \end{itemize}~\\[1em]
-    How could you use as {\tt semaphore} as a {\tt mutex}?
-    \begin{itemize}
-    \item<2-> If the initial {\tt value} is 1 and you use {\tt wait} to lock
-      and {\tt post} to unlock, it's equivalent to a {\tt mutex}.
-    \end{itemize}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Semaphores for Signalling}
-
-
-  Here's an example from the book. How would you make this always print
-  ``Thread 1'' then ``Thread 2'' using semaphores?
-
-  \begin{lstlisting}[language=C]
-#include <pthread.h>
-#include <stdio.h>
-#include <semaphore.h>
-#include <stdlib.h>
-
-void* p1 (void* arg) { printf("Thread 1\n"); }
-
-void* p2 (void* arg) { printf("Thread 2\n"); }
-
-int main(int argc, char *argv[])
-{
-    pthread_t thread[2];
-    pthread_create(&thread[0], NULL, p1, NULL);
-    pthread_create(&thread[1], NULL, p2, NULL);
-    pthread_join(thread[0], NULL);
-    pthread_join(thread[1], NULL);
-    return EXIT_SUCCESS;
-}
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Semaphores for Signalling}
-
-
-  Here's their solution. Is it actually correct?
-
-  \begin{lstlisting}[language=C]
-sem_t sem;
-void* p1 (void* arg) {
-  printf("Thread 1\n");
-  sem_post(&sem);
-}
-void* p2 (void* arg) {
-  sem_wait(&sem);
-  printf("Thread 2\n");
-}
-
-int main(int argc, char *argv[])
-{
-    pthread_t thread[2];
-    sem_init(&sem, 0, /* value: */ 1);
-    pthread_create(&thread[0], NULL, p1, NULL);
-    pthread_create(&thread[1], NULL, p2, NULL);
-    pthread_join(thread[0], NULL);
-    pthread_join(thread[1], NULL);
-    sem_destroy(&sem);
-}
-  \end{lstlisting}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Semaphores for Signalling}
-
-  
-
+  \vfill
+  This is a \alert{terrible} idea. Why?
+  \vfill
   \begin{enumerate}
-    \item {\tt value} is initially 1.
-    \vfill
-    \item Say {\tt p2} hits its {\tt sem\_wait} first and succeeds.
-    \vfill
-    \item {\tt value} is now 0 and {\tt p2} prints ``Thread 2'' first.
+    \item<2-> The value of {\tt i} will probably change before the thread executes
+    \item<2-> The memory for {\tt i} may be out of scope, and therefore invalid by
+          the time the thread executes
   \end{enumerate}
-  \begin{itemize}
-    \item If {\tt p1} happens first, it would just increase
-      {\tt value} to 2.\vfill
-    \item<2-> Fix: set the initial {\tt value} to \alert{0}.\\[1em]
-Then, if {\tt p2} hits its {\tt sem\_wait} first, it will
-      not print until {\tt p1} posts (and prints ``Thread 1'') first.
-  \end{itemize}~\\[1em]
-
 
 
 \end{frame}
@@ -809,38 +246,284 @@ Then, if {\tt p2} hits its {\tt sem\_wait} first, it will
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{{\tt volatile} Keyword}
+  \frametitle{Passing Data to Pthreads threads}
+  
+Correct:
 
 
+\begin{lstlisting}[language=C]
+int i;
+int*
+for (i = 0; i < 10; ++i) {
+  arg = malloc( sizeof( int ) );
+  *arg = i;
+  pthread_create(&thread[i], NULL, run, arg);
+}
+\end{lstlisting}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}[fragile]
+\frametitle{\texttt{int*} and \texttt{int} are always the same size, right guys?}
+
+What about:
+\begin{lstlisting}[language=C]
+int i;
+for (i = 0; i < 10; ++i)
+  pthread_create(&thread[i], NULL, run, (void*)i);
+
+...
+
+void* run(void* arg) {
+  int id = (int)arg;
+\end{lstlisting}
+  \vfill
+  This is suggested in the book, but should carry a warning:
+
+  \vfill
   \begin{itemize}
-    \item Used to notify the compiler that the variable may be changed by ``external forces''. For instance,
-    %% \item Prevents the compiler from substituting values instead of evaluating
-    %%   the value (with proper locking you'll never need this, why?)
-  \end{itemize}
-
-  \begin{lstlisting}[language=C]
-int i = 0;
-
-while (i != 255) {
-  ...
-  \end{lstlisting}
-
-{\tt volatile} prevents this from being optimized to:
-
-  \begin{lstlisting}[language=C]
-int i = 0;
-
-while (true) {
-  ...
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item {\tt volatile} prevents useful optimizations.
-    \item Usually wrong unless there is a {\bf very} good reason for it.
+    \item<2-> Beware size mismatches between arguments: 
+      no guarantee that a pointer is the same size as an int, so your data
+      may overflow.
+    \item<2-> Sizes of data types change between systems. For maximum
+      portability, just use pointers you got {\tt from malloc}.
   \end{itemize}
 
 
 \end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Passing Data to C++11 threads}
+
+It's easier to get data to threads in C++11:
+\begin{lstlisting}[language=C]
+#include <thread>
+#include <iostream>
+
+void run(int i) {
+  std::cout << "In run " << i << "\n";
+}
+
+int main() {
+  for (int i = 0; i < 10; ++i) {
+    std::thread t1(run, i);
+    t1.detach(); // see the next slide...
+  }
+}
+\end{lstlisting}
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Getting Data from C++11 threads}
+
+    \ldots but it's harder to get data back.\\
+    Use {\tt async} and {\tt future} abstractions:
+    \begin{lstlisting}[language=C]
+#include <thread>
+#include <iostream>
+#include <future>
+
+int run() {
+  return 42;
+}
+
+int main() {
+  std::future<int> t1_retval =
+                  std::async(std::launch::async, run);
+  std::cout << t1_retval.get();
+}
+\end{lstlisting}
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Detached Threads}
+
+
+  {\it Joinable} threads (the default) wait for someone to call
+  {\tt pthread\_join} before they release their resources.
+  \vfill
+  {\it Detached} threads release their resources when they terminate, without
+  being joined.
+  \vfill
+  \begin{lstlisting}[language=C]
+int pthread_detach(pthread_t thread);
+  \end{lstlisting}
+  \vfill
+  {\bf thread}: marks the thread as detached
+  \vfill
+  returns 0 on success, error number otherwise.
+  \vfill
+  Calling {\tt pthread\_detach} on an already detached thread results in undefined
+  behaviour.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Thread Termination}
+
+
+  \begin{lstlisting}[language=C]
+void pthread_exit(void *retval);
+  \end{lstlisting}
+  \vfill
+  {\bf retval}: return value passed to function that calls {\tt pthread\_join}
+  \vfill
+  start\_routine returning is equivalent to calling {\tt pthread\_exit} with
+  that return value;
+  \vfill
+  {\tt pthread\_exit} is called implicitly when the {\tt start\_routine} of a
+  thread returns.
+  \vfill
+  There is no C++11 equivalent.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Attributes}
+
+
+  By default, threads are {\it joinable} on Linux, but a more portable way to
+  know what you're getting is to set thread attributes. You can change:
+  \begin{itemize}
+    \item Detached or joinable state
+    \item Scheduling inheritance
+    \item Scheduling policy
+    \item Scheduling parameters
+    \item Scheduling contention scope
+    \item Stack size
+    \item Stack address
+    \item Stack guard (overflow) size
+  \end{itemize}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Attributes---Example}
+
+
+  \begin{lstlisting}[language=C]
+size_t stacksize;
+pthread_attr_t attributes;
+pthread_attr_init(&attributes);
+pthread_attr_getstacksize(&attributes, &stacksize);
+printf("Stack size = %i\n", stacksize);
+pthread_attr_destroy(&attributes);
+  \end{lstlisting}
+Running this on a laptop produces:
+  \begin{lstlisting}
+jon@riker examples master % ./stack_size 
+Stack size = 8388608
+  \end{lstlisting}
+  Setting a thread state to joinable:
+  \begin{lstlisting}
+pthread_attr_setdetachstate(&attributes,
+                            PTHREAD_CREATE_JOINABLE);
+  \end{lstlisting}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Detached Threads: Warning!}
+
+
+\begin{lstlisting}[language=C]
+#include <pthread.h>
+#include <stdio.h>
+
+void* run(void*) {
+  printf("In run\n");
+}
+
+int main() {
+  pthread_t thread;
+  pthread_create(&thread, NULL, run, NULL);
+  pthread_detach(thread);
+  printf("In main\n");
+}
+\end{lstlisting}
+
+  When I run it, it just prints ``In main'', why?
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Detached Threads: Solution to Problem}
+
+  \begin{lstlisting}[language=C]
+#include <pthread.h>
+#include <stdio.h>
+
+void* run(void*) {
+  printf("In run\n");
+}
+
+int main() {
+  pthread_t thread;
+  pthread_create(&thread, NULL, run, NULL);
+  pthread_detach(thread);
+  printf("In main\n");
+  pthread_exit(NULL); // This waits for all detached
+                      // threads to terminate
+}
+  \end{lstlisting}
+
+  Make the final call {\tt pthread\_exit} if you have any detached threads. (There is no C++11 equivalent.)
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Threading Challenges}
+
+  \begin{itemize}
+    \item Be aware of scheduling (you can also set affinity with pthreads on
+      Linux).
+    \vfill
+    \item Make sure the libraries you use are {\bf thread-safe}:
+      \begin{itemize}
+        \item Means that the library protects its shared data.
+      \end{itemize}
+    \vfill
+    \item glibc reentrant functions are also safe: a program can have more than one
+      thread calling these functions concurrently.
+    \vfill
+    \item {\bf Example:} {\tt rand\_r} versus
+      {\tt rand}.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 
 
 \end{document}

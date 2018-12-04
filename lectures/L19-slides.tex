@@ -38,14 +38,19 @@
 
 \begin{frame}
 \frametitle{Single-Thread Performance}
-
-The performance improvements we've seen to date have been leveraging parallelism
+\Large
+\begin{changemargin}{2cm}
+Performance improvements to date have \\
+used parallelism
 to improve throughput. 
 
-Decreasing latency is trickier---it often requires domain-specific
+Decreasing latency is trickier---\\
+often requires domain-specific
 tweaks. 
 
-We'll look at one example of decreasing latency today, Stream VByte.
+Today: one example of decreasing latency: \\
+\hspace*{2em} Stream VByte.
+\end{changemargin}
 
 \end{frame}
 
@@ -53,23 +58,39 @@ We'll look at one example of decreasing latency today, Stream VByte.
 \begin{frame}
 \frametitle{I have a cunning plan...}
 
-Even this example leverages parallelism---it uses vector instructions. 
+\Large
+\begin{changemargin}{2cm}
+Even Stream VByte uses parallelism:\\
+\hspace*{2em}vector instructions. 
 
 But there
-are some sequential improvements, e.g. Stream VByte takes care to be predictable
+are sequential improvements, \\
+e.g. Stream VByte takes care to be predictable
 for the branch predictor.
-
+\end{changemargin}
 
 \end{frame}
 \begin{frame}
-\frametitle{Problem Context}
+\frametitle{Inverted Indexes (like it's CS 137 again!)}
 
-We can abstract the problem to that of storing a sequence of small integers.
+\Large
+\begin{changemargin}{1cm}
+\vspace*{-1em}
+Abstractly: store a sequence of small integers.
 
 
-Such sequences are important in the context of inverted indexes, which allow fast lookups by term, and support boolean queries which combine terms.
+Why Inverted indexes?
 
-Here is a list of documents and some terms that they contain:
+\hspace*{1cm}allow fast lookups by term;\\
+\hspace*{1cm}support boolean queries combining terms.
+
+\end{changemargin}
+
+\end{frame}
+\begin{frame}
+\frametitle{Dogs, cats, cows, goats. In ur documents.}
+\Large
+\begin{changemargin}{2cm}
 \begin{center}
 \begin{tabular}{r|l}
 docid & terms \\ \hline
@@ -79,16 +100,24 @@ docid & terms \\ \hline
 4 & cow, cat, goat\\
 \end{tabular}
 \end{center}
-
+\end{changemargin}
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Problem Context}
+\frametitle{Inverting the Index}
 
-The inverted index looks like this:
+\large\begin{changemargin}{2cm}
+Here's the index and the inverted index:
 \begin{center}
+\begin{tabular}{r|l}
+docid & terms \\ \hline
+1 & dog, cat, cow\\
+2 & cat\\
+3 & dog, goat\\
+4 & cow, cat, goat\\
+\end{tabular} \hspace*{2em}
 \begin{tabular}{r|l}
 term & docs \\ \hline
 dog & 1, 3 \\
@@ -98,106 +127,128 @@ goat & 3, 4
 \end{tabular}
 \end{center}
 
-Inverted indexes contain many small integers in their lists.
+Inverted indexes contain many small integers.
 
-The deltas are typically small if the list of doc ids is sorted.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{VByte}
-
-VByte is one of a number of schemes that use a variable number of
-bytes to store integers.  
-
-This makes sense when most integers are
-small, and especially on today's 64-bit processors.
+Deltas typically small if doc ids are sorted.
+\end{changemargin}
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{VByte}
+\frametitle{Storing inverted index lists: VByte}
 
+\Large\begin{changemargin}{2cm}
+\vspace*{-2em}
+VByte uses a variable number of bytes\\
+to store integers.  
+
+Why? Most integers are
+small,\\
+especially on today's 64-bit processors.
+\end{changemargin}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{How VByte Works}
+
+\large\begin{changemargin}{1cm}
 VByte works like this:
 
 \begin{itemize}
-\item $x$ between 0 and $2^7-1$, e.g. $17 = 0b10001$: $0xxx xxxx$, e.g. $0001 0001$;
-\item $x$ between $2^7$ and $2^{14}-1$, e.g. $1729 = 0b110 11000001$:
-                   $1xxx xxxx/0xxx xxxx$, e.g. $1100 0001/0000 1101$;
-\item $x$ between $2^{14}$ and $2^{21}-1$: $0xxx xxxx/1xxx xxxx/1xxx xxxx$;
+\item $x$ between 0 and $2^7-1$ (e.g. $17 = 0b10001$):\\
+\hspace*{1em}$0xxx xxxx$, e.g. $0001 0001$;
+\item $x$ between $2^7$ and $2^{14}-1$ (e.g. $1729 = 0b110 11000001$):\\
+\hspace*{1em}                   $1xxx xxxx/0xxx xxxx$ (e.g. $1100 0001/0000 1101$);\\
+\item $x$ between $2^{14}$ and $2^{21}-1$: \\
+\hspace*{1em}$0xxx xxxx/1xxx xxxx/1xxx xxxx$;
 \item etc.
 \end{itemize}
 
-That is, the control bit, or high-order bit, is 0 if you have finished representing the integer, and 1 if more bits remain.
-
+Control bit, or high-order bit, is:\\
+\hspace*{2em}0 once done representing the int,\\
+\hspace*{2em}1 if more bits remain.
+\end{changemargin}
 
 \end{frame}
 
 
 
 \begin{frame}
-\frametitle{VByte}
+\frametitle{Why VByte Helps}
 
-It might seem that dealing with variable-byte integers might be
-harder than dealing fixed-byte integers, and it is. 
+\large\begin{changemargin}{2cm}
+Isn't dealing with variable-byte integers harder?\\
+\hspace*{2em} $\bullet$~ Yup!
 
-But there are performance benefits: because we are using fewer bits! 
+But perf improves: \\
+\hspace*{2em} $\bullet$~  We are using fewer bits! 
 
-We can fit more information into our limited RAM and
-cache, and even get higher throughput. 
+We fit more information into RAM and
+cache, and can get higher throughput. (think inlining)
 
-Storing and reading 0s isn't an effective use of resources. 
+Storing and reading 0s isn't good use of resources. 
 
-However, a naive algorithm to decode VByte also gives lots of branch mispredictions.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Stream VByte}
-
-Stream VByte is a variant of VByte which works using SIMD instructions.
-
-
-Science is incremental, and Stream VByte builds on earlier work---masked VByte
-as well as {\sc varint}-GB and {\sc varint}-G8IU. 
-
-The innovation in Stream VByte is to store the control and data streams separately.
-
+However, a naive algorithm to decode VByte \\
+gives branch mispredicts.
+\end{changemargin}
 \end{frame}
 
 \begin{frame}
 \frametitle{Stream VByte}
+\vspace*{-2em}
+\large\begin{changemargin}{2cm}
+Stream VByte: a variant of VByte using SIMD.
 
+
+Science is incremental. \\
+Stream VByte builds on earlier work---\\
+\hspace*{2em}masked VByte, {\sc varint}-GB, {\sc varint}-G8IU. 
+
+Innovation in Stream VByte:\\
+\hspace*{2em}\emph{store the control and data streams separately}.
+\end{changemargin}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Control Stream}
+\vspace*{-4em}
+\large\begin{changemargin}{2cm}
 Stream VByte's control stream uses two bits per integer to represent the size of the integer:
 \begin{center}
-\vspace*{-1em}
+\vspace*{-3em}
 \begin{tabular}{ll@{~~~~~~~~}ll}
 00 & 1 byte & 10 & 3 bytes\\
 01 & 2 bytes & 11 & 4 bytes
 \end{tabular}
 \end{center}
-
+\end{changemargin}
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Stream VByte}
+\frametitle{Decoding Stream VByte}
 
-Each decode iteration reads a byte from the control stream and 16 bytes of data from memory.
+\vspace*{-4em}
+\large\begin{changemargin}{2cm}
+Per decode iteration:\\
+\hspace*{2em} reads 1 byte from the control stream,\\
+\hspace*{2em} and 16 bytes of data.
 
 
-It uses a lookup table over the possible values of the control stream to decide how many
+Lookup table on control stream byte: decide how many
 bytes it needs out of the 16 bytes it has read.
 
-It then uses SIMD instructions to shuffle
-the bits each into their own integers. 
+SIMD instructions: \\
+\hspace*{2em}shuffle the bits each into their own integers. 
 
-Note that, unlike VByte, Stream VByte uses all 8 bits
-of each data byte as data.
-
+Unlike VByte, \\
+Stream VByte uses all 8 bits
+of data bytes as data.
+\end{changemargin}
 
 \end{frame}
 
@@ -206,40 +257,48 @@ of each data byte as data.
 \begin{frame}
 \frametitle{Stream VByte Example}
 
-For instance, if the control stream contains $0b1000~1100$, then the data stream
+\large\begin{changemargin}{2cm}
+Say control stream contains $0b1000~1100$. \\
+Then the data stream
 contains the following sequence of integer sizes: $3, 1, 4, 1$. 
 
 Out of the 16 bytes read,
-this iteration will use 9 bytes; it advances the data pointer by 9. 
+this iteration uses 9 bytes; \\
+\hspace*{2em} $\Rightarrow$ it advances the data pointer by 9. 
 
-It then uses the SIMD
-``shuffle'' instruction to put the decoded integers from the data stream at known positions in the
-128-bit SIMD register. 
+The SIMD
+``shuffle'' instruction puts decoded integers from data stream at known positions in the
+128-bit SIMD register.
 
-In this case, it pads the first 3-byte integer with 1 byte, then
+Pad the first 3-byte integer with 1 byte, then
 the next 1-byte integer with 3 bytes, etc. 
-
+\end{changemargin}
 \end{frame}
 
 \begin{frame}
-\frametitle{Stream VByte Example}
-
-Let's say that the input is
+\frametitle{Stream VByte: Shuffling the Bits}
+\vspace*{-1em}
+\large\begin{changemargin}{1cm}
+Say the data input is:\\
 {\tt 0xf823~e127~2524~9748~1b..~....~....~....}. 
 
-The 128-bit output is
-{\tt 0x00f8~23e1/0000~0027/2524 9748/0000/001b}, with the /s denoting separation
+The 128-bit output is:\\
+{\tt 0x00f8~23e1/0000~0027/2524 9748/0000/001b}\\
+/s denote separation
 between outputs. 
 
-The shuffle mask is precomputed and, at
-execution time, read from an array.
-
+Shuffle mask is precomputed and
+read from an array.
+\end{changemargin}
 \end{frame}
 
 \begin{frame}[fragile]
 \frametitle{SIMD Instructions}
 
-The core of the implementation uses three SIMD instructions:
+\vspace*{-1em}
+\large\begin{changemargin}{1cm}
+The core of the implementation uses\\
+three SIMD instructions:
 \begin{lstlisting}[language=C]
   uint8_t C = lengthTable[control];
   __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
@@ -247,27 +306,35 @@ The core of the implementation uses three SIMD instructions:
   Data = _mm_shuffle_epi8(Data, Shuf);
   databytes += C; control++;
 \end{lstlisting}
-
+\end{changemargin}
 \end{frame}
 
 
 \begin{frame}
 \frametitle{But Does It Work?!}
 
+\vspace*{-1em}
+\large\begin{changemargin}{1cm}
 Stream VByte performs better than previous techniques on a realistic input.
 
 
-Let's discuss how it achieves this performance.
+Why?
 
 \begin{itemize}
-\item control bytes are sequential: the processor can always prefetch the next control byte, because
+\item control bytes are sequential:\\
+\hspace*{1em} CPU can always prefetch the next control byte, \\
+\hspace*{1em} because
 its location is predictable;
-\item data bytes are sequential and loaded at high throughput;
-\item shuffling exploits the instruction set so that it takes 1 cycle;
-\item control-flow is regular (executing only the tight loop which retrieves/decodes control
-and data; there are no conditional jumps).
+\item data bytes are sequential \\
+\hspace*{1em}and loaded at high throughput;
+\item shuffling exploits the instruction set: \\
+\hspace*{1em}takes 1 cycle;
+\item control-flow is regular \\
+\hspace*{1em}(tight loop which retrieves/decodes control
+\& data;\\
+\hspace*{1em}no conditional jumps).
 \end{itemize}
-
+\end{changemargin}
 \end{frame}
 
 \part{Compiler Optimizations}

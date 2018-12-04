@@ -2,7 +2,170 @@
 
 \begin{document}
 
-\lecture{3\footnote{version 2: removed undefined behaviour} --- Branch Prediction \& Amdahl's Law}{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{3 --- CPU Hardware, Branch Prediction}{\term}{Patrick Lam \& Jeff Zarnett}
+
+\section*{Multicore Processors}
+As I've alluded to earlier, multicore processors came about because
+clock speeds just aren't going up anymore. We'll discuss technical
+details today. Each processor \emph{core} executes instructions; a processor with more than one core can therefore simultaneously execute multiple
+(unrelated) instructions. 
+
+\paragraph{Chips and cores.} Multiprocessor (usually SMP, or symmetric
+multiprocessor) systems have been around for a while. Such systems
+contain more than one CPU. We can count the number of CPUs by
+physically looking at the board; each CPU is a discrete physical thing.
+
+Cores, on the other hand, are harder to count. In fact, they look just
+like distinct CPUs to the operating system:
+
+{\scriptsize \begin{verbatim}
+plam@plym:~/courses/p4p/lectures$ cat /proc/cpuinfo
+processor	: 0
+vendor_id	: GenuineIntel
+cpu family	: 6
+model		: 23
+model name	: Pentium(R) Dual-Core  CPU      E6300  @ 2.80GHz
+...
+processor	: 1
+vendor_id	: GenuineIntel
+cpu family	: 6
+model		: 23
+model name	: Pentium(R) Dual-Core  CPU      E6300  @ 2.80GHz
+\end{verbatim}
+}
+\vspace*{-1em}
+%$ 
+If you actually opened my computer, though, you'd only find one chip.
+The chip is pretending to have two \emph{virtual CPUs}, and the
+operating system can schedule work on each of these CPUs. In general,
+you can't look at the chip and figure out how many cores it contains.
+
+\vspace*{-1em}
+\paragraph{Hardware Designs for Multicores.}
+In terms of the hardware design, cores might share a cache, as in this picture:
+
+\vspace*{-1em}
+\begin{center}
+\begin{tikzpicture}
+\draw (-0.5, -0.5) rectangle ++(0.9, 0.9);
+\draw (-0.05, 0.05) node {\small Core};
+
+\draw (-0.5, -1.5) rectangle ++(0.9, 0.9);
+\draw (-0.05, -1.05) node {\small Core};
+
+\draw (0.5, -1.5) rectangle ++(1.2, 1.9);
+\draw (1.1, -.55) node {\small Cache};
+
+\draw (-0.6, -1.6) rectangle ++(2.45, 2.1);
+
+\draw (2.2, -1.6) rectangle ++(2.7, 2.1);
+\draw (3.6, -0.55) node {\small Rest of system};
+
+\draw[<->] (1.9, -0.55) -- (2.15, -0.55);
+\end{tikzpicture}
+\end{center}
+\vspace*{-1em}
+\hfill (credit: \emph{Multicore Application Programming}, p. 5)
+
+This above Symmetric Multithreading (SMP) design is especially good for the 1:1 threading model. In
+this case, the design of the cores don't need to change much, but they
+still need to communicate with each other and the rest of the system.
+
+Or, we can have a design that works well for the N:1 model:
+\begin{center}
+\begin{tikzpicture}
+\draw (-1.4, -1.5) rectangle ++(1.7, 1.9);
+\draw (-0.55, 0.05) node {\small Thread 1};
+\draw (-0.55, -1.05) node {\small Thread 2};
+\draw (-0.55, -0.5) node {\small Core};
+
+\draw (0.5, -1.5) rectangle ++(1.05, 1.9);
+\draw (1.05, -.55) node {\small Cache};
+
+\draw (-1.5, -1.6) rectangle ++(3.15, 2.1);
+
+\draw (2.2, -1.6) rectangle ++(2.7, 2.1);
+\draw (3.6, -0.55) node {\small Rest of system};
+
+\draw[<->] (1.7, -0.55) -- (2.15, -0.55);
+\end{tikzpicture}
+\end{center}
+
+One would expect that executing two threads on one core might
+mean that each thread would run more slowly. It depends on the instruction
+mix. If the threads are trying to access the same resource, then each
+thread would run more slowly. If they're doing different things, there's 
+potential for speedup.
+
+Finally, it's possible to both use multiple cores and put multiple threads
+onto one core, as in the M:N model:
+
+\begin{center}
+\begin{tikzpicture}
+
+ \draw (-1.4, -1.5) rectangle +(1.7, 1.9);
+ \draw (-1.4, -3.5) rectangle +(1.7, 1.9);
+
+\foreach \y in {-2, 0}
+{
+ \draw (-0.55, 0.05) + (0, \y) node {\small Thread 1};
+ \draw (-0.55, -1.05) + (0, \y) node {\small Thread 2};
+ \draw (-0.55, -0.5) + (0, \y) node {\small Core};
+}
+
+\draw (0.5, -3.5) rectangle ++(1.05, 3.9);
+\draw (1.05, -1.55) node {\small Cache};
+
+\draw (-1.5, -3.6) rectangle ++(3.15, 4.1);
+
+\draw (2.2, -3.6) rectangle ++(2.7, 4.1);
+\draw (3.6, -1.55) node {\small Rest of system};
+
+\draw[<->] (1.7, -1.55) -- (2.15, -1.55);
+\end{tikzpicture}
+\end{center}
+Here we have four hardware threads; pairs of threads share hardware
+resources. One example of a processor which supports chip multi-threading
+(CMT) is the UltraSPARC T2, which has 8 cores, each of which supports 8 
+threads. All of the cores share a common level 2 cache.
+
+\paragraph{Non-SMP systems.} The designs we've seen above have been
+more or less SMP designs; all of the cores are mostly alike.
+A very non-SMP system is the Cell, which contains a PowerPC main core
+(the PPE) and 7 Synergistic Processing Elements (SPEs), which are
+small vector computers.
+
+
+\paragraph{Non-Uniform Memory Access.}
+In SMP systems, all CPUs have approximately the same access time for resources
+(subject to cache misses). There are also NUMA, or Non-Uniform Memory Access,
+systems out there. In that case, CPUs can access different resources at different
+speeds. (Resources goes beyond just memory).
+
+In this case, the operating system should schedule tasks on CPUs which
+can access resources faster.  Since memory is commonly the bottleneck,
+each CPU has its own memory bank.
+
+\paragraph{Using CMT effectively.} Typically, a CPU will expose its
+hardware threads using virtual CPUs.
+In current hardware designs, each of the hardware threads has the same
+performance. 
+
+However, performance varies depending on context. In the above
+example, two threads running on the same core will most probably run
+more slowly than two threads running on separate cores, since they'd
+contend for the same core's resources. Task switches between cores (or
+CPUs!) are also slow, as they may involve reloading caches.
+
+Solaris ``processor sets''
+enable the operating system to assign processes to specific virtual CPUs,
+while Linux's ``affinity'' keeps a process running on the same virtual CPU.
+Both of these features reduce the number of task switches, and processor
+sets can help reduce resource contention, along with Solaris's locality
+groups.\footnote{Gove suggests that locality groups help reduce contention
+for core resources, but they seem to help more with memory.}
+
+
 
 \section*{Branch Prediction and Misprediction}
 
@@ -85,7 +248,7 @@ How sure do we have to be? The answer depends dramatically on the code, the CPU 
 
 Conclusion: it's hard to outsmart the compiler. Maybe it's better not to try.
 
-\section*{How does branch prediction work, anyway?}
+\subsection*{How does branch prediction work, anyway?}
 We can write software. The hardware will make it fast. If we understand the hardware, we can understand when it has trouble making our software fast.
 
 You've seen how branch prediction works in ECE 222. However, we'll talk about it today in the context of performance. Notes based on a transcript of a talk by Dan Luu~\cite{branchprediction}.
@@ -289,8 +452,10 @@ now. Aliasing (multiple branches mapping to the same entry in a
 prediction table) can be a problem, but processors are pretty good at
 dealing with that too.
 
-\section*{Cache side-channel attacks}
+\section*{Side-channel attacks}
+There's been a lot happening lately in terms of exploiting the hardware of CPU architectures to get access to privileged data, and unfortunately these things have performance implications!
 
+\subsection*{Cache Attacks}
 In early 2018, the Spectre~\cite{Kocher2018spectre} and Meltdown~\cite{Lipp2018meltdown} attacks were disclosed. These attacks leverage performance features of modern CPUs to break process isolation guarantees---in principle, a process shouldn't be able to read memory that belongs to the kernel or to other processes.
 
 The concept of cache side-channel attacks has been known for a while. If an attacker can get some memory loaded into the cache, then it can extract that memory using a cache side-channel attack.
@@ -298,168 +463,15 @@ The concept of cache side-channel attacks has been known for a while. If an atta
 Spectre and Meltdown can cause privileged memory to be loaded into the cache, and then extracted using a cache side-channel attack. We'll talk about Spectre (variant 2), since it attacks branch prediction in particular. My explanation follows~\cite{masters18:_what_meltd_spect} by Jon Masters of RedHat. However, you should now have enough background to follow the Google Project Zero description at~\cite{horn18:_readin}.
 
 We know that at a branch, the CPU will start speculatively executing code at the inferred target of the branch. To exploit this vulnerability, the attack code convinces the CPU to speculatively execute code of its choice. The speculatively-executed attack code reads secret data (e.g. from the hypervisor kernel) and puts it in the cache. Once the data is in the cache, the attack proceeds by extracting the data from the cache.
-\newpage
 
-\section*{Limits to parallelization}
-I mentioned briefly in Lecture 1 that programs often have a sequential
-part and a parallel part. We'll quantify this observation today
-and discuss its consequences.
+Unfortunately, the only mitigation thus far involved additional security measures (in hardware and software) that unfortunately result in lower performance in program execution.
 
-\paragraph{Amdahl's Law.} One classic model of parallel execution
-is Amdahl's Law. In 1967, Gene Amdahl argued that improvements in
-processor design for single processors would be more effective than
-designing multi-processor systems. Here's the argument. Let's say that
-you are trying to run a task which has a serial part, taking fraction 
-$S$, and a parallelizable part, taking fraction $P = 1-S$. Define $T_s$
-to be the total 
-amount of time needed on a single-processor system.
-Now, moving to a parallel system with $N$ processors, the parallel
-time $T_p$ is instead:
-\[ T_p = T_s \cdot (S + \frac{P}{N}). \]
-{\bf As $N$ increases, $T_p$ is dominated by $S$, limiting potential
-speedup.}
+\subsection*{Hyperthreading attacks}
+Multiprocessor (multicore) processors have some hardware that tries to keep the data consistent between different pipelines and caches (as we saw in the video). More processors, more threads means more work is necessary to keep these things in order. We will discuss cache coherence soon, but about hyperthreading... it turns out this is vulnerable too.
 
-We can restate this law in terms of speedup, which is the 
-original time $T_s$ divided by the sped-up time $T_p$:
-\[ \mbox{speedup} = \frac{T_s}{T_p} = \frac{1}{S+P/N}. \]
-Replacing $S$ with $(1-P)$, we get:
-\[ \mbox{speedup} = \frac{1}{(1-P)+P/N}, \]
-and
-\[ \mbox{max speedup} = \frac{1}{(1-P)}, \]
-since $\frac{P}{N} \rightarrow 0$.
+Remember that in hyperthreading, two threads are sharing the same execution core. That means they have hardware in common. Because of this, a thread can figure out what the other thread is doing by noticing its cache accesses and by timing how long it takes to complete operations. This is like sitting next to someone who's taking a multiple choice exam and noticing what answers they are choosing by how long it takes them to move their pencil down the page to fill in the correct circle. Yes, you have to be running on the same CPU as the victim, but still... Yikes! 
 
-\paragraph{Plugging in numbers.} If $P = 1$, then we can indeed get good
-scaling; running on an $N$-processor machine will give you a speedup
-of $N$. Unfortunately, usually $P < 1$.  Let's see what happens.
-
-\begin{center}
-\begin{tabular}{r|r}
-$P$ & speedup ($N=18$) \\ \hline
-1 & 18 \\
-0.99 & $\sim$ 15 \\
-0.95 & $\sim$ 10 \\
-0.5 & $\sim$ 2
-\end{tabular}
-\end{center}
-Graphically, we have something like this:
-\begin{center}
-  \includegraphics[width=0.5\textwidth]{images/parallel-scaling}
-\end{center}
-
-
-Amdahl's Law tells you how many cores you can hope to leverage in an
-execution given a fixed problem size, if you can estimate $P$.
-
-Let us consider an example from~\cite{mte241}: Suppose we have a task that can be executed in 5~s and this task contains a loop that can be parallelized. Let us also say initialization and recombination code in this routine requires 400~ms. So with one processor executing, it would take about 4.6~s to execute the loop. If we split it up and execute on two processors it will take about 2.3~s to execute the loop. Add to that the setup and cleanup time of 0.4~s and we get a total time of 2.7~s. Completing the task in 2.7~s rather than 5~s represents a speedup of about~46\%. Applying the formula, we get the following run times:
-
-\begin{center}
-	\begin{tabular}{l|l}
-	\textbf{Processors} & \textbf{Run Time (s)} \\ \hline
-	1 & 5\\
-	2 & 2.7\\
-	4 & 1.55\\
-	8 & 0.975\\
-	16 & 0.6875 \\
-	32 & 0.54375 \\
-	64 & 0.471875 \\
-	128 & 0.4359375\\
-	\end{tabular}
-\end{center}
-
-   \paragraph{Empirically estimating parallel speedup $P$.}
-Assuming that you know things that are actually really hard to know, here's a formula for estimating speedup. You don't have to commit it to memory:
-  \[P_{\mbox{\scriptsize estimated}} = \frac{\frac{1}{\mbox{\em speedup}}-1}{\frac{1}{N}-1}.\]
-
-It's just an estimation, but you can use it to guess the fraction of parallel code, given $N$ and the speedup. You can then use $P_{\mbox{\scriptsize estimated}}$ to predict speedup for a different number of processors.
-
-\paragraph{Consequences of Amdahl's Law.}
-For over 30 years, most performance gains did indeed come from
-increasing single-processor performance. The main reason that we're
-here today is that, as we saw last time,
-single-processor performance gains have hit the wall.
-
-By the way, note that we didn't talk about the cost of synchronization
-between threads here. That can drag the performance down even more.
-
-\paragraph{Amdahl's Assumptions.}
-Despite Amdahl's pessimism, we still all have multicore computers today.
-Why is that? Amdahl's Law assumes that:
-\begin{itemize}[noitemsep]
-    \item problem size is fixed (read on);
-    \item the program, or the underlying implementation, behaves the same on 1 processor as on $N$ processors; and
-    \item that we can accurately measure runtimes---i.e. that overheads don't matter.
-\end{itemize}
-
-% replace Amdahl's law with how branch predictors work
-%% \paragraph{Generalizing Amdahl's Law.} We made a simplification,
-%% which was that programs only have one parallel part and one serial part.
-%% Of course, this is not true. The program may have many parts,
-%% each of which we can tune to a different degree.
-
-%% Let's generalize Amdahl's Law:
-
-%% \begin{itemize}
-%% \item  $f_1, f_2, \ldots, f_n$: fraction of time in part $n$
-%% \item  $S_{f_1}, S_{f_n}, \ldots, S_{f_n}$: speedup for part $n$
-%% \end{itemize}
-
-%% Then,
-%% \[\mbox{\em speedup} = \frac{1}{\frac{f_1}{S_{f_1}} + \frac{f_2}{S_{f_2}} + \ldots +
-%%     \frac{f_n}{S_{f_n}}}.\]
-
-%% \paragraph{Example.} Consider a program with 4 parts in the following scenario:
-
-%% \begin{center}
-%%     \begin{tabular}{r|r|r|r}
-%%     \multicolumn{2}{l}{} & \multicolumn{2}{|c}{Speedup} \\
-%%     Part & Fraction of Runtime & Option 1 & Option 2\\
-%%     \hline
-%%     1 & 0.55 & 1  & 2\\
-%%     2 & 0.25 & 5  & 1\\
-%%     3 & 0.15 & 3  & 1\\
-%%     4 & 0.05  & 10 & 1\\
-%%     \end{tabular}
-%% \end{center}
-
-%%     (Note: these speedups don't have to be speedups from parallelization.)
-    
-%%   We can implement either Option 1 or Option 2. 
-%%   Which option is better?
-
-%%   ``Plug and chug'' the numbers:
-%% \begin{itemize}
-%% \item  {\bf Option 1.}
-
-%%   \[ \mbox{\em speedup} = \frac{1}{0.55 + \frac{0.25}{5} + \frac{0.15}{3} + \frac{0.05}{5}}
-%%     = 1.53  \]
-
-%% \item  {\bf Option 2.}
-
-%%   \[\mbox{\em speedup} = \frac{1}{\frac{0.55}{2} + 0.45} = 1.38 \hspace*{5.5em}\]
-%% \end{itemize}
-
-\subsection*{A more optimistic point of view}
-In 1988, John Gustafson pointed
-out\footnote{\url{http://www.scl.ameslab.gov/Publications/Gus/AmdahlsLaw/Amdahls.html}}
-that Amdahl's Law only applies to fixed-size problems, but that the
-point of computers is to deal with bigger and bigger problems.
-
-In particular, you might vary the input size, or the grid resolution,
-number of timesteps, etc. When running the software, then, you might
-need to hold the running time constant, not the problem size: you're
-willing to wait, say, 10 hours for your task to finish, but not 500
-hours. So you can change the question to: how big a problem can you
-run in 10 hours?
-
-According to Gustafson, scaling up the problem tends to increase the
-amount of work in the parallel part of the code, while leaving the
-serial part alone. As long as the algorithm is linear, it is possible
-to handle linearly larger problems with a linearly larger number of
-processors.
-
-Of course, Gustafson's Law works when there is some ``problem-size''
-knob you can crank up.  As a practical example, observe Google, which
-deals with huge datasets.
+Researchers discovered and published a paper~\cite{portsmash} detailing the attack and showing a practical implementation of it. In the practical example, a 384-bit secret key is (over time) completely stolen by another process. It seems likely that this will lead in the long term to slowdowns of existing hardware as Operating System patches will need to prevent threads from different processes from using the same core... And possibly the only long term solution is to not use hyperthreading at all... the performance implications of which are both obvious and significant.
 
 \input{bibliography.tex}
 
