@@ -2,399 +2,226 @@
 
 \begin{document}
 
-\lecture{4 --- Concurrency and Parallelism (v2, shuffled order)}{\term}{Jeff Zarnett, based on original by Patrick Lam}
+\lecture{4 --- Cache Coherency}{\term}{Patrick Lam \& Jeff Zarnett}
 
-\section*{Concurrency and Parallelism}
-Concurrency and parallelism both give up the
-total ordering between instructions in a sequential program, for
-different purposes.
-
-\paragraph{Concurrency.} We'll refer to the use of threads for
-structuring programs as concurrency. Here, we're not aiming
-for increased performance. Instead, we're trying to write the program
-in a natural way. Concurrency makes sense as a model for distributed
-systems, or systems where multiple components interact, with no ordering
-between these components, like graphical user interfaces.
-
-\paragraph{Parallelism.} We're studying parallelism in this class, where
-we try to do multiple things at the same time in an attempt to increase
-throughput. Concurrent programs may be easier to parallelize.
-
-\section*{Processor Design Issues}
-Recall that we summarized a Cliff Click talk on characteristics of
-modern processors in Lecture 2. In this lecture we'll continue our
-quick review of computer architecture and how it relates to
-programming for performance. Here's another reference about chip
-multi-threading; we are going to study some
-of the techniques in the ``Writing Scalable Low-Level Code'' section of~\cite{extremescaling}:
-
-\paragraph{Locking.}
-Think back to the operating systems and systems programming course and the discussion of locking and concurrency. We'll be coming back to this subject before too long. But for now, suffice it to say, that the more locks and locking we need, the less scalable the code is going to be. You may think of the lock as a resource and the more threads or processes that are looking to acquire that lock, the more ``resource contention'' we have, and the more waiting and coordination are going to be necessary.
-
-\paragraph{Cache Line Sharing.}
-Multiprocessor (multicore) processors have some hardware that tries to keep the data consistent between different pipelines and caches (as we saw in the video). More processors, more threads means more work is necessary to keep these things in order.
-
-\section*{Assorted Scalability Issues}
-In addition to the pure hardware issues that we listed above, there are some software design-specific issues that we generally want to keep in mind, including those below:
-
-\paragraph{Scalable Algorithms.} 
-Remember from ECE~250/CS~138 that we often care about the worst case run-time performance of the algorithm. An algorithm that's $O(n^{3})$ scales so much worse than one that's $O(n)$ that it's not even funny. Trying to do an insertion sort on a small array is fine (actually... recommended); doing it on a huge array is madness. Choosing a good algorithm is very important if we want it to scale. 
+\section*{Cache Coherency}
 
 \begin{center}
-	\includegraphics[width=0.75\textwidth]{images/big-o-complexity}\\
-	Big-O Complexity comparison from ~\cite{bigocheatsheet}
+    \includegraphics[width=0.5\textwidth]{images/coherency}
+
+\hfill ---Wikipedia
 \end{center}
 
-\paragraph{Memory Allocators.}
-Assuming we're not working with an embedded system where all memory is statically allocated in advance, there will be dynamic memory allocation. The memory allocator is often centralized and may support only one thread allocating or deallocating at a time. This means it does not necessarily scale very well. There are, however, some techniques for dynamic memory allocation that allow these things to work in parallel.
+We talked about memory ordering and fences last time.  Today we'll
+look at what support the architecture provides for memory ordering, in
+particular in the form of cache coherence. Since this isn't an
+architecture course, we'll look at this material more from the point
+of view of a user, not an implementer.
 
-\paragraph{Pools of Worker Threads.}
-We'll talk about threads shortly. At first, one might imagine manually starting the necessary threads. But that's not the only way. We can have a pool of workers. Then the application just submits units of work, and then on the other side these units of work are allocated to workers. The number of workers will scale based on the available hardware. This is neat as a programming practice: as the application developer we don't care quite so much about the underlying hardware. Let the operating system decide how many workers there should be, to figure out the optimal way to process the units of work.
+The problem is of course that each CPU might have its own cache and if it does then these data may be out of sync. The simplest method, and a horrible solution, is to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?...). The compiler and OS and such will require the data to be read from memory always. Think of this as being like \texttt{volatile} (which prevented a variable from being put in a register), just moved up a level to preventing the variable from being put in a cache. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is coherency.
 
-\section*{Processes and Threads} Let's review the
-difference between a process and a thread. A \emph{process} is an
-instance of a computer program that contains program code and its own
-address space, stack, registers, and resources (file handles, etc).  A
-\emph{thread} usually belongs to a process. The most important point
-is that it shares an address space with its parent process, hence
-variables and code as well as resources. Each thread has its own~\cite{osi}:
-\begin{enumerate}
-	\item Thread execution state (like process state: running, ready, blocked...).
-	\item Saved thread context when not running.
-	\item Execution stack.
-	\item Local variables.
-	\item Access to the memory and resources of the process (shared with all threads in that process).
-\end{enumerate}
-
-Or, to represent this visually:
-
-\begin{center}
-	\includegraphics[width=0.6\textwidth]{images/mthread2.png}\\
-	A single threaded and a multithreaded process compared side-by-side~\cite{osc}.
-\end{center}
-
-All the threads of a process share the state and resources of the process. If one thread opens a file, other threads in that process can also access that file.
-
-The way programs are written now, there are few, if any, that are not in some way multithreaded. One common way of dividing up the program into threads is to separate the user interface from a time-consuming action.
-
-Consider a file-transfer program. If the user interface and upload method share a thread, once a file upload has started, the user will not be able to use the UI anymore (and Windows will put the dreaded ``(Not Responding)'' at the end of its dialog title), even to click the button that cancels the upload. For some reason, users hate that. 
-
-We have two options for how to alleviate this problem: when an upload is ready to start, we can call \texttt{fork} and create a new process to do the upload, or we can spawn a new thread. In either case, the newly created entity will handle the upload of the file. The UI remains responsive, because the UI thread is not waiting for the upload method to complete.
-
-\subsection*{Motivation for Threads}
-
-Why choose threads rather than creating a new process? The primary, but not sole, motivation is performance:
-\begin{enumerate}
-	\item Creating a new thread is much faster than creating a new process. In fact, thread creation is on the order of ten times faster~\cite{machThreads}.
-	\item Terminating and cleaning up a thread is faster than terminating and cleaning up a process.
-	\item It takes less time to switch between two threads within the same process (because less data needs to be stored/restored). In Solaris, for example, switching between processes is about five times slower than switching between threads~\cite{osc}.
-	\item Because threads share the same memory space, for two threads to communicate, they do not have to use any of the IPC mechanisms; they can just communicate directly.
-	\item As in the file transfer program, use of threads allows the program to be responsive even when a part of the program is blocked.
-\end{enumerate}
-
-This last advantage, background work, is one of four common examples of the uses of threads in a general purpose operating system~\cite{insideOS2}:
-\begin{enumerate}
-	\item \textbf{Foreground and Background Work:} as already examined, the ability to run something in the background to keep the program responsive.
-	\item \textbf{Asynchronous processing}: for example, to protect against power failure or a crash, a word processor may write the document data in main memory to disk periodically. This can be done as a background task so it does not disrupt the user's workflow.
-	\item \textbf{Speed of Execution:} a multithreaded program can get more done in the same amount of time. Just as the OS can run a different program when the executing program gets blocked (say, on a disk read), if one thread is blocked, another thread may execute.
-	\item \textbf{Modular Structure:} a program that does several different things may be given structure through threads.
-\end{enumerate}
-
-There are some drawbacks, however: there is no protection between threads in the same process. So, one thread can easily mess with the memory being used by another thread. This once again brings us to the subject of co-ordination, which will follow the discussion of threads.
-
-Also, if any thread encounters an error (such as a division by zero or Segmentation Fault), the whole process might be terminated by the operating system. If the program has multiple processes for different parts, then the other processes will not be affected. But, if the program has multiple threads and they all share the same process, then any thread encountering an error might bring all of them to a halt. (That's why Google Chrome chose to use separate processes for each tab.)
-
-
-
-You can find another explanation of processes versus threads here:
-\begin{center}
-  \url{https://www.purplealienplanet.com/node/50}
-\end{center}
-
-\paragraph{Threads and CPUs.} In your operating systems class,
-you've seen implementations of threads (``lightweight processes'').
-We'll call these threads \emph{software threads}, and we'll program
-with them throughout the class. Each software thread corresponds to a
-stream of instructions that the processor executes. On a old-school
-single-core, single-processor machine, the operating system
-multiplexes the CPU resources to execute multiple threads
-concurrently; however, only one thread runs at a time on the single
-CPU.
-
-On the other hand, a modern chip contains a number of \emph{hardware
-threads}, which correspond to the virtual CPUs. These are sometimes
-known as \emph{strands}. The operating system still needs to 
-multiplex the software threads onto the hardware threads, but now has
-more than one hardware thread to schedule work onto.
-
-
-
-\paragraph{Implementing (or Simulating) Hardware Threads.} 
-There are a number of ways to implement multiple software threads; for
-instance, the simplest possible implementation, {\bf kernel-level
-threading} (or 1:1 model) dedicates one core to each thread. The kernel schedules threads
-on different processors. (Note that kernel involvement will always be required to
-take advantage of a multicore system). This model is used by Win32, as well as
-POSIX threads for Windows and Linux. The 1:1 model allows concurrency and parallelism.
-
-Alternately, we could make one core execute multiple threads. In the
-{\bf user-level threading}, or N:1, model, the single core would keep
-multiple contexts and could 1) switch every 100 cycles; 2) switch
-every cycle; 3) fetch one instruction from each thread each cycle; or
-4) switch every time the current thread hits a long-latency event
-(cache miss, etc.) This model allows for quick context switches, but
-does not leverage multiple processors. (Why would you use these?) The N:1 model is used by
-GNU Portable Threads.
-
-Finally, it's possible to both use multiple cores and put multiple
-threads onto one core, in a {\bf hybrid threading}, or M:N, model. Here, we map $M$ application threads to $N$ kernel threads. This
-is a compromise between the previous two models, which both allows
-quick context switches and the use of multiple processors. However, it
-requires increased complexity; the library provides scheduling
-services, which may not coordinate well with kernel, and increases
-likelihood of priority inversion (which you've seen in Operating
-Systems).  This method is used by modern Windows threads.
-
-
-\section*{Multicore Processors}
-As I've alluded to earlier, multicore processors came about because
-clock speeds just aren't going up anymore. We'll discuss technical
-details today.
-
-Each processor \emph{core} executes instructions; a processor with
-more than one core can therefore simultaneously execute multiple
-(unrelated) instructions. 
-
-\paragraph{Chips and cores.} Multiprocessor (usually SMP, or symmetric
-multiprocessor) systems have been around for a while. Such systems
-contain more than one CPU. We can count the number of CPUs by
-physically looking at the board; each CPU is a discrete physical thing.
-
-Cores, on the other hand, are harder to count. In fact, they look just
-like distinct CPUs to the operating system:
-
-{\scriptsize \begin{verbatim}
-plam@plym:~/courses/p4p/lectures$ cat /proc/cpuinfo
-processor	: 0
-vendor_id	: GenuineIntel
-cpu family	: 6
-model		: 23
-model name	: Pentium(R) Dual-Core  CPU      E6300  @ 2.80GHz
-...
-processor	: 1
-vendor_id	: GenuineIntel
-cpu family	: 6
-model		: 23
-model name	: Pentium(R) Dual-Core  CPU      E6300  @ 2.80GHz
-\end{verbatim}
-}
-\vspace*{-1em}
-%$ 
-If you actually opened my computer, though, you'd only find one chip.
-The chip is pretending to have two \emph{virtual CPUs}, and the
-operating system can schedule work on each of these CPUs. In general,
-you can't look at the chip and figure out how many cores it contains.
-
-\vspace*{-1em}
-\paragraph{Hardware Designs for Multicores.}
-In terms of the hardware design, cores might share a cache, as in this picture:
-
-\vspace*{-1em}
-\begin{center}
-\begin{tikzpicture}
-\draw (-0.5, -0.5) rectangle ++(0.9, 0.9);
-\draw (-0.05, 0.05) node {\small Core};
-
-\draw (-0.5, -1.5) rectangle ++(0.9, 0.9);
-\draw (-0.05, -1.05) node {\small Core};
-
-\draw (0.5, -1.5) rectangle ++(1.2, 1.9);
-\draw (1.1, -.55) node {\small Cache};
-
-\draw (-0.6, -1.6) rectangle ++(2.45, 2.1);
-
-\draw (2.2, -1.6) rectangle ++(2.7, 2.1);
-\draw (3.6, -0.55) node {\small Rest of system};
-
-\draw[<->] (1.9, -0.55) -- (2.15, -0.55);
-\end{tikzpicture}
-\end{center}
-\vspace*{-1em}
-\hfill (credit: \emph{Multicore Application Programming}, p. 5)
-
-This above Symmetric Multithreading (SMP) design is especially good for the 1:1 threading model. In
-this case, the design of the cores don't need to change much, but they
-still need to communicate with each other and the rest of the system.
-
-Or, we can have a design that works well for the N:1 model:
-\begin{center}
-\begin{tikzpicture}
-\draw (-1.4, -1.5) rectangle ++(1.7, 1.9);
-\draw (-0.55, 0.05) node {\small Thread 1};
-\draw (-0.55, -1.05) node {\small Thread 2};
-\draw (-0.55, -0.5) node {\small Core};
-
-\draw (0.5, -1.5) rectangle ++(1.05, 1.9);
-\draw (1.05, -.55) node {\small Cache};
-
-\draw (-1.5, -1.6) rectangle ++(3.15, 2.1);
-
-\draw (2.2, -1.6) rectangle ++(2.7, 2.1);
-\draw (3.6, -0.55) node {\small Rest of system};
-
-\draw[<->] (1.7, -0.55) -- (2.15, -0.55);
-\end{tikzpicture}
-\end{center}
-
-One would expect that executing two threads on one core might
-mean that each thread would run more slowly. It depends on the instruction
-mix. If the threads are trying to access the same resource, then each
-thread would run more slowly. If they're doing different things, there's 
-potential for speedup.
-
-Finally, it's possible to both use multiple cores and put multiple threads
-onto one core, as in the M:N model:
-
-\begin{center}
-\begin{tikzpicture}
-
- \draw (-1.4, -1.5) rectangle +(1.7, 1.9);
- \draw (-1.4, -3.5) rectangle +(1.7, 1.9);
-
-\foreach \y in {-2, 0}
-{
- \draw (-0.55, 0.05) + (0, \y) node {\small Thread 1};
- \draw (-0.55, -1.05) + (0, \y) node {\small Thread 2};
- \draw (-0.55, -0.5) + (0, \y) node {\small Core};
-}
-
-\draw (0.5, -3.5) rectangle ++(1.05, 3.9);
-\draw (1.05, -1.55) node {\small Cache};
-
-\draw (-1.5, -3.6) rectangle ++(3.15, 4.1);
-
-\draw (2.2, -3.6) rectangle ++(2.7, 4.1);
-\draw (3.6, -1.55) node {\small Rest of system};
-
-\draw[<->] (1.7, -1.55) -- (2.15, -1.55);
-\end{tikzpicture}
-\end{center}
-Here we have four hardware threads; pairs of threads share hardware
-resources. One example of a processor which supports chip multi-threading
-(CMT) is the UltraSPARC T2, which has 8 cores, each of which supports 8 
-threads. All of the cores share a common level 2 cache.
-
-\paragraph{Non-SMP systems.} The designs we've seen above have been
-more or less SMP designs; all of the cores are mostly alike.
-A very non-SMP system is the Cell, which contains a PowerPC main core
-(the PPE) and 7 Synergistic Processing Elements (SPEs), which are
-small vector computers.
-
-
-\paragraph{Non-Uniform Memory Access.}
-In SMP systems, all CPUs have approximately the same access time for resources
-(subject to cache misses). There are also NUMA, or Non-Uniform Memory Access,
-systems out there. In that case, CPUs can access different resources at different
-speeds. (Resources goes beyond just memory).
-
-In this case, the operating system should schedule tasks on CPUs which
-can access resources faster.  Since memory is commonly the bottleneck,
-each CPU has its own memory bank.
-
-\paragraph{Using CMT effectively.} Typically, a CPU will expose its
-hardware threads using virtual CPUs.
-In current hardware designs, each of the hardware threads has the same
-performance. 
-
-However, performance varies depending on context. In the above
-example, two threads running on the same core will most probably run
-more slowly than two threads running on separate cores, since they'd
-contend for the same core's resources. Task switches between cores (or
-CPUs!) are also slow, as they may involve reloading caches.
-
-Solaris ``processor sets''
-enable the operating system to assign processes to specific virtual CPUs,
-while Linux's ``affinity'' keeps a process running on the same virtual CPU.
-Both of these features reduce the number of task switches, and processor
-sets can help reduce resource contention, along with Solaris's locality
-groups.\footnote{Gove suggests that locality groups help reduce contention
-for core resources, but they seem to help more with memory.}
-
-\section*{Processes versus Threads}
-The first design decision that you need to solve when parallelizing programs
-is whether you should use threads or processes.
-
+Cache coherency means that:
   \begin{itemize}
-    \item Threads are basically light-weight processes which piggy-back on
-          processes' address space.
+    \item the values in all caches are consistent; and
+    \item to some extent, the system behaves as if all CPUs are using shared memory.
   \end{itemize}
+  
 
-Traditionally (pre-Linux 2.6) you had to use {\tt
-  fork}~(for~processes) and {\tt clone} (for threads). But {\tt clone}
-is not POSIX compliant, and its man page says that it's
-Linux-specific---FreeBSD uses {\tt rfork()}. (POSIX is the standard
-for Unix-like operating systems).
+\paragraph{Cache Coherence Example.} We will use this example to illustrate
+different cache coherence algorithms and how they handle the same situation.
 
-\paragraph{When processes are better.} {\tt fork} is safer and more secure than threads.
+Initially in main memory: {\tt x = 7}.
 
   \begin{enumerate}
-    \item Each process has its own virtual address space:
+    \item {\tt CPU1} reads x, puts the value in its cache.
+    \item {\tt CPU3} reads x, puts the value in its cache.
+    \item {\tt CPU3} modifies {\tt x := 42}
+    \item {\tt CPU1} reads x \ldots ~from its cache?
+    \item {\tt CPU2} reads x. Which value does it get?
+  \end{enumerate}
+
+Unless we do something, {\tt CPU1} is going to read invalid data.
+
+\paragraph{High-Level Explanation of Snoopy Caches.} The simplest way to ``do something''
+is to use Snoopy caches~\cite{snoopycache}. No, not this kind of Snoopy (sadly):
+
+\begin{center}
+	\includegraphics[width=0.25\textwidth]{images/peanuts-snoopy1.jpg}
+\end{center}
+
+This is a distributed approach; no centralized state is maintained. Each cache with a copy of data from a block of physical memory knows whether it is shared or not. All the CPUs are connected to a shared bus, and each CPU has its own cache controller. Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. If it is, then the CPU will need to take action.
+
+
+\subsection*{Write-Through Caches}
+Let's put that into practice using write-through caches, the simplest type of
+cache coherence.
+  \begin{itemize}
+    \item All cache writes are done to main memory.
+    \item All cache writes also appear on the bus.
+    \item If another CPU snoops and sees it has the same location in
+      its cache, it will either {\it invalidate} or {\it update} the
+      data.
+  \end{itemize}
+  
+Invalidation is the most common protocol. It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. Regardless, the most recent value appears in memory, always.
+
+There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. But it uses lots of bandwidth and is not necessarily a good idea. It does, however prevent the costly cache miss that follows an invalidate. Sadly, as we are mere users and not hardware architects, we don't get to decide which is better; we just have to live with whichever one is on the hardware we get to use. Bummer.
+
+\paragraph{Write-Through Protocol.}
+The protocol for implementing such caches looks like this.
+There are two possible states, {\bf valid} and {\bf invalid}, for each cached memory location.
+Events are either from a processor ({\bf Pr}) or the {\bf Bus}. Actions will be either a \textbf{Rd} (read) or \textbf{Wr} (write).
+We then implement the following state machine.
+
+  \begin{center}
+    \begin{tabular}{l|l|l|l}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\ \hline
+      Valid   & PrRd  &       & Valid\\
+      Valid   & PrWr  & BusWr & Valid\\
+      Valid   & BusWr &       & Invalid\\
+      Invalid & PrWr  & BusWr & Valid\\
+      Invalid & PrRd  & BusRd & Valid\\
+    \end{tabular}
+  \end{center}
+
+\paragraph{Example.} For simplicity (this isn't an architecture course), assume all cache
+      reads/writes are atomic. \footnote{If you're a hardware person, this line probably makes you cry. There's a whole lot that goes into making this work. There are potential write races, which have to be dealt with by contending for the bus and then completing the transaction, possibly restarting a command if necessary. If we have a split transaction bus it's really ugly, because we can have multiple interleaved misses. And down the rabbit hole we go.} Using the same example as before:
+
+Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x, puts the value in its cache. {(valid)}
+    \item {\tt CPU3} reads x, puts the value in its cache. {(valid)}
+    \item {\tt CPU3} modifies {\tt x := 42}. {(write to memory)}
       \begin{itemize}
-        \item Memory pages are not copied, they are copy-on-write. Therefore, processes use less memory than you would expect.
+        \item {{\tt CPU1} snoops and marks data as invalid.}
       \end{itemize}
-    \item Buffer overruns or other security holes do not expose other~processes.
-    \item If a process crashes, the others can continue.
+    \item {\tt CPU1} reads x, {from main memory. (valid)}
+    \item {\tt CPU2} reads x, {from main memory. (valid)}
   \end{enumerate}
 
-{\bf Example:} In the Chrome browser, each tab is a separate
-process. Scott McCloud explained this:
-\url{http://www.scottmccloud.com/googlechrome/}.
+\subsection*{Write-Back Caches}
+Let's try to improve performance. What if, in our example, {\tt CPU3} writes to {\tt x} 3 times? It's unpleasant to have to flush that to memory three times when we could do it only once. Let's try to delay the write to memory as long as possible. At minimum, we have to add a ``dirty'' bit, which indicates the our data has not yet been written to memory.
 
-\paragraph{When threads are better.} Threads are easier and faster.
+\paragraph{Write-Back Implementation.}
+     The simplest type of write-back protocol (MSI) uses 3 states instead of 2:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; 
+          main memory is {\bf out-of-date}.
+        \item {\bf Shared}---location is unmodified, 
+           up-to-date with main
+          memory; 
+          \quad may be present in other caches (also up-to-date).
+        \item {\bf Invalid}---same as before.
+      \end{itemize}
+      
+The initial state for a memory location, upon its first read, is ``shared''.
+The implementation will only write the data to memory if another
+processor requests it.
+During write-back, a processor may read the data from the bus.
+
+\paragraph{MSI Protocol.} Here, bus write-back (or flush) is {\bf BusWB}.
+Exclusive read on the bus is {\bf BusRdX}.
+
+\begin{center}
+    \begin{tabular}{l|l|l|l}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\ \hline
+      Modified   & PrRd   &        & Modified\\
+      Modified   & PrWr   &        & Modified\\
+      Modified   & BusRd  & BusWB  & Shared\\
+      Modified   & BusRdX & BusWB  & Invalid\\
+      Shared     & PrRd   &        & Shared\\
+      Shared     & BusRd  &        & Shared\\
+      Shared     & BusRdX &        & Invalid\\
+      Shared     & PrWr   & BusRdX & Modified\\
+      Invalid    & PrRd   & BusRd  & Shared\\
+      Invalid    & PrWr   & BusRdX & Modified\\
+    \end{tabular}
+\end{center}
+
+\paragraph{MSI Example.} Using the same example as before:
+
+Initially in main memory: {\tt x = 7}.
 
   \begin{enumerate}
-    \item Interprocess communication (IPC) is more complicated and slower than interthread
-          communication; must use operating system utilities (pipes, semaphores, shared
-              memory, etc) instead of thread library (or just memory reads and writes).
-    \item Processes have much higher startup, shutdown, and synchronization costs than threads.
-    \item Pthreads fix the issues of {\tt clone} and provide a
-          uniform interface for most systems. (You'll work with them in Assignment 1.)
+    \item {\tt CPU1} reads x from memory. {(BusRd, shared)}
+    \item {\tt CPU3} reads x from memory. {(BusRd, shared)}
+    \item {\tt CPU3} modifies {\tt x = 42}:
+      \begin{itemize}
+        \item {Generates a BusRdX.}
+        \item {{\tt CPU1} snoops and invalidates x.}
+      \end{itemize}
+    \item {\tt CPU1} reads x:
+      \begin{itemize}
+        \item {Generates a BusRd.}
+        \item {{\tt CPU3} writes back the data and sets x to shared.}
+        \item {{\tt CPU1} reads the new value from the bus as shared.}
+      \end{itemize}
+    \item {\tt CPU2} reads x from memory. {(BusRd, shared)}
   \end{enumerate}
 
-\paragraph{How to choose?}
-  If your application is like this:
-  \begin{itemize}
-    \item mostly independent tasks, with little or no communication;
-    \item task startup and shutdown costs are negligible compared to overall runtime; and
-    \item want to be safer against bugs and security holes,
-  \end{itemize}
-then processes are the way to go. If it's the opposite of this, then use threads.
+\subsection*{An Extension to MSI: MESI}
+    The most common protocol for cache coherence is MESI.
+    This protocol adds yet another state:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; 
+ main memory is {\bf out-of-date}.
+        \item {\bf Exclusive}---only this cache has a valid copy; 
+ main memory is {\bf up-to-date}.
+        \item {\bf Shared}---same as before.
+        \item {\bf Invalid}---same as before.
+      \end{itemize}
 
-For performance reasons, along with ease and consistency across systems, we'll use threads. We will describe both Pthreads and C++ 11 threads, in particular.
+    MESI allows a processor to modify data exclusive to it, without
+    having to communicate with the bus.  MESI is safe. The key is that
+    if memory is in the E state, no other processor has the data.
 
-\paragraph{Overhead of Processes vs Threads.} The common wisdom is that processes are
-expensive, threads are cheap. Let's verify this with a benchmark on a
-laptop (included in the live-coding directory on GitHub) which creates and destroys 50,000 threads:
-  \begin{lstlisting}[basicstyle=\scriptsize]
-jon@riker examples master % time ./create_fork 
-0.18s user 4.14s system 34% cpu 12.484 total
-jon@riker examples master % time ./create_pthread 
-0.73s user 1.29s system 107% cpu 1.887 total
-  \end{lstlisting}
+\subsection*{MSEIF: Even More States!}
 
-Clearly Pthreads incur much lower overhead than {\tt fork}. Pthreads
-offer a speedup of 6.5 over processes in terms of startup and teardown costs.
+    MESIF (used in latest i7 processors):
+      \begin{itemize}
+        \item {\bf Forward}---basically a shared state; but, current
+          cache is the only one that will respond to a request to
+          transfer the data.
+      \end{itemize}
 
-%\paragraph{Live Coding Example.} We can write a program to determine
-%whether we are in a user-level threading model vs. the other two models.
-%Just start a child thread and make both threads compute. If CPU utilization
-%exceeds 100\%, we are not user-level threading. The example I saw in class
-%computes $2^{28}$ random numbers to spin the CPU.
+    Hence: a processor requesting data that is already shared or exclusive will
+      only get one response transferring the data. This permits more efficient usage of the bus.
 
-%(Is it possible to differentiate hybrid and kernel threading by writing a
-%simple program?)
+\subsection*{Cache coherence vs flush}
 
+\begin{quote}
+Cache coherency seems to make sure my data is consistent. Why do I have
+to have something like flush or fence?
+\end{quote}
 
+Sadly, no. Cache coherence isn't enough. Writes may be to registers rather than
+memory, and those won't be coherent. Use fences or flushes.
+
+\begin{quote}
+Well, I read that {\tt volatile} variables aren't stored in registers,
+    so then am I okay?
+\end{quote}
+
+Again, sadly, no. Recall that {\tt volatile} in C was only designed to~\cite{pr:volatile}:
+      \begin{itemize}
+        \item Allow access to memory mapped devices.
+        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
+        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
+      \end{itemize}
+
+All of these things apply to single-threaded situations or cases where the compiler has re-ordered some steps. Remember, things can also be reordered by the compiler, and {\tt
+  volatile} doesn't prevent reordering. Also, it's likely your
+variables could be in registers the majority of the time, except in
+critical areas. All that volatile does is tell the compiler that an access of that variable should go to memory, not a register.
+
+\paragraph{Coherence summary.}
+We saw four cache coherence protocols, from MSI through MESIF. There
+are many other protocols for cache coherence, each with their own
+trade-offs.
+
+Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
+      compiler and hardware don't reorder reads and writes. Neither cache coherence nor {\tt volatile} will save you. Barriers/fences/flushes might be expensive in terms of ``wasting time,'' but correctness is important.
 
 \input{bibliography.tex}
 

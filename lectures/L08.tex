@@ -2,214 +2,538 @@
 
 \begin{document}
 
-\lecture{8 (v3) --- Lock Convoys, Atomics, Lock-Freedom}{\term}{Patrick Lam and Jeff Zarnett}
+\lecture{8 --- Asynchronous I/O, epoll, select}{\term}{Patrick Lam}
 
-\section*{Lock Convoys}
+\section*{Asynchronous/non-blocking I/O}
 
-We'd like to avoid, if at all possible, a situation called a \textit{lock convoy}. This happens when we have at least two threads that are contending for a lock of some sort. And it's sort of like a lock traffic jam. A more full and complex description from~\cite{lockconvoys}:
-
-\begin{quote}
-A lock convoy is a situation which occurs when two or more threads at the same priority frequently (several times per quantum) acquire a synchronization object, even if they only hold that object for a very short amount of time.  It happens most often with critical sections, but can occur with mutexes, etc as well.  For a while the threads may go along happily without contending over the object.  But eventually some thread's quantum will expire while it holds the object, and then the problem begins.  The expired thread (let's call it Thread A) stops running, and the next thread at that priority level begins.  Soon that thread (let's call it Thread B) gets to a point where it needs to acquire the object.  It blocks on the object.  The kernel chooses the next thread in the priority-queue.  If there are more threads at that priority which end up trying to acquire the object, they block on the object too.  This continues until the kernel returns to Thread A which owns the object.  That thread begins running again, and soon releases the object.  Here are the two important points.  First, once Thread A releases the object, the kernel chooses a thread that's blocked waiting for the object (probably Thread B), makes that thread the next owner of the object, and marks it as ``runnable.''  Second, Thread A hasn't expired its quantum yet, so it continues running rather than switching to Thread B.  Since the threads in this scenario acquire the synchronization object frequently, Thread A soon comes back to a point where it needs to acquire the object again.  This time, however, Thread B owns it.  So Thread A blocks on the object, and the kernel again chooses the next thread in the priority-queue to run.  It eventually gets to Thread B, who does its work while owning the object, then releases the object.  The next thread blocked on the object receives ownership, and this cycle continues endlessly until eventually the threads stop acquiring so often.
-\end{quote}
-
-Why is it called a convoy? A convoy is when a grouping of vehicles, usually trucks or ships, travels all closely together. A freighter convoy, for example, might carry freight from one sea port to another. In this case, it means that the threads are all moving in a tight group. This is also sometimes called the ``boxcar'' problem: imagine that you have a train that is moving a bunch of boxcars along some railroad tracks. When the engine starts to pull, it moves the first car forward a tiny bit before it stops suddenly because of the car behind. Then the second car moves a bit, removing the slack between it and the next car. And so on and so on. The problem resembles this motion because each thread takes a small step forward before it stops and some other car then gets a turn during which it also moves forward a tiny bit before stopping. The same thing is happening to the threads and we spend all the CPU time on context switches rather than executing the actual code~\cite{boxcar}.
-
-This has a couple of side effects. Threads acquire the lock frequently and they are running for very short periods of time before blocking. But more than that, other, unrelated threads of the same priority get to run for an unusually large percentage of the (wall-clock) time. This can lead you to thinking that some other process is the real offender, taking up a large percentage of the CPU time. In reality, though, that's not the culprit. So it would not solve the problem if you terminate (or rewrite) what looks like offending process. 
-
-\paragraph{Unfair Locks.} With that in mind, in Windows Vista and later versions, the problem is solved because locks are unfair. Unfair sounds bad but it is actually better to be unfair. Why? The Windows XP and earlier implementation of locks, which is fair, is a good explanation of why can go wrong. In XP, if $A$ unlocks a lock $\ell$, and there is a thread $B$ waiting, then $B$ gets the lock, it is no longer blocked, and when it wakes up, $B$ already owns the lock. This is fair in the sense that there was no period during which the lock was available; therefore it could not be ``stolen'' by some other thread that happened to come along at the right (or perhaps wrong) time~\cite{anticonvoy}. (Specifically, if the OS chooses who gets the lock among all the waiting threads randomly, then that's fair.)
-
-Fairness is good, right? But this means there is a period of time where the lock is held by $B$, but $B$ is not running. In the best-case scenario, after $A$ releases the lock, then there is a thread switch (the scheduler runs) and the context switch time is (in Windows, anyway, according to~\cite{anticonvoy}) on the order of 4~000-10~000 cycles. That is a fairly long time but probably somewhat unavoidable. If, however, the system is busy and $B$ has to go to the back of the line it means that it might be a long time before $B$ gets to run. That whole time, it is holding onto the lock. No one else can acquire $\ell$. Worse yet, a thread $C$ might start processing, request $\ell$, and then we have to context switch again. That is a lock convoy.
-
-Unfair locks help with lock convoys by not giving the lock to $B$ when $A$ releases the lock. Instead, the lock is simply unowned. The scheduler chooses another thread to switch to after $A$. If it's $B$, then it gets the lock and continues. If it's instead some thread $C$ which didn't want the lock initially, then $C$ gets to run. If it doesn't request $\ell$, then it just computes as normal. If $C$ does request $\ell$, it gets it. Maybe it'll release it before $B$ gets its turn, thus enabling more throughput than the fair lock.
-
-One of the ways in which one can then diagnose a lock convoy is to see a lock that has some nonzero number of waiting threads but nobody appears to own it. It just so happens that we're in the middle of a handover; some thread has signalled but the other thread has not yet woken up to run yet.
-
-Changing the locks to be unfair does risk starvation, although one can imagine that it is fairly unlikely given that a particular thread would have to be very low priority and very unlucky. Windows does give a thread priority boost, temporarily, after it gets unblocked, to see to it that the unblocked thread does actually get a chance to run.
-
-\paragraph{Mitigating Lock Convoys Ourselves.} Although it can be nice to be able to give away such a problem to the OS developers and say ``please solve this, thanks'', that might not be realistic and we might have to find a way to work around it. We'll consider four solutions from~\cite{lockconvoys}:
-
-\begin{itemize}
-	\item Sleep
-	\item Share
-	\item Cache
-	\item Trylock
-\end{itemize}
-
-We could make the threads that are NOT in the lock convoy call a sleep() system call fairly regularly to give other threads a chance to run. This solution is lame, though, because we're changing the threads that are not the offenders and it just band-aids the situation so the convoy does not totally trash performance. Still, we are doing a lot of thread switches, which themselves are expensive as outlined above.
-
-The next idea is sharing: can we use a reader-writer lock to allow much more concurrency than we would get if everything used exclusive locking? If there will be a lot of writes then there's limited benefit to this speedup, but if reads are the majority of operations then it is worth doing. We can also try to find a way to break a critical section into two or more smaller ones, if that can be done without any undesirable side effects or race conditions.
-
-The next idea has to do with changing when (and how) you need the data. If you shrink the critical section to just pull a copy of the shared data and operate on the shared data, then it reduces the amount of time that the lock is held and therefore speeds up operations. But you saw the earlier discussion about critical section sizes, right? So you did that already...?
-
-The last solution suggested is to use try-lock primitives: try to acquire the lock, and if you fail, yield the CPU to some other thread and try again. See the code below:
-
-\begin{lstlisting}[language=C]
-int retries = 0;
-while(pthread_mutex_trylock( &lock ) != 0 ) { /* 0 indicates lock acquired */
-  if ( retries < SPIN_LIMIT ) {
-    retries++;
-    sleep(0);
-    continue;
-  }
-  pthread_mutex_lock( &lock );
-  break;
-}
-\end{lstlisting}
-
-In short, we try to lock the mutex some number of times (up to a maximum of \texttt{SPIN\_LIMIT}), releasing the CPU each time if we don't get it, and if we do get it then we can continue. If we reach the limit then we just give up and enter the queue (regular lock statement) so we will wait at that point. You can perhaps think of this as being like waiting for the coffee machine at the office in the early morning. If you go to the coffee machine and find there is a line, you will maybe decide to do something else, and try again in a couple minutes. If you've already tried the come-back-later approach and there is still a line for the coffee machine you might as well get in line.
-
-Why does this work? It looks like polling for the critical section. The limit on the number of tries helps in case the critical section belongs to a low priority thread and we need the current thread to be blocked so the low priority thread can run. Under this scheme, if $A$ is going to release the critical section, $B$ does not immediately become the owner and $A$ may keep running and $A$ might even get the critical section again before $B$ tries again to acquire the lock (and may succeed). Even if the spin limit is as low as 2, this means two threads can recover from contention without creating a convoy~\cite{lockconvoys}. 
-
-\paragraph{The Thundering Herd Problem.} The lock convoy has some similarities with a different problem called the \textit{thundering herd problem}. In the thundering herd problem, some condition is fulfilled (e.g., broadcast on a condition variable) and it triggers a large number of threads to wake up and try to take some action. It is likely they can't all proceed, so some will get blocked and then awoken again all at once in the future. In this case it would be better to wake up one thread at a time instead of all of them.
-
-\paragraph{The Lost Wakeup Problem.} However! Waking up only one thread at a time has its own problems~\footnote{\url{https://stackoverflow.com/questions/37026/java-notify-vs-notifyall-all-over-again}}. For instance, in the Java context, you can choose to wake up one waiting thread with either \texttt{notify()} or all waiting threads with \texttt{notifyAll()}. If you use \texttt{notify()}, then you can encounter the \texttt{lost wakeup} problem.
-
-If all of your threads are identical, then you can use \texttt{notify()}. Otherwise, use \texttt{notifyAll()}, and brave the thundering herds. Or, in Java, use a \texttt{java.util.concurrent.locks.Condition}.
-
-\section*{Atomics}
-What if we could find a way to get rid of locks and waiting altogether? That would avoid the lock convoy problem as well as any potential for deadlock, starvation, et cetera. In previous courses, you have learned about test-and-set operations and possibly compare-and-swap and those are atomic operations supported through hardware. They are uninterruptible and therefore will either completely succeed or not run at all. Is there a way that we could use those sorts of indivisible operations? Yes!
-
-Atomics are a lower-overhead alternative to
-locks as long as you're doing suitable operations. Remember that what we wanted sometimes with locks and mutexes and all that is that operations are indivisible: an update to a variable doesn't get interfered with by another update. Remember the key idea is: an \textit{atomic operation} is indivisible. Other threads see state before or after the operation; nothing in between.
-
-
-We are only going to talk about atomics with sequential consistency. If you use the default {\tt std::memory\_order}, that's what you get. What do I mean by that? Well, in the header file \texttt{atomic} (C++11 here) there is an enumeration of memory orders and I am suggesting that using the default is pretty nice, compared to the alternative which may or may not be a Lovecraftian Horror to understand (or prove correctness). If you'd like to know about all the options, take a look at~\cite{cppatomics}, but here's a quick summary from~\cite{bmref1} (which is much more concise than the C++ Atomics listing):
+Let's start with some juicy quotes.
 
 \begin{center}
-	\begin{tabular}{l|p{12cm}}
-	\textbf{Value} & \textbf{Explanation} \\ \hline
-		\texttt{memory\_order\_acquire} &  Subsequent loads are not moved before the current load or any preceding loads.\\ \hline
-		\texttt{memory\_order\_release} &  Preceding stores are not moved past the current store or any subsequent stores. \\ \hline
-		\texttt{memory\_order\_acq\_rel} & Combine the acquire and release guarantees\\ \hline
-		\texttt{memory\_order\_consume} & A potentially weaker form of memory\_order\_acquire that enforces ordering of the current load before other operations that are data-dependent on it (for instance, when a load of a pointer is marked memory\_order\_consume, subsequent operations that dereference this pointer won't be moved before it (yes, even that is not guaranteed on all platforms!).\\ \hline
-	
-	\texttt{memory\_order\_relaxed} & All reordering are okay; only atomicity is required of this operation. \\ \hline
-\texttt{memory\_order\_seq\_cst} & Same as \texttt{memory\_order\_acq\_rel}, plus a single total order exists in which all threads observe all modifications in the same order.\\ 
-	\end{tabular}
+  \fbox{\includegraphics[width=.7\textwidth]{images/aio-linux.png}}\\
+{\scriptsize (mirrored at \url{compgeom.com/~piyush/teach/4531_06/project/hell.html})}
+   \\[2em]
+
+   ``Asynchronous I/O, for example, is often infuriating.''\\
+\hfill --- Robert Love. {\em Linux System Programming, 2nd ed, } page 215.
 
 \end{center}
 
+To motivate the need for non-blocking I/O, consider some standard I/O code:
+
+\begin{lstlisting}[language=C]
+    fd = open(...);
+    read(...);
+    close(fd);
+\end{lstlisting}
+
+This isn't very performant. The problem is that the {\tt read} call will
+{\em block}. So, your program doesn't get to use the zillions of CPU cycles that
+are happening while the I/O operation is occurring.
+
+\paragraph{As seen previously: threads.} That can be fine if
+you have some other code running to do work---for instance, other threads
+do a good job mitigating the I/O latency, perhaps doing I/O themselves.
+But maybe you would rather not use threads. Why not?
+
+\begin{itemize}
+\item potential race conditions;
+\item overhead due to per-thread stacks; or
+\item limitations due to maximum numbers of threads.
+\end{itemize}
+
+\paragraph{Live coding example.} To illustrate the max-threads
+issue, let's write {\tt threadbomb.c}, to explore how many simultaneous threads
+one could start on my computer.
+
+\paragraph{Non-blocking I/O.} The main point of this lecture, though,
+is non-blocking/asynchronous I/O. The simplest example:
+
+\begin{lstlisting}[language=C]
+    fd = open(..., O_NONBLOCK);
+    read(...); // returns instantly!
+    close(fd);
+\end{lstlisting}
+
+In principle, the {\tt read} call is supposed to return instantly,
+whether or not results are ready. That was easy!
+
+Well, not so much. The {\tt O\_NONBLOCK} flag actually only has the
+desired behaviour on sockets. The semantics of {\tt O\_NONBLOCK} is
+for I/O calls to not block, in the sense that they should never wait
+for data while there is no data available.
+
+Unfortunately, files always have data available. Under Linux, you'd have
+to use {\tt aio} calls to be able to send requests to the I/O subsystem
+asynchronously and not, for instance, wait for the disk to spin up.
+We won't talk about them, but they operate along the same lines as what
+we will see. They just have a different API.
+
+\paragraph{Conceptual view: non-blocking I/O.} Fundamentally,
+there are two ways to find out whether I/O is ready to be queried:
+polling (under UNIX, implemented via {\tt select}, {\tt poll},
+and {\tt epoll}) and interrupts (under UNIX, signals).
 
 
-The C++11 standard includes both strong and weak atomics. The weak ones are the ones where you get to specify the the memory ordering of load and store operating in a way that is not sequentially consistent. But we care about the standard, sequentially consistent kind of operation. \textit{Don't} use relaxed atomics unless you're an expert! Basically, a value that is seen from a memory load may come from the past or from the future (it's all relative, of course). If you want to dig into the details about an example, I recommend~\cite{bmref2}, which goes into the details of just how difficult it is to prove correctness. If that doesn't talk you out of it, I'm not sure what will.
+We will describe {\tt epoll}. It is the most modern and
+flexible interface. Unfortunately, I didn't realize that the obvious
+{\tt curl} interface does not work with {\tt epoll} but instead with
+{\tt select}.  There is different syntax but the ideas are the same.
 
+The key idea is to give {\tt epoll} a bunch of file descriptors and
+wait for events to happen. In particular:
+     \begin{itemize}
+       \item create an epoll instance ({\tt epoll\_create1});
+       \item populate it with file descriptors ({\tt epoll\_ctl}); and
+       \item wait for events ({\tt epoll\_wait}).
+     \end{itemize}
+Let's run through these steps in order.
 
-\paragraph{Atomic Flags.} The simplest form of C++11 atomic is the {\tt atomic\_flag}.
-Not surprisingly, this represents a boolean flag. You can clear the flag and test-and-set it.
+\paragraph{Creating an {\tt epoll} instance.} Just use the API:
+    \begin{lstlisting}[language=C]
+   int epfd = epoll_create1(0);
+    \end{lstlisting}
 
+The return value {\tt epfd} is typed like a UNIX file
+descriptor---{\tt int}---but doesn't represent any files; instead, use
+it as an identifier, to talk to {\tt epoll}.
 
-\begin{lstlisting}[language=C++]
-#include <atomic>
+The parameter ``{\tt 0}'' represents the flags, but the only available flag
+is {\tt EPOLL\_CLOEXEC}. Not interesting to you.
 
-atomic_flag f = ATOMIC_FLAG_INIT;
-int foo() {
-  f.clear();
-  if (f.test_and_set()) {
-    // was true
+\paragraph{Populating the {\tt epoll} instance.} Next, you'll want
+{\tt epfd} to do something. The obvious thing is to add some {\tt fd}
+to the set of descriptors watched by {\tt epfd}:
+    \begin{lstlisting}[language=C]
+   struct epoll_event event;
+   int ret;
+   event.data.fd = fd;
+   event.events = EPOLLIN | EPOLLOUT;
+   ret = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &event);
+    \end{lstlisting}
+
+You can also use {\tt epoll\_ctl} to modify and delete descriptors from {\tt epfd}; read the manpage to find out how.
+
+\paragraph{Waiting on an {\tt epoll} instance.} Having completed
+the setup, we're ready to wait for events on any file descriptor in {\tt epfd}.
+    \begin{lstlisting}[language=C]
+  #define MAX_EVENTS 64
+
+  struct epoll_event events[MAX_EVENTS];
+  int nr_events;
+
+  nr_events = epoll_wait(epfd, events, MAX_EVENTS, -1);
+    \end{lstlisting}
+
+The given {\tt -1} parameter means to wait potentially forever;
+otherwise, the parameter indicates the number of milliseconds to wait.
+(It is therefore ``easy'' to sleep for some number of milliseconds by
+starting an {\tt epfd} and using {\tt epoll\_wait}; takes two function
+calls instead of one, but allows sub-second latency.)
+
+Upon return from {\tt epoll\_wait}, we know that we have {\tt
+  nr\_events} events ready.
+
+\subsection*{Level-Triggered and Edge-Triggered Events}
+One relevant concept for these polling APIs is the concept of
+\emph{level-triggered} versus \emph{edge-triggered}.  The default {\tt
+  epoll} behaviour is level-triggered: it returns whenever data is
+ready. One can also specify (via {\tt epoll\_ctl}) edge-triggered
+behaviour: return whenever there is a change in readiness.
+
+%\paragraph{Another Live Demo.} Now let's run some code (socket.c) that creates a
+%server and reads from it, in either level-triggered mode or edge-triggered mode.
+
+One would think that level-triggered mode would return from {\tt read}
+whenever data was available, while edge-triggered mode would return
+from {\tt read} whenever new data came in. Level-triggered does behave
+as one would guess: if there is data available, {\tt read()} returns
+the data. However, edge-triggered mode returns whenever the
+state-of-readiness of the socket changes (from no-data-available to
+data-available). Play with it and get a sense for how it works.
+
+Good question to think about: when is it appropriate to choose one or the other?
+
+\subsection*{Asynchronous I/O}
+As mentioned above, the POSIX standard defines {\tt aio} calls.
+Unlike just giving the {\tt O\_NONBLOCK} flag, using {\tt aio} works
+for disk as well as sockets.
+
+\paragraph{Key idea.} You specify the action to occur when I/O is ready:
+    \begin{itemize}
+      \item nothing;
+      \item start a new thread; or
+      \item raise a signal.
+    \end{itemize}
+
+Your code submits the requests using e.g. {\tt aio\_read} and {\tt aio\_write}.
+If needed, wait for I/O to happen using {\tt aio\_suspend}.
+
+\section*{curl\_multi}
+\section*{Using cURL Asynchronously}
+We've already seen that network communication is a great example of a way that you could use asynchronous  I/O. You can start a network request and move on to creating more without waiting for the results of the first one. For requests to different recipients, it certainly makes sense to do this.
+
+The cURL multi interface has a lot of similarities with the regular cURL interface. It's been a little while since we went over it, so let's recap what we did before. Remember from earlier the example we did that was modified from \url{https://curl.haxx.se/libcurl/c/https.html} (i.e., the official docs):
+
+\begin{lstlisting}[language=C]
+#include <stdio.h>
+#include <curl/curl.h>
+ 
+int main( int argc, char** argv ) {
+  CURL *curl;
+  CURLcode res;
+ 
+  curl_global_init(CURL_GLOBAL_DEFAULT);
+ 
+  curl = curl_easy_init();
+  if( curl ) {
+    curl_easy_setopt(curl, CURLOPT_URL, "https://example.com/" );
+    res = curl_easy_perform( curl );
+    
+  if( res != CURLE_OK ) {
+      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+    }
+    curl_easy_cleanup(curl);
   }
+ 
+  curl_global_cleanup();
+  return 0;
 }
 \end{lstlisting}
 
-This returns the previous value. There is no assignment (=) operator for {\tt atomic\_flag}s. Although I guess in C++ you could define one if you wanted. This is kind of a dangerous thing about C++. If in C you see a line of code like \texttt{z = x + y;} you can have a pretty good idea about what it does and you can infer that there's some sort of natural meaning to the + operator there, like addition or concatenation. In C++, however, this same line of code tells you nothing, unless you know (1) the type of \texttt{x}, (2) the type of \texttt{y}, and (3) how the \texttt{+} operator is defined on those two operands \textit{in that order}. But I'm digressing.
+In the previous example, the call to \texttt{curl\_easy\_perform()} is blocking and we wait for the curl execution to take place. We want to change that! The tool for this is the ``multi handle'' - this is a structure that lets us have more than one curl easy handle. And rather than waiting, we can start them and then check on their progress. 
 
-\paragraph{More general C++ atomics.} Boolean flags are nice, but we want more.
-C++11 supports arbitrary types as atomic. Here'a an example declaration:
+There are still the global initialization and cleanup functions. The structure for the new multi-handle type is \texttt{CURLM} (instead of \texttt{CURL}) and it is initialized with the \texttt{curl\_multi\_init()} function. 
 
-\begin{lstlisting}[language=C++]
-#include <atomic>
-atomic<int> x;
+Once we have a multi handle, we can add easy handles -- however many we need -- to the multi handle. Creation of the easy handle is the same as it is when being used alone - use \texttt{curl\_easy\_init()} to create it and then we can set however many options on this we need. Then, we add the easy handle to the multi handle with \texttt{curl\_multi\_add\_handle( CURLM* cm, CURL* eh )}.
+
+Once we have finished putting all the easy handles into the multi handle, we can dispatch them all at once with \texttt{curl\_multi\_perform( CURLM* cm, int* still\_running )}. The second parameter is a pointer to an integer that is updated with the number of the easy handles in that multi handle that are still running. If it's down to 0, then we know that they are all done. If it's nonzero it means that some of them are still in progress.
+
+This does mean that we're going to call\texttt{curl\_multi\_perform()} more than once. Doing so doesn't restart or interfere with anything that was already in progress -- it just gives us an update on the status of what's going on. We can check as often as we'd like, but the intention is of course to do something useful while the asynchronous I/O request(s) are going on. Otherwise, why not make it synchronous?
+
+Suppose we've run out of things to do though. What then? Well, we can wait, if we want, using \texttt{curl\_multi\_wait( CURLM *multi\_handle, struct curl\_waitfd extra\_fds[], unsigned int extra\_nfds, int timeout\_ms, int *numfds )} . This function will block the current thread until something happens (some event occurs).
+
+The first parameter is the multi handle, which makes sense. The second parameter is a structure of extra file descriptors you can wait on (but we will always want this to be NULL in this course) and the third parameter is the count (the size of the provided array) which would also be zero here. Then the second-last parameter is a maximum time to wait. The last parameter is a pointer that will be updated with the actual number of ``interesting'' events that occurred (interesting is the word used in the specifications, and what it means is mysterious). For a simple use case you can ignore most of the parameters and just wait for something to happen and go from there.
+
+In the meantime though, the perform operations are happening, and so are whatever callbacks we have set up (if any). And as the I/O operation moves through its life cycle, the state of the easy handle is updated appropriately. Each easy handle has an associated status message as well as a return code.
+
+Why both? Well - one is about what the status of the request is. The message could be, for example ``done'', but does that mean finished with success or finished with an error? For the second one tells us about that. We can ask about the status of the request using \texttt{curl\_multi\_info\_read( CURLM* cm, int* msgs\_left )}. This returns a pointer to information ``next'' easy handle, if there is one. The return value is a pointer to a struct of type \texttt{CURLMsg}. Along side this, the parameter \texttt{msgs\_left} is updated to say how many messages remain (so you don't have to remember or know in advance, really). 
+
+We will therefore check the \texttt{CURLMsg} message to see what happened and make sure all is well. If our message that we got back with the info read is called \texttt{m}, What we are looking for is that the \texttt{m->msg} is equal to \texttt{CURLMSG\_DONE} -- request completed. If not, this request is still in progress and we aren't ready to evaluate whether it was successful or not. If there are more handles to look at, we should go on to the next. If it is done, we should look at the return code in and the result, in \texttt{m->data.result}. If it is \texttt{CURLE\_OK} then everything succeeded. If it's anything else, it indicates an error.
+
+When a handle has finished, you need to remove it from the multi handle. A pointer to it is inside the \texttt{CURLMsg} under \texttt{m->easy\_handle}. It is removed with \texttt{curl\_multi\_remove\_handle( CURLM* cm, CURL eh )}. Once removed, it should be cleaned up like normal with \texttt{curl\_easy\_cleanup( CURL* eh )}.
+
+There is of course the corresponding cleanup function \texttt{curl\_multi\_cleanup( CURLM * cm ) } for the multi handle when we are done with all the easy handles inside. The last step, as before, is to use the global cleanup function. After that we are done. 
+
+Let's consider the following code example by Clemens Gruber~\cite{curlmulti}, with slight modifications for compactness, formatting, and to remember the cleanup. This example puts together all the things we talked about in one compact code segment. Here, the callback does nothing, but that's okay -- it's just to show what you could do with it.
+
+\begin{lstlisting}[language=C]
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <curl/multi.h>
+
+#define MAX_WAIT_MSECS 30*1000 /* Wait max. 30 seconds */
+
+const char *urls[] = {
+  "http://www.microsoft.com",
+  "http://www.yahoo.com",
+  "http://www.wikipedia.org",
+  "http://slashdot.org"
+};
+#define CNT 4
+
+size_t cb(char *d, size_t n, size_t l, void *p) {
+  /* take care of the data here, ignored in this example */
+  return n*l;
+}
+
+void init( CURLM *cm, int i ) {
+  CURL *eh = curl_easy_init();
+  curl_easy_setopt( eh, CURLOPT_WRITEFUNCTION, cb );
+  curl_easy_setopt( eh, CURLOPT_HEADER, 0L );
+  curl_easy_setopt( eh, CURLOPT_URL, urls[i] );
+  curl_easy_setopt( eh, CURLOPT_PRIVATE, urls[i]) ;
+  curl_easy_setopt( eh, CURLOPT_VERBOSE, 0L );
+  curl_multi_add_handle( cm, eh );
+}
+
+int main( int argc, char** argv ) {
+    CURLM *cm = NULL;
+    CURL *eh = NULL;
+    CURLMsg *msg = NULL;
+    CURLcode return_code = 0;
+    int still_running = 0; 
+    int msgs_left = 0;
+    int http_status_code;
+    const char *szUrl;
+
+    curl_global_init( CURL_GLOBAL_ALL );
+    cm = curl_multi_init( );
+
+    for ( int i = 0; i < CNT; ++i ) {
+        init( cm, i );
+    }
+
+    curl_multi_perform( cm, &still_running );
+
+    do {
+        int numfds = 0;
+        int res = curl_multi_wait( cm, NULL, 0, MAX_WAIT_MSECS, &numfds );
+        if( res != CURLM_OK ) {
+            fprintf( stderr, "error: curl_multi_wait() returned %d\n", res );
+            return EXIT_FAILURE;
+        }
+        curl_multi_perform( cm, &still_running );
+
+    } while( still_running );
+
+    while ( ( msg = curl_multi_info_read( cm, &msgs_left ) ) ) {
+        if ( msg->msg == CURLMSG_DONE ) {
+            eh = msg->easy_handle;
+
+            return_code = msg->data.result;
+            if ( return_code != CURLE_OK ) {
+                fprintf( stderr, "CURL error code: %d\n", msg->data.result );
+                continue;
+            }
+
+            // Get HTTP status code
+            http_status_code = 0;
+            szUrl = NULL;
+
+            curl_easy_getinfo( eh, CURLINFO_RESPONSE_CODE, &http_status_code );
+            curl_easy_getinfo( eh, CURLINFO_PRIVATE, &szUrl );
+
+            if( http_status_code == 200 ) {
+                printf( "200 OK for %s\n", szUrl ) ;
+            } else {
+                fprintf( stderr, "GET of %s returned http status code %d\n", szUrl, http_status_code );
+            }
+
+            curl_multi_remove_handle( cm, eh );
+            curl_easy_cleanup( eh );
+        } else {
+            fprintf( stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg );
+        }
+    }
+    curl_multi_cleanup( cm );
+    curl_global_cleanup();
+    return 0;
+}
 \end{lstlisting}
 
-The C++11 library implements atomics using lock-free operations for small types
-and using mutexes for large types. The general types of operations that you can do with atomics are three: reads, writes, and RMW (read-modify-write) operations. C++ has syntax to make these all transparent.
+You may wonder about re-using an easy handle rather than removing and destroying it and making a new one. The official docs say that you can re-use one, but you have to remove it from the multi handle and then re-add it, presumably after having changed anything that you want to change about that handle. 
 
-\begin{lstlisting}[language=C++]
-// atomic reads and writes
-#include <atomic>
-#include <iostream>
+In this example all requests had the same (useless) callback, but of course you could have different callbacks for different easy handles if you wanted them to do different things. 
 
-std::atomic<int> ai;
-int i;
+
+\section*{Building Servers: Concurrent Socket I/O}
+Switching gears, we'll talk about building software that handles tons of connections. Let's go back to that initial question:
+
+    \begin{quote}
+      What is the ideal design for server process in Linux that handles concurrent socket I/O?
+    \end{quote}
+
+    So far in this class, we've seen:
+    \begin{itemize}
+    \item processes;
+    \item threads; 
+    \item thread pools; and
+    \item non-blocking/async I/O.
+    \end{itemize}
+
+We'll analyze the answer by Robert Love, Linux kernel
+hacker~\cite{gplus:concurrent}:
+
+\paragraph{The Real Question.}
+
+    \begin{quote}
+      How do you want to do I/O?
+    \end{quote}
+
+The question is not really ``how many threads should I use?''.
+
+\paragraph{Your Choices.} The first two both use blocking I/O, while the second two use
+non-blocking I/O.
+    \begin{itemize}
+      \item Blocking I/O; 1 process per request.
+      \item Blocking I/O; 1 thread per request.
+      \item Asynchronous I/O, pool of threads, callbacks, each thread handles multiple connections.
+      \item Nonblocking I/O, pool of threads, multiplexed with select/poll,
+        event-driven, each thread handles multiple connections.
+    \end{itemize}
+
+\paragraph{Blocking I/O; 1 process per request.}
+This is the old Apache model.
+  \begin{itemize}
+    \item The main thread waits for connections.
+    \item Upon connect, the main thread forks off a new process, which completely
+      handles the connection.
+    \item Each I/O request is blocking, e.g., reads wait until more data arrives.
+  \end{itemize}
+
+Advantage: 
+  \begin{itemize}
+    \item ``Simple to undertand and easy to program.''
+  \end{itemize}
+
+Disadvantage:
+  \begin{itemize}
+    \item High overhead from starting 1000s of processes.
+      (We can somewhat mitigate this using process pools).
+  \end{itemize}
+This method can handle $\sim$10 000 processes, but doesn't generally scale beyond that, and
+uses many more resources than the alternatives.
+
+\paragraph{Blocking I/O; 1 thread per request.}
+    We know that threads are more lightweight than processes. So let's use threads instead
+of processes. Otherwise, this is the same as 1 process per request, but with less overhead.
+I/O is the same---it is still blocking.
+
+    Advantage:
+    \begin{itemize}
+      \item Still simple to understand and easy to program.
+    \end{itemize}
+
+    Disadvantages:
+    \begin{itemize}
+      \item Overhead still piles up, although less than processes.
+      \item New complication: race conditions on shared data.
+    \end{itemize}
+
+\paragraph{Asynchronous I/O.} The other two choices don't assign one thread or process per connection,
+but instead multiplex the threads to connections. We'll first talk
+about using asynchronous I/O with select or poll.  
+
+Here are (from 2006) some performance benefits of using asynchronous
+I/O on lighttpd~\cite{lttpd}.
+
+    \begin{tabular}{llrrr}
+    version & & fetches/sec & bytes/sec & CPU idle \\
+    1.4.13 & sendfile & 36.45 & 3.73e+06 & 16.43\% \\
+    1.5.0 & sendfile & 40.51 & 4.14e+06 & 12.77\% \\
+    1.5.0 & linux-aio-sendfile & 72.70 & 7.44e+06 & 46.11\% \\
+    \end{tabular}
+
+(Workload: $2\times 7200$ RPM in RAID1, 1GB RAM, transferring 10GBytes on a 100MBit network).
+
+The basic workflow is as follows: 
+   \begin{enumerate}
+     \item enqueue a request;
+     \item \ldots ~do something else;
+     \item (if needed) periodically check whether request is done; and
+     \item read the return value.
+   \end{enumerate}
+
+Some code which uses the Linux asynchronous I/O model is:
+\begin{lstlisting}[language=C]
+#include <aio.h>
 
 int main() {
-    ai = 4;
-    i = ai;
-    ai = i;
-    std::cout << i;
-}
+    // so far, just like normal
+    int file = open("blah.txt", O_RDONLY, 0);
+
+    // create buffer and control block
+    char* buffer = new char[SIZE_TO_READ];
+    aiocb cb;
+    
+    memset(&cb, 0, sizeof(aiocb));
+    cb.aio_nbytes = SIZE_TO_READ;
+    cb.aio_fildes = file;
+    cb.aio_offset = 0;
+    cb.aio_buf = buffer;
+
+    // enqueue the read
+    if (aio_read(&cb) == -1) { /* error handling */ }
+
+    do {
+      // ... do something else ...
+    while (aio_error(&cb) == EINPROGRESS); // poll
+
+    // inspect the return value
+    int numBytes = aio_return(&cb);
+    if (numBytes == -1) { /* error handling */ }
+
+    // clean up
+    delete[] buffer;
+    close(file);
 \end{lstlisting}
-If you want, you can also use {\tt i = ai.load()} and {\tt ai.store(i)}.
 
-As for RMW operations, consider {\tt ai++}. This is equivalent to (but faster than):
+\paragraph{Using Select/Poll.} The idea is to improve performance
+by letting each thread handle multiple connections.
+When a thread is ready, it uses select/poll to find work:
+    \begin{itemize}
+      \item perhaps it needs to read from disk into a mmap'd tempfile;
+      \item perhaps it needs to copy the tempfile to the network.
+    \end{itemize}
 
-\begin{lstlisting}[language=C++]
-ai.lock();
-tmp = ai.read(); 
-tmp++; 
-ai.write(tmp);
-ai.unlock();
-\end{lstlisting}
-But, hardware can do that atomically. It can also do other RMWs: {\tt +-, \&=, etc, compare-and-swap}.
+In either case, the thread does work and updates the request state.
 
-More info on C++11 atomics:\\
-\url{http://preshing.com/20130618/atomic-vs-non-atomic-operations/}
-
-We talked about C++11 atomics. Is there a pthread equivalent? Nope, not really.
-
-OS X has atomics via OS calls: \\
-\url{https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/Multithreading/ThreadSafety/ThreadSafety.html}
-
-The Linux kernel provides a number of atomic operations (but that doesn't really make them portable). Reference:
-\url{http://stackoverflow.com/questions/1130018/unix-portable-atomic-operations}
-
-\section*{Lock-Freedom}
-
-Let's suppose that we want to take this sort of thing up a level: we'd like to operate in a world in which there are no locks. Research has gone into the idea of lock-free data structures. If you have a map, like a HashMap, and it will be shared between threads, the normal thing would be to protect access to the map with a mutex (lock). But what if the data structure was written in such a way that we didn't have to do that? That would be a lock-free data structure.
-
-It's unlikely that you want to use these sorts of things everywhere in your program. For a great many situations, the normal locking and unlocking behaviour is sufficient, provided one avoids the possibility of deadlock by, for example, enforcing lock ordering. We likely want to use it when we need to guarantee that progress is made, or when we really can't use locks (e.g., signal handler), or where a thread dying while holding a lock results in the whole system hanging.
-
-Before we get too much farther though we should take a moment to review some definitions. I assume you know what blocking functions are (locking a mutex is one) and that you also have a pretty good idea by now of what is not (spinlock or trylock behaviour). 
-
-The definition of a non-blocking data structure is one where none of the operations can result in being blocked. In a language like Java there might be some concurrency-controlled data structures in which locking and unlocking is handled for you, but those can still be blocking. Lock-free data structures are always inherently non-blocking, but that does not go the other way: a spin lock or busy-waiting approach is not lock free, because if the thread holding the lock is suspended then everyone else is stuck~\cite{nblfwf}.
-
-A lock-free data structure doesn't use any locks (duh) but there's also some implication that this is also thread-safe; concurrent access must still result in the correct behaviour, so you can't make all your data structures lock-free ones by just deleting all the mutex code. Lock free also doesn't mean it's a free-for-all; there can be restrictions, like, for example, a queue that allows one thread to append to the end while another removes from the front, although two removals at the same time might cause a problem~\cite{nblfwf}.
-
-The actual definition of lock-free is that if any thread performing an operation gets suspended during the operation, then other threads accessing the data structure are still able to complete their tasks~\cite{nblfwf}. This is distinct from the idea of waiting, though; an operation might still have to wait its turn or might get restarted if it was suspended and when it resumes things have somehow changed. If you learned about compare-and-swap then you might have some idea about this already: you try to do the compare-and-swap operation and if you find that someone changed it out from under you, you have to go back and try again. Unfortunately, going back to try again might mean that threads are frequently interrupting each other...
-
-For this you might need wait-free data structures. This does not mean that nothing ever has to wait, but it does mean that each thread trying to perform some operation will complete it within a bounded number of steps regardless of what any other threads do~\cite{nblfwf}. This means that a compare-and-swap routine as above with infinite retries is not wait free, because a very unlucky thread could potentially take infinite tries before it completes its operations. The wait free data structures tend to be very complicated...
-
-Let's consider some examples from~\cite{1024cores}. First, a lock-free algorithm:
+\subsection*{Callback-Based Asynchronous I/O Model}
+Finally, we'll talk about a not-very-popular programming model for
+non-blocking I/O (at least for C programs; it's the only game in town
+for JavaScript and a contender for Go).  Instead of select/poll, you
+pass a callback to the I/O routine, which is to be executed upon
+success or failure.
 
 \begin{lstlisting}[language=C]
-void stack_push(stack* s, node* n) {
-    node* head;
-    do
-    {
-        head = s->head;
-        n->next = head;
+void new_connection_cb (int cfd)
+{
+  if (cfd < 0) {
+    fprintf (stderr, "error in accepting connection!\n");
+    exit (1);
+  }
+
+  ref<connection_state> c = 
+    new refcounted<connection_state>(cfd);
+
+  // what to do in case of failure: clean up.
+  c->killing_task = delaycb(10, 0, wrap(&clean_up, c));
+
+  // link to the next task: got the input from the connection
+  fdcb (cfd, selread, wrap (&read_http_cb, cfd, c, true,
+                 wrap(&read_req_complete_cb)));
+}
+\end{lstlisting}
+
+
+\paragraph{{\tt node.js}: A Superficial View.} We'll wrap up today 
+by talking about the callback-based {\tt node.js} model.
+{\tt node.js} is another event-based nonblocking I/O model.
+Given that JavaScript doesn't have threads, the only way to write servers
+is using non-blocking I/O.
+
+The canonical example from the {\tt node.js} homepage:
+\begin{lstlisting}[language=C]
+var http = require('http');
+http.createServer(function (req, res) {
+  res.writeHead(200, {'Content-Type': 'text/plain'});
+  res.end('Hello World\n');
+}).listen(1337, '127.0.0.1');
+console.log('Server running at http://127.0.0.1:1337/');
+\end{lstlisting}
+
+Note the use of the callback---it's called upon each connection.
+
+However, usually we don't want to handle the fields in the request manually.
+We'd prefer a higher-level view. One option is expressjs\footnote{\url{http://expressjs.com}},
+and here's an an example from the Internet~\cite{nod.js}:
+\begin{lstlisting}[language=C]
+app.post('/nod', function(req, res) {
+  loadAccount(req,function(account) {
+    if(account && account.username) {
+      var n = new Nod();
+      n.username = account.username;
+      n.text = req.body.nod;
+      n.date = new Date();
+      n.save(function(err){
+        res.redirect('/');
+      });
     }
-    while ( !atomic_compare_exchange(s->head, head, n) );
-} 
+  });
+});
 \end{lstlisting}
 
-A particularly unlucky thread might spend literally forever spinning around the do-while loop as above, but that's okay because that thread's bad luck is someone else's good luck. At least some thread, somewhere, has succeeded in pushing to the stack, so the system is making progress (stuff is happening). 
-
-And here is a small wait-free algorithm:
-
-\begin{lstlisting}[language=C]
-void increment_reference_counter(rc_base* obj) {
-    atomic_increment(obj->rc);
-}
-
-void decrement_reference_counter(rc_base* obj) {
-    if (0 == atomic_decrement(obj->rc))
-        delete obj;
-} 
-\end{lstlisting}
-
-Both operations will complete in a bounded number of steps and therefore there is no possibility that anything gets stuck or is forced to repeat itself forever. 
-
-The big question is: are lock-free programming techniques somehow better for performance? Well, they can be but they might not be either. Lock free algorithms are about ensuring there is forward progress in the system and not really specifically about speed. A particular algorithm implementation might be faster under lock-free algorithms. For example, if the compare and swap operation to replace a list head is faster than the mutex lock and unlock, you prefer the lock free algorithm. But often they are not. In fact, the lock free algorithms could be slower, in which case you use them because you must, not because it is particularly speedy.
 
 \input{bibliography.tex}
 

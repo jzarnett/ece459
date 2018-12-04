@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 4 --- Concurrency and Parallelism }
+\title{Lecture 4 --- Cache Coherency }
 
-\author{Jeff Zarnett \& Patrick Lam \\ \small \texttt{jzarnett@uwaterloo.ca} \texttt{patrick.lam@uwaterloo.ca}}
+\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -15,590 +15,438 @@
 
  \end{frame}
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Parallelism versus Concurrency}
+  \frametitle{Introduction}
 
-  {\bf Parallelism}
+  \begin{center}
+    \includegraphics[scale=0.7]{images/coherency}
 
-  Two or more tasks are \structure{parallel}\\ \hspace*{2em} if they are running at the same time. 
+    Image courtesy of Wikipedia.
+  \end{center}
 
-  Main goal: run tasks as fast as possible. 
-
-  Main concern: \structure{dependencies}.
-  \vfill
-  {\bf Concurrency}
-
-  Two or more tasks are \structure{concurrent}\\ \hspace*{2em} if the ordering of the two tasks is not 
-  predetermined. 
-
-  Main concern: \structure{synchronization}.
-
-\end{frame}
-
-
-
-
-\begin{frame}
-\frametitle{Writing Scalable Code}
-
-Think about the worst case run-time performance of the algorithm. 
-
-An algorithm that's $O(n^{3})$ scales so much worse than one that's $O(n)$... 
-
-Trying to do an insertion sort on a small array is fine (actually... recommended); doing it on a huge array is madness.
-
-Choosing a good algorithm is very important if we want it to scale. 
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Big-O Complexity}
-\begin{center}
-	\includegraphics[width=0.75\textwidth]{images/big-o-complexity}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Lock It Down}
-The more locks and locking we need, the less scalable the code is going to be. 
-
-You may think of the lock as a resource. 
-The more threads or processes that are looking to acquire that lock, the more ``resource contention'' we have.
-
-And thus more waiting and coordination are going to be necessary.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Doing Lines}
-
-Multiprocessor (multicore) processors have some hardware that tries to keep the data consistent between different pipelines and caches.
-
- More processors, more threads means more work is necessary to keep these things in order.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Everybody Into the Pool}
-
-If we have a pool of workers, the application just submits units of work, and then on the other side these units of work are allocated to workers. 
-
-The number of workers will scale based on the available hardware. 
-
-This is neat as a programming practice: as the application developer we don't care quite so much about the underlying hardware. 
-
-Let the operating system decide how many workers there should be, to figure out the optimal way to process the units of work.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{``We have a new enemy...''}
-
-Assuming we're not working with an embedded system where all memory is statically allocated in advance, there will be dynamic memory allocation. 
-
-The memory allocator is often centralized and may support only one thread allocating or deallocating at a time. 
-
-This means it does not necessarily scale very well.
-
-There are some techniques for dynamic memory allocation that allow these things to work in parallel.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Processes and Threads}
-A \alert{process} is an
-instance of a computer program that contains program code and its own
-address space, stack, registers, and resources (file handles, etc).  
-
-A
-\alert{thread} usually belongs to a process. 
-
-The most important point
-is that it shares an address space with its parent process, hence
-variables and code as well as resources.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Threads}
-
-Each thread has its own:
-\begin{enumerate}
-	\item Thread execution state.
-	\item Saved thread context when not running.
-	\item Execution stack.
-	\item Local variables.
-	\item Access to the memory and resources of the process.
-\end{enumerate}
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Threads and Processes}
-
-\begin{center}
-	\includegraphics[width=0.625\textwidth]{images/mthread2.png}
-\end{center}
-
-All the threads of a process share the state and resources of the process. If one thread opens a file, other threads in that process can also access that file.
-
-My usual example: file transfer program...
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Thread Motivation}
-Why threads instead of a new process?
-
-Primary motivation is: performance.
-
-\begin{enumerate}
-	\item Creation: 10$\times$ faster.
-	\item Terminating and cleaning up a thread is faster.
-	\item Switch time: 20\% of process switch time.
-	\item Shared memory space (no need for IPC).
-	\item Lets the UI be responsive.
-\end{enumerate}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Common Usage of Threads}
-
-\begin{enumerate}
-	\item \textbf{Foreground and Background Work}
-	\item \textbf{Asynchronous processing}
-	\item \textbf{Speed of Execution}
-	\item \textbf{Modular Structure}
-\end{enumerate}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Thread Drawbacks}
-
-There is no protection between threads in the same process. 
-
-One thread can easily mess with the memory being used by another. 
-
-This once again brings us to the subject of co-ordination, which will follow the discussion of threads.
-
-Also, if any thread encounters an error, the whole process might be terminated by the operating system.
-
-\end{frame}
-\begin{frame}
-  \frametitle{Software and Hardware Threads}
-
-
-  {\bf Software Thread:}
-
-  What you program with (e.g. with {\tt pthread\_create()} or {\tt std::thread()}). \vfill
-
-  Corresponds to a stream of instructions executed by the processor. \vfill
-
-  On a single-core, single-processor machine, someone has to multiplex the CPU to
-  execute multiple threads concurrently; only one thread runs at a time.
-
-  \vfill
-  {\bf Hardware Thread:}
-
-  Corresponds to virtual (or real) CPUs in a system. Also known as strands. \vfill
-
-  Operating system must multiplex software threads onto hardware threads, but 
-  can execute more than one software thread at once.
-
-
-\end{frame}
-
-\begin{frame}
-  \frametitle{Thread Model---1:1 (Kernel-level Threading)}
-
-
-    Simplest possible threading implementation.
-    \vfill
-    The kernel schedules threads on different processors;
-      \begin{itemize}
-        \item NB: Kernel involvement required to take advantage of a multicore system.
-      \end{itemize}
-    \vfill
-    Context switching involves system call overhead.
-    \vfill
-    Used by Win32, POSIX threads for Windows and Linux.
-    \vfill
-    Allows concurrency and parallelism.
-
-\end{frame}
-
-\begin{frame}
-  \frametitle{Thread Model---N:1 (User-level Threading)}
-
-    All application threads map to a single kernel thread.
-    \vfill
-    Quick context switches, no need for system call.
-    \vfill
-    Cannot use multiple processors, only for concurrency.
-      \begin{itemize}
-        \item Why would you use user threads?
-      \end{itemize}
-    \vfill
-    Used by GNU Portable Threads.
-\end{frame}
-
-\begin{frame}
-  \frametitle{Thread Model---M:N (Hybrid Threading)}
-
-    Map $M$ application threads to $N$ kernel threads.
-    \vfill
-    A compromise between the previous two models.
-    \vfill
-    Allows quick context switches and the use of multiple processors.
-    \vfill
-    Requires increased complexity:
-    \begin{itemize}
-        \item Both library and kernel must schedule.
-        \item Schedulers may not coordinate well together.
-        \item Increases likelihood of priority inversion\\ \hspace*{2em} (recall from Operating Systems).
-      \end{itemize}
-    \vfill
-    Used by Windows 7 threads.
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Example System---Physical View}
   
-  \begin{center}
-  \includegraphics[scale=0.25]{images/computer-parts}
-  \end{center}
-
+  {\bf Coherency:}
   \begin{itemize}
-    \item Only one physical CPU
+    \item Values in all caches are consistent;
+    \item System behaves as if all CPUs are using shared memory.
   \end{itemize}
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\begin{frame}[fragile]
-  \frametitle{Example System---System View}
-
-  \scriptsize
-  \begin{lstlisting}
-jon@ece459-1 ~ % egrep 'processor|model name' /proc/cpuinfo 
-processor : 0
-model name: Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz
-processor : 1
-model name: Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz
-processor : 2
-model name: Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz
-processor : 3
-model name: Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz
-processor : 4
-model name: Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz
-processor : 5
-model name: Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz
-processor : 6
-model name: Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz
-processor : 7
-model name: Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item Many processors
-  \end{itemize}
-\end{frame}
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{SMP (Symmetric Multiprocessing)}
+  \frametitle{Cache Coherence Example}
 
-    Identical processors or cores, which:
-    \begin{itemize}
-    \item are interconnected, usually using buses; and
-    \item share main memory.
-    \end{itemize}
-    ~\\[1em]
-    $\bullet$ SMP is most common type of multiprocessing system.
+  
+  Initially in main memory: {\tt x = 7}.
 
-\end{frame}
-
-\begin{frame}
-  \frametitle{Example of an SMP System}
-\begin{center}
-\begin{tikzpicture}
-\draw (-0.5, -0.5) rectangle ++(0.9, 0.9);
-\draw (-0.05, 0.05) node {\small Core};
-
-\draw (-0.5, -1.5) rectangle ++(0.9, 0.9);
-\draw (-0.05, -1.05) node {\small Core};
-
-\draw (0.5, -1.5) rectangle ++(1.2, 1.9);
-\draw (1.1, -.55) node {\small Cache};
-
-\draw (-0.6, -1.6) rectangle ++(2.45, 2.1);
-
-\draw (2.2, -1.6) rectangle ++(2.7, 2.1);
-\draw (3.6, -0.55) node {\small Rest of system};
-
-\draw[<->] (1.9, -0.55) -- (2.15, -0.55);
-\end{tikzpicture}
-\end{center}
-
-  \begin{itemize}
-    \item Each core can execute a different thread
-    \item Shared memory quickly becomes the bottleneck
-  \end{itemize}
-\end{frame}
-
-\begin{frame}
-  \frametitle{Executing 2 Threads on a Single Core}
-
-  \begin{center}
-\begin{tikzpicture}
-\draw (-1.4, -1.5) rectangle ++(1.7, 1.9);
-\draw (-0.55, 0.05) node {\small Thread 1};
-\draw (-0.55, -1.05) node {\small Thread 2};
-\draw (-0.55, -0.5) node {\small Core};
-
-\draw (0.5, -1.5) rectangle ++(1.05, 1.9);
-\draw (1.05, -.55) node {\small Cache};
-
-\draw (-1.5, -1.6) rectangle ++(3.15, 2.1);
-
-\draw (2.2, -1.6) rectangle ++(2.7, 2.1);
-\draw (3.6, -0.55) node {\small Rest of system};
-
-\draw[<->] (1.7, -0.55) -- (2.15, -0.55);
-\end{tikzpicture}
-  \end{center}
-
-
-    On a single core, must context switch between threads:
-      \begin{itemize}
-        \item every $N$ cycles; or
-        \item wait until cache miss, or another long event
-      \end{itemize}
-    Resources may be unused during execution. \vfill
-
-    Why not take advantage of this?
-
-\end{frame}
-
-\begin{frame}
-  \frametitle{Executing M Threads on a N Cores}
-\begin{center}
-\begin{tikzpicture}
-
- \draw (-1.4, -1.5) rectangle +(1.7, 1.9);
- \draw (-1.4, -3.5) rectangle +(1.7, 1.9);
-
-\foreach \y in {-2, 0}
-{
- \draw (-0.55, 0.05) + (0, \y) node {\small Thread 1};
- \draw (-0.55, -1.05) + (0, \y) node {\small Thread 2};
- \draw (-0.55, -0.5) + (0, \y) node {\small Core};
-}
-
-\draw (0.5, -3.5) rectangle ++(1.05, 3.9);
-\draw (1.05, -1.55) node {\small Cache};
-
-\draw (-1.5, -3.6) rectangle ++(3.15, 4.1);
-
-\draw (2.2, -3.6) rectangle ++(2.7, 4.1);
-\draw (3.6, -1.55) node {\small Rest of system};
-
-\draw[<->] (1.7, -1.55) -- (2.15, -1.55);
-\end{tikzpicture}
-\end{center}
-
-\begin{changemargin}{2.5cm}
-Here's a Chip Multithreading example. \vfill
-
-UltraSPARC T2 has 8 cores, each of which supports 8 
-threads. All of the cores share a common level 2 cache.
-\end{changemargin}
-
-\end{frame}
-
-\begin{frame}
-  \frametitle{SMT (Simultaneous Multithreading)}
-
-
-    Use idle CPU resources (may be calculating or waiting
-          for memory) to execute another task.
-    \vfill
-    Cannot improve performance if shared resources are the bottleneck.
-    \vfill
-    Issue instructions for each thread per cycle.
-    \vfill
-    To the OS, it looks a lot like SMP, but gives only up to 30\% performance improvement.
-    \vfill
-Intel implementation: Hyper-Threading.
-
-\end{frame}
-
-\begin{frame}
-  \frametitle{Example: Non-SMP system}
-
-\begin{center}
-  \includegraphics[height=.5\textheight]{images/ps3-small}
-\end{center}
-
-  PlayStation 3 contains a Cell processor:
-  \begin{itemize}
-    \item PowerPC main core (Power Processing Element, or ``PPE'')
-    \item 7 Synergistic Processing Elements (``SPE''s): small vector computers.
-  \end{itemize}
-\end{frame}
-
-\begin{frame}
-  \frametitle{NUMA (Non-Uniform Memory Access)}
-
-
-    In SMP, all CPUs have uniform (the same) access time for resources.
-    \vfill
-    For NUMA, CPUs can access different resources faster (resources: not just
-          memory).
-    \vfill
-    Schedule tasks on CPUs which access resources faster.
-    \vfill
-    Since memory is commonly the bottleneck, each CPU has its own memory
-          bank.
-
-\end{frame}
-
-\begin{frame}
-  \frametitle{Processor Affinity}
-
-
-    Each task (process/thread) can be associated with a set of processors.
-    \vfill
-    Useful to take advantage of existing caches (either from the last time
-          the task ran or task uses the same data).
-    \vfill
-    Hyper-Threading is an example of complete affinity for both threads on
-          the same core.
-    \vfill
-    Often better to use a different processor if current set busy.
-
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Background}
-
-
-  Recall the difference between \structure{processes} and 
-          \structure{threads}:
-  \begin{itemize}
-    \item Threads are basically light-weight processes which piggy-back on
-          processes' address space.
-  \end{itemize} ~\\
-  Traditionally (pre-Linux 2.6) you had to use {\tt fork}~(for~processes) and {\tt clone} (for threads).
-
-
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{History}
-
-
-    {\tt clone} is not POSIX compliant.
-    ~\\
-    Developers mostly used {\tt fork} in the past, which creates a new process.
-      \begin{itemize}
-        \item Drawbacks?
-        \item Benefits?
-      \end{itemize}
-
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Benefit: {\tt fork} is Safer and More Secure Than Threads}
-
-  \begin{changemargin}{1cm}
   \begin{enumerate}
-    \item Each process has its own virtual address space:
-      \begin{itemize}
-        \item Memory pages are not copied, they are copy-on-write---
-        \item Therefore, uses less memory than you would expect.
-      \end{itemize}
-    \item Buffer overruns or other security holes do not expose other~processes.
-    \item If a process crashes, the others can continue.
-  \end{enumerate}~\\[1em]
-  {\bf Example:} In the Chrome browser, each tab is a separate process.
-  \end{changemargin}
+    \item {\tt CPU1} reads x, puts the value in its cache.
+    \item {\tt CPU3} reads x, puts the value in its cache.
+    \item {\tt CPU3} modifies {\tt x := 42}
+    \item {\tt CPU1} reads x \ldots ~from its cache?
+    \item {\tt CPU2} reads x. Which value does it get?
+  \end{enumerate}
+  ~\\
+
+  Unless we do something, {\tt CPU1} is going to read invalid data.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Snoopy Caches}
+
+The simplest way to ``do something''
+is to use Snoopy caches. 
+
+No, not this kind of Snoopy (sadly):
+
+\begin{center}
+	\includegraphics[width=0.25\textwidth]{images/peanuts-snoopy1.jpg}
+\end{center}
+
+
+
 \end{frame}
 
-\begin{frame}[fragile]
-  \frametitle{Drawback of Processes: Threads are Easier and Faster}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{High-Level Explanation of Snoopy Caches}
 
-  \begin{changemargin}{1cm}
+  
   \begin{itemize}
-    \item Interprocess communication (IPC) is more complicated and slower than interthread
-          communication.
-      \begin{itemize}
-        \item Need to use operating system utilities (pipes, semaphores, shared
-              memory, etc) instead of thread library (or just memory reads and writes).
-      \end{itemize}
-    \item Processes have much higher startup, shutdown and synchronization cost.
-    \item And, \structure{Pthreads}/\structure{C++11 threads} fix issues\\ with {\tt clone} and provide a
-          uniform interface for most systems {\bf (Assignment 1)}.
+    \item Each CPU is connected to a simple bus.
+    \item Each CPU ``snoops'' to observe if a memory location is read or written
+      by another CPU.
+    \item We need a cache controller for every CPU.
   \end{itemize}
-  \end{changemargin}
+  ~\\
+  {\bf What happens?}
 
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Appropriate Time to Use Processes}
-
-  \begin{changemargin}{1cm}
-  If your application is like this:
   \begin{itemize}
-    \item Mostly independent tasks, with little or no communication.
-    \item Task startup and shutdown costs are negligible compared to overall runtime.
-    \item Want to be safer against bugs and security holes.
+    \item Each CPU reads the bus to see if any memory operation is relevant. If
+      it is, the controller takes appropriate action.
   \end{itemize}
-  Then processes are the way to go. \\[1em]
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-  For performance reasons, along with ease and consistency, we'll use
-  \structure{Pthreads}.
-  \end{changemargin}
+
+
+\begin{frame}
+\frametitle{A Distributed Approach}
+
+
+This is a distributed approach; no centralized state is maintained. 
+
+Each cache with a copy of data from a block of physical memory knows whether it is shared or not. 
+
+Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. 
+
+If it is, then the CPU will need to take action.
 
 \end{frame}
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Write-Through Cache}
+
+  
+Simplest type of cache coherence:
+  \begin{itemize}
+    \item All cache writes are done to main memory.
+    \item All cache writes also appear on the bus.
+    \item If another CPU snoops and sees it has the same location in
+      its cache, it will either {\it invalidate} or {\it update} the
+      data.\\ \qquad (We'll be looking at invalidating.)
+  \end{itemize}
+~\\
+
+    For write-through caches: normally, when you write to an invalidated
+    location, you bypass the cache and go directly to memory (aka {\bf
+      write no-allocate}).
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{In-val-i-daaaaaate!}
+
+Invalidation is the most common protocol. 
+
+It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  
+
+Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). 
+
+If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. 
+
+This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. 
+
+Regardless, the most recent value appears in memory, always.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Let's Yell}
+
+There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. 
+
+But it uses lots of bandwidth and is not necessarily a good idea. 
+
+It does, however prevent the costly cache miss that follows an invalidate. 
+
+Sadly, as we are mere users and not hardware architects, we don't get to decide; we just have to live with whichever one is on the hardware we get. Bummer.
+
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Write-Through Protocol}
+
+  
+  \begin{itemize}
+    \item Two states, {\bf valid} and {\bf invalid}, for each memory location.
+    \item Events are either from a processor ({\bf Pr}) or the {\bf Bus}.
+  \end{itemize}
+  \vfill
+  \begin{center}
+    \begin{tabular}{llll}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
+      Valid   & PrRd  &       & Valid\\
+      Valid   & PrWr  & BusWr & Valid\\
+      Valid   & BusWr &       & Invalid\\
+      Invalid & PrWr  & BusWr & Valid\\
+      Invalid & PrRd  & BusRd & Valid\\
+    \end{tabular}
+  \end{center}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Write-Through Protocol Example}
+
+  
+
+  \begin{itemize}
+    \item For simplicity (this isn't an architecture course), assume all cache
+      reads/writes are atomic.
+  \end{itemize}
+  \vfill
+  {\bf Using the same example as before:}
+
+  Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x, puts the value in its cache. \structure{(valid)}
+    \item {\tt CPU3} reads x, puts the value in its cache. \structure{(valid)}
+    \item {\tt CPU3} modifies {\tt x := 42}. \structure{(write to memory)}
+      \begin{itemize}
+        \item \structure{{\tt CPU1} snoops and marks data as invalid.}
+      \end{itemize}
+    \item {\tt CPU1} reads x, \structure{from main memory. (valid)}
+    \item {\tt CPU2} reads x, \structure{from main memory. (valid)}
+  \end{enumerate}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Write-Back Cache}
+
+
+  \begin{itemize}
+    \item What if, in our example, {\tt CPU3} writes to {\tt x} 3 times?\\[1em]
+    \item Main goal: delay the write to memory as long as possible.\\[1em]
+    \item At minimum, we have to add a ``dirty'' bit:\\
+     \quad Indicates the our data has not yet been written to memory.
+  \end{itemize}
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Write-Back Implementation}
+
+  
+     The simplest type of write-back protocol (MSI), with 3 states:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; \\
+          \quad main memory is {\bf out-of-date}.
+        \item {\bf Shared}---location is unmodified, \\
+          \quad up-to-date with main
+          memory; \\
+          \quad may be present in other caches (also up-to-date).
+        \item {\bf Invalid}---same as before.
+      \end{itemize}~\\
+      
+     Initial state, upon first read, is ``shared''.\\[1em]
+
+     Implementation will only write the data to memory if another
+        processor requests it.\\[1em]
+
+     During write-back, a processor may read the data from the bus.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{MSI Protocol}
+
+  
+  \begin{itemize}
+    \item Bus write-back (or flush) is {\bf BusWB}.
+    \item Exclusive read on the bus is {\bf BusRdX}.
+  \end{itemize}~\\
+
+  \begin{center}
+    \begin{tabular}{llll}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
+      Modified   & PrRd   &        & Modified\\
+      Modified   & PrWr   &        & Modified\\
+      Modified   & BusRd  & BusWB  & Shared\\
+      Modified   & BusRdX & BusWB  & Invalid\\
+      Shared     & PrRd   &        & Shared\\
+      Shared     & BusRd  &        & Shared\\
+      Shared     & BusRdX &        & Invalid\\
+      Shared     & PrWr   & BusRdX & Modified\\
+      Invalid    & PrRd   & BusRd  & Shared\\
+      Invalid    & PrWr   & BusRdX & Modified\\
+    \end{tabular}
+  \end{center}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{MSI Example}
+
+  
+
+  {\bf Using the same example as before:}
+
+  Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x from memory. \structure{(BusRd, shared)}
+    \item {\tt CPU3} reads x from memory. \structure{(BusRd, shared)}
+    \item {\tt CPU3} modifies {\tt x = 42}:
+      \begin{itemize}
+        \item \structure{Generates a BusRdX.}
+        \item \structure{{\tt CPU1} snoops and invalidates x.}
+        \item \structure{{\tt CPU3} changes {\tt x}'s state to modified.}
+      \end{itemize}
+    \item {\tt CPU1} reads x:
+      \begin{itemize}
+        \item \structure{Generates a BusRd.}
+        \item \structure{{\tt CPU3} writes back the data and sets x to shared.}
+        \item \structure{{\tt CPU1} reads the new value from the bus as shared.}
+      \end{itemize}
+    \item {\tt CPU2} reads x from memory. \structure{(BusRd, shared)}
+  \end{enumerate}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{An Extension to MSI: MESI}
+
+  
+    The most common protocol for cache coherence is MESI.\\[1em]
+    Adds another state:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; \\
+\qquad main memory is {\bf out-of-date}.
+        \item {\bf Exclusive}---only this cache has a valid copy; \\
+\qquad main memory is {\bf up-to-date}.
+        \item {\bf Shared}---same as before.
+        \item {\bf Invalid}---same as before.
+      \end{itemize}
+~\\
+
+    MESI allows a processor to modify data exclusive to it, \\without
+      having to communicate with the bus.\\
+    MESI is \structure{safe}: in E state, no other processor has the
+      data.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Even More States!}
+
+  
+    MESIF (used in latest i7 processors):
+      \begin{itemize}
+        \item {\bf Forward}---basically a shared state; but, current
+          cache is the only one that will respond to a request to
+          transfer the data.
+      \end{itemize}~\\[1em]
+
+    Hence: a processor requesting data that is already shared or exclusive will
+      only get one response transferring the data.\\[1em]
+    Permits more efficient usage of the bus.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Good Questions (1)}
+
+  
+  {\bf Cache coherency seems to make sure my data is consistent. Why do I have
+    to have something like flush or fence?}
+  \begin{itemize}
+    \item You might be ok, if all of the writes on processors are to the
+      cache. But they're not!
+    \item Cache coherency won't update any values modified in registers.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Results: Threads Offer a Speedup of 6.5 over {\tt fork}}
+  \frametitle{Good Questions (2)}
 
-  \begin{changemargin}{1cm}
-  Here's a benchmark between {\tt fork} and Pthreads on a laptop, creating and
-  destroying 50,000 threads:
-  \vfill
-  \begin{lstlisting}[basicstyle=\scriptsize]
-jon@riker examples master % time ./create_fork 
-0.18s user 4.14s system 34% cpu 12.484 total
-jon@riker examples master % time ./create_pthread 
-0.73s user 1.29s system 107% cpu 1.887 total
-  \end{lstlisting}
-  \vfill
-  Clearly Pthreads incur much lower overhead than {\tt fork}.
-  \end{changemargin}
+  
+  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
+    so then am I okay?}
+  \vspace{6.2em}
+  \pause
+
+  \begin{center}
+    \includegraphics[scale=0.3]{images/disapproval}    
+  \end{center}
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Good Questions (2)}
 
+  
+  {\bf Well, I read that {\tt volatile} variables aren't stored in registers,
+    so then am I okay?}\\[1em]
+
+    {\tt volatile} in C was only designed to:
+      \begin{itemize}
+        \item Allow access to memory mapped devices.
+        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
+        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
+      \end{itemize}~\\[1em]
+    Remember, things can also be reordered by the compiler,
+      {\tt volatile} doesn't prevent this.\\[1em]
+    Also, it's likely your variables could be in registers the majority
+      of the time, except in critical areas.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Cache Coherency Summary}
+
+  
+    We saw the basics of cache coherence (good to know, but more of an architecture
+      thing).\\[1em]
+    There are many other protocols for cache coherence, each with their own
+      trade-offs.\\[1em]
+
+     Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
+      compiler and hardware don't reorder reads and writes.\\[1em]
+    \begin{itemize}
+     \item Neither cache coherence nor {\tt volatile} will save you.
+    \end{itemize}
+
+Barriers/fences/flushes might be expensive in terms of ``wasting time'', but correctness is important.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \end{document}
 

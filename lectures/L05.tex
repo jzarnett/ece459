@@ -2,376 +2,386 @@
 
 \begin{document}
 
-\lecture{5 --- Working with Threads }{\term}{Patrick Lam and Jeff Zarnett}
+\lecture{5 --- Concurrency and Parallelism}{\term}{Jeff Zarnett, based on original by Patrick Lam}
 
-\section*{Using Threads to Program for Performance}
-We'll start by seeing how to use threads on ``embarrassingly parallel problems'', which have:
-  \begin{itemize}
-    \item mostly-independent sub-problems (little synchronization); and
-    \item strong locality (little communication).
-  \end{itemize}
+\section*{Concurrency and Parallelism}
+Concurrency and parallelism both give up the
+total ordering between instructions in a sequential program, for
+different purposes.
 
-Later, we'll see:
-  \begin{itemize}
-    \item which problems are amenable to parallelization (\emph{dependencies})
-    \item alternative parallelization patterns\\(right now, just use one thread
-          per sub-problem)
-  \end{itemize}
+\paragraph{Concurrency.} We'll refer to the use of threads for
+structuring programs as concurrency. Here, we're not aiming
+for increased performance. Instead, we're trying to write the program
+in a natural way. Concurrency makes sense as a model for distributed
+systems, or systems where multiple components interact, with no ordering
+between these components, like graphical user interfaces.
 
-\paragraph{About Pthreads.} Pthreads stands for POSIX threads. It's available
-on most systems, including Pthreads Win32 (which I don't recommend).
-Use Linux, and our provided server, for this course. C++ 11 also includes threads
-in its specification.
+\paragraph{Parallelism.} We're studying parallelism in this class, where
+we try to do multiple things at the same time in an attempt to increase
+throughput. Concurrent programs may be easier to parallelize.
+
+\subsection*{Limits to parallelization}
+I mentioned briefly in Lecture 1 that programs often have a sequential
+part and a parallel part. We'll quantify this observation today
+and discuss its consequences.
+
+\paragraph{Scalable Algorithms.} 
+Remember from ECE~250/CS~138 that we often care about the worst case run-time performance of the algorithm. An algorithm that's $O(n^{3})$ scales so much worse than one that's $O(n)$ that it's not even funny. Trying to do an insertion sort on a small array is fine (actually... recommended); doing it on a huge array is madness. Choosing a good algorithm is very important if we want it to scale. 
+
+\begin{center}
+	\includegraphics[width=0.75\textwidth]{images/big-o-complexity}\\
+	Big-O Complexity comparison from ~\cite{bigocheatsheet}
+\end{center}
 
 
-Here's a quick {\tt pthreads} refresher~\cite{mos}:
+\paragraph{Amdahl's Law.} One classic model of parallel execution
+is Amdahl's Law. In 1967, Gene Amdahl argued that improvements in
+processor design for single processors would be more effective than
+designing multi-processor systems. Here's the argument. Let's say that
+you are trying to run a task which has a serial part, taking fraction 
+$S$, and a parallelizable part, taking fraction $P = 1-S$. Define $T_s$
+to be the total 
+amount of time needed on a single-processor system.
+Now, moving to a parallel system with $N$ processors, the parallel
+time $T_p$ is instead:
+\[ T_p = T_s \cdot (S + \frac{P}{N}). \]
+{\bf As $N$ increases, $T_p$ is dominated by $S$, limiting potential
+speedup.}
 
-\begin{itemize}
-	\item \texttt{pthread\_create} -- Create a new thread. 
-	\item \texttt{pthread\_exit} -- Terminate the calling thread. It ends execution and returns a value.
-	\item \texttt{pthread\_join} -- Wait for a specific thread to exit. The caller cannot proceed until the thread it is waiting for calls \texttt{pthread\_exit}. Note that it is an error to join a thread that has already been joined.
-	\item \texttt{pthread\_yield} -- Release the CPU and let another thread run. We expect that threads want to co-operate rather then compete for CPU time and threads can make decisions about when it would be ideal to let some other thread run instead.
-	\item \texttt{pthread\_attr\_init} -- Create and initialize a thread's attributes. The attributes contain things like the priority of the thread.
-	\item \texttt{pthread\_attr\_destroy} -- Clean up a thread's attributes. Free up the memory holding the thread's attributes. This does not terminate the threads.
-	\item \texttt{pthread\_cancel} -- Signal cancellation to a thread; this can be asynchronous or deferred, depending on the thread's attributes.
+We can restate this law in terms of speedup, which is the 
+original time $T_s$ divided by the sped-up time $T_p$:
+\[ \mbox{speedup} = \frac{T_s}{T_p} = \frac{1}{S+P/N}. \]
+Replacing $S$ with $(1-P)$, we get:
+\[ \mbox{speedup} = \frac{1}{(1-P)+P/N}, \]
+and
+\[ \mbox{max speedup} = \frac{1}{(1-P)}, \]
+since $\frac{P}{N} \rightarrow 0$.
+
+\paragraph{Plugging in numbers.} If $P = 1$, then we can indeed get good
+scaling; running on an $N$-processor machine will give you a speedup
+of $N$. Unfortunately, usually $P < 1$.  Let's see what happens.
+
+\begin{center}
+\begin{tabular}{r|r}
+$P$ & speedup ($N=18$) \\ \hline
+1 & 18 \\
+0.99 & $\sim$ 15 \\
+0.95 & $\sim$ 10 \\
+0.5 & $\sim$ 2
+\end{tabular}
+\end{center}
+Graphically, we have something like this:
+\begin{center}
+  \includegraphics[width=0.5\textwidth]{images/parallel-scaling}
+\end{center}
+
+
+Amdahl's Law tells you how many cores you can hope to leverage in an
+execution given a fixed problem size, if you can estimate $P$.
+
+Let us consider an example from~\cite{mte241}: Suppose we have a task that can be executed in 5~s and this task contains a loop that can be parallelized. Let us also say initialization and recombination code in this routine requires 400~ms. So with one processor executing, it would take about 4.6~s to execute the loop. If we split it up and execute on two processors it will take about 2.3~s to execute the loop. Add to that the setup and cleanup time of 0.4~s and we get a total time of 2.7~s. Completing the task in 2.7~s rather than 5~s represents a speedup of about~46\%. Applying the formula, we get the following run times:
+
+\begin{center}
+	\begin{tabular}{l|l}
+	\textbf{Processors} & \textbf{Run Time (s)} \\ \hline
+	1 & 5\\
+	2 & 2.7\\
+	4 & 1.55\\
+	8 & 0.975\\
+	16 & 0.6875 \\
+	32 & 0.54375 \\
+	64 & 0.471875 \\
+	128 & 0.4359375\\
+	\end{tabular}
+\end{center}
+
+   \paragraph{Empirically estimating parallel speedup $P$.}
+Assuming that you know things that are actually really hard to know, here's a formula for estimating speedup. You don't have to commit it to memory:
+  \[P_{\mbox{\scriptsize estimated}} = \frac{\frac{1}{\mbox{\em speedup}}-1}{\frac{1}{N}-1}.\]
+
+It's just an estimation, but you can use it to guess the fraction of parallel code, given $N$ and the speedup. You can then use $P_{\mbox{\scriptsize estimated}}$ to predict speedup for a different number of processors.
+
+\paragraph{Consequences of Amdahl's Law.}
+For over 30 years, most performance gains did indeed come from
+increasing single-processor performance. The main reason that we're
+here today is that, as we saw last time,
+single-processor performance gains have hit the wall.
+
+By the way, note that we didn't talk about the cost of synchronization
+between threads here. That can drag the performance down even more.
+
+\paragraph{Amdahl's Assumptions.}
+Despite Amdahl's pessimism, we still all have multicore computers today.
+Why is that? Amdahl's Law assumes that:
+\begin{itemize}[noitemsep]
+    \item problem size is fixed (read on);
+    \item the program, or the underlying implementation, behaves the same on 1 processor as on $N$ processors; and
+    \item that we can accurately measure runtimes---i.e. that overheads don't matter.
 \end{itemize}
 
+% replace Amdahl's law with how branch predictors work
+%% \paragraph{Generalizing Amdahl's Law.} We made a simplification,
+%% which was that programs only have one parallel part and one serial part.
+%% Of course, this is not true. The program may have many parts,
+%% each of which we can tune to a different degree.
 
-To compile a C or C++ program
-with pthreads, add the {\tt -pthread} parameter to the compiler
-commandline. If you want C99 for C, add \texttt{-std=c99}. To ensure C++11 support in GCC, use \verb!-std=c++11!.
-
-\paragraph{Starting a new thread.} You can start a thread with
-\verb+pthread_create()+ or by creating a \verb+std::thread+:
-
-{\small
-  \begin{minipage}{.55\textwidth}
-\begin{lstlisting}[language=C]
-#include <pthread.h>
-#include <stdio.h>
-
-void* run(void*) {
-  printf("In run\n");
-}
-
-int main() {
-  pthread_t thread;
-  pthread_create(&thread, NULL, run, NULL);
-  printf("In main\n");
-}
-\end{lstlisting}
-  \end{minipage} 
-  \begin{minipage}{.4\textwidth}
-\begin{lstlisting}[language=C]
-#include <thread>
-#include <iostream>
-
-void run() {
-  std::cout << "In run\n";
-}
-
-int main() {
-  std::thread t1(run);
-  std::cout << "In main\n";
-  t1.join(); // see below
-}
-\end{lstlisting}
-  \end{minipage}
-}
-
-From the man page, here's how you use \verb+pthread_create+:
-\begin{lstlisting}[language=C]
-int pthread_create(pthread_t* thread, 
-                   const pthread_attr_t* attr,
-                   void* (*start_routine)(void*),
-                   void* arg);
-\end{lstlisting}
-
-\begin{itemize}
-\item  {\bf thread}: creates a handle to a thread at pointer location
-
-\item  {\bf attr}: thread attributes (NULL for defaults, more details later)
-
-\item  {\bf start\_routine}: function to start execution
-
-\item   {\bf arg}: value to pass to start\_routine
-\end{itemize}
-
-This function returns 0 on success and an error number otherwise (in
-which case the contents of *thread are undefined).
-
-\paragraph{Waiting for Threads to Finish.} If you want to join the threads
-of execution, use the {\tt pthread\_join} call. Let's improve our example.
-
-\begin{lstlisting}[language=C]
-#include <pthread.h>
-#include <stdio.h>
-
-void* run(void*) {
-  printf("In run\n");
-}
-
-int main() {
-  pthread_t thread;
-  pthread_create(&thread, NULL, &run, NULL);
-  printf("In main\n");
-  pthread_join(thread, NULL);
-}
-\end{lstlisting}
-
-The main thread now waits for the newly created thread to terminate
-before it terminates. (C++11 requires threads to be either joined or
-detached when they go out of scope; we'll see the meaning of detach below.)
-
-Here's the syntax for {\tt pthread\_join}:
-
-\begin{lstlisting}[language=C]
-int pthread_join(pthread_t thread, void** retval)
-\end{lstlisting}
-~\vspace*{-3em}
-\begin{itemize}
-\item  {\bf thread}: wait for this thread to terminate (thread must be~joinable).
-
-\item  {\bf retval}: stores exit status of thread (set by {\tt pthread\_exit}) to
-                 the location pointed by *retval. If cancelled, returns
-                 {\tt PTHREAD\_CANCELED}. {\tt NULL} is ignored.
-\end{itemize}
-
-This function returns 0 on success, error number otherwise.
-
- {\bf Caveat: Only call this one time per thread!} Multiple calls to join on the same thread
-  lead to undefined behaviour.
-
-\paragraph{Inter-thread communication.} Recall that the {\tt pthread\_create} 
-call allows you to pass data to the new thread. Let's see how we might do that\ldots
-
-\begin{lstlisting}[language=C]
-int i;
-for (i = 0; i < 10; ++i) {
-  pthread_create(&thread[i], NULL, run, &i);
-}
-\end{lstlisting}
-
-{\bf Wrong!} This is a \emph{terrible} idea. Why?
-\begin{enumerate}
-    \item The value of {\tt i} will probably change before the thread executes.
-    \item The memory for {\tt i} may be out of scope, and therefore invalid by
-          the time the thread executes.
-\end{enumerate}
-The worst part is that in a simple program where you just write most of the pthread launch logic in main, then \texttt{i} will not go out of scope and it will seem like everything is fine... Instead we need to do this:
-
-\begin{lstlisting}[language=C]
-int i;
-int* arg;
-for (i = 0; i < 10; ++i) {
-  arg = malloc( sizeof( int ) );
-  *arg = i;
-  pthread_create(&thread[i], NULL, run, arg);
-}
-\end{lstlisting}
-
-And then \texttt{arg} needs to be deallocated at some point by the thread.
-
-On the other hand, you can pull off something similar with C++11 threads:
-\begin{lstlisting}[language=C]
-int i;
-for (i = 0; i < 10; ++i) {
-  std::thread t(run, i);
-  t.detach();
-}
-\end{lstlisting}
-This is OK because we pass {\tt i} by value, which doesn't work for Pthreads.
-
-In Pthreads-land, this is marginally acceptable:
-\begin{lstlisting}[language=C]
-int i;
-for (i = 0; i < 10; ++i)
-  pthread_create(&thread[i], NULL, &run, (void*)i);
-
-...
-
-void* run(void* arg) {
-  int id = (int)arg;
-\end{lstlisting}
-It's not ideal, though.
-  \begin{itemize}
-    \item Beware size mismatches between arguments: you have
-      no guarantee that a pointer is the same size as an int, so your data
-      may overflow. (C only guarantees that the difference between two pointers is an int.)
-    \item Sizes of data types change between systems. For maximum
-      portability, just use pointers you got from {\tt malloc}.
-  \end{itemize}
-
-  The idiomatic way of returning data from threads in C++11 appears to be using
-  futures. {\tt std::async} provides support for this:
-\begin{lstlisting}[language=C]
-#include <thread>
-#include <iostream>
-#include <future>
-
-int run() {
-  return 42;
-}
-
-int main() {
-  std::future<int> t1_retval = std::async(std::launch::async, run);
-  std::cout << t1_retval.get();
-}
-\end{lstlisting}
-This launches your thread for you. The {\tt get()} call waits until the answer
-is ready and returns it to you.
-
-\paragraph{More on inter-thread synchronization.} There was a comment on {\tt pthread\_join}
-only working if the target thread was joinable. Joinable threads
-(which is the default on Linux) wait for someone to call {\tt pthread\_join}
-before they release their resources (e.g. thread stacks). On the other
-hand, you can also create \emph{detached} threads, which release
-resources when they terminate, without being joined. We've seen C++11 detached
-threads above.
-
-\begin{lstlisting}[language=C]
-int pthread_detach(pthread_t thread);
-\end{lstlisting}
-~\vspace*{-3em}
-\begin{itemize}
-\item  {\bf thread}: marks the thread as detached
-\end{itemize}
-
-This call returns 0 on success, error number otherwise.
-
-Calling {\tt pthread\_detach} on an already detached thread results in undefined
-behaviour.
-
-\paragraph{Finishing a thread.} A thread finishes when its {\tt start\_routine}
-returns. But it's also possible to explicitly end a thread from within:
-
-\begin{lstlisting}[language=C]
-void pthread_exit(void *retval);
-\end{lstlisting}
-~\vspace*{-3em}
-\begin{itemize}
-\item  {\bf retval}: return value passed to function which called {\tt pthread\_join}
-\end{itemize}
-
-Alternately, returning from the thread's {\tt start\_routine} is equivalent
-to calling {\tt pthread\_exit}, and {\tt start\_routine}'s return value
-is passed back to the {\tt pthread\_join} caller. There is no C++11 equivalent.
-
-\paragraph{Attributes.} Beyond being detached/joinable, threads have additional
-attributes. (Note, also, that even though being joinable rather than
-detached is the default on Linux, it's not necessarily the default everywhere).
-Here's a list.
-  \begin{itemize}
-    \item Detached or joinable state
-    \item Scheduling inheritance
-    \item Scheduling policy
-    \item Scheduling parameters
-    \item Scheduling contention scope
-    \item Stack size
-    \item Stack address
-    \item Stack guard (overflow) size
-  \end{itemize}
-
-Basically, you create and destroy attributes objects with {\tt
-  pthread\_attr\_init} and {\tt pthread\_attr\_destroy}
-respectively. You can pass attributes objects to {\tt
-  pthread\_create}. For instance,
-
-  \begin{lstlisting}[language=C]
-size_t stacksize;
-pthread_attr_t attributes;
-pthread_attr_init(&attributes);
-pthread_attr_getstacksize(&attributes, &stacksize);
-printf("Stack size = %i\n", stacksize);
-pthread_attr_destroy(&attributes);
-  \end{lstlisting}
-
-Running this on a laptop produces:
-
-  \begin{lstlisting}[language=C]
-jon@riker examples master % ./stack_size 
-Stack size = 8388608
-  \end{lstlisting}
-
-Once you have a thread attribute object, you can set the thread state to joinable:
-  \begin{lstlisting}[language=C]
-pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_JOINABLE);
-  \end{lstlisting}
-
-\paragraph{Warning about detached threads.} Consider the following code.
-
-\begin{lstlisting}[language=C]
-#include <pthread.h>
-#include <stdio.h>
-
-void* run(void*) {
-  printf("In run\n");
-}
-
-int main() {
-  pthread_t thread;
-  pthread_create(&thread, NULL, &run, NULL);
-  pthread_detach(thread);
-  printf("In main\n");
-}
-\end{lstlisting}
-
-  When I run it, it just prints ``In main''. Why?
-
-\paragraph{Solution.} Use {\tt pthread\_exit} to quit if you have any detached threads.
-  \begin{lstlisting}[language=C]
-#include <pthread.h>
-#include <stdio.h>
-
-void* run(void*) {
-  printf("In run\n");
-}
-
-int main() {
-  pthread_t thread;
-  pthread_create(&thread, NULL, &run, NULL);
-  pthread_detach(thread);
-  printf("In main\n");
-  pthread_exit(NULL); // This waits for all detached
-                      // threads to terminate
-}
-  \end{lstlisting}
-(There is no C++11 equivalent.)
-
-%% \paragraph{Three useful Pthread calls.} You may find these helpful.
-
-%% \begin{lstlisting}[language=C]
-%% pthread_t pthread_self(void);
-
-%% int pthread_equal(pthread_t t1, pthread_t t2);
-
-%% int pthread_once(pthread_once_t* once_control,
-%%                  void (*init_routine)(void));
-%% pthread_once_t once_control = PTHREAD_ONCE_INIT;
-%% \end{lstlisting}
+%% Let's generalize Amdahl's Law:
 
 %% \begin{itemize}
-%% \item {\tt pthread\_self} returns the handle of the currently running thread.
-%% \item {\tt pthread\_equal} compares 2 threads for equality.
-%% \item {\tt pthread\_once} runs a block of code just once, even across threads, based
-%% on a (presumably-global) control variable. This is useful for initialization code.
+%% \item  $f_1, f_2, \ldots, f_n$: fraction of time in part $n$
+%% \item  $S_{f_1}, S_{f_n}, \ldots, S_{f_n}$: speedup for part $n$
 %% \end{itemize}
 
-\paragraph{Threading Challenges.}
+%% Then,
+%% \[\mbox{\em speedup} = \frac{1}{\frac{f_1}{S_{f_1}} + \frac{f_2}{S_{f_2}} + \ldots +
+%%     \frac{f_n}{S_{f_n}}}.\]
+
+%% \paragraph{Example.} Consider a program with 4 parts in the following scenario:
+
+%% \begin{center}
+%%     \begin{tabular}{r|r|r|r}
+%%     \multicolumn{2}{l}{} & \multicolumn{2}{|c}{Speedup} \\
+%%     Part & Fraction of Runtime & Option 1 & Option 2\\
+%%     \hline
+%%     1 & 0.55 & 1  & 2\\
+%%     2 & 0.25 & 5  & 1\\
+%%     3 & 0.15 & 3  & 1\\
+%%     4 & 0.05  & 10 & 1\\
+%%     \end{tabular}
+%% \end{center}
+
+%%     (Note: these speedups don't have to be speedups from parallelization.)
+    
+%%   We can implement either Option 1 or Option 2. 
+%%   Which option is better?
+
+%%   ``Plug and chug'' the numbers:
+%% \begin{itemize}
+%% \item  {\bf Option 1.}
+
+%%   \[ \mbox{\em speedup} = \frac{1}{0.55 + \frac{0.25}{5} + \frac{0.15}{3} + \frac{0.05}{5}}
+%%     = 1.53  \]
+
+%% \item  {\bf Option 2.}
+
+%%   \[\mbox{\em speedup} = \frac{1}{\frac{0.55}{2} + 0.45} = 1.38 \hspace*{5.5em}\]
+%% \end{itemize}
+
+\subsection*{A more optimistic point of view}
+In 1988, John Gustafson pointed
+out\footnote{\url{http://www.scl.ameslab.gov/Publications/Gus/AmdahlsLaw/Amdahls.html}}
+that Amdahl's Law only applies to fixed-size problems, but that the
+point of computers is to deal with bigger and bigger problems.
+
+In particular, you might vary the input size, or the grid resolution,
+number of timesteps, etc. When running the software, then, you might
+need to hold the running time constant, not the problem size: you're
+willing to wait, say, 10 hours for your task to finish, but not 500
+hours. So you can change the question to: how big a problem can you
+run in 10 hours?
+
+According to Gustafson, scaling up the problem tends to increase the
+amount of work in the parallel part of the code, while leaving the
+serial part alone. As long as the algorithm is linear, it is possible
+to handle linearly larger problems with a linearly larger number of
+processors.
+
+Of course, Gustafson's Law works when there is some ``problem-size''
+knob you can crank up.  As a practical example, observe Google, which
+deals with huge datasets.
+
+
+\section*{Software Design Issues}
+
+
+\paragraph{Locking.}
+Think back to a concurrency course and the discussion of locking. We'll be coming back to this subject before too long. But for now, suffice it to say, that the more locks and locking we need, the less scalable the code is going to be. You may think of the lock as a resource and the more threads or processes that are looking to acquire that lock, the more ``resource contention'' we have, and the more waiting and coordination are going to be necessary.
+
+\paragraph{Memory Allocators.}
+Assuming we're not working with an embedded system where all memory is statically allocated in advance, there will be dynamic memory allocation. The memory allocator is often centralized and may support only one thread allocating or deallocating at a time. This means it does not necessarily scale very well. There are, however, some techniques for dynamic memory allocation that allow these things to work in parallel.
+
+\paragraph{Pools of Worker Threads.}
+We'll talk about threads shortly. At first, one might imagine manually starting the necessary threads. But that's not the only way. We can have a pool of workers. Then the application just submits units of work, and then on the other side these units of work are allocated to workers. The number of workers will scale based on the available hardware. This is neat as a programming practice: as the application developer we don't care quite so much about the underlying hardware. Let the operating system decide how many workers there should be, to figure out the optimal way to process the units of work.
+
+\section*{Processes and Threads} Let's review the
+difference between a process and a thread. A \emph{process} is an
+instance of a computer program that contains program code and its own
+address space, stack, registers, and resources (file handles, etc).  A
+\emph{thread} usually belongs to a process. The most important point
+is that it shares an address space with its parent process, hence
+variables and code as well as resources. Each thread has its own~\cite{osi}:
+\begin{enumerate}
+	\item Thread execution state (like process state: running, ready, blocked...).
+	\item Saved thread context when not running.
+	\item Execution stack.
+	\item Local variables.
+	\item Access to the memory and resources of the process (shared with all threads in that process).
+\end{enumerate}
+
+Or, to represent this visually:
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/mthread2.png}\\
+	A single threaded and a multithreaded process compared side-by-side~\cite{osc}.
+\end{center}
+
+All the threads of a process share the state and resources of the process. If one thread opens a file, other threads in that process can also access that file.
+
+The way programs are written now, there are few, if any, that are not in some way multithreaded. One common way of dividing up the program into threads is to separate the user interface from a time-consuming action.
+
+Consider a file-transfer program. If the user interface and upload method share a thread, once a file upload has started, the user will not be able to use the UI anymore (and Windows will put the dreaded ``(Not Responding)'' at the end of its dialog title), even to click the button that cancels the upload. For some reason, users hate that. 
+
+We have two options for how to alleviate this problem: when an upload is ready to start, we can call \texttt{fork} and create a new process to do the upload, or we can spawn a new thread. In either case, the newly created entity will handle the upload of the file. The UI remains responsive, because the UI thread is not waiting for the upload method to complete.
+
+\subsection*{Motivation for Threads}
+
+Why choose threads rather than creating a new process? The primary, but not sole, motivation is performance:
+\begin{enumerate}
+	\item Creating a new thread is much faster than creating a new process. In fact, thread creation is on the order of ten times faster~\cite{machThreads}.
+	\item Terminating and cleaning up a thread is faster than terminating and cleaning up a process.
+	\item It takes less time to switch between two threads within the same process (because less data needs to be stored/restored). In Solaris, for example, switching between processes is about five times slower than switching between threads~\cite{osc}.
+	\item Because threads share the same memory space, for two threads to communicate, they do not have to use any of the IPC mechanisms; they can just communicate directly.
+	\item As in the file transfer program, use of threads allows the program to be responsive even when a part of the program is blocked.
+\end{enumerate}
+
+This last advantage, background work, is one of four common examples of the uses of threads in a general purpose operating system~\cite{insideOS2}:
+\begin{enumerate}
+	\item \textbf{Foreground and Background Work:} as already examined, the ability to run something in the background to keep the program responsive.
+	\item \textbf{Asynchronous processing}: for example, to protect against power failure or a crash, a word processor may write the document data in main memory to disk periodically. This can be done as a background task so it does not disrupt the user's workflow.
+	\item \textbf{Speed of Execution:} a multithreaded program can get more done in the same amount of time. Just as the OS can run a different program when the executing program gets blocked (say, on a disk read), if one thread is blocked, another thread may execute.
+	\item \textbf{Modular Structure:} a program that does several different things may be given structure through threads.
+\end{enumerate}
+
+There are some drawbacks, however: there is no protection between threads in the same process. So, one thread can easily mess with the memory being used by another thread. This once again brings us to the subject of co-ordination, which will follow the discussion of threads.
+
+Also, if any thread encounters an error (such as a division by zero or Segmentation Fault), the whole process might be terminated by the operating system. If the program has multiple processes for different parts, then the other processes will not be affected. But, if the program has multiple threads and they all share the same process, then any thread encountering an error might bring all of them to a halt. (That's why Google Chrome chose to use separate processes for each tab.)
+
+
+
+You can find another explanation of processes versus threads here:
+\begin{center}
+  \url{https://www.purplealienplanet.com/node/50}
+\end{center}
+
+\paragraph{Threads and CPUs.} In your operating systems class,
+you've seen implementations of threads (``lightweight processes'').
+We'll call these threads \emph{software threads}, and we'll program
+with them throughout the class. Each software thread corresponds to a
+stream of instructions that the processor executes. On a old-school
+single-core, single-processor machine, the operating system
+multiplexes the CPU resources to execute multiple threads
+concurrently; however, only one thread runs at a time on the single
+CPU.
+
+On the other hand, a modern chip contains a number of \emph{hardware
+threads}, which correspond to the virtual CPUs. These are sometimes
+known as \emph{strands}. The operating system still needs to 
+multiplex the software threads onto the hardware threads, but now has
+more than one hardware thread to schedule work onto.
+
+
+
+\paragraph{Implementing (or Simulating) Hardware Threads.} 
+There are a number of ways to implement multiple software threads; for
+instance, the simplest possible implementation, {\bf kernel-level
+threading} (or 1:1 model) dedicates one core to each thread. The kernel schedules threads
+on different processors. (Note that kernel involvement will always be required to
+take advantage of a multicore system). This model is used by Win32, as well as
+POSIX threads for Windows and Linux. The 1:1 model allows concurrency and parallelism.
+
+Alternately, we could make one core execute multiple threads. In the
+{\bf user-level threading}, or N:1, model, the single core would keep
+multiple contexts and could 1) switch every 100 cycles; 2) switch
+every cycle; 3) fetch one instruction from each thread each cycle; or
+4) switch every time the current thread hits a long-latency event
+(cache miss, etc.) This model allows for quick context switches, but
+does not leverage multiple processors. (Why would you use these?) The N:1 model is used by
+GNU Portable Threads.
+
+Finally, it's possible to both use multiple cores and put multiple
+threads onto one core, in a {\bf hybrid threading}, or M:N, model. Here, we map $M$ application threads to $N$ kernel threads. This
+is a compromise between the previous two models, which both allows
+quick context switches and the use of multiple processors. However, it
+requires increased complexity; the library provides scheduling
+services, which may not coordinate well with kernel, and increases
+likelihood of priority inversion (which you've seen in Operating
+Systems).  This method is used by modern Windows threads.
+
+
+\section*{Choose Your Pain}
+The first design decision that you need to solve when parallelizing programs
+is whether you should use threads or processes.
+
   \begin{itemize}
-    \item Be aware of scheduling (you can also set affinity with pthreads on
-      Linux).
-
-    \item Make sure the libraries you use are {\bf thread-safe}:
-      \begin{itemize}
-        \item Means that the library protects its shared data (we'll see how, below).
-      \end{itemize}
-
-    \item glibc reentrant functions are also safe: a program can have
-      more than one thread calling these functions concurrently. For
-      example, use {\tt rand\_r}, not {\tt
-        rand}.
+    \item Threads are basically light-weight processes which piggy-back on
+          processes' address space.
   \end{itemize}
+
+Traditionally (pre-Linux 2.6) you had to use {\tt
+  fork}~(for~processes) and {\tt clone} (for threads). But {\tt clone}
+is not POSIX compliant, and its man page says that it's
+Linux-specific---FreeBSD uses {\tt rfork()}. (POSIX is the standard
+for Unix-like operating systems).
+
+\paragraph{When processes are better.} {\tt fork} is safer and more secure than threads.
+
+  \begin{enumerate}
+    \item Each process has its own virtual address space:
+      \begin{itemize}
+        \item Memory pages are not copied, they are copy-on-write. Therefore, processes use less memory than you would expect.
+      \end{itemize}
+    \item Buffer overruns or other security holes do not expose other~processes.
+    \item If a process crashes, the others can continue.
+  \end{enumerate}
+
+{\bf Example:} In the Chrome browser, each tab is a separate
+process. Scott McCloud explained this:
+\url{http://www.scottmccloud.com/googlechrome/}.
+
+\paragraph{When threads are better.} Threads are easier and faster.
+
+  \begin{enumerate}
+    \item Interprocess communication (IPC) is more complicated and slower than interthread
+          communication; must use operating system utilities (pipes, semaphores, shared
+              memory, etc) instead of thread library (or just memory reads and writes).
+    \item Processes have much higher startup, shutdown, and synchronization costs than threads.
+    \item pthreads fix the issues of {\tt clone} and provide a
+          uniform interface for most systems. (You'll work with them in Assignment 1.)
+  \end{enumerate}
+
+\paragraph{How to choose?}
+  If your application is like this:
+  \begin{itemize}
+    \item mostly independent tasks, with little or no communication;
+    \item task startup and shutdown costs are negligible compared to overall runtime; and
+    \item want to be safer against bugs and security holes,
+  \end{itemize}
+then processes are the way to go. If it's the opposite of this, then use threads.
+
+For performance reasons, along with ease and consistency across systems, we'll use threads. We will describe both pthreads and C++ 11 threads, in particular.
+
+\paragraph{Overhead of Processes vs Threads.} The common wisdom is that processes are
+expensive, threads are cheap. Let's verify this with a benchmark on a
+laptop (included in the live-coding directory on GitHub) which creates and destroys 50,000 threads:
+  \begin{lstlisting}[basicstyle=\scriptsize]
+jon@riker examples master % time ./create_fork 
+0.18s user 4.14s system 34% cpu 12.484 total
+jon@riker examples master % time ./create_pthread 
+0.73s user 1.29s system 107% cpu 1.887 total
+  \end{lstlisting}
+
+Clearly pthreads incur much lower overhead than {\tt fork}. pthreads
+offer a speedup of 6.5 over processes in terms of startup and teardown costs.
+
+%\paragraph{Live Coding Example.} We can write a program to determine
+%whether we are in a user-level threading model vs. the other two models.
+%Just start a child thread and make both threads compute. If CPU utilization
+%exceeds 100\%, we are not user-level threading. The example I saw in class
+%computes $2^{28}$ random numbers to spin the CPU.
+
+%(Is it possible to differentiate hybrid and kernel threading by writing a
+%simple program?)
+
 
 
 
