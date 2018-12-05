@@ -15,6 +15,407 @@
 
 \end{frame}
 
+\begin{frame}
+\frametitle{Lunch Time, Already?}
+
+``Is there any such thing as a free lunch?''
+
+Compiler optimizations really do feel like a free lunch.
+
+
+But what does it really mean when you say {\tt -O2}?
+
+
+We'll see some representative compiler optimizations and discuss how
+they can improve program performance. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{You Do Your Job...}
+
+I'll point out cases that stop compilers
+from being able to optimize your code. 
+
+In general, it's better if the
+compiler automatically does a performance-improving transformation
+rather than you doing it manually.
+
+It's probably a waste of time for
+you and it also makes your code less readable.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{References}
+
+Many pages on the Internet describe
+optimizations. 
+
+Here's one that contains good examples:
+
+$\qquad \qquad$ \url{http://www.digitalmars.com/ctg/ctgOptimizer.html}
+
+You can find a full list of {\tt gcc} options here:
+
+$\qquad \qquad$ \url{http://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{About Compiler Optimizations}
+
+First of all, ``optimization'' is
+a bit of a misnomer. 
+
+Compilers generally don't generate ``optimal'' code. They generate \emph{better} code.
+
+\begin{center}
+\includegraphics[width=0.7\textwidth]{images/bender.jpg}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Optimization Levels}
+
+Here's what {\tt -On} means for
+{\tt gcc}. Other compilers have similar (but not identical) optimization flags.
+
+\begin{itemize}
+\item {\tt -O0} (default): Fastest compilation time. Debugging works as expected.
+\item {\tt -O1} ({\tt -O}): Reduce code size and execution time.
+ No optimizations that increase compiliation time.
+\item {\tt -O2}: All optimizations except space vs. speed tradeoffs.
+\item {\tt -O3}: All optimizations.
+\item {\tt -Ofast}: All {\tt -O3} optimizations, plus non-standards compliant optimizations,
+      particularly {\tt -ffast-math}.
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Scalar Optimizations: Constant Folding}
+
+Tag line: ``Why do later something you can do now?''
+
+\begin{center}
+\vspace*{-1em}
+\begin{tabular}{lll}
+i = 1024 * 1024 &
+$\Longrightarrow$ &
+i = 1048576
+\end{tabular}
+\end{center}
+
+\noindent \emph{Enabled at all optimization levels.} 
+
+The compiler will not emit code that does the multiplication at runtime.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Common Subexpression Elimination}
+
+We can do common subexpression elimination
+when the same expression {\tt x~op~y} is computed more than once. 
+
+Neither {\tt x} nor {\tt y} may change between the two computations. 
+
+\begin{lstlisting}[language=C]
+   a = (c + d) * y;
+   b = (c + d) * z;
+
+   w = 3;
+   x = f(); y = x;
+   z = w + y;
+
+\end{lstlisting}
+
+\emph{Enabled at {\tt -O2}, {\tt -O3} or with {\tt -fgcse}}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Constant Propagation}
+
+Moves constant values from definition to
+use. 
+
+The transformation is valid if there are no redefinitions of the
+variable between the definition and its use.
+
+ In the above example,
+we can propagate the constant value 3 to its use in {\tt z = w + y},
+yielding {\tt z = 3 + y}.
+
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Copy Propagation}
+
+A bit more sophisticated than constant
+propagation---telescopes copies of variables from their definition to
+their use. 
+
+Using it, we can replace the
+last statement with {\tt z = w + x}. 
+
+If we run both constant and copy
+propagation together, we get {\tt z = 3 + x}.
+
+These scalar optimizations are more complicated in the presence
+of pointers, e.g. {\tt z = *w + y}.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Redundant Code Optimizations}
+
+Dead code elimination: removes code that is guaranteed to not execute.
+
+\begin{center}
+\vspace*{-2em}
+\begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=C]
+  int f(int x) {
+    return x * 2;
+  }
+  \end{lstlisting}
+  \end{minipage} \begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=C]
+  int g() {
+    if (f(5) % 2 == 0) {
+      // do stuff...
+    } else {
+      // do other stuff
+    }
+  }
+\end{lstlisting}
+\end{minipage}
+\end{center}
+
+The general problem, as with many other compiler problems, is undecidable.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Loop Optimizations}
+
+Loop optimizations are particularly profitable when loops execute
+often. 
+
+This is often a win, because programs spend a lot of time looping.
+
+
+The trick is to find which loops are going to be the important ones.
+
+A loop induction variable is a variable that varies on each iteration
+of the loop. 
+
+The loop variable is definitely a loop induction variable
+but there may be others. 
+
+\emph{Induction variable elimination} gets
+rid of extra induction variables.
+
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Scalar Replacement}
+
+\emph{Scalar replacement} replaces an array read {\tt a[i]}
+occuring multiple times with a single read {\tt temp = a[i]} and references
+to {\tt temp} otherwise. 
+
+It needs to know that {\tt a[i]} won't change
+between reads.
+
+Sane languages include array bounds checks. 
+
+Loop optimizations
+can eliminate array bounds checks if they can prove that the loop
+never iterates past the array bounds.
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Unrolling}
+
+This
+lets the processor run more code without having to branch
+as often. 
+
+\emph{Software pipelining} is a synergistic optimization,
+which allows multiple iterations of a loop to proceed in parallel.
+
+
+This optimization is also useful for SIMD. Here's an example.
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 4; ++i)
+    f(i)
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+f(0); f(1); f(2); f(3);
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+\noindent \emph{Enabled with {\tt -funroll-loops}.}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Interchange}
+
+This optimization can give big wins
+for caches (which are key); it changes the nesting of loops to
+coincide with the ordering of array elements in memory. 
+
+
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < N; ++i)
+    for (int j = 0; j < M; ++j)
+        a[j][i] = a[j][i] * c
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int j = 0; j < M; ++j)
+    for (int i = 0; i < N; ++i)
+        a[j][i] = a[j][i] * c
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+  since C is \emph{row-major} (meaning a[1][1] is beside a[1][2]),
+rather than \emph{column-major}.
+
+\noindent
+\emph{Enabled with {\tt -floop-interchange}.}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Fusion}
+
+This optimization is like the OpenMP collapse
+construct; we transform
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i)
+    a[i] = 4
+
+for (int i = 0; i < 100; ++i)
+    b[i] = 7
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i) {
+    a[i] = 4
+    b[i] = 7
+}
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+There's a trade-off between data locality and loop overhead.
+
+Sometimes the inverse transformation, \emph{loop fission}, will
+improve performance.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop-Invariant Code Motion}
+
+ Also known as \emph{Loop hoisting},
+this optimization moves calculations out of a loop. 
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i) {
+    s = x * y;
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+s = x * y;
+for (int i = 0; i < 100; ++i) {
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+
+This reduces the amount of work we have to do for each iteration of the loop.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Miscellaneous Low-Level Optimizations}
+
+Some optimizations affect low level code generation; here are two examples.
+
+{\tt gcc} attempts to guess the probability of each branch to
+best order the code. (For an {\tt if}, fall-through is most efficient. Why?)
+
+This isn't quite an optimization, but you can use {\tt
+  \_\_builtin\_expect(expr, value)} to help gcc, if you know the runtime behaviour...
+  
+  In the Linux Kernel:
+  \begin{lstlisting}[language=C]
+#define likely(x)       __builtin_expect((x),1)
+#define unlikely(x)     __builtin_expect((x),0)
+  \end{lstlisting}
+
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Architecture-Specific}
+
+{\tt gcc} can also generate code tuned to particular
+processors. 
+
+You can specify this using {\tt
+  -march} and {\tt -mtune}. ({\tt -march} implies {\tt -mtune}).
+
+
+This will enable specific instructions that not all CPUs support (e.g. SSE4.2).
+For example, {\tt -march=corei7}.
+
+\noindent
+Good to use on your local machine or your cloud servers, not ideal for code you ship to others.
+
+
+\end{frame}
+
+
 
 \begin{frame}
 \frametitle{Interprocedural Analysis and Link-Time Optimizations}
