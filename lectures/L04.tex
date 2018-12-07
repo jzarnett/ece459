@@ -12,13 +12,12 @@
 \hfill ---Wikipedia
 \end{center}
 
-We talked about memory ordering and fences last time.  Today we'll
-look at what support the architecture provides for memory ordering, in
+Today we'll look at what support the architecture provides for memory ordering, in
 particular in the form of cache coherence. Since this isn't an
 architecture course, we'll look at this material more from the point
 of view of a user, not an implementer.
 
-The problem is of course that each CPU might have its own cache and if it does then these data may be out of sync. The simplest method, and a horrible solution, is to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?...). The compiler and OS and such will require the data to be read from memory always. Think of this as being like \texttt{volatile} (which prevented a variable from being put in a register), just moved up a level to preventing the variable from being put in a cache. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is coherency.
+The problem is, of course, that each CPU likely its own cache. If it does then these data may be out of sync -- the value that CPU 1 has for a particular piece of data might be different from the value that CPU 4 has. The simplest method, and a horrible solution, would be the ability to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?...). The compiler and OS and such will require the data to be read from main memory, always. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is \textit{coherency}.
 
 Cache coherency means that:
   \begin{itemize}
@@ -26,7 +25,8 @@ Cache coherency means that:
     \item to some extent, the system behaves as if all CPUs are using shared memory.
   \end{itemize}
   
-
+In modern CPUs with three or four levels of cache, we frequently find that the level 3 cache isn't much faster than going to main memory. But this level is where the cache coherency communication can take place. This can be by making the cache shared between the different CPUs. And the L4 cache is frequently used for sharing data with the integrated graphics hardware on CPUs that have this feature. But for the most part we will imagine that caches are not shared, and we have to figure out how to get coherency between them. This is the case with a L1/L2 cache in a typical modern CPU as they are unique to the given core (i.e., not shared).
+  
 \paragraph{Cache Coherence Example.} We will use this example to illustrate
 different cache coherence algorithms and how they handle the same situation.
 
@@ -41,16 +41,26 @@ Initially in main memory: {\tt x = 7}.
   \end{enumerate}
 
 Unless we do something, {\tt CPU1} is going to read invalid data.
+  
+Outside of a computing context, imagine you and several co-workers have some shared information, such as a meeting (in a specific room) in a shared online calendar (the one for the room). You (or anyone else) could make changes to this event. As mind-reading does not work, there are two ways that another invitee can know that something has changed: (1) they can check to see if anything has changed, or (2) they can be notified that a change has occurred. 
 
-\paragraph{High-Level Explanation of Snoopy Caches.} The simplest way to ``do something''
+The notification may contain the updated information in its entirety, such as ``Event title changed to 'Discuss User Permissions and Roles''', or it may just tell you ``something has changed; please check''. In transportation, you can experience both... in the same day. I [JZ] was flying to Frankfurt and going to catch a train. Air Canada sent me an e-mail that said ``Departure time revised to 22:00'' (20 minute delay); when I landed the Deutsche Bahn (German railways) sent me an e-mail that said ``Something on your trip has changed; please check and see what it is in the app''... it was my train being cancelled. I don't know why they couldn't have e-mailed me that in the first place! It's not like I was any less annoyed by finding out after taking a second step of opening an app.
+
+Regardless of which method is chosen, we have to pick one. We can't pick none of those and expect to get the right answers.
+
+
+\paragraph{Snoopy Caches.} The simplest way to ``do something''
 is to use Snoopy caches~\cite{snoopycache}. No, not this kind of Snoopy (sadly):
 
 \begin{center}
-	\includegraphics[width=0.25\textwidth]{images/peanuts-snoopy1.jpg}
+	\includegraphics[width=0.3\textwidth]{images/peanuts-snoopy1.jpg}
 \end{center}
 
-This is a distributed approach; no centralized state is maintained. Each cache with a copy of data from a block of physical memory knows whether it is shared or not. All the CPUs are connected to a shared bus, and each CPU has its own cache controller. Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. If it is, then the CPU will need to take action.
+It's called Snoopy because the caches are, in a way, spying on each other: they are observing what the other ones are doing. This way, they are kept up to date on what's happening and they know whether they need to do anything. They do not rely on being notified explicitly. This is a bit different from the transportation analogy, of course, but workable in a computer with a shared bus.
 
+This is a distributed approach; no centralized state is maintained. Each cache with a copy of data from a block of main memory knows whether it is shared or not. All the CPUs are connected to a shared bus, and each CPU has its own cache controller. Whenever a CPU issues a memory write, the other CPUs are watching (colloquially, ``snooping around'') to observe if that memory location is in their cache. If so, the CPU will need to take action.
+
+What does action mean? In the flight plus train example, both kinds of action occurred. The Air Canada action was \textit{update} -- the information about the flight departure time was changed from 21:40 to 22:00 and at the time of becoming aware of the change, I got the new value immediately. The Deutsche Bahn action was \textit{invalidate} -- the information about the train was changed, but I didn't know what had changed. All that I really knew is that the old information I had was out of date. When I needed that information again, I had to go get it myself from the source (their app). Either action (noting down the new, or knowing that what I have is out of date) is adequate for ensuring that I have the most up to date information. You may have a preference on which one you think is better, but unfortunately this is not your decision, neither as a user of the hardware of the computer nor as  a person who wants to travel by plane or train.
 
 \subsection*{Write-Through Caches}
 Let's put that into practice using write-through caches, the simplest type of
@@ -59,11 +69,13 @@ cache coherence.
     \item All cache writes are done to main memory.
     \item All cache writes also appear on the bus.
     \item If another CPU snoops and sees it has the same location in
-      its cache, it will either {\it invalidate} or {\it update} the
+      its cache, it will either invalidate or update the
       data.
   \end{itemize}
   
-Invalidation is the most common protocol. It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. Regardless, the most recent value appears in memory, always.
+Invalidation is the most common protocol. It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). This kind of thing happens if you're just doing \texttt{x = 42;} -- it doesn't matter what value of \texttt{x} was there before; you're just overwriting it (which may be.
+
+If we want to do a read and there's a miss, we can ask around the other caches to see who has the most recent cached version. This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. Regardless, the most recent value appears in memory, always, so if nobody else has it in cache (or they don't feel like sharing) you can get it from there.
 
 There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. But it uses lots of bandwidth and is not necessarily a good idea. It does, however prevent the costly cache miss that follows an invalidate. Sadly, as we are mere users and not hardware architects, we don't get to decide which is better; we just have to live with whichever one is on the hardware we get to use. Bummer.
 
@@ -101,7 +113,7 @@ Initially in main memory: {\tt x = 7}.
   \end{enumerate}
 
 \subsection*{Write-Back Caches}
-Let's try to improve performance. What if, in our example, {\tt CPU3} writes to {\tt x} 3 times? It's unpleasant to have to flush that to memory three times when we could do it only once. Let's try to delay the write to memory as long as possible. At minimum, we have to add a ``dirty'' bit, which indicates the our data has not yet been written to memory.
+Let's try to improve performance. What if, in our example, {\tt CPU3} writes to {\tt x} 3 times in rapid succession? It's unpleasant to have to flush that to memory three times when we could do it only once. Let's try to delay the write to memory as long as possible. At minimum, we need support in hardware for a ``dirty'' bit, which indicates the our data has been changed but not yet been written to memory.
 
 \paragraph{Write-Back Implementation.}
      The simplest type of write-back protocol (MSI) uses 3 states instead of 2:
@@ -174,7 +186,7 @@ Initially in main memory: {\tt x = 7}.
 
     MESI allows a processor to modify data exclusive to it, without
     having to communicate with the bus.  MESI is safe. The key is that
-    if memory is in the E state, no other processor has the data.
+    if memory is in the E state, no other processor has the data. The transition from E to M does not have to be reported over the bus, which potentially saves some work and reduces bus usage. 
 
 \subsection*{MSEIF: Even More States!}
 
@@ -186,21 +198,34 @@ Initially in main memory: {\tt x = 7}.
       \end{itemize}
 
     Hence: a processor requesting data that is already shared or exclusive will
-      only get one response transferring the data. This permits more efficient usage of the bus.
+      only get one response transferring the data. Under a more simple MESI scheme you could get multiple caches trying to answer, with leads to bus arbitration or contention. The existence of a F state permits more efficient usage of the bus.
+      
+      
+\subsection*{False Sharing}
+False sharing is something that happens when our program has two unrelated data elements that are mapped to the same cache line/location. Let's consider an example from~\cite{falsesharing}:
 
-\subsection*{Cache coherence vs flush}
+\begin{lstlisting}[language=C]
+char a[10];
+char b[10];
+\end{lstlisting}
+These don't overlap but are almost certainly allocated next to each other in memory. If a thread is writing to \texttt{a} and they share a cache line, then \texttt{b} will be invalidated and the CPU working on \texttt{b} will be forced to fetch the newest value from memory. This can be avoided by seeing to it that there is some separation between these two arrays.
+
+One way would be to heap allocate both arrays. You can find where things are located, if you are curious, by printing the pointer (or the address of a regular variable). Usually if you do this you will find that they are not both located at the same location. But you are provided no guarantee of that. So the other alternative is to make both arrays bigger than they need to be such that we're sure they don't overlap.
+
+Consider the graph below that shows what happens in a sample program reading and writing these two arrays, if you increase the size of arrays \texttt{a} and \texttt{b} (noting that byte separation of 11 means they are adjacent; anything less than that and they overlap). This does waste space, but is it worth it?
+
+\begin{center}
+\includegraphics[width=0.6\textwidth]{images/falsesharing.png}\\
+Execution time graph showing 5x speedup by ``wasting'' some space~\cite{falsesharing}.
+\end{center}
+
+At separation size 51 there is a huge drop in execution time because now we are certainly putting the two arrays in two locations that do not have the false sharing problem. Is wasting a little space worth it? Yes!
+
+\subsection*{Volatile}
 
 \begin{quote}
-Cache coherency seems to make sure my data is consistent. Why do I have
-to have something like flush or fence?
-\end{quote}
-
-Sadly, no. Cache coherence isn't enough. Writes may be to registers rather than
-memory, and those won't be coherent. Use fences or flushes.
-
-\begin{quote}
-Well, I read that {\tt volatile} variables aren't stored in registers,
-    so then am I okay?
+``Well, I read that {\tt volatile} variables aren't stored in registers,
+    so then am I okay?''
 \end{quote}
 
 Again, sadly, no. Recall that {\tt volatile} in C was only designed to~\cite{pr:volatile}:
@@ -214,14 +239,6 @@ All of these things apply to single-threaded situations or cases where the compi
   volatile} doesn't prevent reordering. Also, it's likely your
 variables could be in registers the majority of the time, except in
 critical areas. All that volatile does is tell the compiler that an access of that variable should go to memory, not a register.
-
-\paragraph{Coherence summary.}
-We saw four cache coherence protocols, from MSI through MESIF. There
-are many other protocols for cache coherence, each with their own
-trade-offs.
-
-Recall: OpenMP flush acts as a {\bf memory barrier/fence} so the
-      compiler and hardware don't reorder reads and writes. Neither cache coherence nor {\tt volatile} will save you. Barriers/fences/flushes might be expensive in terms of ``wasting time,'' but correctness is important.
 
 \input{bibliography.tex}
 
