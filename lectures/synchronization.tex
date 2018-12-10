@@ -1,0 +1,248 @@
+\include{header}
+
+\begin{document}
+
+\lecture{X -- A Review of Synchronization}{\term}{Jeff Zarnett}
+
+\section*{Semaphore}
+A semaphore, outside of the context of computing, is a system of signals used for communication. Before ships had radios, when two friendly ships were in visual range, they would communicate with one another through flag semaphores, which is a fancy way of saying each ship had someone holding certain flags in a specific position. Thus the two ships could co-ordinate at a distance, even if the distance was limited to visual range. This worked dramatically better than many alternatives (e.g., shouting).
+
+The computer semaphore was invented in 1965 by Edsger Dijkstra, a brilliant Dutch computer scientist who is sometimes maligned in textbooks as being eccentric or unusual.  He described a data structure that can be used to solve synchronization problems via messages in~\cite{semaphores}. Although the version we use now is not exactly the same as the original description, even 50+ years later, the core idea is unchanged.
+
+We will begin with the \textit{binary semaphore}: this is a variable that has two values, 0 and 1. It can be initialized to 0 or to 1. The semaphore has two operations: \texttt{wait} and \texttt{post}. In the original paper, \texttt{wait} was called \texttt{P} and \texttt{signal} was called \texttt{V}, but the names in common usage have become a little more descriptive. Mind you, if you can read/write Dutch as I can, the names make some sense: \texttt{P} is short for \textit{proberen}, ``to test'', and \texttt{V} is short for \textit{verhogen}, ``to raise'' or ``to increment''. But, for historical reasons as much as any other, the traditional lingua franca of computers is English, so the English names have tended to dominate. Furthermore, \texttt{post} is also called \texttt{signal} in many textbooks.
+
+The \texttt{wait} operation on the semaphore is how a program tries to enter the critical section. When \texttt{wait} is called, if the semaphore value is 1, set it to 0 and this thread may enter the critical section and continue. If the semaphore is 0, some other thread is in the critical section and the current thread must \textit{wait} its turn. The thread that called \texttt{wait} will be blocked by the operating system, just as if it asked for memory or a disk operation. This is sometimes referred to as decrementing the semaphore (because the value changes from 1 to 0).
+
+The \texttt{post} operation is how a program sends the message that it is finished with the critical section. When this is called, if the semaphore is 1, do nothing; if the semaphore is 0 and there is a task blocked awaiting that semaphore, that task may be unblocked; else set the semaphore to 1. This is also sometimes called incrementing the semaphore.
+
+If this is still confusing, consider the following analogy. Suppose you like coffee, and going to a particular coffee shop because there you can get your drink exactly the way you like it: half caf, no whip, extra hot, extra foam, two shot, soy milk latte\footnote{For the record, the author drinks tea, black.}. After this delightful beverage it may be the case that you need to use the washroom. The washroom is locked at such places, so to get in you will need the key, which is available by asking one of the employees. If nobody is currently in the washroom, you will get the key and can proceed. If it is currently occupied, you will have to wait. When the key is returned, if anyone is waiting, the employee will give the key to the first person in line for the washroom; otherwise he or she will put the key away behind the counter.
+
+Observe that the operating system is needed to make this work: if thread $A$ attempts to wait on a semaphore that some other thread already has, it will be blocked and the operating system knows not to schedule it to run until it is unblocked. When thread $B$ is finished and posts to the semaphore it is holding, that will unblock $A$ and allow it to run again.
+
+Note also that the semaphore does not provide any facility to ``check'' the current value. Thus a thread does not know in advance if it will block when it waits on the semaphore. It can only wait and may be blocked or may proceed directly into the critical section if there is no other thread in there at the moment.
+
+When a thread signals a semaphore, it likewise does not know if any other thread(s) are waiting on that semaphore. There is no facility to check this, either. When thread $A$ signals a semaphore, if another thread $B$ is waiting, $B$ will be unblocked and either thread $A$ or thread $B$ may continue execution (or both, if it is a SMP system), or another unrelated thread may be the one to continue execution. We have no way of knowing.
+
+On the subject of observation, note that nothing about the semaphore as so defined protects against certain ``bad'' behaviour. Suppose thread $C$ would like to enter the critical section. The programmer of this task is malicious as well as impatient: ``my task is FAR too important to wait for those other processes and threads,'' he says, as he implements his code such that before he waits on the semaphore, he posts to it. Even though $A$ or $B$ might be in the critical section, the semaphore gets incremented so he is more or less certain that his program will now get to enter the critical section. It's not foolproof: if there are other threads waiting, they might get woken up to proceed instead of $C$; much depends on the scheduler. Nevertheless, this is really bad: one process can wreak all kinds of havoc by letting another process into the critical section. Though the example here makes the author of thread $C$ a scheming villain (because the example is funnier that way), such a situation may occur without malicious intent if it is simply the result of a programming error.
+
+The problem identified in the previous paragraph is usually solved by supplementing the basic binary semaphore. A data structure called a \textit{mutex} (from \textbf{mut}ual \textbf{ex}clusion) is a binary semaphore with an additional rule enforced: only the thread that has called \texttt{wait} may \texttt{post} to that semaphore. This adds a small amount of extra bookkeeping to the semaphore, but this is a reasonable price to pay.
+
+\subsection*{Example: Linked List Integrity}
+We will now examine a situation where a semaphore helps to prevent a synchronization error. This example comes from~\cite{mte241}. Imagine we have a shared linked list defined as:
+
+\begin{lstlisting}[language=C]
+typedef struct single_node {
+  void *element;
+  struct single_node *next;
+} single_node_t;
+
+typedef struct single_list {
+  single_node_t *head;
+  single_node_t *tail;
+  int size;
+} single_list_t;
+
+
+void single_list_init( single_list_t *list ) {
+  list->head = NULL;
+  list->tail = NULL;
+  list->size = 0;
+}
+
+bool push_front( single_list_t *list, void *obj ) {
+  single_node_t *tmp = malloc( sizeof( single_node_t ) );
+  
+  if ( tmp == NULL ) {
+    return false;
+  }
+  
+  tmp->element = obj;
+  tmp->next = list->head;
+  list->head = tmp;
+
+  if ( list->size == 0 ) {
+     list->tail = tmp;
+  }
+  
+   ++( list->size );
+   return true;
+}
+\end{lstlisting}
+
+If only one thread can access this data structure, we do not have a problem, but it was a shared linked list. Suppose a thread runs and tries to add an element $A$ to the list using the \texttt{push\_front} function. Right before the increment of the \texttt{size} field takes place there is a process switch. At this point, the new node has been allocated and initialized, the pointers of \texttt{head} and \texttt{tail} have been updated, but \texttt{size} is 0. 
+
+\begin{center}
+\includegraphics[width=0.25\textwidth]{images/linkedlist1.png}\\
+The linked list at the time of the thread switch~\cite{mte241}.
+\end{center}
+
+Now, the second thread executes and wants to add $B$ to the linked list. In the conditional statement, \texttt{list->size == 0} evaluates to true. Thus, the \texttt{tail} pointer is updated.
+
+\begin{center}
+\includegraphics[width=0.35\textwidth]{images/linkedlist2.png}\\
+The linked list after the second thread adds $B$~\cite{mte241}.
+\end{center}
+
+When the first thread gets to run again, it will resume where it left off: it increments the \texttt{size} integer, leaving the final state: \texttt{head} and \texttt{tail} both point to element $B$, even though there is element $A$ in the list.
+
+\begin{center}
+\includegraphics[width=0.35\textwidth]{images/linkedlist3.png}\\
+The linked list after the first thread resumes~\cite{mte241}.
+\end{center}
+
+This is an \textit{inconsistent state}: the linked list has two elements in it but the \texttt{tail} pointer is wrong. An attempt to remove an element from the list will reveal the problem, which can manifest in a few ways, depending on how the removal routine is implemented. If we try to remove the front element we might check that \texttt{head} and \texttt{tail} are equal, and that may give the mistaken impression that $B$ is the last element in the list, so we ``lose'' $A$ and it becomes a memory leak. Or perhaps the \texttt{head} pointer will be updated but \texttt{tail} will still point to $B$ even after it has been freed, which can result in a segmentation fault or invalid access.
+
+\subsection*{Semaphore Syntax}
+
+Binary semaphores are useful, and we can generalize this concept to what is known as a \textit{counting} or \textit{general} semaphore. Instead of having only the values 0 and 1, the setup routine for the counting semaphore allows the choice of an integer value and this is the maximum value. A thread that waits on that semaphore will decrement the integer by 1; a thread that signals on the semaphore will increment the integer by 1. If a thread attempts to wait on a semaphore and the decrement operation makes the integer value negative, the calling thread is blocked. If, however, the semaphore is, for example, initialized with 5 and the current value is 2, a thread that waits on that general semaphore will not be blocked.
+
+In UNIX, the semaphores are always general. So, the functions are:
+
+\begin{lstlisting}[language=C]
+sem_init( sem_t* semaphore, int shared, int initial_value);
+sem_destroy( sem_t* semaphore )
+sem_wait( sem_t* semaphore )
+sem_post( sem_t* semaphore )
+\end{lstlisting}
+
+Of these functions, the only one where the parameters are not obvious is the initialization routine. The parameter \texttt{shared} will be set to either 0 or 1: 1 if the semaphore is to be shared between processes (e.g., using shared memory), 0 otherwise. I'll also take a moment also to point out the importance of getting the initial value correct. If we choose the wrong initial value then our program might get stuck or we might not get the mutual exclusion behaviour we are supposed to have.
+
+\subsection*{Applying the Semaphore to the Linked List}
+
+Now that we have the appropriate syntax we can apply it to the linked list example from this section. We will add to the linked list structure (\texttt{struct single\_list}) a semaphore: \texttt{sem\_t sem;}. In the initialization routine, we need to call the initialization method: \texttt{sem\_init( \&( list->sem ), 0, 1 );}
+
+Finally, the \texttt{semaphore\_wait} and \texttt{semaphore\_signal} operations need to be added to \texttt{push\_front} at the start and end of the critical section, respectively. Recall from earlier that we want the critical section to be as small as it can be. Putting it all together:
+
+\begin{lstlisting}[language=C]
+typedef struct single_node {
+  void *element;
+  struct single_node *next;
+} single_node_t;
+
+typedef struct single_list {
+  single_node_t *head;
+  single_node_t *tail;
+  int size;
+  sem_t sem;
+} single_list_t;
+
+void single_list_init( single_list_t *list ) {
+  list->head = NULL;
+  list->tail = NULL;
+  list->size = 0;
+
+  sem_init( &( list->sem ), 0, 1 );
+}
+
+bool push_front( single_list_t *list, void *obj ) {
+  single_node_t *tmp = malloc( sizeof( single_node_t ) );
+  
+  if ( tmp == NULL ) {
+    return false;
+  }
+  
+  tmp->element = obj;
+  
+  sem_wait( &( list->sem ) ); {
+    tmp->next = list->head;
+    list->head = tmp;
+
+    if ( list->size == 0 ) {
+       list->tail = tmp;
+    }
+    ++( list->size );
+  
+  } sem_post( &( list->sem ) );  
+  
+  return true;
+}
+\end{lstlisting}
+
+Strictly speaking, the braces (\{ \}) to enclose the critical region (between the wait and signal operations) are not necessary. This is just a use of C syntax to make it more obvious what the critical region is and to make it harder to make a mistake.
+
+The critical section here just encloses the modification of the shared linked list. In theory one might put the wait and signal operations at the start and end of the entire function, respectively. This is, however, suboptimal: it forces unnecessary waiting. In this specific example, including the call to \texttt{malloc} is especially bad; the memory allocation itself can block if insufficient memory is available. Thus the process currently in the critical section is blocked and that means no other thread can enter the critical section. This might result in the system getting totally stuck~\cite{mte241}.
+
+\section*{Mutex}
+
+  \begin{lstlisting}[language=C]
+int counter = 0;
+
+void* run(void* arg) {
+    for (int i = 0; i < 10000; ++i) {
+        ++counter;
+    }
+}
+
+int main(int argc, char *argv[]) {
+    pthread_t threads[8];
+    for ( int i = 0; i < 8; ++i ) {
+      pthread_create( &threads[i], NULL, run, NULL );
+    }
+    for ( int j = 0; j < 8; ++j ) {
+      pthread_join( threads[j], NULL );
+    }
+    printf("counter = %d\n", counter);
+}
+  \end{lstlisting}
+
+This produces different outputs on different runs of the program. Because there is a race condition, as we have seen before. We will use this pretty simple example to show how to use the mutex function calls.
+
+\subsection*{Mutex Syntax}
+ While it is possible, of course, to use a semaphore as a mutex, frequently we will use the more specialized tool for this task.
+
+The structure representing the mutex is of type \texttt{pthread\_mutex\_t}. We don't care about the internals or what the struct is made of; it is either locked or unlocked and that's all that matters to us.
+
+\begin{lstlisting}[language=C]
+pthread_mutex_init( pthread_mutex_t *mutex, pthread_mutexattr_t *attributes )
+pthread_mutex_lock( pthread_mutex_t *mutex )
+pthread_mutex_trylock( pthread_mutex_t *mutex ) /* Returns 0 on success */
+pthread_mutex_unlock( pthread_mutex_t *mutex )
+pthread_mutex_destroy( pthread_mutex_t *mutex )
+\end{lstlisting}
+
+The first function of note is \texttt{pthread\_mutex\_init} which is used to create a new mutex variable and returns it, with type \texttt{pthread\_mutex\_t}. It takes an optional parameter, the attributes (the details of which are not important at the moment, but relate mostly to priorities). We can initialize it using \texttt{NULL} and that is sufficient. There is also a syntactic shortcut to do static initialization if you do not want to set attributes~\cite{pthreads}: 
+
+\begin{lstlisting}[language=C]
+pthread_mutex_t mymutex = PTHREAD_MUTEX_INITIALIZER;
+\end{lstlisting}
+
+When created, by default, the mutex is unlocked. There are three methods related to using the mutex; two to lock it and one to unlock it, all of which take as a parameter the mutex to (un)lock. The unlock method, \texttt{pthread\_mutex\_unlock} is self-explanatory. As expected, attempting to unlock a mutex that is not currently locked is an error, but it is also an error if one thread attempts to unlock a mutex owned by another thread~\cite{pthreads}.
+
+The two kinds of lock are \texttt{pthread\_mutex\_lock}, which is blocking, and \texttt{pthread\_mutex\_trylock}, which is nonblocking. The lock function works as you would expect: if the mutex is currently locked, the calling function is blocked until its turn to enter the critical section; if the mutex is unlocked then it changes to being locked and the current thread enters the critical section. Trylock is more complicated and not necessary for understanding the producer-consumer example, but will come up again soon when we look at another classical synchronization problem.
+
+To destroy a mutex, there is a method \texttt{pthread\_mutex\_destroy}. As expected, it cleans up a mutex and should be used when finished with it. If attributes were created with \texttt{pthread\_mutexattr\_init} they should be destroyed with \texttt{pthread\_mutexattr\_destroy}.
+
+An attempt to destroy the mutex may fail if the mutex is currently locked. The specification says that destroying an unlocked mutex is okay, but attempting to destroy a locked one results in undefined behaviour. Undefined behaviour is, in the words of the internet, the worst thing ever: it means code might work some of the time or on some systems, but not others, or could work fine for a while and then break suddenly later when something else is changed\footnote{Sadly, the specifications for C and POSIX and many other things are riddled with these ``undefined behaviour'' situations and it causes programmers everywhere a great deal of stress and difficulty. Another example: reading from an uninitialized variable in C produces undefined behaviour too.}.
+
+
+So, let's apply that to the previous code:
+\begin{lstlisting}[language=C]
+pthread_mutex_t mutex;
+int counter = 0;
+
+void* run(void* arg) {
+    for (int i = 0; i < 100; ++i) {
+        pthread_mutex_lock(&mutex);
+        ++counter;
+        pthread_mutex_unlock(&mutex);
+    }
+}
+
+int main(int argc, char *argv[]) {
+    pthread_t threads[8];
+    pthread_mutex_init( &mutex, NULL );
+    for ( int i = 0; i < 8; ++i ) {
+      pthread_create( &threads[i], NULL, run, NULL );
+    }
+    for ( int j = 0; j < 8; ++j ) {
+      pthread_join( threads[j], NULL );
+    }
+    pthread_mutex_destroy(&mutex);
+    printf("counter = %d\n", counter);
+}
+\end{lstlisting}
+
+Later on we'll take a look into whether this code is optimal (it is not) and why, but at a first stage all that matters is correctness: preventing the race condition and ensuring consistent answers from the program. Correctness comes first, then performance...
+
+\input{bibliography}
+\end{document}
