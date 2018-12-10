@@ -244,5 +244,37 @@ int main(int argc, char *argv[]) {
 
 Later on we'll take a look into whether this code is optimal (it is not) and why, but at a first stage all that matters is correctness: preventing the race condition and ensuring consistent answers from the program. Correctness comes first, then performance...
 
+\paragraph{Trylock}
+
+In addition to locking the normal way, where we would get locked. 
+
+\begin{lstlisting}[language=C]
+int pthread_mutex_trylock( pthread_mutex_t * mutex )
+\end{lstlisting}
+
+This function returns an integer and it's extremely important to check and see if the return code is 0, because that is the only way to know if the lock was acquired. The call is non-blocking so the code will carry on regardless. Consider below a code description of the dining philosophers if they used two-phase locking via the trylock routines. Assume that the mutex variables have been initialized appropriately. It should be possible to reason about this solution and demonstrate that (1) a philosopher can only eat if they have both chopsticks, and (2) deadlock does not occur.
+
+\begin{lstlisting}[language=C]
+int locked_both = 0;
+while( locked_both == 0 ) {
+  int locked1 = pthread_mutex_trylock( chopstick1 );
+  int locked2 = pthread_mutex_trylock( chopstick2 );
+  if (locked1 != 0 && locked2 == 0) {
+    pthread_mutex_unlock( chopstick2 );
+  } else if (locked1 == 0 && locked2 != 0 ) {
+    pthread_mutex_unlock( chopstick1 );
+  } else if (locked1 != 0 && locked2 != 0 ) {
+    /* Do nothing */
+  } else {
+    locked_both = 1;
+  }
+}
+eat( );
+
+pthread_mutex_unlock( chopstick1 );
+pthread_mutex_unlock( chopstick2 );
+\end{lstlisting}
+
+
 \input{bibliography}
 \end{document}
