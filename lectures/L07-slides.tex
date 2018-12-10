@@ -88,7 +88,8 @@ In other situations (e.g., processor design) these are sometimes referred to as 
 \frametitle{It's a Kind of Hazard}
 Race conditions typically arise between variables shared
 between threads.
-{\scriptsize
+
+\begin{minipage}[l]{0.39\linewidth}
 \begin{lstlisting}[language=C]
 #include <stdlib.h>
 #include <stdio.h>
@@ -103,9 +104,11 @@ void* run2(void* arg) {
     int* x = (int*) arg;
     *x += 2;
 }
-
-int main(int argc, char *argv[])
-{
+\end{lstlisting}
+\end{minipage}
+\begin{minipage}[r]{0.6\linewidth}
+\begin{lstlisting}[language=C]
+int main(int argc, char *argv[]) {
     int* x = malloc(sizeof(int));
     *x = 1;
     pthread_t t1, t2;
@@ -116,9 +119,10 @@ int main(int argc, char *argv[])
     printf("%d\n", *x);
     free(x);
     return EXIT_SUCCESS;
+
 }
 \end{lstlisting}
-}
+\end{minipage}
 
 \end{frame}
 
@@ -129,8 +133,7 @@ int main(int argc, char *argv[])
 
 {\scriptsize
 \begin{lstlisting}[language=C]
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     int* x = malloc(sizeof(int));
     *x = 1;
     pthread_t t1, t2;
@@ -157,14 +160,13 @@ Now do we have a race?
 What are the possible outputs? (Assume that initially {\tt *x} is 1.)
 We'll look at compiler intermediate code (three-address code) to tell.
 
-\hspace*{.2\textwidth}\begin{minipage}{.8\textwidth}
 \begin{lstlisting}[language=C]
 run1                          run2   
 D.1 = *x;                     D.1 = *x;
 D.2 = D.1 + 1;                D.2 = D.1 + 2
 *x = D.2;                     *x = D.2;
   \end{lstlisting}
-\end{minipage}
+
 
 Memory reads and writes are key in data~races.
 
@@ -311,30 +313,15 @@ z = x + 40
 You'll need some sort of synchronization to get sane results from
 multithreaded programs. 
 
-We'll start by talking about how to use
-mutual exclusion in Pthreads.
-
+Hopefully you remember semaphores and mutexes from earlier courses.
 
 \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-\frametitle{Summary of Memory-carried Dependencies}
-\begin{center}
-\begin{tabular}{ll|p{2.8cm}p{3.2cm}}
-& & \multicolumn{2}{c}{Second Access} \\ 
-&  & \bf Read & \bf Write \\ \hline
-\multirow{2}{*}{First Access} & \bf Read & No Dependency Read After Read (RAR)  & Anti-dependency Write After Read (WAR) \\[0.5em]
-& \bf Write & True Dependency Read After Write (RAW) & Output Dependency Write After Write (WAW) \\
-\end{tabular}
-\end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \begin{frame}
 \frametitle{Mutual Exclusion}
 
-Mutexes are the most basic type of synchronization.
+Mutexes are a very common of synchronization.
 As a reminder:
     \begin{itemize}
     \item Only one thread can access code protected by a mutex at a time.
@@ -353,7 +340,7 @@ As a reminder:
     
     \begin{tabular}{ll}
       \begin{minipage}{.65\textwidth}
-        {\bf PThreads}
+        {\bf pthreads}
 {\scriptsize
   \begin{lstlisting}[language=C]
 pthread_mutex_t m1_static = PTHREAD_MUTEX_INITIALIZER;
@@ -412,115 +399,17 @@ you need to use the dynamic version.
 \end{frame}
 
 
-
-\begin{frame}[fragile]
-\frametitle{Mutex Example}
-
-   \begin{tabular}{ll}
-      \begin{minipage}{.5\textwidth}
-        {\bf PThreads}
-  \begin{lstlisting}[language=C]
-// code
-pthread_mutex_lock(&m1);
-// protected code
-pthread_mutex_unlock(&m1);
-// more code
-  \end{lstlisting}
-      \end{minipage}&
-      \begin{minipage}{.35\textwidth}
-        {\bf C++11 Threads}
-  \begin{lstlisting}[language=C]
-// code
-m1.lock();
-// protected code
-m1.unlock();
-// more code
-  \end{lstlisting}
-      \end{minipage}
-    \end{tabular}
-
-  \begin{itemize}
-    \item Everything within the {\tt lock} and {\tt unlock} is protected.
-    \item Be careful to avoid deadlocks if you are using multiple mutexes (always
-acquire locks in the same order across threads).
-    \item Another useful primitive is {\tt pthread\_mutex\_trylock}.
-later.
-  \end{itemize}
-
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Locks and Data Races}
-
-Why are we bothering with locks? Data races. A data race occurs when
-two concurrent actions access the same variable and at least one of
-them is a {\bf write}. (This shows up on Assignment 1!)
-
-  \begin{lstlisting}[language=C]
-static int counter = 0;
-
-void* run(void* arg) {
-    for (int i = 0; i < 100; ++i) {
-        ++counter;
-    }
-}
-
-int main(int argc, char *argv[]) {
-    // Create 8 threads
-    // Join 8 threads
-    printf("counter = %i\n", counter);
-}
-  \end{lstlisting}
-
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Use Mutexes}
-
- \begin{lstlisting}[language=C]
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-static int counter = 0;
-
-void* run(void* arg) {
-    for (int i = 0; i < 100; ++i) {
-        pthread_mutex_lock(&mutex);
-        ++counter;
-        pthread_mutex_unlock(&mutex);
-    }
-}
-
-int main(int argc, char *argv[]) {
-    // Create 8 threads
-    // Join 8 threads
-    pthread_mutex_destroy(&mutex);
-    printf("counter = %i\n", counter);
-}
-  \end{lstlisting}
-
-\end{frame}
-
-
-
 \begin{frame}
-\frametitle{Mutex Recap}
+\frametitle{Try, Try Again}
 
-\begin{itemize}
-\item Call {\tt lock} on mutex $\ell_1$. Upon return from
-      {\tt lock}, your thread has exclusive access to $\ell_1$ until it
-      {\tt unlock}s it.
-\item Other calls to {\tt lock} $\ell_1$ will not return
-      until {\tt m1} is available.
-\end{itemize}
+There is also the idea of trylock: you attempt to lock the mutex in a way that you won't get blocked whether we acquire the lock or not. 
 
+The function returns a value to indicate if we succeeded and it is mandatory that we check. 
+
+If successful, proceed. 
+
+If unsuccessful then we'll have to try again at some point.
 \end{frame}
-
-
 
 \begin{frame}
 \frametitle{Protect the End Zone}
@@ -537,20 +426,6 @@ access to the protected resource at a time.
 
 The code between the lock
 acquisition and release is known as the \alert{critical region} or \alert{critical section}.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Try, Try Again}
-
-Some mutex implementations also provide a ``try-lock'' primitive.
-
-This grabs the lock if it's available, or returns control to the
-thread if it's not.
-
-This enables the thread to do something else. (Kind of
-like non-blocking I/O!)
 
 \end{frame}
 
@@ -612,82 +487,6 @@ As long as we have a multicore system.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Read-Write Locks}
-
-  \begin{center}
-    \input{images/L06-rwlock-1}
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{OK to read in parallel}
-
-  \begin{center}
-    \input{images/L06-rwlock-2}
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Must wait for write to finish}
-
-  \begin{center}
-    \input{images/L06-rwlock-3}
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Read-Write Locks}
-
-\Large
-\begin{changemargin}{2cm}
-  Multiple threads can hold a read lock\\ \hspace*{2em} ({\tt pthread\_rwlock\_rdlock})\\
-      but only one thread may hold the associated write lock\\ \hspace*{2em} ({\tt pthread\_rwlock\_wrlock});\\
-      grabbing the write waits until current readers are done.
-\end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Semaphores: share \# instances of a resource}
-
-  \begin{center}
-    \input{images/L06-sem-1}
-  \end{center}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Semaphores: can wait until at least 1 available}
-
-  \begin{center}
-    \input{images/L06-sem-2}
-  \end{center}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Semaphores: another thread has posted, carry on}
-
-  \begin{center}
-    \input{images/L06-sem-3}
-  \end{center}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
   \frametitle{Barriers}
 
   \begin{center}
@@ -724,6 +523,41 @@ enable experts to write lock-free code.\\[1em]
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Semaphores: share \# instances of a resource}
+
+  \begin{center}
+    \input{images/L06-sem-1}
+  \end{center}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Semaphores: can wait until at least 1 available}
+
+  \begin{center}
+    \input{images/L06-sem-2}
+  \end{center}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Semaphores: another thread has posted, carry on}
+
+  \begin{center}
+    \input{images/L06-sem-3}
+  \end{center}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
   \frametitle{Semaphores Usage}
   
@@ -741,110 +575,187 @@ int sem_trywait(sem_t *sem);
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+\begin{frame}
+\frametitle{Reader/Writer Locks}
+Reads don't interfere with one another so we can let them run in parallel!
+
+But sometimes writes occur, and nobody can read when this happens.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Reader/Writer Rules}
+
+
+\begin{enumerate}
+\item Any number of readers may be in the critical section simultaneously.
+\item Only one writer may be in the critical section (and when it is, no readers are allowed).
+\end{enumerate}
+
+
+\end{frame}
+
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Semaphores As Mutexes}
-How could you use as {\tt semaphore} as a {\tt mutex}?
-    \begin{itemize}
-    \item<2-> If the initial {\tt value} is 1 and you use {\tt wait} to lock
-      and {\tt post} to unlock, it's equivalent to a {\tt mutex}.
-    \end{itemize}
+\begin{frame}
+  \frametitle{Read-Write Locks}
 
-
+  \begin{center}
+    \input{images/L06-rwlock-1}
+  \end{center}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Semaphores for Signalling}
+\begin{frame}
+  \frametitle{OK to read in parallel}
 
-
-  Here's an example from the recommended book. How would you make this always print
-  ``Thread 1'' then ``Thread 2'' using semaphores?
-
-  \begin{lstlisting}[language=C]
-#include <pthread.h>
-#include <stdio.h>
-#include <semaphore.h>
-#include <stdlib.h>
-
-void* p1 (void* arg) { printf("Thread 1\n"); }
-
-void* p2 (void* arg) { printf("Thread 2\n"); }
-
-int main(int argc, char *argv[])
-{
-    pthread_t thread[2];
-    pthread_create(&thread[0], NULL, p1, NULL);
-    pthread_create(&thread[1], NULL, p2, NULL);
-    pthread_join(thread[0], NULL);
-    pthread_join(thread[1], NULL);
-    return EXIT_SUCCESS;
-}
-  \end{lstlisting}
-
+  \begin{center}
+    \input{images/L06-rwlock-2}
+  \end{center}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Semaphores for Signalling}
+\begin{frame}
+  \frametitle{Must wait for write to finish}
 
-
-  Here's a possible solution. Is it actually correct?
-
-  \begin{lstlisting}[language=C]
-sem_t sem; // new
-void* p1 (void* arg) {
-  printf("Thread 1\n"); // new
-  sem_post(&sem);
-}
-void* p2 (void* arg) {
-  sem_wait(&sem);       // new
-  printf("Thread 2\n");
-}
-
-int main(int argc, char *argv[])
-{
-    pthread_t thread[2];
-    sem_init(&sem, 0, /* value: */ 1); // new
-    pthread_create(&thread[0], NULL, p1, NULL);
-    pthread_create(&thread[1], NULL, p2, NULL);
-    pthread_join(thread[0], NULL);
-    pthread_join(thread[1], NULL);
-    sem_destroy(&sem);
-}
-  \end{lstlisting}
-
-
+  \begin{center}
+    \input{images/L06-rwlock-3}
+  \end{center}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
 \begin{frame}[fragile]
-  \frametitle{Semaphores for Signalling}
+\frametitle{RW Lock Syntax}
 
-  
+The type for the lock is \texttt{pthread\_rwlock\_t}. 
 
-  \begin{enumerate}
-    \item {\tt value} is initially 1.
-    \vfill
-    \item Say {\tt p2} hits its {\tt sem\_wait} first and succeeds.
-    \vfill
-    \item {\tt value} is now 0 and {\tt p2} prints ``Thread 2'' first.
-  \end{enumerate}
-  \begin{itemize}
-    \item If {\tt p1} happens first, it would just increase
-      {\tt value} to 2.\vfill
-    \item<2-> Fix: set the initial {\tt value} to \alert{0}.\\[1em]
-Then, if {\tt p2} hits its {\tt sem\_wait} first, it will
-      not print until {\tt p1} posts (and prints ``Thread 1'') first.
-  \end{itemize}~\\[1em]
+
+\begin{lstlisting}[language=C]
+pthread_rwlock_init( pthread_rwlock_t * rwlock, pthread_rwlockattr_t * attr )
+pthread_rwlock_rdlock( pthread_rwlock_t * rwlock )
+pthread_rwlock_tryrdlock( pthread_rwlock_t * rwlock )
+pthread_rwlock_wrlock( pthread_rwlock_t * rwlock )
+pthread_rwlock_trywrlock( pthread_rwlock_t  *  rwlock )
+pthread_rwlock_unlock( pthread_rwlock_t * rwlock )
+pthread_rwlock_destroy( pthread_rwlock_t * rwlock )
+\end{lstlisting}
 
 
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Mine, Mine, Mine!}
+
+In theory, the same thread may lock the same rwlock $n$ times.
+
+Just remember to unlock it $n$ times as well.
+
+Readers get priority? Implementation defined.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Without RW Locks}
+
+\begin{multicols}{2}
+\begin{lstlisting}[language=C]
+int readers;
+pthread_mutex_t mutex;
+sem_t roomEmpty;
+
+void init( ) {
+  readers = 0;
+  pthread_mutex_init( &mutex, NULL );
+  sem_init( &roomEmpty, 0, 1 );
+}
+
+void cleanup( ) {
+  pthread_mutex_destroy( &mutex );
+  sem_destroy( &roomEmpty );
+}
+\end{lstlisting}
+
+\columnbreak
+
+\begin{lstlisting}[language=C]
+void* writer( void* arg ) {
+  sem_wait( &roomEmpty );
+  write_data( arg );
+  sem_post( &roomEmpty );
+}
+
+void* reader( void* read ) {
+  pthread_mutex_lock( &mutex );
+  readers++;
+  if ( readers == 1 ) {
+    sem_wait( &roomEmpty );
+  }
+  pthread_mutex_unlock( &mutex );
+  read_data( arg );
+  pthread_mutex_lock( &mutex );
+  readers--;
+  if ( readers == 0 ) {
+    sem_post( &roomEmpty );
+  }
+  pthread_mutex_unlock( &mutex );
+}
+\end{lstlisting}
+
+\end{multicols}
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{With RW Locks}
+
+\begin{multicols}{2}
+\begin{lstlisting}[language=C]
+pthread_rwlock_t rwlock;
+
+void init( ) {
+  pthread_rwlock_init( &rwlock, NULL );
+}
+
+void cleanup( ) {
+  pthread_rwlock_destroy( &rwlock );
+}
+\end{lstlisting}
+
+\columnbreak
+
+\begin{lstlisting}[language=C]
+void* writer( void* arg ) {
+  pthread_rwlock_wrlock( &rwlock );
+  write_data( arg );
+  pthread_rwlock_unlock( &rwlock );
+}
+
+void* reader( void* read ) {
+  pthread_rwlock_rdlock( &rwlock );
+  read_data( arg );
+  pthread_rwlock_unlock( &rwlock );
+}
+\end{lstlisting}
+
+\end{multicols}
+
+Conclusion: don't reinvent the wheel!
+
+\end{frame}
+
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
