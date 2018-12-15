@@ -2,7 +2,388 @@
 
 \begin{document}
 
-\lecture{14 --- OpenMP Memory Model}{\term}{Patrick Lam}
+\lecture{14 --- OpenMP Tasks, Memory Model}{\term}{Patrick Lam}
+
+\section*{Tasks: OpenMP's thread-like mechanism.}
+The main new feature in OpenMP 3.0 is the notion of \emph{tasks}. When
+the program executes a \verb+#pragma omp task+ statement, the code
+inside the task is split off as a task and scheduled to run sometime
+in the future. Tasks are more flexible than parallel sections, because
+parallel sections constrain exactly how many threads are supposed to
+run, and there is also always a join at the end of the parallel
+section.  On the other hand, the OpenMP runtime can assign any task to
+any thread that's running. Tasks therefore have lower overhead.
+
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf task} {\it [clause [[,] clause]*]}
+  \end{center}~\\
+
+Generates a task for a thread in the team to run.
+     When a thread enters the region it may:
+\begin{itemize}
+        \item immediately execute the task; or
+        \item defer its execution. (any other thread may be assigned the task)
+\end{itemize}
+
+  Allowed Clauses: {\bf if, final, untied, default, mergeable, private,
+  firstprivate, shared}
+
+\paragraph{{\tt if} and {\tt final} Clauses.}
+
+  \begin{center}
+  {\bf if} {\it(scalar-logical-expression)}
+  \end{center}
+
+    When expression is {\tt false}, generates an undeferred task---\\
+    the generating task region is suspended until execution of the
+      undeferred task finishes.\\[1em]
+
+  \begin{center}
+  {\bf final} {\it(scalar-logical-expression)}
+  \end{center}
+
+    When expression is {\tt true}, generates a final task.\\
+    All tasks within a final task are {\it included}.\\
+    Included tasks are undeferred and also execute immediately in the same thread.
+
+Let's look at some examples of these clauses.
+  \begin{lstlisting}[language=C]
+void foo () {
+    int i;
+    #pragma omp task if(0) // This task is undeferred
+    {
+        #pragma omp task
+        // This task is a regular task
+        for (i = 0; i < 3; i++) {
+            #pragma omp task
+            // This task is a regular task
+            bar();
+        }
+    }
+    #pragma omp task final(1) // This task is a regular task
+    {
+        #pragma omp task // This task is included
+        for (i = 0; i < 3; i++) {
+            #pragma omp task
+            // This task is also included
+            bar();
+        }
+    }
+}
+  \end{lstlisting}
+
+\paragraph{{\tt untied} and {\tt mergeable} Clauses.}
+
+\begin{center}
+  {\bf untied}
+\end{center}
+  \begin{itemize}
+    \item A suspended task can be resumed by any thread.
+    \item ``untied'' is ignored if used with {\bf final}.
+    \item Interacts poorly with thread-private variables and {\tt gettid()}.
+  \end{itemize}
+
+\begin{center}
+  {\bf mergeable}
+\end{center}
+
+  \begin{itemize}
+    \item For an undeferred or included task,
+    allows the implementation to generate a merged task instead.
+    \item In a merged task, the implementation may re-use the environment from its generating task (as if there was no task directive).
+  \end{itemize}
+
+  For more: \url{docs.oracle.com/cd/E24457_01/html/E21996/gljyr.html}
+
+\paragraph{Bad {\tt mergeable} Example.}
+
+  \begin{lstlisting}[language=C]
+#include <stdio.h>
+void foo () {
+    int x = 2;
+    #pragma omp task mergeable
+    {
+        x++; // x is by default firstprivate
+    }
+    #pragma omp taskwait
+    printf("%d\n",x); // prints 2 or 3
+}
+  \end{lstlisting}
+  
+    This is an incorrect usage of {\bf mergeable}: the output depends
+      on whether or not the task got merged.
+    Merging tasks (when safe) produces more efficient code.
+
+\paragraph{Taskyield.}
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf taskyield}
+  \end{center}
+
+This directive specifies that the current task can be suspended in favour of another task.
+
+  Here's a good use of {\bf taskyield}.
+
+  \begin{lstlisting}[language=C]
+void foo (omp_lock_t * lock, int n) {
+    int i;
+    for ( i = 0; i < n; i++ )
+    #pragma omp task
+    {
+        something_useful();
+        while (!omp_test_lock(lock)) {
+            #pragma omp taskyield
+        }
+        something_critical();
+        omp_unset_lock(lock);
+    }
+}
+  \end{lstlisting}
+
+\paragraph{Taskwait.}
+  \begin{center}
+    {\tt \#pragma omp }{\bf taskwait}
+  \end{center}~\\[1em]
+
+     Waits for the completion of the current task's child tasks.
+
+Two examples which show off tasks,
+from~\cite{Ayguade:2009:DOT:1512157.1512430}, include a web server (with
+unstructured requests) and a user interface which allows users to
+start tasks that are to run in parallel.
+
+Here's pseudocode for the Boa webserver main loop from~\cite{Ayguade:2009:DOT:1512157.1512430}.
+{\small
+\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
+#pragma omp parallel
+  /* a single thread manages the connections */
+  #pragma omp single nowait
+  while (!end) {
+    process any signals
+    foreach request from the blocked queue {
+      if (request dependencies are met) {
+        extract from the blocked queue
+        /* create a task for the request */
+        #pragma omp task untied
+          serve_request(request);
+      }
+    }
+    if (new connection) {
+      accept_connection();
+      /* create a task for the request */
+      #pragma omp task untied
+        serve_request(new connection);
+    }
+    select();
+  }
+\end{lstlisting}
+}
+The {\tt untied} qualifier lifts restrictions on the task-to-thread mapping.
+All it means is that a task that's been started by one thread could be picked up
+by another and carried forward. This can have bad side effects if there's
+thread-private data involved. The {\tt single} directive indicates that the
+runtime is only to use one thread to execute the next statement; otherwise,
+it could execute $N$ copies of the statement, which does belong to a
+OpenMP {\tt parallel} construct.
+
+\paragraph{Tree Traversal.}
+  \begin{lstlisting}[language=C]
+struct node {
+    struct node *left;
+    struct node *right;
+};
+extern void process(struct node *);
+
+void traverse(struct node *p) {
+    if (p->left) {
+        #pragma omp task
+        // p is firstprivate by default
+        traverse(p->left);
+    }
+    if (p->right) {
+        #pragma omp task
+        // p is firstprivate by default
+        traverse(p->right);
+    }
+    process(p);
+}    
+  \end{lstlisting}
+
+If we want to guarantee a post-order traversal,
+we simply need to insert an explicit \verb+#pragma omp taskwait+
+after the two calls to {\tt traverse} and before the
+call to {\tt process}.
+
+
+\paragraph{Parallel Linked List Processing.} We can spawn 
+tasks to process linked list entries. It's hard to
+use two threads to traverse the list, though.
+
+  \begin{lstlisting}[language=C]
+// node struct with data and pointer to next
+extern void process(node* p);
+
+void increment_list_items(node* head) {
+    #pragma omp parallel
+    {
+        #pragma omp single
+        {
+            node * p = head;
+            while (p) {
+                #pragma omp task
+                {
+                    process(p);
+                }
+                p = p->next;
+            }
+        }
+    }
+}
+  \end{lstlisting}
+
+\paragraph{Using Lots of Tasks.} Let's see what happens
+if we spawn lots of tasks in a {\tt single} directive.
+
+  \begin{lstlisting}[language=C]
+#define LARGE_NUMBER 10000000
+double item[LARGE_NUMBER];
+extern void process(double);
+
+int main() {
+    #pragma omp parallel
+    {
+        #pragma omp single
+        {
+            int i;
+            for (i=0; i<LARGE_NUMBER; i++) {
+                #pragma omp task
+                // i is firstprivate, item is shared
+                process(item[i]);
+            }
+        }
+    }
+}
+  \end{lstlisting}
+
+In this case, the main loop generates tasks, which are all assigned to the executing thread as it becomes available (because of {\tt single}).
+When too many tasks get generated, OpenMP suspends the main thread, runs some tasks, then resumes the loop in the main thread.
+
+\paragraph{Improved code.} It would be better to {\tt untied} the
+spawned tasks, enabling them to run on multiple threads. Surround
+the for loop with \verb+#pragma omp task untied+.
+
+
+\section*{More Scoping Clauses}
+Besides the {\tt shared}, {\tt private} and {\tt threadprivate}, OpenMP also 
+supports {\tt firstprivate} and {\tt lastprivate}, which work like this.
+
+
+Pthreads pseudocode for {\tt firstprivate} clause:
+  \begin{lstlisting}
+int x;
+
+void* run(void* arg) {
+    int thread_x = x;
+    // use thread_x
+}
+  \end{lstlisting}
+
+Pthread pseudocode for the {\tt lastprivate} clause:
+  \begin{lstlisting}
+int x;
+
+void* run(void* arg) {
+    int thread_x;
+    // use thread_x
+    if (last_iteration) {
+        x = thread_x;
+    }
+}
+  \end{lstlisting}
+In other words, {\tt lastprivate} makes sure that the variable {\tt x}
+has the same value as if the loop executed sequentially.
+
+{\tt copyin} is like firstprivate, but for threadprivate variables.
+
+Pthreads pseudocode for {\tt copyin}:
+  \begin{lstlisting}[language=C]
+int x;
+int x[NUM_THREADS];
+
+void* run(void* arg) {
+  x[thread_num] = x;
+  // use x[thread_num]
+}
+  \end{lstlisting}
+
+The {\tt copyprivate} clause is only used with {\tt single}.
+It copies the specified private variables from the thread to all other
+threads. It cannot be used with {\tt nowait}.
+
+\paragraph{Defaults.} {\bf default(shared)} makes all variables shared; 
+{\bf default(none)} prevents sharing by default (creating compiler errors if
+you treat a variable as shared.)
+
+
+
+\paragraph{Catch Me Outside...}
+A related problem with private variables is that sometimes you need 
+access to them outside their parallel region. Here's some contrived code.
+
+\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
+#include <omp.h>
+#include <stdio.h>
+
+int tid, a, b;
+
+#pragma omp threadprivate(a)
+
+int main(int argc, char *argv[])
+{
+    printf("Parallel #1 Start\n");
+    #pragma omp parallel private(b, tid)
+    {
+        tid = omp_get_thread_num();
+        a = tid;
+        b = tid;
+        printf("T%d: a=%d, b=%d\n", tid, a, b);
+    }
+
+    printf("Sequential code\n");
+    printf("Parallel #2 Start\n");
+    #pragma omp parallel private(tid)
+    {
+        tid = omp_get_thread_num();
+        printf("T%d: a=%d, b=%d\n", tid, a, b);
+    }
+
+    return 0;
+}    
+  \end{lstlisting}
+This yields something like the following output:
+\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
+% ./a.out
+Parallel #1 Start
+T6: a=6, b=6
+T1: a=1, b=1
+T0: a=0, b=0
+T4: a=4, b=4
+T2: a=2, b=2
+T3: a=3, b=3
+T5: a=5, b=5
+T7: a=7, b=7
+Sequential code
+Parallel #2 Start
+T0: a=0, b=0
+T6: a=6, b=0
+T1: a=1, b=0
+T2: a=2, b=0
+T5: a=5, b=0
+T7: a=7, b=0
+T3: a=3, b=0
+T4: a=4, b=0
+\end{lstlisting}
 
 \section*{OpenMP Memory Model, Its Pitfalls, and How to Mitigate Them}
 OpenMP uses a {\bf relaxed-consistency, shared-memory} model. This almost certainly doesn't 
@@ -151,261 +532,9 @@ This is not true for OpenMP versions before 2.5, so be careful.
 
 \paragraph{Final thoughts on flush.} We've seen that it's very difficult to use flush properly. Really, you should be using mutexes or other synchronization instead of flush~\cite{flush}, because you'll probably just get it wrong. But now you know what flush means.
 
-\section*{OpenMP Task Directive}
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf task} {\it [clause [[,] clause]*]}
-  \end{center}~\\
-
-Generates a task for a thread in the team to run.
-     When a thread enters the region it may:
-\begin{itemize}
-        \item immediately execute the task; or
-        \item defer its execution. (any other thread may be assigned the task)
-\end{itemize}
-
-  Allowed Clauses: {\bf if, final, untied, default, mergeable, private,
-  firstprivate, shared}
-
-\paragraph{{\tt if} and {\tt final} Clauses.}
-
-  \begin{center}
-  {\bf if} {\it(scalar-logical-expression)}
-  \end{center}
-
-    When expression is {\tt false}, generates an undeferred task---\\
-    the generating task region is suspended until execution of the
-      undeferred task finishes.\\[1em]
-
-  \begin{center}
-  {\bf final} {\it(scalar-logical-expression)}
-  \end{center}
-
-    When expression is {\tt true}, generates a final task.\\
-    All tasks within a final task are {\it included}.\\
-    Included tasks are undeferred and also execute immediately in the same thread.
-
-Let's look at some examples of these clauses.
-  \begin{lstlisting}[language=C]
-void foo () {
-    int i;
-    #pragma omp task if(0) // This task is undeferred
-    {
-        #pragma omp task
-        // This task is a regular task
-        for (i = 0; i < 3; i++) {
-            #pragma omp task
-            // This task is a regular task
-            bar();
-        }
-    }
-    #pragma omp task final(1) // This task is a regular task
-    {
-        #pragma omp task // This task is included
-        for (i = 0; i < 3; i++) {
-            #pragma omp task
-            // This task is also included
-            bar();
-        }
-    }
-}
-  \end{lstlisting}
-
-\paragraph{{\tt untied} and {\tt mergeable} Clauses.}
-
-\begin{center}
-  {\bf untied}
-\end{center}
-  \begin{itemize}
-    \item A suspended task can be resumed by any thread.
-    \item ``untied'' is ignored if used with {\bf final}.
-    \item Interacts poorly with thread-private variables and {\tt gettid()}.
-  \end{itemize}
-
-\begin{center}
-  {\bf mergeable}
-\end{center}
-
-  \begin{itemize}
-    \item For an undeferred or included task,
-    allows the implementation to generate a merged task instead.
-    \item In a merged task, the implementation may re-use the environment from its generating task (as if there was no task directive).
-  \end{itemize}
-
-  For more: \url{docs.oracle.com/cd/E24457_01/html/E21996/gljyr.html}
-
-\paragraph{Bad {\tt mergeable} Example.}
-
-  \begin{lstlisting}[language=C]
-#include <stdio.h>
-void foo () {
-    int x = 2;
-    #pragma omp task mergeable
-    {
-        x++; // x is by default firstprivate
-    }
-    #pragma omp taskwait
-    printf("%d\n",x); // prints 2 or 3
-}
-  \end{lstlisting}
-  
-    This is an incorrect usage of {\bf mergeable}: the output depends
-      on whether or not the task got merged.
-    Merging tasks (when safe) produces more efficient code.
-
-\paragraph{Taskyield.}
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf taskyield}
-  \end{center}
-
-This directive specifies that the current task can be suspended in favour of another task.
-
-  Here's a good use of {\bf taskyield}.
-
-  \begin{lstlisting}[language=C]
-void foo (omp_lock_t * lock, int n) {
-    int i;
-    for ( i = 0; i < n; i++ )
-    #pragma omp task
-    {
-        something_useful();
-        while (!omp_test_lock(lock)) {
-            #pragma omp taskyield
-        }
-        something_critical();
-        omp_unset_lock(lock);
-    }
-}
-  \end{lstlisting}
-
-\paragraph{Taskwait.}
-  \begin{center}
-    {\tt \#pragma omp }{\bf taskwait}
-  \end{center}~\\[1em]
-
-     Waits for the completeion of the current task's child tasks.
-
-\section*{OpenMP Examples}
-We are next going to look at a sequence of examples showing
-how to use OpenMP.
-
-\paragraph{Tree Traversal.}
-  \begin{lstlisting}[language=C]
-struct node {
-    struct node *left;
-    struct node *right;
-};
-extern void process(struct node *);
-
-void traverse(struct node *p) {
-    if (p->left) {
-        #pragma omp task
-        // p is firstprivate by default
-        traverse(p->left);
-    }
-    if (p->right) {
-        #pragma omp task
-        // p is firstprivate by default
-        traverse(p->right);
-    }
-    process(p);
-}    
-  \end{lstlisting}
-
-If we want to guarantee a post-order traversal,
-we simply need to insert an explicit \verb+#pragma omp taskwait+
-after the two calls to {\tt traverse} and before the
-call to {\tt process}.
-
-
-\paragraph{Parallel Linked List Processing.} We can spawn 
-tasks to process linked list entries. It's hard to
-use two threads to traverse the list, though.
-
-  \begin{lstlisting}[language=C]
-// node struct with data and pointer to next
-extern void process(node* p);
-
-void increment_list_items(node* head) {
-    #pragma omp parallel
-    {
-        #pragma omp single
-        {
-            node * p = head;
-            while (p) {
-                #pragma omp task
-                {
-                    process(p);
-                }
-                p = p->next;
-            }
-        }
-    }
-}
-  \end{lstlisting}
-
-\paragraph{Using Lots of Tasks.} Let's see what happens
-if we spawn lots of tasks in a {\tt single} directive.
-
-  \begin{lstlisting}[language=C]
-#define LARGE_NUMBER 10000000
-double item[LARGE_NUMBER];
-extern void process(double);
-
-int main() {
-    #pragma omp parallel
-    {
-        #pragma omp single
-        {
-            int i;
-            for (i=0; i<LARGE_NUMBER; i++) {
-                #pragma omp task
-                // i is firstprivate, item is shared
-                process(item[i]);
-            }
-        }
-    }
-}
-  \end{lstlisting}
-
-In this case, the main loop generates tasks, which are all assigned to the executing thread as it becomes available (because of {\tt single}).
-When too many tasks get generated, OpenMP suspends the main thread, runs some tasks, then resumes the loop in the main thread.
-
-\paragraph{Improved code.} It would be better to {\tt untied} the
-spawned tasks, enabling them to run on multiple threads. Surround
-the for loop with \verb+#pragma omp task untied+.
-
-\paragraph{About Nesting: Restrictions.}
-Let's consider nesting of parallel constructs.
-  \begin{itemize}
-    \item You cannot nest {\bf for} regions.
-    \item You cannot nest {\bf single} inside a {\bf for}.
-    \item You cannot nest {\bf barrier} inside a\\~~~~~ {\bf critical/single/master/for}.
-  \end{itemize}
-
-Here's something that OpenMP does allow:
-  \begin{lstlisting}[language=C]
-void good_nesting(int n)
-{
-    int i, j;
-    #pragma omp parallel default(shared)
-    {
-        #pragma omp for
-        for (i=0; i<n; i++) {
-            #pragma omp parallel shared(i, n)
-            {
-                #pragma omp for
-                for (j=0; j < n; j++)
-                    work(i, j);
-            }
-        }
-    }
-}
-  \end{lstlisting}
 
 \section*{Why Your Code is Slow}
-Code too slow? Want it to run faster? Avoid these pitfalls:
+OpenMP code too slow? Avoid these pitfalls:
   \begin{enumerate}
     \item Unnecessary flush directives.
     \item Using critical sections or locks instead of atomic.
