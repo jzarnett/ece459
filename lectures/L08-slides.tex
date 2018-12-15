@@ -69,16 +69,6 @@
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Live coding: Fork Bomb! }
-
-\begin{center}
-(well, threadbomb anyway)
-\end{center}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
@@ -110,7 +100,7 @@ $\cdots$\\[2em]
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Not Quite So Easy: Live Demo}
+  \frametitle{Not Quite So Easy}
 
     Doesn't work on files---they're always ready. Only e.g. sockets.
 
@@ -256,15 +246,50 @@ Upon return from {\tt epoll\_wait}, we have {\tt nr\_events} events ready.
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+\begin{frame}[fragile]
+\frametitle{Classic, Blocking cURL Request}
+
+Here's a simple cURL program that we can look over:
+
+\begin{lstlisting}[language=C]
+#include <stdio.h>
+#include <curl/curl.h>
+ 
+int main( int argc, char** argv ) {
+  CURL *curl;
+  CURLcode res;
+ 
+  curl_global_init(CURL_GLOBAL_DEFAULT);
+ 
+  curl = curl_easy_init();
+  if( curl ) {
+    curl_easy_setopt(curl, CURLOPT_URL, "https://example.com/" );
+    res = curl_easy_perform( curl );
+    
+  if( res != CURLE_OK ) {
+      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+    }
+    curl_easy_cleanup(curl);
+  }
+ 
+  curl_global_cleanup();
+  return 0;
+}
+\end{lstlisting}
+
+
+\end{frame}
+
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
   \frametitle{curl\_multi initialization}
 
   
     curl\_multi: work with multiple resources at once.\\[1em]
-
-    How? Similar idea to {\tt epoll}:\\[1em]
-
+    
     1. To use {\tt curl\_multi}, first create the individual requests \\ \hspace{2em} ({\tt curl\_easy\_init}).\\
     ~~~(Set options as needed on each handle).\\[1em]
 
@@ -279,108 +304,51 @@ Upon return from {\tt epoll\_wait}, we have {\tt nr\_events} events ready.
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{curl\_multi\_perform: option 1, select-based interface}
+\frametitle{Open Fire!}
 
-  
-    Main idea: put in requests and wait for results.\\[1em]
+Start reqs: \texttt{curl\_multi\_perform( CURLM* cm, int* still\_running )}
 
-    {\tt curl\_multi\_perform} is a generalization of {\tt curl\_easy\_perform} to multiple resources.\\[1em]
+\begin{center}
+\includegraphics[width=0.5\textwidth]{images/artillery.jpeg}
+\end{center}
 
-    Handle completed transfers with {\tt curl\_multi\_info\_read}.
+The second parameter is updated with the number of still-in-progress requests.
 
-  
+Meantime, we can do other things!
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{calling curl\_multi\_perform}
-
-  
-    perform interface requires use of {\tt select} (not {\tt epoll}).\\[1em]
-
-    usage (once you've {\tt curl\_multi\_add\_handle}'d):\\[.5em]
-{\tt curl\_multi\_perform(multi\_handle, \&still\_running)}\\[.5em]
-    performs a non-blocking read/write, and\\
-    returns the number of still-active handles\\ \hspace*{2em} (with more data to come).
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Next steps after curl\_multi\_perform}
-
-  
-    do
-    \begin{itemize}
-      \item organize a call to {\tt select}; and
-      \item call {\tt curl\_multi\_perform} again
-    \end{itemize}
-    while there are still running transfers.\\[1em]
-
-    After the {\tt curl\_multi\_perform}, you can also delete, alter,
-    and re-add an {\tt curl\_easy\_handle} when a transfer finishes.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Before calling {\tt select}}
+\frametitle{I'm bored... So take a nap?}
 
-  
-    {\tt select} needs a timeout and an {\tt fdset}. \\
-    \qquad ({\tt curl} provides both.)\\[1em]
+Suppose we've run out of things to do and nothing is ready yet. Wait!
 
-    Initializing the {\tt fdset} from the {\tt multi\_handle}:
-  
-
-\begin{lstlisting}
-    // zero the fd-sets
-    FD_ZERO(&fdread); FD_ZERO(&fdwrite); FD_ZERO(&fdexcep);
-    // retrieve the fds, check for error
-    curl_multi_fdset(multi_handle, 
-                     &fdread, &fdwrite, &fdexcep, &maxfd);
-    if (maxfd < -1) abort_("multi_fdset: couldn't wait for fds");
+\begin{lstlisting}[language=C]
+curl_multi_wait( CURLM *multi_handle, struct curl_waitfd extra_fds[], 
+unsigned int extra_nfds, int timeout_ms, int *numfds )
 \end{lstlisting}
 
-  
-    Retrieving the proper timeout:
-  
-\begin{lstlisting}
-    curl_multi_timeout(multi_handle, &curl_timeout);
-\end{lstlisting}
-  
-    (and then convert the {\tt long} to a {\tt struct timeval}).
-  
+This function will block the current thread until something happens.
+
+Choose how long to wait and see how many events occurred.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{The call to {\tt select}}
 
-\begin{lstlisting}
-  rc = select(maxfd + 1, &fdread, &fdwrite, &fdexcep, &timeout);
-  if (rc == -1) abort_("[main] select error");
-\end{lstlisting}
+\begin{frame}
+\frametitle{While You Were Sleeping}
 
-  
-    Wait for one of the fds to become ready,\\ ~~or for timeout to elapse. \\[1em]
-    What next?\\
-    \only<2>{Call {\tt curl\_multi\_perform} again to do the work.}
-  
+While we are asleep or doing other things, callbacks still happen.
+
+The status of the cURL easy handle is updated.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
@@ -426,154 +394,20 @@ Upon return from {\tt epoll\_wait}, we have {\tt nr\_events} events ready.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{curl\_multi\_perform example}
+\frametitle{Long Example}
 
-  
-    Not a great example:
+The long example is too big for the slides. 
 
-\begin{center}
-\url{http://curl.haxx.se/libcurl/c/multi-app.html}
-\end{center}
+We'll have to take look at it in the notes!
 
-    I'm not even sure it works verbatim.\\[1em]
-
-    Nevertheless, you could use it as a solution template.\\
-    You'll have to add more code to replace completed transfers.
-  
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{A better choice: curl\_multi\_wait}
-
-  
-    Instead of using {\tt select()}, \\
-    you can use {\tt curl\_multi\_wait()}.\\[2em]
-    It's just better.\\
-  \url{https://gist.github.com/clemensg/4960504}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{curl\_multi, option 3: curl\_multi\_socket\_action}
-
-  
-    So, I couldn't quite figure out how this works. Sorry.\\[1em]
-
-    Similar to the {\tt perform} interface, but you have more control.
-
-    Advantage:
-
-\begin{quote}
-   2 - When the application discovers action on a single socket, it calls
-       libcurl and informs that there was action on this particular socket and
-       libcurl can then act on that socket/transfer only and not care about
-       any other transfers. (The previous API always had to scan through all
-       the existing transfers.)
-\end{quote}
-
-\url{http://curl.haxx.se/dev/readme-multi_socket.html}
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-
-  \frametitle{multi\_socket usage}
-
-
-From the manpage:
-\small
-\begin{itemize}
-\item Create a multi handle
-
-\item Set the socket callback with {\tt CURLMOPT\_SOCKETFUNCTION}
-
-\item Set the timeout callback with {\tt CURLMOPT\_TIMERFUNCTION}, to get to know what timeout value to use when waiting for socket activities.
-
-\item Add easy handles with {\tt curl\_multi\_add\_handle()}
-
-\item Provide some means to manage the sockets libcurl is using, so you can check them for activity. This can be done through your application code, or by way of an external library such as libevent or glib.
-
-\item Call {\tt curl\_multi\_socket\_action(..., CURL\_SOCKET\_TIMEOUT, 0, ...)} to kickstart everything. To get one or more callbacks called.
-
-\item Wait for activity on any of libcurl's sockets, use the timeout value your callback has been told.
-
-\item When activity is detected, call {\tt curl\_multi\_socket\_action()} for the socket(s) that got action. If no activity is detected and the timeout expires, call {\tt curl\_multi\_socket\_action(3)} with {\tt CURL\_SOCKET\_TIMEOUT}. 
-\end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-
-  \frametitle{multi\_socket example}
-
-
-This example is even worse than the last one:
-\begin{center}
-\url{http://curl.haxx.se/libcurl/c/hiperfifo.html}
-\end{center}~\\[1em]
-It contains more moving parts than we need to understand the API, and gets
-another library ({\tt libevent}) involved.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Concurrent Socket I/O}
-
-  
-    Complete change of topic. A Quora question:
-
-    \begin{quote}
-      What is the ideal design for server process in Linux that handles concurrent socket I/O?
-    \end{quote}
-
-    So far in this class, we've seen:
-    \begin{itemize}
-    \item processes;
-    \item threads;
-    \item thread pools; and
-      \item async/non-blocking I/O.
-    \end{itemize}
-
-    We'll see the answer by Robert Love, Linux kernel hacker\footnote{\tiny \url{https://plus.google.com/105706754763991756749/posts/VPMT8ucAcFH}}.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{The Real Question}
-
-  
-    \Large
-    \begin{quote}
-      How do you want to do I/O?\\[1em]
-    \end{quote}
-
-    Not really ``how many threads?''.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Four Choices}
+  \frametitle{Process, Threads, AIO?! Four Choices}
 
   
     \begin{itemize}
@@ -752,111 +586,6 @@ int main() {
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Callback-Based Asynchronous I/O Model}
-
-  
-    Weird programming model; not popular.\\[1em]
-    Instead of select/poll, pass along a callback,\\ to be executed upon success or failure.\\[1em]
-    JavaScript does this extensively, but more unwieldy in C.\\[1em]
-    We'll see the Go programming model, which makes this easy.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Callback-Based Example}
-
-\begin{lstlisting}
-void
-new_connection_cb (int cfd)
-{
-  if (cfd < 0) {
-    fprintf (stderr, "error in accepting connection!\n");
-    exit (1);
-  }
-
-  ref<connection_state> c = 
-    new refcounted<connection_state>(cfd);
-
-  c->killing_task = delaycb(10, 0, wrap(&clean_up, c));
-
-  /* next step: read information on the new connection */
-  fdcb (cfd, selread, wrap (&read_http_cb, cfd, c, true,
-                 wrap(&read_req_complete_cb)));
-}
-\end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{node.js: A Superficial View}
-
-   node.js is another event-based nonblocking I/O model.\\[1em]
-
-   (Since JavaScript is singlethreaded, nonblocking I/O mandatory.)\\[1em]
-
-Canonical example from node.js homepage:
-\begin{lstlisting}
-var http = require('http');
-http.createServer(function (req, res) {
-  res.writeHead(200, {'Content-Type': 'text/plain'});
-  res.end('Hello World\n');
-}).listen(1337, '127.0.0.1');
-console.log('Server running at http://127.0.0.1:1337/');
-\end{lstlisting}
-
-Note the use of the callback---it's called upon each connection.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Building on node.js}
-
-Usually we want a higher-level view, e.g. expressjs\footnote{\url{http://expressjs.com}}.\\[1em]
-
-An example from the Internet\footnote{\tiny \url{https://github.com/tglines/nodrr/blob/master/controllers/nod.js}}:
-\begin{lstlisting}
-app.post('/nod', function(req, res) {
-  loadAccount(req,function(account) {
-    if(account && account.username) {
-      var n = new Nod();
-      n.username = account.username;
-      n.text = req.body.nod;
-      n.date = new Date();
-      n.save(function(err){
-        res.redirect('/');
-      });
-    }
-  });
-});
-\end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary: Building Servers}
-
-  
-    \begin{itemize}
-      \item Blocking I/O; 1 process per request (old Apache).
-      \item Blocking I/O; 1 thread per request (Java).
-      \item Asynchronous I/O, pool of threads, callbacks, \\ each thread handles multiple connections. (no one does this)
-      \item Nonblocking I/O, pool of threads, \\ multiplexed with select/poll,
-        event-driven, \\ each thread handles multiple connections. (JavaScript)
-    \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \end{document}
 
