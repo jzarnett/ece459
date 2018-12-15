@@ -5,7 +5,7 @@
 \lecture{13 --- OpenMP}{\term}{Patrick Lam}
 
 \section*{OpenMP}
-%\paragraph{Moving on.} Now that we've seen automatic parallelization (and how that works in Solaris Studio and gcc), let's talk about manual---but compiler-aided---parallelization using OpenMP. 
+
 
 \paragraph{About OpenMP.} OpenMP (Open Multiprocessing) 
 is an API specification which allows you to tell the compiler how you'd 
@@ -18,6 +18,11 @@ You use OpenMP~\cite{omptutorial} by specifying
 directives in the source code. In C and C++, these directives are
 pragmas of the form \verb+#pragma omp ...+. There is also OpenMP
 syntax for Fortran. 
+
+There are {\bf 16} OpenMP directives. Each directive applies to the immediately-following statement, which is either a single statement or a compound statement {\bf \{  $\cdots$ \}}. Most clauses have a \emph{list} as an argument. 
+A list is a comma-separated list of list items. For C and C++, a list item 
+is simply a variable name.
+
 
 Here are some benefits of the OpenMP approach:
 \begin{itemize}
@@ -34,7 +39,7 @@ Here are some benefits of the OpenMP approach:
   incremental parallelization of the program, starting with the hotspots.
 \end{itemize}
 
-Let's look at a simple example:
+Let's look at a simple example of a parallel for loop:
 {\small
 \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
   void calc (double *array1, double *array2, int length) {
@@ -71,7 +76,7 @@ loops that it's going to parallelize:
 \begin{itemize}
 \item the loop must be of the form 
 \[ \mbox{\tt for (init expression; test expression; increment expression)}; \]
-\item the loop variable must be integer (signed or unsigned), pointer, or a C++
+\item the loop variable must be integer (signed or unsigned), pointer, or a \CPP~ 
 random access iterator;
 \item the loop variable must be initialized to one end of the range;
 \item the loop increment amount must be loop-invariant (constant with respect to the loop body); 
@@ -80,7 +85,7 @@ random access iterator;
 
 (These restrictions therefore also apply to automatically parallelized
 loops.) If you want to parallelize a loop that doesn't meet the 
-restriction, restructure it so that it does, as we saw last time.
+restriction, restructure it so that it does, as we  did for autoparallelization
 
 \paragraph{Runtime effect.} When you compile a program with 
 OpenMP directives, the compiler generates code to spawn a \emph{team}
@@ -103,6 +108,71 @@ should be \emph{shared} between threads. Changes to shared variables
 are visible to all threads, while changes to private variables are
 visible only to the changing thread. Let's look at the defaults that
 OpenMP uses to parallelize the above code.
+
+
+OpenMP includes three keywords for variable scope and storage:
+\begin{itemize}
+        \item private;
+        \item shared; and
+        \item threadprivate.
+\end{itemize}
+
+\paragraph{Private Variables.} You can declare private variables
+with the {\tt private} clause. This creates new storage, on a per-thread
+basis, for the variable---it does not copy variables. The scope
+of the variable extends from the start of the region where the variable
+exists to the end of that region; the variable is destroyed afterwards.
+
+Some Pthread pseudocode for private variables:
+
+  \begin{lstlisting}[language=C]
+void* run(void* arg) {
+    int x;
+    // use x
+}
+  \end{lstlisting}
+
+\paragraph{Shared Variables.} The opposite of a private variable
+is a {\tt shared} variable. All threads have access to the same block
+of data when accessing such a variable.
+
+The relevant Pthread pseudocode is:
+  \begin{lstlisting}[language=C]
+int x;
+
+void* run(void* arg) {
+    // use x
+}
+  \end{lstlisting}
+
+\paragraph{Thread-Private Variables.} Finally, OpenMP supports 
+{\tt threadprivate} variables. This is like a {\tt private} variable
+in that each thread makes a copy of the variable. However, the scope 
+is different. Such variables are accessible to the thread in any parallel region.
+
+This example will make things clearer. The OpenMP code:
+  \begin{lstlisting}[language=C]
+int x;
+#pragma omp threadprivate(x)
+  \end{lstlisting}
+  maps to this Pthread pseudocode:
+  \begin{lstlisting}[language=C]
+int x;
+int x[NUM_THREADS];
+
+void* run(void* arg) {
+  // use x[pthread_self()]
+}
+  \end{lstlisting}
+
+A variable may not appear in {\bf more than one clause} on the same
+directive. (There's an exception for {\tt firstprivate} and {\tt
+  lastprivate}, which we'll see later.) By default, variables
+declared in regions are private; those outside regions are
+shared. (An exception: anything with dynamic storage is
+shared).
+
+
 
 { 
 \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
@@ -144,6 +214,102 @@ on the {\tt parallel} pragma, or you can give explicit scoping:
 
 \verb+   #pragma omp parallel for private(i) shared(length, array1, array2)+
 
+\section*{Directives}
+We'll talk about the different OpenMP directives next. These are the key
+language features you'll use to tell OpenMP what to parallelize.
+
+\subsection*{Parallel}
+  \begin{center}
+    {\tt \#pragma omp }{\bf parallel} {\it [clause [[,] clause]*]}
+  \end{center}
+
+This is the most basic directive in OpenMP.
+It tells OpenMP to form a team of threads and start parallel execution.
+The thread that enters the region becomes the {\bf master} (thread 0).
+
+Allowed Clauses: {\bf if, num\_threads, default, private, firstprivate,
+    shared, copyin, reduction}.
+
+The figure below illustrates what {\tt parallel} does.
+By default, the number of threads used is set globally, either automatically
+or manually. After the parallel block, the thread team sleeps until it's needed again.
+
+  \tikzstyle{brace} = [decorate,decoration={brace},thick]
+  \tikzstyle{transition} = [rectangle, draw=blue!50, fill=blue!20, thick,
+                            text width=6.75cm, align=center]
+  \tikzstyle{thread} = [->, >=stealth', very thick]
+  \tikzstyle{master} = [->, >=stealth', very thick, red]
+
+
+\begin{center}
+  \begin{tikzpicture}[decoration={brace}]
+
+    \node[transition] (begin) {{\tt \#pragma omp parallel}\\begin block};
+    \node[transition] (end) [below=of begin] {end block};
+
+    \draw[master]   (   0,   1.55) to (   0,   0.55);
+
+    \draw[master]   (-3.5, -0.525) to (-3.5, -1.525);
+    \draw[thread]   (-2.5, -0.525) to (-2.5, -1.525);
+    \draw[thread]   (-1.5, -0.525) to (-1.5, -1.525);
+    \draw[thread]   (-0.5, -0.525) to (-0.5, -1.525);
+    \draw[thread]   ( 0.5, -0.525) to ( 0.5, -1.525);
+    \draw[thread]   ( 1.5, -0.525) to ( 1.5, -1.525);
+    \draw[thread]   ( 2.5, -0.525) to ( 2.5, -1.525);
+    \draw[thread]   ( 3.5, -0.525) to ( 3.5, -1.525);
+
+    \draw[master]   (   0,  -2.08) to (   0,  -3.08);
+
+    \draw[decorate, thick, red] (-4,  -3.08) -- (-4,  -2.08)
+      node[red, anchor=east, midway, outer sep=0.1cm] {Master Thread};
+    \draw[decorate, thick]      (-4, -1.525) -- (-4, -0.525)
+      node[anchor=east, midway, outer sep=0.1cm] {Thread Team};
+    \draw[decorate, thick, red] (-4,   0.55) -- (-4,   1.55)
+      node[red, anchor=east, midway, outer sep=0.1cm] {Master Thread};
+\end{tikzpicture}
+\end{center}
+
+
+\paragraph{Code Example: Parallel.}
+  \begin{lstlisting}[language=C]
+#pragma omp parallel
+{
+    printf("Hello!");
+}
+  \end{lstlisting}
+
+  If the number of threads is 4, this produces:
+  \begin{lstlisting}[language=C]
+Hello!
+Hello!
+Hello!
+Hello!
+  \end{lstlisting}
+
+\paragraph{{\tt if} and {\tt num\_threads} Clauses.} Directives take clauses.
+The first one we'll see (besides the variable scope clauses) are {\tt if} and
+{\tt num\_threads}.
+
+  \begin{center}
+    {\bf if}({\it primitive-expression})    
+  \end{center}
+The {\tt if} clause allows you to control at runtime whether or not to run
+multiple threads or just one thread in its associated parallel section.
+If {\it primitive-expression} evaluates to {\tt 0}, i.e. {\tt false}, then
+only one thread will execute in the parallel section. (It's what you would expect.)
+
+
+If the parallel section is going to run multiple threads (e.g. {\tt if} expression
+is true; or if there is no {\tt if} expression), we can then specify how many threads.
+  \begin{center}
+    {\bf num\_threads}({\it integer-expression})    
+  \end{center}
+
+This spawns at most {\bf num\_threads}, depending on the number of
+threads available.  It can only guarantee the number of threads
+requested if {\bf dynamic adjustment} for number of threads is off and
+enough threads aren't busy.
+
 \subsection*{Reductions}
 Recall that we introduced the concept of a reduction, e.g.
 {\small
@@ -162,154 +328,52 @@ specifies that the {\tt total} variable is the accumulator for a
 reduction over {\tt +}. OpenMP will create local copies of {\tt total} and 
 combine them at the end of the parallel region.
 
-\subsection*{Accessing Private Data outside a Parallel Region}
-A related problem with private variables is that sometimes you need 
-access to them outside their parallel region. Here's some contrived code.
-
-{\small
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-  int data=1;
-  #pragma omp parallel for private(data)
-  for (int i = 0; i < 100; i++)
-    printf ("data=%d\n", data);
-\end{lstlisting}
-}
-Since {\tt data} is private, OpenMP is not going to copy in the
-initial value {\tt 1} for it, so you'll get an undefined value.  To
-make OpenMP initialize private variables with the master thread's
-values for those variables, use {\tt firstprivate(data)}.  Conversely,
-to get a value out from the (sequentially) last iteration of the loop,
-use {\tt lastprivate(data)}.
-
-\paragraph{Thread-private Data.} A variant on {\tt private} is
-{\tt threadprivate}. Thread-private data is also local to each
-thread. The main difference is that {\tt private} is for transient
-data, typically local variables, declared at the start of a region,
-while {\tt threadprivate} is for persistent data, e.g. declared at
-file scope, which lives beyond a single parallel region. Instead of
-{\tt firstprivate(local)} for {\tt private(local)}, use {\tt
-  copyin(global)} for {\tt threadprivate(global)}.
-
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-#include <omp.h>
-#include <stdio.h>
-
-int tid, a, b;
-
-#pragma omp threadprivate(a)
-
-int main(int argc, char *argv[])
-{
-    printf("Parallel #1 Start\n");
-    #pragma omp parallel private(b, tid)
-    {
-        tid = omp_get_thread_num();
-        a = tid;
-        b = tid;
-        printf("T%d: a=%d, b=%d\n", tid, a, b);
-    }
-
-    printf("Sequential code\n");
-    printf("Parallel #2 Start\n");
-    #pragma omp parallel private(tid)
-    {
-        tid = omp_get_thread_num();
-        printf("T%d: a=%d, b=%d\n", tid, a, b);
-    }
-
-    return 0;
-}    
-  \end{lstlisting}
-This yields something like the following output:
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-% ./a.out
-Parallel #1 Start
-T6: a=6, b=6
-T1: a=1, b=1
-T0: a=0, b=0
-T4: a=4, b=4
-T2: a=2, b=2
-T3: a=3, b=3
-T5: a=5, b=5
-T7: a=7, b=7
-Sequential code
-Parallel #2 Start
-T0: a=0, b=0
-T6: a=6, b=0
-T1: a=1, b=0
-T2: a=2, b=0
-T5: a=5, b=0
-T7: a=7, b=0
-T3: a=3, b=0
-T4: a=4, b=0
-\end{lstlisting}
-
-  \subsection*{Atomic}
-We can also request atomic operations.
+{\bf Operators (and their associated initial value)}
   \begin{center}
-    {\tt \#pragma omp }{\bf atomic} [{\bf read $\mid$ write $\mid$ update $\mid$ capture}]\\
-    {\it expression-stmt}
+    \begin{tabular}{l r | l r | l r | l r | l r}
+      + & (0) & -  &  (0) &    $\mid$ & (0) & \&\& & (1) & max & MAX\\
+      * & (1) & \& & (\~{}0) & \^{} & (0) &   $\mid\mid$ & (0) & min & MIN\\ 
+    \end{tabular}
   \end{center}
-  
-    This ensures that a specific storage location is updated
-    atomically.  Atomics should be more efficient than using critical
-    sections (or else why would they include it?)
 
-\begin{itemize}[noitemsep]
-\item  {\bf read expression:} {\tt v = x;}
-  
-\item   {\bf write expression:} {\tt x = expr;}
+\subsection*{(For) Loop Directive} Inside a parallel section, we can
+specify a for loop clause, as follows.
 
-\item  {\bf update expression:} {\tt x++;} {\tt x{-}-;} {\tt ++x;} {\tt -{-}x;}
-  {\tt x binop= expr;} {\tt x = x binop expr;}
+  \begin{center}
+    {\tt \#pragma omp }{\bf for} {\it [clause [[,] clause]*]}
+  \end{center}
 
-    {\tt expr} must not access the same location as {\tt v} or {\tt x}.
-    {\tt v} and {\tt x} must not access the same location; must be
-      primitives.
-    All operations to {\tt x} are atomic.
+    Iterations of the loop will be distributed among the
+      current team of threads.
+    This clause only supports simple ``for'' loops with invariant bounds (bounds do
+      not change during the loop).
+    Loop variable is implicitly private; OpenMP sets the
+      correct values.
 
-\item  {\bf capture expression:} {\tt v = x++;} {\tt v = x{-}-;} {\tt v = ++x;}
-  {\tt v = -{-}x;} {\tt v = x binop= expr;}
+  Allowed Clauses: {\bf private, firstprivate, lastprivate, reduction, schedule,
+    collapse, ordered, nowait}.
 
-  Capture expressions perform the indicated update. At the same time,
-  they also store the original or final value computed into location
-  {\tt v}.
-\end{itemize}
+\paragraph{The {\tt schedule} Clause.}
 
-\paragraph{Collapsing Loops.}
-Usually, when you have nested loops, it's best to parallelize the
-outermost loop. {\sf Why?} \\[2em]
+  \begin{center}
+    {\bf schedule}({\it kind[, chunk\_size]})
+  \end{center}
 
-Sometimes, however, that just doesn't work out. The main issue is that
-the outermost loop may have too low a trip count to be worth
-parallelizing. You could instead parallelize the inner loop by putting
-the pragma just before the inner loop, but then you pay more overhead
-than you need to. OpenMP therefore supports \emph{collapsing} loops,
-which creates a single loop performing all the iterations of the
-collapsed loops. Consider:
+    The {\bf chunk\_size} is the number of iterations a thread
+      should handle at a time. {\bf kind} is one of:
+      \begin{itemize}
+        \item {\bf static}:  divides the number of iterations into chunks and assigns each thread
+        a chunk in round-robin fashion (before the loop executes).
 
-{\small
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-  #include <math.h>
-  int main() {
-    double array[2][10000];
-    #pragma omp parallel for collapse(2)
-    for (int i = 0; i < 2; i++)
-      for (int j = 0; j < 10000; j++)
-        array[i][j] = sin(i+j);
-    return 0;
-  }
-\end{lstlisting}
-}
+        \item {\bf dynamic}: divides the number of iterations into chunks and assigns each
+        available thread a chunk, until there are no chunks left.
+        \item {\bf guided}:  same as dynamic, except {\bf chunk\_size} represents the minimum
+        size. This starts by dividing the loop into large chunks, and decreases the
+        chunk size as fewer iterations remain.
+        \item {\bf auto}: obvious (OpenMP decides what's best for you).
+        \item {\bf runtime}: also obvious; we'll see how to adjust this later.
+      \end{itemize}
 
-Parallelizing the outer loop only enables the use of 2 threads.
-Parallelizing both loops together enables the use of up to 20,000
-threads, although the loop body is too small for that to be
-worthwhile. 
-
-{\sf Where have you seen something like a manually collapsed loop?}\\[1em]
-
-\subsection*{Better Performance Through Scheduling}
 OpenMP tries to guess how many iterations to distribute to each thread
 in a team. The default mode is called \emph{static scheduling}; in
 this mode, OpenMP looks at the number of iterations it needs to run,
@@ -364,151 +428,245 @@ are also two meta-modes, {\tt auto}, which leaves it up to OpenMP, and
 {\tt runtime}, which leaves it up to the \verb+OMP_SCHEDULE+ environment
 variable.
 
-\section*{Beyond {\tt for} Loops: OpenMP parallel sections and tasks}
-The part of OpenMP we've seen so far has been strictly less powerful
-than pthreads (but harder to misuse): we have only parallelized
-specific forms of {\tt for} loops. This reflects OpenMP's
-scientific-computation heritage, where you have huge FORTRAN matrix
-calculations to parallelize. However, these days we also care about
-parallelism in more general settings, so OpenMP now provides
-more ways to parallelize.
 
-\paragraph{Parallel Sections.} The first mechanism, \emph{parallel sections},
-is a purely-static mechanism for specifying independent units of work
-which ought to be run in parallel. For instance, you can set up two 
-(and exactly two, in this example) linked lists simultaneously as follows:
+
+\paragraph{{\tt collapse} and {\tt ordered} Clauses.}
+
+  \begin{center}
+    {\bf collapse}({\it n})
+  \end{center}
+
+    This collapses {\it n} levels of loops. Obviously, this only has
+    an effect if $n \ge 2$; otherwise, nothing happens. Collapsed loop
+    variables are also made private.
+
+  \begin{center}
+    {\bf ordered}
+  \end{center}
+  
+    This enables the use of {\tt ordered} directives inside loop, which we'll see below.
+
+\subsection*{Ordered directive}
+  \begin{center}
+    {\tt \#pragma omp }{\bf ordered}
+  \end{center}
+
+    To use this directive, the containing loop must have an {\bf ordered} clause.
+    OpenMP will ensure that the ordered directives are executed the same
+      way the sequential loop would (one at a time).
+    Each iteration of the loop may execute {\bf at most one} ordered
+      directive.
+
+Let's see what that means by way of two examples.
+
+\paragraph{Invalid Use of Ordered.} This doesn't work.
 
 {\small
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-  #include <stdlib.h>
+  \begin{lstlisting}
+void work(int i) {
+  printf("i = %d\n", i);
+}
+...
+int i;
+#pragma omp for ordered
+for (i = 0; i < 20; ++i) {
 
-  typedef struct s { struct s* next; } S;
+  #pragma omp ordered
+  work(i);
 
-  void setuplist (S* current) {
-    for (int i = 0; i < 10000; i++) {
-      current->next = (S*) malloc (sizeof(S));
-      current = current->next;
-    }
-    current->next = NULL;
+  // Each iteration of the loop has 2 "ordered" clauses!
+  #pragma omp ordered 
+  work(i + 100);
+}
+  \end{lstlisting}
+}
+
+\paragraph{Valid Use of Ordered.} This does.
+{\small  \begin{lstlisting}
+void work(int i) {
+  printf("i = %d\n", i);
+}
+...
+int i;
+#pragma omp for ordered
+for (i = 0; i < 20; ++i) {
+  if (i <= 10) {
+    #pragma omp ordered
+    work(i);
   }
+  if (i > 10) {
+    // two ordered clauses are mutually-exclusive
+    #pragma omp ordered
+    work(i+100);
+  }
+}
+  \end{lstlisting}
+}
 
-  int main() {
-    S var1, var2;
-    #pragma omp parallel sections
+{\bf Note:} if we change {\tt i \textgreater\- 10} to {\tt i \textgreater\- 9}, 
+the use becomes invalid because the iteration $i=9$ contains two {\tt ordered}
+directives.
+
+  \paragraph{Tying It All Together.} Here's a larger example.
+
+  \begin{lstlisting}
+#include <omp.h>
+#include <stdio.h>
+
+int main(int argc, char *argv[])
+{
+    int j, k, a;
+    #pragma omp parallel num_threads(2)
     {
-      #pragma omp section
-      { setuplist (&var1); }
-      #pragma omp section
-      { setuplist (&var2); }
+        #pragma omp for collapse(2) ordered private(j,k) \
+                        schedule(static,3)
+        for (k = 1; k <= 3; ++k)
+            for (j = 1; j <= 2; ++j) {
+                #pragma omp ordered
+                printf("t[%d] k=%d j=%d\n",
+                       omp_get_thread_num(),
+                       k, j);
+            }
     }
     return 0;
-  }
-\end{lstlisting}
 }
-Note that the structure of the parallelism is explicitly visible in the
-structure of the code, and that you don't get to start an unbounded 
-number of threads with the parallel sections mechanism.
+  \end{lstlisting}
 
-{\sf What's another potential barrier to parallelism in the above code?}\\
+\paragraph{Output of Previous Example.} And here's what it does.
 
-\paragraph{Nested Parallelism.} Instead of collapsing loops, we can
-specify nested parallelism; we might have, for instance, two parallel
-sections, each of which contain parallel for loops. To enable
-such nested parallelism, you have to call \verb+omp_set_nested+ with
-a non-zero value. The runtime might refuse; call \verb+omp_get_nested+ to
-find out if the runtime complied or not. You can also set the 
-\verb+OMP_NESTED+ environment variable to enable nesting.
-
-Here's an example of nested parallelism.
 {\small
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-  #include <stdlib.h>
-  #include <omp.h>
-
-  int main() {
-    double *array1, *array2;
-    omp_set_nested(1);
-    #pragma omp parallel sections shared(array1, array2)
-    {
-      #pragma omp section
-      {
-        array1 = (double*) malloc(sizeof (double)*1024*1024);
-        #pragma omp parallel for shared(array1)
-        for (int i = 0; i < 1024*1024; i++)
-          array1[i] = i;
-      }
-      #pragma omp section
-      {
-        array2 = (double*) malloc(sizeof (double)*1024*512);
-        #pragma omp parallel for shared(array2)
-        for (int i = 0; i < 1024*512; i++)
-          array2[i] = i;
-      }
-    }
-  }
-\end{lstlisting}
+  \begin{lstlisting}
+    t[0] k=1 j=1
+    t[0] k=1 j=2
+    t[0] k=2 j=1
+    t[1] k=2 j=2
+    t[1] k=3 j=1
+    t[1] k=3 j=2
+  \end{lstlisting}
 }
 
-\paragraph{Tasks: OpenMP's thread-like mechanism.}
-The main new feature in OpenMP 3.0 is the notion of \emph{tasks}. When
-the program executes a \verb+#pragma omp task+ statement, the code
-inside the task is split off as a task and scheduled to run sometime
-in the future. Tasks are more flexible than parallel sections, because
-parallel sections constrain exactly how many threads are supposed to
-run, and there is also always a join at the end of the parallel
-section.  On the other hand, the OpenMP runtime can assign any task to
-any thread that's running. Tasks therefore have lower overhead.
+  {\bf Note:} the output will be determinstic; still, the program will run two threads as
+  long as the thread limit is at least 2.
 
-Two examples which show off tasks,
-from~\cite{Ayguade:2009:DOT:1512157.1512430}, include a web server (with
-unstructured requests) and a user interface which allows users to
-start tasks that are to run in parallel.
+This directive is shorthand:
 
-Here's pseudocode for the Boa webserver main loop from~\cite{Ayguade:2009:DOT:1512157.1512430}.
+  \begin{center}
+    {\tt \#pragma omp }{\bf parallel for} {\it [clause [[,] clause]*]}
+  \end{center}
+
+We could equally well write:
 {\small
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
+  \begin{lstlisting}
 #pragma omp parallel
-  /* a single thread manages the connections */
-  #pragma omp single nowait
-  while (!end) {
-    process any signals
-    foreach request from the blocked queue {
-      if (request dependencies are met) {
-        extract from the blocked queue
-        /* create a task for the request */
-        #pragma omp task untied
-          serve_request(request);
-      }
+{
+    #pragma omp for
+    {
+
     }
-    if (new connection) {
-      accept_connection();
-      /* create a task for the request */
-      #pragma omp task untied
-        serve_request(new connection);
-    }
-    select();
-  }
-\end{lstlisting}
 }
-The {\tt untied} qualifier lifts restrictions on the task-to-thread mapping;
-we won't talk about that. The {\tt single} directive indicates that the
-runtime is only to use one thread to execute the next statement; otherwise,
-it could execute $N$ copies of the statement, which does belong to a
-OpenMP {\tt parallel} construct.
+  \end{lstlisting}
+}
+but the single directive is shorter; this idiom happens a lot.
 
-\paragraph{More OpenMP features.} 
-Random fact: you can use the {\tt flush} directive to make sure that
-all values in registers or cache are written to memory. Usually, this
-isn't a problem for OpenMP programs, because of the way they're
-written. On a related note, the {\tt barrier} directive explicitly
-instructs the runtime to wait for all threads to complete; OpenMP also
-has implicit barriers at the end of parallel sections.  
+Allowed Clauses: everything allowed by {\tt parallel} and {\tt for}, except
+  {\bf nowait}.
 
-OpenMP also supports critical sections (one thread at a time), atomic
-sections, and typical mutex locks (\verb+omp_set_lock+,
-\verb+omp_unset_lock+).
+\subsection*{Sections}
+Another OpenMP parallelism idiom is sections.
+  \begin{center}
+    {\tt \#pragma omp }{\bf sections} {\it [clause [[,] clause]*]}
+  \end{center}
 
-\paragraph{A Warning About Using OpenMP Directives.}
+  Allowed Clauses: {\bf private, firstprivate, lastprivate, reduction, nowait}.
+
+Each {\bf sections} directive must contain one or more {\bf section} directive:
+  \begin{center}
+    {\tt \#pragma omp }{\bf section}
+  \end{center}
+  
+Sections distributed among current team of threads.
+They statically limit parallelism to the number of
+      sections which are lexically in the code.
+
+\paragraph{Parallel Sections.} Another common idiom.
+  \begin{center}
+    {\tt \#pragma omp }{\bf parallel sections} {\it [clause [[,] clause]*]}
+  \end{center}
+
+  As with parallel for, this is basically shorthand for:
+  
+  \begin{lstlisting}
+#pragma omp parallel
+{
+    #pragma omp sections
+    {
+
+    }
+}
+  \end{lstlisting}
+
+  Allowed Clauses: everything allowed by {\tt parallel} and {\tt sections}, except
+  {\bf nowait}.
+
+  \subsection*{Single} When we'd be otherwise running many threads, we can state
+that some particular code block should be run by only one method.
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf single}
+  \end{center}
+    Only a single thread executes the region following the directive.
+    The thread is not guaranteed to be the master thread.
+
+  Allowed Clauses: {\bf private, firstprivate, copyprivate, nowait}.
+ Must not use {\bf copyprivate} with {\bf nowait}
+
+  \subsection*{Barrier}
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf barrier}
+  \end{center}
+
+     Waits for all the threads in the team to reach the barrier before
+      continuing. In other words, this constitutes a synchronization point.
+     Loops, sections, and single all have an implicit barrer at the end of their
+      region (unless you use {\bf nowait}).
+     Note that, although it's always good practice to put statements following a {\tt \#pragma omp} inside a compound block ({\tt \{ \ldots \}}), a barrier inside an {\tt if} statement must be {\tt \{  \}} separated.
+
+     This mechanism is analogous to {\tt pthread\_barrier} in Pthreads.
+
+  \subsection*{Master} Sometimes we do want to guarantee that only the master
+thread runs some code.
+  \begin{center}
+    {\tt \#pragma omp }{\bf master}
+  \end{center}
+
+    This is similar to the {\bf single} directive, except that the master thread (and only the master thread) is guaranteed to enter this region.
+    No implied barriers. 
+
+Also, no clauses.
+
+  \subsection*{Critical} We turn our attention to synchronization constructs.
+First, let's examine critical.
+  \begin{center}
+    {\tt \#pragma omp }{\bf critical} {\it [(name)]}
+  \end{center}
+
+    The enclosed region is guaranteed to only run one thread at a time
+      (on a per-name basis).
+    This is the same as a block of code in Pthreads surrounded by a {\tt mutex} lock
+      and unlock.
+
+\subsection*{Atomic}
+We can also request atomic operations:
+
+    {\tt \#pragma omp }{\bf atomic} [{\bf read $\mid$ write $\mid$ update $\mid$ capture}]\\
+    {\it expression-stmt}
+    
+This ensures that a specific storage location is updated
+    atomically.  Atomics should be more efficient than using critical
+    sections (or else why would they include it?)
+
+\section*{A Warning About Using OpenMP Directives}
   Write your code so that simply eliding OpenMP directives gives a valid program. For instance, this is wrong:
   \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
 if (a != 0)
