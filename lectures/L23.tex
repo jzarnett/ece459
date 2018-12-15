@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{23 --- Password Cracking, Software Transactional Memory}{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{23 --- Password Cracking, Reduced-Resource Computation}{\term}{Patrick Lam \& Jeff Zarnett}
 
 \section*{GPU Application: Password Cracking}
 
@@ -161,102 +161,6 @@ for (i = 0; i < m; i++) {
 }
 The optimization changes the loop increments and then compensates. 
 
-\section*{Software Transactional Memory}
-Developers use software transactions by 
-writing {\tt atomic} blocks. These blocks are just like {\tt
-  synchronized} blocks, but with different semantics.
-
-\begin{lstlisting}
-  atomic {
-    this.x = this.z + 4;
-  }
-\end{lstlisting}
-You're meant to think of database transactions, which I expect you to
-know about. The {\tt atomic} construct means that either the code in
-the atomic block executes completely, or aborts/rolls back in the
-event of a conflict with another transaction (which triggers a retry
-later on).
-
-\paragraph{Benefit.} The big win from transactional memory is the simple
-programming model. It is far easier to program with transactions than with
-locks. Just stick everything in an atomic block and hope the compiler does the
-right thing with respect to optimizing the code.
-
-\paragraph{Motivating Example.} We'll illustrate STM with the usual bank account example\footnote{Apparently, bank account transactions aren't actually atomic, but they still make a good example.}.
-  \begin{lstlisting}
-transfer_funds(Account* sender, Account* receiver, double amount) {
-  atomic {
-    sender->funds -= amount;
-    receiver->funds += amount;
-  }
-}
-  \end{lstlisting}
-
-Using locks, we have two main options:
-      \begin{itemize}
-        \item Big Global Lock: Lock everything to do with modifying accounts. (This is slow; and you might forget to grab the lock).
-        \item Use a different lock for every account. (Prone to deadlocks; may forget to grab the lock).
-      \end{itemize}
-With STM, we do not have to worry about remembering to acquire locks,
-or about deadlocks.
-
-\paragraph{Drawbacks.} As I understand it, three of the problems with 
-transactions are as follows:
-
-\begin{itemize}
-\item I/O: Rollback is key. The problem with transactions and I/O is
-  not really possible to rollback. (How do you rollback a write to the
-  screen, or to the network?)
-
-\item Nested transactions: The concept of nesting transactions is easy
-  to understand. The problem is: what do you do when you commit the
-  inner transaction but abort the nested transaction? The clean
-  transactional fa\,cade doesn't work anymore in the presence of
-  nested transactions.
-
-\item Transaction size: Some transaction implementations (like
-  all-hardware implementations) have size limits for their
-  transactions.
-\end{itemize}
-
-\paragraph{Implementations.} Transaction implementations are typically 
-optimistic; they assume that the transaction is going to succeed,
-buffering the changes that they are carrying out, and rolling back the
-changes if necessary.
-
-One way of implementing transactions is by using hardware support,
-especially the cache hardware. Briefly, you use the caches to store
-changes that haven't yet been committed. Hardware-only transaction
-implementations often have maximum-transaction-size limits, which are
-bad for programmability, and combining hardware and software approaches
-can help avoid that.
-
-\paragraph{Implementation issues.} Since atomic sections don't protect
-against data races, but just rollback to recover, a datarace may still
-trigger problems in your program.
-
-\begin{tabular}{r|l}
-\hspace*{2em}  \begin{minipage}{.4\textwidth}
-\begin{lstlisting}
-atomic {
-  x++;
-  y++;
-}
-\end{lstlisting}
-\end{minipage}
-&
-\hspace*{2em} \begin{minipage}{.4\textwidth}
-\begin{lstlisting}
-atomic {
-  if (x != y)
-     while (true) { }
-}
-\end{lstlisting}
-\end{minipage}
-\end{tabular}
-
-In this silly example, assume initially {\tt x = y}. You may think the
-code will not go into an infinite loop, but it can.
 
 \input{bibliography.tex}
 

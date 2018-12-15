@@ -600,5 +600,176 @@ For the most part it can only have side effects which we would generally prefer 
 
 \end{frame}
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM: Introduction}
+
+
+    Instead of programming with locks, we have transactions on memory.
+      \begin{itemize}
+        \item Analogous to database transactions
+      \end{itemize}
+    An old idea; recently saw some renewed interest.\\[1em]
+
+    A series of memory operations either all succeed; or \\ \qquad
+     all fail (and get
+      rolled back), and are later retried.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM: Benefits}
+
+
+    Simple programming model: need not worry about lock
+      granularity or deadlocks.\\[1em]
+
+    Just group lines of code that should logically be one operation
+      in an {\tt atomic} block!\\[1em]
+
+    It is the responsibility of the implementer to ensure the code
+      operates as an atomic transaction.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{STM: Implementing a Motivating Example}
+
+
+  \begin{lstlisting}
+transfer_funds(Account* sender, Account* receiver,
+               double amount) {
+  atomic {
+    sender->funds -= amount;
+    receiver->funds += amount;
+  }
+}
+  \end{lstlisting}
+  [Note: bank transfers aren't actually atomic!]\\[1em]
+
+    With locks we have two main options:
+      \begin{itemize}
+        \item Lock everything to do with modifying accounts \\ 
+\qquad (slow; may forget to use lock).
+        \item Have a lock for every account \\ 
+\qquad (deadlocks; may forget to use lock).
+      \end{itemize}
+    With STM, we do not have to worry about remembering to acquire locks,
+      or about deadlocks.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM: Drawbacks}
+
+
+    Rollback is key to STM. \\
+     \qquad But, some things cannot be rolled back. \\
+     \qquad (write to the screen, send packet over network)\\[1em]
+
+    Nested transactions. \\
+     \qquad What if an inner transaction succeeds, \\ yet the
+      transaction aborts? \\[1em]
+
+    Limited transaction size: \\
+ \qquad Most implementations (especially
+    all-hardware) \\ have a limited transaction size.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Basic STM Implementation (Software)}
+
+
+    In all atomic blocks, record all reads/writes to a log.\\[1em]
+    At the end of the block, running thread verifies that no other threads
+      have modified any values read.\\[1em]
+    If validation is successful, changes are {\bf committed}.\\
+    Otherwise, the block is {\bf aborted} and re-executed.\\[2em]
+
+  Note: Hardware implementations exist too.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Basic STM Implementation Issues}
+
+
+    Since you don't protect against dataraces (just rollback),\\
+      a datarace may trigger a fatal error in your program.
+
+  \begin{lstlisting}
+atomic {
+  x++;
+  y++;
+}
+  \end{lstlisting}
+
+  \begin{lstlisting}
+atomic {
+  if (x != y)
+     while (true) { }
+}
+  \end{lstlisting}
+
+ In this silly example, assume initially {\tt x = y}. You may think the
+      code will not go into an infinite loop, but it can.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM Implementations}
+
+
+
+  Note: Typically STM performance is no worse than twice as slow as
+  fine-grained locks.
+
+  \begin{itemize}
+    \item Toward.Boost.STM (C++)
+
+    \item SXM (Microsoft, C\#)
+
+    \item Built-in to the language (Clojure, Haskell)
+
+    \item AtomJava (Java)
+
+    \item Durus (Python)
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM Summary}
+
+
+     Software Transactional Memory provides a more natural approach to
+      parallel programming: \\ \qquad no need to deal with locks and their associated problems.\\[1em]
+
+     Currently slow,\\ \qquad but a lot of research is going into improving it. (futile?)\\[1em]
+
+     Operates by either completing an atomic block,\\ or retrying (by rolling
+      back) until it successfully completes.
+
+\end{frame}
+
+
 \end{document}
 
