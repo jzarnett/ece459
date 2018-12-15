@@ -25,7 +25,7 @@
   \begin{itemize}
     \item Available on most systems
     \vfill
-    \item Windows has Pthreads Win32, but I wouldn't use it; \\use Linux for
+    \item Windows has pthreads Win32, but I wouldn't use it; \\use Linux for
           this course
     \vfill
     \item API available by {\tt \#include <pthread.h>}
@@ -37,18 +37,20 @@
 
 
 
-\begin{frame}
+\begin{frame}[fragile]
 \frametitle{Pthread Functions}
 
-\begin{itemize}
-	\item \texttt{pthread\_create}
-	\item \texttt{pthread\_exit}
-	\item \texttt{pthread\_join}
-	\item \texttt{pthread\_yield} 
-	\item \texttt{pthread\_attr\_init}
-	\item \texttt{pthread\_attr\_destroy}
-	\item \texttt{pthread\_cancel}
-\end{itemize}
+Need a refresher? See the pthreads.pdf document in the course repository!
+
+\begin{lstlisting}[language=C]
+pthread_create( pthread_t *thread, const pthread_attr_t *attributes,
+                void *(*start_routine)( void * ), void *argument )
+pthread_join( pthread_t thread, void **return_value )
+pthread_detach( pthread_t thread )
+pthread_cancel( pthread_t thread )
+pthread_testcancel( ) /* If the thread is cancelled, this function does not return (thread terminated) */
+pthread_exit( void *value )
+\end{lstlisting}
 
 
 \end{frame}
@@ -68,59 +70,6 @@
   \end{itemize}
 
 \end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Pthreads: Creating Threads}
-
-
-  \begin{lstlisting}[language=C]
-int pthread_create(pthread_t* thread, 
-                   const pthread_attr_t* attr,
-                   void* (*start_routine)(void*),
-                   void* arg);
-  \end{lstlisting}
-  \vfill
-  {\bf thread}: creates a handle to a thread at pointer location
-
-  {\bf attr}: thread attributes (NULL for defaults, more details later)
-
-  {\bf start\_routine}: function to start execution
-
-  {\bf arg}: value to pass to start\_routine
-  \vfill
-  returns 0 on success, error number otherwise\\(contents of *thread are
-  undefined)
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Creating Threads---Pthreads Example}
-
-
-\begin{lstlisting}[language=C]
-#include <pthread.h>
-#include <stdio.h>
-
-void* run(void*) {
-  printf("In run\n");
-}
-
-int main() {
-  pthread_t thread;
-  pthread_create(&thread, NULL, run, NULL);
-  printf("In main\n");
-}
-\end{lstlisting}
-  \vfill
-  Simply creates a thread and terminates\\(usage isn't really right, as we'll
-  see.)
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
@@ -146,75 +95,67 @@ int main() {
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+\begin{frame}
+\frametitle{Attributes}
+
+ In previous courses, the default attributes were fine...
+ 
+ But now we should know about them!
+ 
+ \begin{center}
+ \includegraphics[width=0.8\textwidth]{images/mixing-console.jpg}
+ \end{center}
+
+\end{frame}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Attributes}
+
+
+  By default, threads are {\it joinable} on Linux, but a more portable way to
+  know what you're getting is to set thread attributes. You can change:
+  \begin{itemize}
+    \item Detached or joinable state
+    \item Scheduling inheritance
+    \item Scheduling policy
+    \item Scheduling parameters
+    \item Scheduling contention scope
+    \item Stack size
+    \item Stack address
+    \item Stack guard (overflow) size
+  \end{itemize}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Waiting for Threads}
+  \frametitle{Attributes---Example}
 
 
   \begin{lstlisting}[language=C]
-int pthread_join(pthread_t thread,
-                 void** retval)
+size_t stacksize;
+pthread_attr_t attributes;
+pthread_attr_init(&attributes);
+pthread_attr_getstacksize(&attributes, &stacksize);
+printf("Stack size = %i\n", stacksize);
+pthread_attr_destroy(&attributes);
   \end{lstlisting}
-  \vfill
-  {\bf thread}: wait for this thread to terminate (thread must be~joinable).
+Running this on a laptop produces:
+  \begin{lstlisting}
+jon@riker examples master % ./stack_size 
+Stack size = 8388608
+  \end{lstlisting}
+  Setting a thread state to joinable:
+  \begin{lstlisting}
+pthread_attr_setdetachstate(&attributes,
+                            PTHREAD_CREATE_JOINABLE);
+  \end{lstlisting}
 
-  {\bf retval}: stores exit status of thread (set by {\tt pthread\_exit}) to
-                 the location pointed by *retval. If cancelled, returns
-                 {\tt PTHREAD\_CANCELED}. {\tt NULL} is ignored.
-  \vfill
-  returns 0 on success, error number otherwise.
-  \vfill
-  {\bf Only call this one time per thread!} Multiple calls on the same thread
-  leads to undefined behaviour.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Waiting for Threads---Pthreads example}
-
-
-\begin{lstlisting}[language=C]
-#include <pthread.h>
-#include <stdio.h>
-
-void* run(void*) {
-  printf("In run\n");
-}
-
-int main() {
-  pthread_t thread;
-  pthread_create(&thread, NULL, run, NULL);
-  printf("In main\n");
-  pthread_join(thread, NULL);
-}
-\end{lstlisting}
-  \vfill
-  This now waits for the newly created thread to terminate.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Creating Threads---C++11 Example}
-
-
-\begin{lstlisting}[language=C]
-#include <thread>
-#include <iostream>
-
-void run() {
-  std::cout << "In run\n";
-}
-
-int main() {
-  std::thread t1(run);
-  std::cout << "In main\n";
-  t1.join(); // aha!
-}
-\end{lstlisting}
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -298,57 +239,6 @@ void* run(void* arg) {
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Passing Data to C++11 threads}
-
-It's easier to get data to threads in C++11:
-\begin{lstlisting}[language=C]
-#include <thread>
-#include <iostream>
-
-void run(int i) {
-  std::cout << "In run " << i << "\n";
-}
-
-int main() {
-  for (int i = 0; i < 10; ++i) {
-    std::thread t1(run, i);
-    t1.detach(); // see the next slide...
-  }
-}
-\end{lstlisting}
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Getting Data from C++11 threads}
-
-    \ldots but it's harder to get data back.\\
-    Use {\tt async} and {\tt future} abstractions:
-    \begin{lstlisting}[language=C]
-#include <thread>
-#include <iostream>
-#include <future>
-
-int run() {
-  return 42;
-}
-
-int main() {
-  std::future<int> t1_retval =
-                  std::async(std::launch::async, run);
-  std::cout << t1_retval.get();
-}
-\end{lstlisting}
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
   \frametitle{Detached Threads}
 
 
@@ -373,78 +263,114 @@ int pthread_detach(pthread_t thread);
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Thread Termination}
+  \frametitle{Passing Data to C++11 threads}
+
+It's easier to get data to threads in C++11:
+\begin{lstlisting}[language=C]
+#include <thread>
+#include <iostream>
+
+void run(int i) {
+  std::cout << "In run " << i << "\n";
+}
+
+int main() {
+  for (int i = 0; i < 10; ++i) {
+    std::thread t1(run, i);
+    t1.detach();.
+  }
+}
+\end{lstlisting}
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-  \begin{lstlisting}[language=C]
-void pthread_exit(void *retval);
-  \end{lstlisting}
-  \vfill
-  {\bf retval}: return value passed to function that calls {\tt pthread\_join}
-  \vfill
-  start\_routine returning is equivalent to calling {\tt pthread\_exit} with
-  that return value;
-  \vfill
-  {\tt pthread\_exit} is called implicitly when the {\tt start\_routine} of a
-  thread returns.
-  \vfill
-  There is no C++11 equivalent.
+\begin{frame}
+\frametitle{Thread Safety}
+
+Make sure the libraries you use are  \alert{thread-safe}.
+
+That means it protects its shared data (more detail later).
+
+``How do I know?''
+
+Well, you could... Read the documentation...?
 
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{READ THE WHAT?!}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/meatloaf.jpeg}
+\end{center}
+
+\end{frame}
+
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Attributes}
+  \frametitle{Thread Safety}
 
+glibc reentrant functions are also safe.
 
-  By default, threads are {\it joinable} on Linux, but a more portable way to
-  know what you're getting is to set thread attributes. You can change:
-  \begin{itemize}
-    \item Detached or joinable state
-    \item Scheduling inheritance
-    \item Scheduling policy
-    \item Scheduling parameters
-    \item Scheduling contention scope
-    \item Stack size
-    \item Stack address
-    \item Stack guard (overflow) size
-  \end{itemize}
-
+A program can have more than one thread calling these functions concurrently.
+   
+{\bf Example:} {\tt rand\_r} versus {\tt rand}.
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Joinable Threads and Detached Threads}
+
+Joinable threads hang around until someone joins them.
+
+Detached threads clean up as soon as execution is finished.
+
+It is good practice to detach threads if they are never joined.
+
+And undefined behaviour to try to join a detached thread.
+
+\end{frame}
+
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Attributes---Example}
+  \frametitle{Getting Data from C++11 threads}
 
+    In C++ it's harder to get data back.\\
+    Use {\tt async} and {\tt future} abstractions:
+    \begin{lstlisting}[language=C]
+#include <thread>
+#include <iostream>
+#include <future>
 
-  \begin{lstlisting}[language=C]
-size_t stacksize;
-pthread_attr_t attributes;
-pthread_attr_init(&attributes);
-pthread_attr_getstacksize(&attributes, &stacksize);
-printf("Stack size = %i\n", stacksize);
-pthread_attr_destroy(&attributes);
-  \end{lstlisting}
-Running this on a laptop produces:
-  \begin{lstlisting}
-jon@riker examples master % ./stack_size 
-Stack size = 8388608
-  \end{lstlisting}
-  Setting a thread state to joinable:
-  \begin{lstlisting}
-pthread_attr_setdetachstate(&attributes,
-                            PTHREAD_CREATE_JOINABLE);
-  \end{lstlisting}
+int run() {
+  return 42;
+}
 
+int main() {
+  std::future<int> t1_retval =
+                  std::async(std::launch::async, run);
+  std::cout << t1_retval.get();
+}
+\end{lstlisting}
 
+  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
@@ -500,28 +426,120 @@ int main() {
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Threading Challenges}
 
-  \begin{itemize}
-    \item Be aware of scheduling (you can also set affinity with pthreads on
-      Linux).
-    \vfill
-    \item Make sure the libraries you use are {\bf thread-safe}:
-      \begin{itemize}
-        \item Means that the library protects its shared data.
-      \end{itemize}
-    \vfill
-    \item glibc reentrant functions are also safe: a program can have more than one
-      thread calling these functions concurrently.
-    \vfill
-    \item {\bf Example:} {\tt rand\_r} versus
-      {\tt rand}.
-  \end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Thread Termination}
+
+
+  \begin{lstlisting}[language=C]
+void pthread_exit(void *retval);
+  \end{lstlisting}
+  \vfill
+  {\bf retval}: return value passed to function that calls {\tt pthread\_join}
+  \vfill
+  start\_routine returning is equivalent to calling {\tt pthread\_exit} with
+  that return value;
+  \vfill
+  {\tt pthread\_exit} is called implicitly when the {\tt start\_routine} of a
+  thread returns.
+  \vfill
+  There is no C++11 equivalent.
+
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Not Now!}
+
+Remember cancellation? Asynchronous and Deferred.
+
+Sometimes a thread could die before it has cleaned up.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/tenthdoctor.jpeg}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Cleanup Handler}
+
+The functions for cleaning up are:
+
+\begin{lstlisting}[language=C]
+pthread_cleanup_push( void (*routine)(void*), void *argument ); /* Register cleanup handler, with argument */ 
+pthread_cleanup_pop( int execute ); /* Run if execute is non-zero */ 
+\end{lstlisting}
+
+The push function always needs to be paired with the pop function at the same level in your program (where level is defined by the curly braces).
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Don't You Forget About Me}
+
+Consider the following code: 
+\begin{lstlisting}[language=C]
+void* do_work( void* argument ) {
+  struct job * j = malloc( sizeof( struct job ) );
+  /* Do something useful with this structure */
+  /* Actual work to do not shown */
+  free( j );
+  pthread_exit( NULL );
+\end{lstlisting}
+
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Don't You Forget About me}
+
+\begin{lstlisting}[language=C]
+void cleanup( void* mem ) {
+  free( mem );
+}
+
+void* do_work( void* argument ) {
+  struct job * j = malloc( sizeof( struct job ) );
+  pthread_cleanup_push( cleanup, j );
+  /* Do something useful with this structure */
+  /* Actual work to do not shown */
+  free( j );
+  pthread_cleanup_pop( 0 ); /* Don't run */
+  pthread_exit( NULL );
+\end{lstlisting}
+
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{More fun with pthreads}
+
+There are some additional pthread functions we can take a look at:
+
+\begin{lstlisting}[language=C]
+pthread_t pthread_self( void );
+int pthread_equal( pthread_t t1, pthread_t t2 );
+int pthread_once(pthread_once_t* once_control, void (*init_routine)(void));
+pthread_once_t once_control = PTHREAD_ONCE_INIT;
+\end{lstlisting}
+
+
+
+\end{frame}
 
 
 
