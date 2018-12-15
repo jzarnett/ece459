@@ -41,10 +41,6 @@ But maybe you would rather not use threads. Why not?
 \item limitations due to maximum numbers of threads.
 \end{itemize}
 
-\paragraph{Live coding example.} To illustrate the max-threads
-issue, let's write {\tt threadbomb.c}, to explore how many simultaneous threads
-one could start on my computer.
-
 \paragraph{Non-blocking I/O.} The main point of this lecture, though,
 is non-blocking/asynchronous I/O. The simplest example:
 
@@ -75,9 +71,7 @@ and {\tt epoll}) and interrupts (under UNIX, signals).
 
 
 We will describe {\tt epoll}. It is the most modern and
-flexible interface. Unfortunately, I didn't realize that the obvious
-{\tt curl} interface does not work with {\tt epoll} but instead with
-{\tt select}.  There is different syntax but the ideas are the same.
+flexible interface. If you want to learn about \texttt{select} and \texttt{poll} at a lower level: \url{https://github.com/jzarnett/ece252/blob/master/lectures/L29-Asynchronous_I_O_with_select_poll.pdf }
 
 The key idea is to give {\tt epoll} a bunch of file descriptors and
 wait for events to happen. In particular:
@@ -168,11 +162,10 @@ for disk as well as sockets.
 Your code submits the requests using e.g. {\tt aio\_read} and {\tt aio\_write}.
 If needed, wait for I/O to happen using {\tt aio\_suspend}.
 
-\section*{curl\_multi}
 \section*{Using cURL Asynchronously}
 We've already seen that network communication is a great example of a way that you could use asynchronous  I/O. You can start a network request and move on to creating more without waiting for the results of the first one. For requests to different recipients, it certainly makes sense to do this.
 
-The cURL multi interface has a lot of similarities with the regular cURL interface. It's been a little while since we went over it, so let's recap what we did before. Remember from earlier the example we did that was modified from \url{https://curl.haxx.se/libcurl/c/https.html} (i.e., the official docs):
+The cURL multi interface has a lot of similarities with the regular cURL interface. Here's a simple example from \url{https://curl.haxx.se/libcurl/c/https.html} (i.e., the official docs):
 
 \begin{lstlisting}[language=C]
 #include <stdio.h>
@@ -328,33 +321,9 @@ In this example all requests had the same (useless) callback, but of course you 
 
 
 \section*{Building Servers: Concurrent Socket I/O}
-Switching gears, we'll talk about building software that handles tons of connections. Let's go back to that initial question:
-
-    \begin{quote}
-      What is the ideal design for server process in Linux that handles concurrent socket I/O?
-    \end{quote}
-
-    So far in this class, we've seen:
-    \begin{itemize}
-    \item processes;
-    \item threads; 
-    \item thread pools; and
-    \item non-blocking/async I/O.
-    \end{itemize}
-
-We'll analyze the answer by Robert Love, Linux kernel
-hacker~\cite{gplus:concurrent}:
-
-\paragraph{The Real Question.}
-
-    \begin{quote}
-      How do you want to do I/O?
-    \end{quote}
-
-The question is not really ``how many threads should I use?''.
 
 \paragraph{Your Choices.} The first two both use blocking I/O, while the second two use
-non-blocking I/O.
+non-blocking I/O~~\cite{gplus:concurrent}:
     \begin{itemize}
       \item Blocking I/O; 1 process per request.
       \item Blocking I/O; 1 thread per request.
@@ -468,72 +437,6 @@ When a thread is ready, it uses select/poll to find work:
     \end{itemize}
 
 In either case, the thread does work and updates the request state.
-
-\subsection*{Callback-Based Asynchronous I/O Model}
-Finally, we'll talk about a not-very-popular programming model for
-non-blocking I/O (at least for C programs; it's the only game in town
-for JavaScript and a contender for Go).  Instead of select/poll, you
-pass a callback to the I/O routine, which is to be executed upon
-success or failure.
-
-\begin{lstlisting}[language=C]
-void new_connection_cb (int cfd)
-{
-  if (cfd < 0) {
-    fprintf (stderr, "error in accepting connection!\n");
-    exit (1);
-  }
-
-  ref<connection_state> c = 
-    new refcounted<connection_state>(cfd);
-
-  // what to do in case of failure: clean up.
-  c->killing_task = delaycb(10, 0, wrap(&clean_up, c));
-
-  // link to the next task: got the input from the connection
-  fdcb (cfd, selread, wrap (&read_http_cb, cfd, c, true,
-                 wrap(&read_req_complete_cb)));
-}
-\end{lstlisting}
-
-
-\paragraph{{\tt node.js}: A Superficial View.} We'll wrap up today 
-by talking about the callback-based {\tt node.js} model.
-{\tt node.js} is another event-based nonblocking I/O model.
-Given that JavaScript doesn't have threads, the only way to write servers
-is using non-blocking I/O.
-
-The canonical example from the {\tt node.js} homepage:
-\begin{lstlisting}[language=C]
-var http = require('http');
-http.createServer(function (req, res) {
-  res.writeHead(200, {'Content-Type': 'text/plain'});
-  res.end('Hello World\n');
-}).listen(1337, '127.0.0.1');
-console.log('Server running at http://127.0.0.1:1337/');
-\end{lstlisting}
-
-Note the use of the callback---it's called upon each connection.
-
-However, usually we don't want to handle the fields in the request manually.
-We'd prefer a higher-level view. One option is expressjs\footnote{\url{http://expressjs.com}},
-and here's an an example from the Internet~\cite{nod.js}:
-\begin{lstlisting}[language=C]
-app.post('/nod', function(req, res) {
-  loadAccount(req,function(account) {
-    if(account && account.username) {
-      var n = new Nod();
-      n.username = account.username;
-      n.text = req.body.nod;
-      n.date = new Date();
-      n.save(function(err){
-        res.redirect('/');
-      });
-    }
-  });
-});
-\end{lstlisting}
-
 
 \input{bibliography.tex}
 
