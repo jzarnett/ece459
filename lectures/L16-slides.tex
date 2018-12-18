@@ -20,7 +20,6 @@
 \begin{frame}
   \frametitle{Next topic: Dependencies}
 
-  
      \structure{Dependencies} are the main
       limitation to parallelization.\\[1em]
      Example: computation must be evaulated as {\tt XY} and not {\tt YX}.\\[1em]
@@ -42,13 +41,27 @@
 \begin{frame}
 \frametitle{Dependencies: Analogies}
 
-Must extract bicycle from garage before closing garage door.\\[1em]
+Must extract bicycle from garage before closing garage door.
 
-Must close washing machine door before starting the cycle.\\[1em]
+Must close washing machine door before starting the cycle.
 
-Must be called on before answering questions? (sort of)\\[1em]
+Must be called on before answering questions? (sort of)
 
 Students must submit assignment before course staff can mark the assignment.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Dependencies: Analogies}
+
+Must install package $X$ before running package $Y$.
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/debian_main.png}
+\end{center}
+\hfill xkcd 797
+	
 
 \end{frame}
 
@@ -59,7 +72,7 @@ Students must submit assignment before course staff can mark the assignment.
 Dependencies limit the amount of parallelization.
 \vfill
 Can we execute these 2 lines in parallel?
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 x = 42
 x = x + 1  
 \end{lstlisting}
@@ -80,8 +93,13 @@ Next, we'll classify dependencies.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
 \begin{frame}
 \frametitle{Summary of Memory-carried Dependencies}
+
+Well, turns out our memory-carried dependencies are the hazards:
 \begin{center}
 \begin{tabular}{ll|p{2.8cm}p{3.2cm}}
 & & \multicolumn{2}{c}{Second Access} \\ 
@@ -100,7 +118,7 @@ Next, we'll classify dependencies.
 \frametitle{Loop-carried Dependencies (1)}
 
 Can we run these lines in parallel? \\ ~~~(initially a[0] and a[1] are 1)
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 a[4] = a[0] + 1
 a[5] = a[1] + 2
 \end{lstlisting}
@@ -119,7 +137,7 @@ a[5] = a[1] + 2
 \frametitle{Loop-carried Dependencies (2)}
 
 What about this? (all elements initially 1)
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 for (int i = 1; i < 12; ++i)
     a[i] = a[i-1] + 1
 \end{lstlisting}
@@ -138,7 +156,7 @@ for (int i = 1; i < 12; ++i)
 \frametitle{Loop-carried Dependencies (3)}
 
 Can we parallelize this? (again, all elements initially 1)
-\begin{lstlisting}
+\begin{lstlisting}[language=C]
 for (int i = 4; i < 12; ++i)
     a[i] = a[i-4] + 1
 \end{lstlisting}
@@ -163,7 +181,7 @@ for (int i = 4; i < 12; ++i)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
 \frametitle{Larger example: Loop-carried Dependencies}
-{\small \begin{verbatim}
+{\small \begin{lstlisting}[language=C]
   // Repeatedly square input, return number of iterations before 
   // absolute value exceeds 4, or 1000, whichever is smaller.
   int inMandelbrot(double x0, double y0) {
@@ -177,7 +195,7 @@ for (int i = 4; i < 12; ++i)
     }
     return iterations;
   }
-\end{verbatim} 
+\end{lstlisting} 
 }
 How can we parallelize this? \\
 \pause
@@ -196,20 +214,31 @@ different point computations.
   
   \structure{Speculation}: architects use it to predict
       branch targets.
-  \begin{itemize}
-    \item Need not wait for the branch to be evaluated.
-  \end{itemize}~\\[1em]
-  We'll use speculation at a coarser-grained level:
-      speculatively parallelize source code.\\[1em]
+  
+  \begin{center}
+  	\includegraphics[width=0.5\textwidth]{images/6sided_dice.jpg}
+  \end{center}
+  	\hfill Image Credit: Diacritica
 
-      Two ways: \structure{speculative execution} and
-      \structure{value speculation}.
+Roll the dice and see how we do!
+
+\end{frame}
+  
+
+\begin{frame}
+\frametitle{Breaking Dependencies}
+
+We need not wait for the branch to be evaluated.
+
+We'll use speculation at a coarser-grained level: speculatively parallelize code.
+
+Two ways: \alert{speculative execution} and
+      \alert{value speculation}.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-\section{Speculation}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
   \frametitle{Speculative Execution: Example}
@@ -217,7 +246,7 @@ different point computations.
   
 Consider the following code:
   
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 void doWork(int x, int y) {
     int value = longCalculation(x, y);
     if (value > threshold) {
@@ -246,7 +275,7 @@ void doWork(int x, int y) {
   
   Yes, we could parallelize them. Consider this code:
     
-    \begin{lstlisting}
+    \begin{lstlisting}[language=C]
   void doWork(int x, int y) {
     thread_t t1, t2;
     point p(x,y);
@@ -304,7 +333,7 @@ void doWork(int x, int y) {
   
   Consider the following code:
   
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 void doWork(int x, int y) {
     int value = longCalculation(x, y);
     return secondLongCalculation(value);
@@ -329,7 +358,7 @@ void doWork(int x, int y) {
   
   This Pthread code does value speculation:
   
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 void doWork(int x, int y) {
     thread_t t1, t2;
     point p(x,y);
@@ -403,6 +432,18 @@ void doWork(int x, int y) {
 \begin{frame}
 \frametitle{Side Effects}
 
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/side-effects.jpg}
+\end{center}
+\hfill Image Credit: Kes, Cartoonstock
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Side Effects}
+
 As a general warning: Consider the \alert{side effects} of function calls. 
 
 They have a big impact on parallelism. Side effects are problematic, but why? 
@@ -456,7 +497,7 @@ Or alternatively, restarting the print routine might result in some doubled char
 
 The trivial example of a non-reentrant C function:
 
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int tmp;
 
 void swap( int x, int y ) {
@@ -464,7 +505,7 @@ void swap( int x, int y ) {
     y = x;
     x = tmp;
 }
-\end{verbatim}
+\end{lstlisting}
 
 Why is this non-reentrant?
 
@@ -505,7 +546,7 @@ Or it can be re-started without affecting the outcome.
 \begin{frame}[fragile]
 \frametitle{Thread Safe Non-Reentrant Example}
 {\scriptsize
-\begin{verbatim}
+\begin{lstlisting}[language=C]
 int length = 0;
 char *s = NULL;
 
@@ -515,8 +556,6 @@ char *s = NULL;
 
 
 // WARNING! This code is buggy - do not use!
-
-
 void AddToString(int ch)
 {
   EnterCriticalSection(&someCriticalSection);
@@ -533,7 +572,7 @@ void AddToString(int ch)
   }
   LeaveCriticalSection(&someCriticalSection);
 }
-\end{verbatim}
+\end{lstlisting}
 }
 
 
@@ -567,6 +606,19 @@ Why?
 Because a purely functional program has no side effects and they are very easy to parallelize.
 
 Any impure function has to indicate that in its function signature.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Functional Programming}
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/functional.png}
+\end{center}
+{\small \url{https://www.fpcomplete.com/blog/2017/04/pure-functional-programming}}
+
 
 \end{frame}
 
@@ -641,7 +693,7 @@ For the most part it can only have side effects which we would generally prefer 
   \frametitle{STM: Implementing a Motivating Example}
 
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 transfer_funds(Account* sender, Account* receiver,
                double amount) {
   atomic {
@@ -711,14 +763,14 @@ transfer_funds(Account* sender, Account* receiver,
     Since you don't protect against dataraces (just rollback),\\
       a datarace may trigger a fatal error in your program.
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 atomic {
   x++;
   y++;
 }
   \end{lstlisting}
 
-  \begin{lstlisting}
+  \begin{lstlisting}[language=C]
 atomic {
   if (x != y)
      while (true) { }
