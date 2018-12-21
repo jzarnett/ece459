@@ -65,6 +65,40 @@
 Which of the updates fall into which categories?
 \end{frame}
 
+\begin{frame}[fragile]
+\frametitle{Some Firefox Perf Improvements, per Mike Conley}
+
+\begin{minipage}{.5\textwidth}
+\begin{itemize}
+\item don't animate out-of-view elements
+\item move db init off main thread
+\item keep better profiling data
+\item parallel painting for macOS
+\item lazily instantiate Search Service
+\end{itemize}
+\end{minipage}\begin{minipage}{.5\textwidth}
+\begin{itemize}
+\item halve size of the blocklist
+\item refactor to reduce main-thread IO
+\item don't hold all frames of animated GIFs/APNGs in memory
+\item eliminate unnecessary hash table
+\item use more modern compiler
+\end{itemize}
+\end{minipage}
+
+\begin{center}
+\begin{minipage}{.6\textwidth}
+\large How?
+\begin{itemize}
+\item do less work (or do it sooner/later);
+\item use threads (move work off main thread);
+\item measure performance;
+\end{itemize}
+\end{minipage}
+\end{center}
+
+\end{frame}
+
 \begin{frame}
 \frametitle{Tab Warming}
 \begin{center}
@@ -76,10 +110,8 @@ Which of the updates fall into which categories?
 \includegraphics[width=.95\columnwidth]{images/L19-hot-chocolate.jpg}
 \end{minipage}%
 \begin{minipage}[t]{.5\textwidth}
-\vspace{0pt}
-\begin{flushleft}
+\vspace{3em}
 ``Maybe this is my Canadian-ness showing, but I like to think of it almost like coming in from shoveling snow off of the driveway, and somebody inside has \emph{already made hot chocolate for you}, because they knew you’d probably be cold.'' --- Mike Conley
-\end{flushleft}
 \end{minipage}
 
 \end{frame}
@@ -115,31 +147,169 @@ And in the event that we were wrong, and you weren’t interested in seeing the 
 Blog post does not report performance numbers.
 \end{frame}
 
-\begin{frame}[fragile]
-\frametitle{Some Firefox Perf Improvements, per Mike Conley}
+\begin{frame}
+\begin{center}
+\includegraphics[width=\textwidth]{images/L19-about-mozilla.png}
+\end{center}
+\end{frame}
 
-\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item don't animate out-of-view elements
-\item move db init off main thread
-\item keep better profiling data
-\item parallel painting for macOS
-\item lazily instantiate Search Service
-\end{itemize}
-\end{minipage}\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item halve size of the blocklist
-\item refactor to reduce main-thread IO
-\item don't hold all frames of animated GIFs/APNGs in memory
-\item eliminate unnecessary hash table
-\item use more modern compiler
-\end{itemize}
-\end{minipage}
+\begin{frame}
+\frametitle{Faster Firefox Step 1: Electrolysis}
+
+\Large
+Electrolysis (2017): multiple OS-level processes.\\
+(Think about threading models).
 
 \begin{center}
-\url{https://mikeconley.ca/blog/2018/02/14/firefox-performance-update-1/}
+\includegraphics[width=.9\textwidth]{images/L19-chrome-vs-firefox.png}
 \end{center}
+\end{frame}
 
+\begin{frame}
+\frametitle{Chrome vs Firefox}
+
+\Large
+Chrome: 1-process-per-tab.\\
+Firefox: 4 shared content processes.\\[1em]
+
+Firefox uses less memory (has less render state).
+
+Electrolysis challenges: \\
+\qquad internal architecture, and add-ons.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Electrolysis vs Flow}
+\large
+Two different Firefox projects:\\[1em]
+\begin{changemargin}{2em}
+Electrolysis = split across processes\\
+\begin{tabbing}
+Quantum Flow =~\=  leverage multithreading \\
+\> (using Rust's ``fearless concurrency''), \\
+\> plus other improvements.
+\end{tabbing}
+\end{changemargin}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Quantum Flow}
+\Large
+\begin{changemargin}{1cm}
+Steps:\\
+\begin{enumerate}
+\item Measure slowness \& prioritize
+\item Gather help
+\item Fix all (well, some of) the things!
+\end{enumerate}
+
+In 6 months:\\
+\qquad prioritized 895 bugs, fixed 369.\\
+Key tool: \\
+\qquad ``Quantum Flow Engineering Newsletter''.
+\end{changemargin}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{arewefastyet dot com}
+\includegraphics[width=.99\textwidth]{images/L19-arewefastyet.png}
+\end{frame}
+
+\begin{frame}
+\frametitle{about:telemetry}
+\includegraphics[width=.99\textwidth]{images/L19-about-telemetry.png}
+\end{frame}
+
+\begin{frame}
+\frametitle{About Telemetry}
+\Large
+Idea: Ask questions first, act second.
+
+Collect data about Firefox usage, then start hacking.
+
+100s of GBs of anonymous metrics/day, \\
+publicly available.
+
+Analogous to CPU profiling, but massively distributed.
+\begin{itemize}
+\item collected much less often than CPU profiling data,\\
+but at much broader scope.
+\end{itemize}
+\begin{center}
+\url{https://telemetry.mozilla.org/}
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Example Telemetry Questions}
+\Large
+\begin{itemize}
+\item Is Firefox the user's default browser? (69\% yes)
+\item Does e10s make startup faster? (no, slower)
+\item Which plugins tend to freeze the browser on load? (Silverlight and Flash)
+\end{itemize}
+Can also see evolution of data over time.
+\end{frame}
+
+\begin{frame}
+\frametitle{ama}
+\Large
+
+Devs can propose new probes;\\
+reviewed for data privacy plus normal code review.
+\end{frame}
+
+\begin{frame}
+\frametitle{ping!}
+
+\Large
+Firefox sends pings:
+\begin{itemize}
+\item ``main ping'' every 24 hours;
+\item upon shutdown;
+\item upon environment change;
+\item upon abnormal shutdown.
+\end{itemize}
+Presumably compressed JSON to Mozilla servers.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{common ping structure}
+\begin{verbatim}
+{
+  type: <string>, // "main", "activation", "optout", ...
+  id: <UUID>, // a UUID that identifies this ping
+  creationDate: <ISO date>, // the date the ping was generated
+  version: <number>, // the version of the ping format
+
+  application: {
+    architecture: <string>, // build architecture, e.g. x86
+    buildId: <string>, // "20141126041045"
+    // etc
+  },
+
+  clientId: <UUID>, // optional
+  environment: { ... }, // optional, not all pings contain
+  payload: { ... }, // actual payload data for this ping type
+}
+\end{verbatim}
+\end{frame}
+
+\begin{frame}
+\frametitle{Ping contents}
+\Large
+
+\begin{enumerate}
+\item Scalars (counts, booleans, strings)
+\item Histograms = bucketed data (like grade distributions)
+\end{enumerate}
+
+Both scalars and histograms can be keyed, \\
+e.g. how often searches happen for which search engines.
 \end{frame}
 
 \part{Single-Thread Performance}
@@ -354,7 +524,6 @@ Stream VByte's control stream uses two bits per integer to represent the size of
 \begin{frame}
 \frametitle{Decoding Stream VByte}
 
-\vspace*{-4em}
 \large\begin{changemargin}{2cm}
 Per decode iteration:\\
 \hspace*{2em} reads 1 byte from the control stream,\\
