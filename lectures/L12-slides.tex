@@ -25,7 +25,7 @@
 \hfill Image Credit: Volkswagen
 
 
-Wait... autonomous vehicles is a different course...
+Wait\ldots autonomous vehicles is a different course\ldots
 
 \end{frame}
 
@@ -99,11 +99,11 @@ Wait... autonomous vehicles is a different course...
   \frametitle{The {\tt restrict} Keyword}
 
    
-   A new feature of C99: ``The restrict type qualifier allows programs to
+   A feature available as of C99: ``The restrict type qualifier allows programs to
       be written so that translators can produce significantly faster
       executables.''
   \begin{itemize}
-    \item To request C99 in {\tt gcc}, use the {\tt -std=c99} flag.
+    \item {\tt gcc} 5+ support C11 or better by default.
   \end{itemize}
 ~\\
    {\tt restrict} means: you are promising the
@@ -310,6 +310,8 @@ int main()
     {
         setup (vector, 1024*1024);
     }
+    // if you don't read vector, compiler NOPs everything
+    printf("%f\n", vector[0]);
 }
   \end{lstlisting}
 
@@ -364,22 +366,37 @@ int main()
   \frametitle{Automatic Parallelization in {\tt gcc}}
 
 
-  {\tt gcc} (since 4.3) can also auto-parallelize loops. \\
-  However, there are
-      a few problems:
-      \begin{enumerate}
-        \item It will not tell you which loops it parallelizes (nicely).
-        \item It only operates with a fixed number of threads.
-        \item The profitability metrics are quite simple.
-        \item Only operates in simple cases.
-      \end{enumerate}
-   ~\\[1em]
+  {\tt gcc} (since 4.3) can also auto-parallelize loops via Graphite. \\[1em]
+  Parallelization has been getting better, \\ \qquad but not super well-maintained.\\[1em]
+  I think {\tt gcc} can insert a runtime check of loop iteration count.\\[2em]
+  Magic incantation:\\
+  \qquad {\tt gcc -O2 -floop-parallelize-all }\\
+  \qquad \qquad {\tt -ftree-parallelize-loops=4 -fopt-info}\\[1em]
+  {\tt -floop-parallelize-all:} parallelize all the things\\
+  {\tt -ftree-parallelize-loops=N:} use {\tt N} threads\\[1em]
 
-  Use the flags {\tt -floop-parallelize-all -ftree-parallelize-loops=N} where {\tt N} is the \# of
-  threads.
-  \vfill
-  {\bf Note:} {\tt gcc} also uses {\tt OpenMP} but ignores
-  {\tt OMP\_NUM\_THREADS}.
+  {\bf Note:} {\tt gcc} uses {\tt OpenMP} but overrides
+  {\tt OMP\_NUM\_THREADS} with {\tt N} above.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Sample {\tt -fopt-info} output}
+
+\begin{verbatim}
+$ gcc L11-omp_vector.c -O2 \
+ -floop-parallelize-all -ftree-parallelize-loops=4 -fopt-info 
+L11-omp_vector.c:14:3: note: parallelizing inner loop 1
+L11-omp_vector.c:23:3: note: loop nest optimized
+L11-omp_vector.c:15:15: note: parallelizing inner loop 4
+
+line 14: for (i = 0; i < length; i++) {
+line 15: vector[i] += 1.0;
+line 23: for (int i = 0; i < 1000; i++) {
+\end{verbatim}
 
 
 \end{frame}
@@ -390,17 +407,22 @@ int main()
   \frametitle{Understanding Automatic Parallelization in {\tt gcc}}
 
 
-  Flag {\tt -fdump-tree-parloops-details} shows what the automatic
-  parallelizations were, but it's quite unreadable.
-  \vfill
-  Instead, you can look at the assembly code to see the parallelizations
-  (obviously, impractical for a large project).
-  \begin{lstlisting}[language=C]
-% gcc -std=c99 -O3 -ftree-parallelize-loops=4
-  omp_vector_gcc.c -S -o omp_vector_gcc_auto.s
-  \end{lstlisting}
-  \vfill
-  The resulting {\tt .s} file contains the following code:
+  Want to better understand?\\
+  Look at the assembly code to see the parallelizations\\
+  (obviously, impractical for a large project).\\[-7em]
+\begin{verbatim}
+$ gcc -std=c99 -O3 -ftree-parallelize-loops=4 \
+    omp_vector_gcc.c -S -o omp_vector_gcc_auto.s
+\end{verbatim}
+  [Or, you can use {\tt objdump} on files compiled with {\tt -g}.]
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{{\tt gcc} assembly output}
+  Older gcc generated a {\tt .s} file with:
   \begin{lstlisting}[language=C]
 call    GOMP_parallel_start
 leaq    80(%rsp), %rdi
@@ -444,7 +466,7 @@ for (i = 0; i < 10; i++)
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Loops That gcc's Automatic Parallelization Can't Handle}
+  \frametitle{More Loops That gcc's Automatic Parallelization Can Handle}
 
 
   Single loop with if statement:
