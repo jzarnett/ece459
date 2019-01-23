@@ -1,5 +1,6 @@
 \documentclass[letterpaper,10pt]{article}
 
+\usepackage{csquotes}
 \usepackage{titling}
 \usepackage{listings}
 \usepackage{url}
@@ -203,71 +204,32 @@ sure that your results are consistent.
 
 \section{Manual Parallelization with OpenMP (55 marks)}
 
-This time rather than just apply OpenMP directives to an existing program, you will write the program according to what is written below and verify its correctness with some provided sample files.
+This time rather than just apply OpenMP directives to an existing program, you will write the program according to what is written below and verify its correctness with some provided sample inputs.
 
-The program does a simulation of Coulomb's Law: there are proton and electron particles (that have the standard masses and charges). The protons are kept fixed in place via mechanical forces, but the electrons will move. Electrons move according to classical physics: they are attracted to protons and repelled by other electrons. The program will perform just one step of the simulation. The plan is to use Heun's method from ECE 204A (if you took that course).
+Many web applications use JSON Web Token (JWT) for user authentication. A JWT is composed of three components: a header, a payload, and a signature. All three components are encoded using the Base64URL algorithm and concatenated together with dots. The header and payload components are JSON objects specific for each application but can mostly be ignored for the purpose of this assignment. The signature component that authenticates the information in the header and payload is generated using HMAC-SHA256 algorithm as shown below.
 
-The program takes parameters:
-\begin{enumerate}
-\item $h$ -- initial size of simulation step (a measure of time) 
-\item $e$ -- epsilon, the amount of error allowed
-\item An input file of initial positions (comma separated value file).
-\end{enumerate}
+\begin{verbatim}
+HMACSHA256(
+  base64UrlEncode(header) + "." +
+  base64UrlEncode(payload),
+  secret)
+\end{verbatim}
 
-The input file is in csv format, first column is whether it is a proton (indicated by \texttt{p}) or electron (indicated by \texttt{e}), second is x coordinate, third is y coordinate, fourth is z coordinate. The input values are floating point numbers (of \texttt{float} type) and they have a precision of 6 digits and are written using scientific notation such as \texttt{3.14159e-05}. 
+The \textquote{secret} is what prevents malicious actors from generating fake JWT. Your task is to write a program that brute forces a JWT's secret. Your program will be given three inputs on the command line: (1) the JWT, (2) maximum length of the secret, and (3) an alphabet representing the set of possible characters in the JWT's secret. For example, the alphabet \textquote{abcdefghijklmnopqrstuvwxyz0123456789} represents the set of lowercase letters and numeric digits. Once you found the secret, your program should print it out in \texttt{stdout}.
 
-The program produces as output the new positions of the electrons and protons (the protons should not move). The output file format should be the same as the input file format, and the order of each of the particles must be the same as the order of the input file.
-
-Some physics facts you may need to know to get this done:
-
-\begin{itemize}
-\item Coulomb's law calculates the force of attraction as $\dfrac{k (q_{1} q_{2})}{r^{2}}$.  Where $k$ is Coulomb's constant, $q$ the charge, and $r$ the distance between the two points.
-
-\item The value for $k$ is Coulomb's constant $8.99 \times 10^{9} N m^{2} C^{-2}$. 
-
-\item The charge of an electron is the same as the charge of a proton which is $1.60217662 \times 10^{-19}$ Coulombs. Electrons have negative charge and protons have positive charge. 
-
-\item The mass of an electron is $9.10938356 \times 10^{-31}$ kg.
-\end{itemize}
-
-
-The simulation algorithm is:
-
-\begin{enumerate}
-\item The initial vector $y_{0}$ contains the positions of the electrons and protons.
-
-\item Calculate a vector $k_{0}$ being the sum on each electron (and zero force on the protons), and use that to approximate the new positions vector $y_{1}$ = $y_{0} + h \times k_{0}$.
-
-To calculate new positions, remember $F = m \times a$;  acceleration will be considered constant in the range we're talking about ($h$ represents a very small unit of time, or it will after the value of $h$ has been divided multiple times after we find the error has been too large). 
-
-With the acceleration then we compute velocity $v$ for any point as $h \times a$; with the velocity in hand, the position is updated as simply $h \times v$ (again worth noting that the times are very small here so we don't have wild swings in $v$). 
-
-Or to break it down in math notation: $F = ma \rightarrow \dfrac{F}{m} = a \rightarrow \dfrac{hF}{m} = v \rightarrow \dfrac{h^{2}F}{m} = d$
-
-\item Calculate a second vector $k_{1}$ being the sum of the forces on each point at the new position $y_{1}$, again having zero forces on the protons. You don't have to calculate the next set of positions $y_{2}$ because it is not needed for the next step.
-
-\item Using the two force vectors,  compute $z_{1}$ as $y_{0} + h \times \dfrac{( k_{0} + k_{1} )}{2}$ (the average of the two forces). This produces a second, more accurate position vector.
-
-\item If $||z_{1} - y_{1}|| > e$ at any position (i.e., the error at any one position is larger than the tolerance), then the simulation is too coarse, and we need to go back to step 2, this time with $h$ divided by 2.
-
-\item Otherwise, you are ready to produce the output file. The output file should be in the same format as the input file, and the positions $z_{1}$ are the final results that should be put in the output. The output file name should be the same as the input file name, with the extension changed to \texttt{.out}. So if the input file to the program is \texttt{testcase1.in} then the output file name should be \texttt{testcase1.out}. 
-
-\end{enumerate}
+Note that in practice, a JWT secret should be 32 bytes long, making it impossible to brute force. For the purpose of this assignment, we will be using small secrets that can be brute forced within a reasonable timeframe.
 
 Once the sequential version is written, you will apply OpenMP directives, one at a time (or in a tightly integrated group) and judge their impact on the runtime of your program as a way to assess what areas benefit most from parallelization and the impact of various OpenMP directives. Note down for your report what is effective and what is ineffective, and what produces invalid results. 
 
 To produce the data we want for the report, the easiest way is just to take notes about what about OpenMP directives you have used. Each time you add some OpenMP directive(s), note down what it was and what effect it had, if any. By writing down what was successful and what was not, as well as what made a big difference, you will have at hand all the data you need.
 
-You should also try to achieve the maximum speedup you can while preserving behaviour. The usage of the compiled output is: \texttt{./protons h e inputfile}. So a sample call might be: \texttt{./protons 1 1.000e-05 example.in} ; this behaviour needs to be preserved for your solution to be tested.
-
-Note that for testing there are some provided input and output files. The sample output files are created with parameters $h=0.001$ and $e=0.00001$. You should, however, also do some tests with other parameters as well. The test cases provided
-are not a complete test suite.
+You should also try to achieve the maximum speedup you can while preserving behaviour. The usage of the compiled output is: \texttt{./jwtcracker jwt maxsecretlen alphabet}. This behaviour needs to be preserved for your solution to be tested.
 
 Submit the final OpenMP-annotated version of your code. Your report will contain the impact of various OpenMP directives, walking the reader through the process of applying them and testing out their effectiveness.
 
 \squishlist
-  \item {\bf Minimum expected speedup:} n/a
-  \item {\bf Initial solution speedup:} n/a
+  \item {\bf Minimum expected speedup:} 2
+  \item {\bf Initial solution speedup:} 2.4
 \squishend
 
 
