@@ -15,28 +15,10 @@
 
  \end{frame}
 
+\part{Limits}
 \begin{frame}
-  \frametitle{Parallelism versus Concurrency}
-
-  {\bf Parallelism}
-
-  Two or more tasks are \structure{parallel}\\ \hspace*{2em} if they are running at the same time. 
-
-  Main goal: run tasks as fast as possible. 
-
-  Main concern: \structure{dependencies}.
-  \vfill
-  {\bf Concurrency}
-
-  Two or more tasks are \structure{concurrent}\\ \hspace*{2em} if the ordering of the two tasks is not 
-  predetermined. 
-
-  Main concern: \structure{synchronization}.
-
+\partpage
 \end{frame}
-
-
-
 
 \begin{frame}
 \frametitle{Writing Scalable Code}
@@ -56,6 +38,27 @@ Choosing a good algorithm is very important if we want it to scale.
 \begin{center}
 	\includegraphics[width=0.75\textwidth]{images/big-o-complexity}
 \end{center}
+
+\end{frame}
+\begin{frame}
+  \frametitle{Parallelism versus Concurrency}
+
+  Before we talk about parallelism, let's distinguish it from concurrency.
+
+  {\bf Parallelism}
+
+  Two or more tasks are \structure{parallel}\\ \hspace*{2em} if they are running at the same time. 
+
+  Main goal: run tasks as fast as possible. 
+
+  Main concern: \structure{dependencies}.
+  \vfill
+  {\bf Concurrency}
+
+  Two or more tasks are \structure{concurrent}\\ \hspace*{2em} if the ordering of the two tasks is not 
+  predetermined. 
+
+  Main concern: \structure{synchronization}.
 
 \end{frame}
 
@@ -379,6 +382,10 @@ Yes! Large problems can be efficiently parallelized. (Ask Google.)
   enough distance, you can bring your average up to 90~km/h.
 \end{frame}
 
+\part{Parallelization Techniques}
+\begin{frame}
+\partpage
+\end{frame}
 
 \begin{frame}
 \frametitle{Lock It Down}
@@ -391,6 +398,19 @@ And thus more waiting and coordination are going to be necessary.
 
 \end{frame}
 
+\begin{frame}
+\frametitle{``We have a new enemy...''}
+
+Assuming we're not working with an embedded system where all memory is statically allocated in advance, there will be dynamic memory allocation. 
+
+The memory allocator is often centralized and may support only one thread allocating or deallocating at a time (using locks to ensure this). 
+
+This means it does not necessarily scale very well.
+
+There are some techniques for dynamic memory allocation that allow these things to work in parallel.
+
+
+\end{frame}
 
 
 \begin{frame}
@@ -418,25 +438,154 @@ Let the operating system decide how many workers there should be, to figure out 
 \end{frame}
 
 
-
+\part{Parallelization Technique: \\ Threads vs Processes}
 \begin{frame}
-\frametitle{``We have a new enemy...''}
+\partpage
+\end{frame}
 
-Assuming we're not working with an embedded system where all memory is statically allocated in advance, there will be dynamic memory allocation. 
 
-The memory allocator is often centralized and may support only one thread allocating or deallocating at a time. 
+\begin{frame}[fragile]
+  \frametitle{Background}
 
-This means it does not necessarily scale very well.
 
-There are some techniques for dynamic memory allocation that allow these things to work in parallel.
+  Recall the difference between \structure{processes} and 
+          \structure{threads}:
+  \begin{itemize}
+    \item Threads are basically light-weight processes which piggy-back on
+          processes' address space.
+  \end{itemize} ~\\
+  Traditionally (pre-Linux 2.6) you had to use {\tt fork}~(for~processes) and {\tt clone} (for threads).
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{History}
+
+
+    Developers mostly used {\tt fork} before there was a standardized way to create threads ({\tt clone} was non-standards-complient).
+
+  For performance reasons, along with ease and consistency, we'll use
+  \structure{Pthreads}.
+
+  {\tt fork} creates a new process.
+      \begin{itemize}
+        \item Drawbacks?
+        \item Benefits?
+      \end{itemize}
+  
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Benefit: {\tt fork} is Safer and More Secure Than Threads}
+
+  \begin{enumerate}
+    \item Each process has its own virtual address space:
+      \begin{itemize}
+        \item Memory pages are not copied, they are copy-on-write---
+        \item Therefore, uses less memory than you would expect.
+      \end{itemize}
+    \item Buffer overruns or other security holes do not expose other~processes.
+    \item If a process crashes, the others can continue.
+  \end{enumerate}~\\[1em]
+  {\bf Example:} In the Chrome browser, each tab is a separate process.
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Drawback of Processes: Threads are Easier and Faster}
+
+  \begin{itemize}
+    \item Interprocess communication (IPC) is more complicated and slower than interthread
+          communication.
+      \begin{itemize}
+        \item Need to use operating system utilities (pipes, semaphores, shared
+              memory, etc) instead of thread library (or just memory reads and writes).
+      \end{itemize}
+    \item Processes have much higher startup, shutdown and synchronization cost.
+    \item And, \structure{Pthreads}/\structure{C++11 threads} fix issues\\ with {\tt clone} and provide a
+          uniform interface for most systems {\bf (Assignment 1)}.
+  \end{itemize}
+
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Appropriate Time to Use Processes}
+
+
+  If your application is like this:
+  \begin{itemize}
+    \item Mostly independent tasks, with little or no communication.
+    \item Task startup and shutdown costs are negligible compared to overall runtime.
+    \item Want to be safer against bugs and security holes.
+  \end{itemize}
+  Then processes are the way to go. \\[1em]
 
 
 \end{frame}
 
 
+\begin{frame}
+\frametitle{Thread Motivation}
+Why threads instead of a new process?
+
+Primary motivation is: performance.
+
+\begin{enumerate}
+	\item Creation: 10$\times$ faster.
+	\item Terminating and cleaning up a thread is faster.
+	\item Switch time: 20\% of process switch time.
+	\item Shared memory space (no need for IPC).
+	\item Lets the UI be responsive.
+\end{enumerate}
+
+\end{frame}
 
 \begin{frame}
-\frametitle{Processes and Threads}
+\frametitle{Common Usage of Threads}
+
+\begin{enumerate}
+	\item \textbf{Foreground and Background Work}
+	\item \textbf{Asynchronous processing}
+	\item \textbf{Speed of Execution}
+	\item \textbf{Modular Structure}
+\end{enumerate}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Thread Drawbacks}
+
+There is no protection between threads in the same process. 
+
+One thread can easily mess with the memory being used by another. 
+
+This once again brings us to the subject of co-ordination, which will follow the discussion of threads.
+
+Also, if any thread encounters an error, the whole process might be terminated by the operating system.
+
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Results: Threads Offer a Speedup of 6.5 over {\tt fork}}
+
+
+  Here's a benchmark between {\tt fork} and Pthreads on a laptop, creating and
+  destroying 50,000 threads:
+  \vfill
+  \begin{lstlisting}[basicstyle=\scriptsize]
+jon@riker examples master % time ./create_fork 
+0.18s user 4.14s system 34% cpu 12.484 total
+jon@riker examples master % time ./create_pthread 
+0.73s user 1.29s system 107% cpu 1.887 total
+  \end{lstlisting}
+  \vfill
+  Clearly Pthreads incur much lower overhead than {\tt fork}.
+  
+\end{frame}
+
+
+\begin{frame}
+\frametitle{More Detail: Processes and Threads}
 A \alert{process} is an
 instance of a computer program that contains program code and its own
 address space, stack, registers, and resources (file handles, etc).  
@@ -483,49 +632,8 @@ My usual example: file transfer program...
 
 \end{frame}
 
-
 \begin{frame}
-\frametitle{Thread Motivation}
-Why threads instead of a new process?
-
-Primary motivation is: performance.
-
-\begin{enumerate}
-	\item Creation: 10$\times$ faster.
-	\item Terminating and cleaning up a thread is faster.
-	\item Switch time: 20\% of process switch time.
-	\item Shared memory space (no need for IPC).
-	\item Lets the UI be responsive.
-\end{enumerate}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Common Usage of Threads}
-
-\begin{enumerate}
-	\item \textbf{Foreground and Background Work}
-	\item \textbf{Asynchronous processing}
-	\item \textbf{Speed of Execution}
-	\item \textbf{Modular Structure}
-\end{enumerate}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Thread Drawbacks}
-
-There is no protection between threads in the same process. 
-
-One thread can easily mess with the memory being used by another. 
-
-This once again brings us to the subject of co-ordination, which will follow the discussion of threads.
-
-Also, if any thread encounters an error, the whole process might be terminated by the operating system.
-
-\end{frame}
-\begin{frame}
-  \frametitle{Software and Hardware Threads}
+  \frametitle{Thread implementations: Software and Hardware Threads}
 
 
   {\bf Software Thread:}
@@ -640,104 +748,6 @@ model name: Intel(R) Core(TM) i7-2600K CPU @ 3.40GHz
   \begin{itemize}
     \item Many processors
   \end{itemize}
-\end{frame}
-
-
-\begin{frame}[fragile]
-  \frametitle{Background}
-
-
-  Recall the difference between \structure{processes} and 
-          \structure{threads}:
-  \begin{itemize}
-    \item Threads are basically light-weight processes which piggy-back on
-          processes' address space.
-  \end{itemize} ~\\
-  Traditionally (pre-Linux 2.6) you had to use {\tt fork}~(for~processes) and {\tt clone} (for threads).
-
-
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{History}
-
-
-    {\tt clone} is not POSIX compliant.
-    ~\\
-    Developers mostly used {\tt fork} in the past, which creates a new process.
-      \begin{itemize}
-        \item Drawbacks?
-        \item Benefits?
-      \end{itemize}
-
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Benefit: {\tt fork} is Safer and More Secure Than Threads}
-
-  \begin{enumerate}
-    \item Each process has its own virtual address space:
-      \begin{itemize}
-        \item Memory pages are not copied, they are copy-on-write---
-        \item Therefore, uses less memory than you would expect.
-      \end{itemize}
-    \item Buffer overruns or other security holes do not expose other~processes.
-    \item If a process crashes, the others can continue.
-  \end{enumerate}~\\[1em]
-  {\bf Example:} In the Chrome browser, each tab is a separate process.
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Drawback of Processes: Threads are Easier and Faster}
-
-  \begin{itemize}
-    \item Interprocess communication (IPC) is more complicated and slower than interthread
-          communication.
-      \begin{itemize}
-        \item Need to use operating system utilities (pipes, semaphores, shared
-              memory, etc) instead of thread library (or just memory reads and writes).
-      \end{itemize}
-    \item Processes have much higher startup, shutdown and synchronization cost.
-    \item And, \structure{Pthreads}/\structure{C++11 threads} fix issues\\ with {\tt clone} and provide a
-          uniform interface for most systems {\bf (Assignment 1)}.
-  \end{itemize}
-
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Appropriate Time to Use Processes}
-
-
-  If your application is like this:
-  \begin{itemize}
-    \item Mostly independent tasks, with little or no communication.
-    \item Task startup and shutdown costs are negligible compared to overall runtime.
-    \item Want to be safer against bugs and security holes.
-  \end{itemize}
-  Then processes are the way to go. \\[1em]
-
-  For performance reasons, along with ease and consistency, we'll use
-  \structure{Pthreads}.
-  
-
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Results: Threads Offer a Speedup of 6.5 over {\tt fork}}
-
-
-  Here's a benchmark between {\tt fork} and Pthreads on a laptop, creating and
-  destroying 50,000 threads:
-  \vfill
-  \begin{lstlisting}[basicstyle=\scriptsize]
-jon@riker examples master % time ./create_fork 
-0.18s user 4.14s system 34% cpu 12.484 total
-jon@riker examples master % time ./create_pthread 
-0.73s user 1.29s system 107% cpu 1.887 total
-  \end{lstlisting}
-  \vfill
-  Clearly Pthreads incur much lower overhead than {\tt fork}.
-  
 \end{frame}
 
 
