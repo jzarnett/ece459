@@ -74,26 +74,6 @@ Wait\ldots autonomous vehicles is a different course\ldots
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Branch Prediction Hints}
-
-  
-  As seen earlier in class, {\tt gcc} allows you to give branch
-  prediction hints by calling this builtin function:
-
-  \begin{center}
-    \verb+long __builtin_expect (long exp, long c)+
-  \end{center}
-
-  The expected result is that {\tt exp} equals {\tt c}.\\[1em]
-  Compiler reorders code \& tells CPU the prediction.
-  
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
   \frametitle{The {\tt restrict} Keyword}
@@ -511,6 +491,38 @@ for (i = 0; i < 100; i++)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Example Code to Parallelize (once more)}
+
+
+  \begin{lstlisting}[language=C][numbers=left]
+#include <stdlib.h>
+
+void setup(double *vector, int length) {
+    int i;
+    for (i = 0; i < length; i++)
+    {
+        vector[i] += 1.0;
+    }
+}
+
+int main()
+{
+    double *vector;
+    vector = (double*) malloc(sizeof(double)*1024*1024);
+    for (int i = 0; i < 1000; i++)
+    {
+        setup (vector, 1024*1024);
+    }
+    // if you don't read vector, compiler NOPs everything
+    printf("%f\n", vector[0]);
+}
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
   \frametitle{Manually Parallelizing the Example Code}
 
@@ -569,6 +581,66 @@ How does autoparallelization compare to manual parallelization?
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[containsverbatim]
+  \frametitle{Lingering Questions about Runtimes}
+
+  
+    What happened here?\\[1em]
+  
+    \begin{tabular}{ll}
+      \begin{minipage}{5em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}& horizontal good: \\
+      & \qquad create 4 threads to do 1000 iterations on sub-arrays.\\
+      \begin{minipage}{5em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}& horizontal bad: \\
+      & \qquad 1000 times, create 4 threads to iterate on sub-array. \\
+      $ \mid \mid \mid\mid \: \mid \mid \mid \mid \: \mid \mid \mid \mid\: \mid \mid \mid \mid$& vertical:\\
+      & \qquad create 4 threads, handle 1 element at a time.\\[1em]
+    \end{tabular}
+    
+      
+      In 2015, {\tt perf stat -r 5} gave following task-clocks (in seconds):\\[1em]
+
+      \begin{center}
+      \begin{tabular}{lrrrr}
+        & H good & H bad & V & auto \\
+        gcc, no opt & 2.794 & 2.953 & 2.799\\
+        gcc, -O3 & 0.588 & 1.490 & 0.980\\
+        solaris, no opt & 3.175 & 3.291 & 2.966 \\
+        solaris, -xO4 & 0.494 & 1.453 & 2.739 & 0.688\\
+      \end{tabular}
+      \end{center}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[containsverbatim]
+  \frametitle{Runtimes---Why?}
+
+  
+    Observations:\\[1em]
+    \begin{itemize}
+    \item Good runs had 5 to 7 cpu-migrations; bad had 4000.
+    \item \# cycles varied from 2B to 9.7B (no opt).\\
+    \item Branch misses varied from 8k to 208k.
+    \end{itemize}
+  
+    
+
+    
+%%     gcc plain, bad: 4,004 cpu-migrations; 5.2B cycles; 75\% frontend cycles idle; 1B branches; 167k branch misses
+%% gcc -O3, bad: 4,003 cpu-migrations; 4.2B cycles; 80\% frontend cycles idle; 466k branches; 208k branch misses
+%% gcc plain, good: 5 cpu-migrations; 9.6B cycles; 39\% frontend cycles idle; 1B branches; 13k branch misses
+%% gcc -O3, good: 7 cpu-migrations; 2B cycles; 49\% frontend cycles idle; 525k branches; 8k branch misses
+
+%% gcc plain, V: 5 cpu-migrations; 9.7B cycles; 44\% frontend cycles idle; 1B branches; 1M branch misses
+%% gcc -O3, V: 7 cpu-migrations; 3.3B cycles; 69\% frontend cycles idle; 1B branches; 1M branch misses
+
+%% solaris auto: 0.688s; 3 cpu-migrations; 2.4B cycles; 72\% frontend cycles idle; 134M branches; 30k branch misses
+        
+    
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -690,66 +762,6 @@ the assignment). We'll see that {\tt solarisstudio} can do it automatically.
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{Lingering Questions about Runtimes}
-
-  
-    What happened here?\\[1em]
-  
-    \begin{tabular}{ll}
-      \begin{minipage}{5em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}& horizontal good: \\
-      & \qquad create 4 threads to do 1000 iterations on sub-arrays.\\
-      \begin{minipage}{5em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}& horizontal bad: \\
-      & \qquad 1000 times, create 4 threads to iterate on sub-array. \\
-      $ \mid \mid \mid\mid \: \mid \mid \mid \mid \: \mid \mid \mid \mid\: \mid \mid \mid \mid$& vertical:\\
-      & \qquad create 4 threads, handle 1 element at a time.\\[1em]
-    \end{tabular}
-    
-      
-      In 2015, {\tt perf stat -r 5} gave following task-clocks (in seconds):\\[1em]
-
-      \begin{center}
-      \begin{tabular}{lrrrr}
-        & H good & H bad & V & auto \\
-        gcc, no opt & 2.794 & 2.953 & 2.799\\
-        gcc, -O3 & 0.588 & 1.490 & 0.980\\
-        solaris, no opt & 3.175 & 3.291 & 2.966 \\
-        solaris, -xO4 & 0.494 & 1.453 & 2.739 & 0.688\\
-      \end{tabular}
-      \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{Runtimes---Why?}
-
-  
-    Observations:\\[1em]
-    \begin{itemize}
-    \item Good runs had 5 to 7 cpu-migrations; bad had 4000.
-    \item \# cycles varied from 2B to 9.7B (no opt).\\
-    \item Branch misses varied from 8k to 208k.
-    \end{itemize}
-  
-    
-
-    
-%%     gcc plain, bad: 4,004 cpu-migrations; 5.2B cycles; 75\% frontend cycles idle; 1B branches; 167k branch misses
-%% gcc -O3, bad: 4,003 cpu-migrations; 4.2B cycles; 80\% frontend cycles idle; 466k branches; 208k branch misses
-%% gcc plain, good: 5 cpu-migrations; 9.6B cycles; 39\% frontend cycles idle; 1B branches; 13k branch misses
-%% gcc -O3, good: 7 cpu-migrations; 2B cycles; 49\% frontend cycles idle; 525k branches; 8k branch misses
-
-%% gcc plain, V: 5 cpu-migrations; 9.7B cycles; 44\% frontend cycles idle; 1B branches; 1M branch misses
-%% gcc -O3, V: 7 cpu-migrations; 3.3B cycles; 69\% frontend cycles idle; 1B branches; 1M branch misses
-
-%% solaris auto: 0.688s; 3 cpu-migrations; 2.4B cycles; 72\% frontend cycles idle; 134M branches; 30k branch misses
-        
-    
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
