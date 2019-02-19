@@ -9,7 +9,7 @@ NOTES_T := $(NOTES:%.tex=%.pdf)
 
 ENVS := slides
 
-all: $(SLIDES_PO) $(NOTES_T) clean
+all: $(SLIDES_PO) $(NOTES_T) notebook clean
 
 %-slides.pdf: env := slides
 %-slides.pdf: %.tex
@@ -28,6 +28,14 @@ all: $(SLIDES_PO) $(NOTES_T) clean
 	$(eval NAME := `grep -ohP '(\\\lecture\{\s?.*---\s?)\K([A-Za-z0-9\-\\\&;,:\/ ]*[A-Za-z0-9])' $*.tex| sed -e 's@/@ @g' -e 's/[^a-zA-Z0-9 -]//g' -e 's/  / /g' -e 's/ /_/g'`)
 	@mv $*.pdf $*-$(NAME).pdf
 	
+notebook:
+	@echo building notebook
+	@python3 build_notebook.py
+	@pdflatex -interaction=batchmode  notebook.tex > /dev/null;
+	@bibtex notebook > /dev/null;
+	@pdflatex -interaction=batchmode notebook.tex > /dev/null;
+	@pdflatex -interaction=batchmode notebook.tex > /dev/null;
+
 clean:
 	rm -f *.aux *.log *.bbl *.blg *.brf *.cb *.ind *.idx *.ilg *.pdfsync   \
 	*.inx *.ps *.dvi *.toc *.out *.nav *.snm *.d *.bak _region* *.vrb
