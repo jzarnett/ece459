@@ -19,7 +19,16 @@ int main(int argc, char *argv[])
     }
 
     printf("Sequential code\n");
+    omp_set_num_threads( 3 );
     printf("Parallel #2 Start\n");
+    #pragma omp parallel private(tid)
+    {
+        tid = omp_get_thread_num();
+        printf("T%d: a=%d, b=%d\n", tid, a, b);
+    }
+
+    omp_set_num_threads( 8 );
+    printf("Parallel #3 Start\n");
     #pragma omp parallel private(tid)
     {
         tid = omp_get_thread_num();
