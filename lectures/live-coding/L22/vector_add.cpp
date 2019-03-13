@@ -78,10 +78,14 @@ int main() {
         queue.enqueueReadBuffer(bufferC, CL_TRUE, 0, LIST_SIZE * sizeof(int), C);
  
         for(int i = 0; i < LIST_SIZE; i ++)
-        std::cout << A[i] << " + " << B[i] << " = " << C[i] << std::endl; 
+            std::cout << A[i] << " + " << B[i] << " = " << C[i] << std::endl;
+	delete[] C;
     } catch(cl::Error error) {
         std::cout << error.what() << "(" << error.err() << ")" << std::endl;
     }
- 
+
+    delete[] A;
+    delete[] B;
+
     return 0;
 }
