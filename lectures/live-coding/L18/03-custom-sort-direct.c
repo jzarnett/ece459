@@ -53,7 +53,7 @@ void test(int N)
     end = clock();
     time_elapsed = (double) (end-begin) / CLOCKS_PER_SEC;
 
-    printf("%.2lf\n", time_elapsed);
+    //printf("%.2lf\n", time_elapsed);
     free(data);
 }
 

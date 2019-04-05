@@ -5,6 +5,11 @@
 
 typedef int T;
 
+int compare_T (const void *a, const void *b) 
+{
+    return (*(int *)a - *(int *)b);
+}
+
 void mysort(T* data, int N)
 {
     int i, j;
@@ -27,11 +32,6 @@ void mysort(T* data, int N)
     t = data[i-1]; data[i-1] = data[0]; data[0] = t;
     mysort(data, i-1);
     mysort(data + i, N-i);
-}
-
-int compare_T (const void *a, const void *b) 
-{
-    return (*(int *)a - *(int *)b);
 }
 
 void test(int N)

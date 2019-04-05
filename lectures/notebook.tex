@@ -4,7 +4,7 @@
 
 \usepackage{enumitem}
 \usepackage{titling}
-\usepackage{listings}
+\usepackage{listings,listings-rust}
 \usepackage{url}
 \usepackage{soul}
 \usepackage{hyperref}
@@ -29,7 +29,7 @@
 \usepackage[normalem]{ulem}
 \usepackage{booktabs}
 \usepackage{tikz}
-\usetikzlibrary{arrows,automata,shapes,trees,matrix,chains,scopes,positioning,calc,decorations.pathreplacing}
+\usetikzlibrary{arrows.meta,automata,shapes,trees,matrix,chains,scopes,positioning,calc,decorations.pathreplacing}
 \tikzstyle{block} = [rectangle, draw, fill=blue!20, 
     text width=2.5em, text centered, rounded corners, minimum height=2em]
 \tikzstyle{bw} = [rectangle, draw, fill=blue!20, 
@@ -4520,8 +4520,8 @@ or manually. After the parallel block, the thread team sleeps until it's needed 
   \tikzstyle{brace} = [decorate,decoration={brace},thick]
   \tikzstyle{transition} = [rectangle, draw=blue!50, fill=blue!20, thick,
                             text width=6.75cm, align=center]
-  \tikzstyle{thread} = [->, >=stealth', very thick]
-  \tikzstyle{master} = [->, >=stealth', very thick, red]
+  \tikzstyle{thread} = [->, very thick]
+  \tikzstyle{master} = [->, very thick, red]
 
 
 \begin{center}
@@ -6362,7 +6362,7 @@ not depend on anything, so it could be done in parallel with
 everything else. You can also compute expected execution times
 for different strategies.
 \begin{center}
-\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
+\begin{tikzpicture}[->,shorten >=1pt,auto,column sep=2.2cm,
                     semithick,initial text=]
   \node[initial,block] (s0) {Start};
   \node[block] (s1) [right=of s0] {S1};
@@ -6711,7 +6711,10 @@ void AddToString(int ch)
 }
 \end{lstlisting}
 
-Is it thread safe? Sure - there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
+Is it thread safe? Sure---there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
+
+The GNU C library attempts to document thread-safety of their code here:
+\url{https://www.gnu.org/software/libc/manual/html_node/POSIX-Safety-Concepts.html}.
 
 \subsection*{Functional Programming and Parallelization}
 Interestingly, functional programming languages (by which I do NOT mean procedural programming languages like C) such as Haskell and Scala and so on, lend themselves very nicely to being parallelized. Why? Because a purely functional program has no side effects and they are very easy to parallelize. If a function is impure, its functions signature will indicate so. Thus spake Joel\footnote{``Thus Spake Zarathustra'' is a book by Nietzsche, and this was not a spelling error.}:
@@ -7703,17 +7706,18 @@ virtual method calls with nonvirtual method calls.  Consider the
 following code:
   \begin{lstlisting}[language=C]
 class A {
+  public:
     virtual void m();
 };
 
 class B : public A {
-    virtual void m();
-}
+  public:
+    virtual void m() {}
+};
 
 int main(int argc, char *argv[]) {
-
     std::unique_ptr<A> t(new B);
-    t.m();
+    t->m();
 }
   \end{lstlisting}
 Devirtualization could eliminate vtable access; instead, we could just call B's {\tt m} method
@@ -11455,6 +11459,498 @@ $2\times$ speedup for PageRank and $10\times$ speedup for label propagation.
 \item    ``If you are going to build a big data system for others, see that it is faster than my laptop.''
 \end{itemize}
 
+
+
+
+
+
+
+
+
+
+
+\chapter*{36 --- Programming Languages and P4P}
+
+\addcontentsline{toc}{chapter}{36 --- Programming Languages and P4P}
+
+In ECE 459 we've used C/C++ as systems languages:
+\vspace*{-1.5em}
+\begin{itemize}[noitemsep]
+\item C: ``portable assembly language'';
+\item C++: can be much higher-level; we've seen C++ abstractions like threads, algorithms, STL, etc.
+\end{itemize}
+The focus of this course hasn't been on security. But in many cases, writing insecure fast code
+isn't the right thing.
+
+\paragraph{Question.} Is it possible to write secure C/C++?
+\vspace*{-1.5em}
+\begin{itemize}[noitemsep]
+\item[\emph{problems:}] memory errors, race conditions
+\item[\emph{tools:}] Valgrind tools memcheck, helgrind; code review; other static tools e.g. Coverity.
+\end{itemize}
+
+Here are some points of view on this question.
+
+\paragraph{Robert O'Callahan.}
+\begin{quote}
+\vspace*{-1.5em}
+``I cannot consistently write safe C/C++ code.\footnote{\url{https://robert.ocallahan.org/2017/07/confession-of-cc-programmer.html}}'' (17 July 2017)
+\end{quote}
+\vspace*{-1em}
+(Holds a PhD in CS from Carnegie Mellon University; was Distinguished Engineer
+at Mozilla for 10 years; etc.)
+
+\paragraph{Stephen Kell.} ``Some Were Meant for C'' (Onward '17)~\cite{Kell:2017:MCE:3133850.3133867}: One could have safe C implementations;
+C is good for interoperating with low-level sytems (e.g. reproduce systems' memory layouts).
+
+\paragraph{Chrome.} March 2019: disclosure of Chrome use-after-free vulnerability\footnote{\url{https://security.googleblog.com/2019/03/disclosing-vulnerabilities-to-protect.html}}; 0-day attacks
+observed in the wild. Google implements best practices, and has all the tools and developers that
+money can buy!
+
+\section*{Rust} Enough of talking about the failings of C and C++.
+We'll talk about Rust, an alternative to C/C++. It is a new-school
+secure systems programming language used by Mozilla's Project Quantum. This material is based
+on \emph{The Rust Programming Language} by Steve Klabnik and Carol
+Nichols\cite{klabnik18:_rust_progr_languag} and I'll make references as appropriate.
+
+Here's some Rust code.
+\vspace*{-.5em}
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    let x = 42; // NB: Rust infers type "s32" for x.
+    println!("x is {}", x);
+  }
+\end{lstlisting}
+By default, Rust variables are \emph{immutable}.
+\vspace*{-.5em}
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    let x = 42; // NB: Rust infers type "s32" for x.
+    x = 17; // compile-time error!
+  }
+\end{lstlisting}
+Let's consider two examples that look similar but have drastically different meanings.
+
+\vspace*{-1.5em}
+\begin{minipage}{.4\textwidth}
+\begin{lstlisting}[language=Rust]
+  let x = 1729;
+  let x = 88;
+  println!("shadowed x is {}", x);
+\end{lstlisting}
+\end{minipage}\
+\begin{minipage}{.4\textwidth}
+\begin{lstlisting}[language=Rust]
+  let mut x = 33; // mutable
+  x = 5;
+  println!("mutated x is {}", x);
+\end{lstlisting}
+\end{minipage}
+
+In the first case, old ``x'' still exists but is inaccessible under the name ``x''.
+In the second case, the storage cell for ``x'' used to contain 33 and then contains 5.
+The difference matters, for instance, when there are references to ``x''.
+
+[NB: Rust also has compile-time {\tt const}s.]
+
+\paragraph{Rust vs C++: immutability.} In C, you can cast away {\tt const}-ness; not so in Rust.
+If something is not mutable in Rust, you can't cast it into mutability. Also, in Rust, structs or
+tuples are either all mutable or all immutable. (Although interior mutability is a thing in Rust. We're
+not talking about it.)
+
+\paragraph{Perf implications.}
+We mentioned immutability in Lecture 7. The best way to avoid having
+to use locks (even read/write locks still require writes to acquire
+the read lock): have no writes.  However, there's a tradeoff. If your
+data structure is immutable but you want to update it (as we often do
+with data structures), you need to copy the data structure, at least
+partially. That can be slow.
+
+% - on whiteboard, stopped here after 1 hour
+
+
+
+
+
+
+
+
+\chapter*{37 --- Ownership in Rust}
+
+\addcontentsline{toc}{chapter}{37 --- Ownership in Rust}
+
+\paragraph{Runtime safety.} We said that Rust is safe. One way in which it is safe is for
+arrays. Rust has tuples and structs. Hard to go out of bounds on those. Rust also has arrays.
+Like with any language, one can imagine going beyond the ends of an array. Rust defines
+the behaviour of going beyond the end of an array: it is a runtime exception (``panic''),
+unlike C/C++, where it is undefined behaviour.
+
+\vspace*{-2em}
+\begin{lstlisting}[language=Rust]
+  let a = [1,2,3,4,5];
+  let index = 10;
+  println!("error! {}", a[index]); // panics here.
+\end{lstlisting}
+
+\subsection*{What's special about Rust?}
+Let's step back and do some Rust propaganda.
+\begin{itemize}[noitemsep]
+\item harder to write unsafe code: compiler + runtime ensure safety. No arrays-out-of-bounds accesses, null pointers (at all), wild pointers;
+\item yet can still write low-level code;
+\item supports zero-cost abstractions (like C++ as discussed in L18);
+\item designed with ergonomics in mind;
+\item type system obviates need for either garbage collection or manual memory management (which you will get wrong)\footnote{Well, mostly. Sometimes you need to use ref-counted data, and we'll see that.};
+\item type system prevents race conditions;
+\item dependency management using crates.
+\end{itemize}
+As far as I know, Firefox's rendering engine, Project Servo, is the largest deployed Rust codebase. [size?]
+
+\paragraph{Rust lectures outline.} Here's what else we are going to talk about. Chapter references from
+\emph{The Rust Programming Language}.
+\begin{enumerate}[noitemsep]
+\item[Ch4:] what's special about Rust: \emph{ownership};
+\item[Ch15:] smart pointers (briefly);
+\item[Ch16:] fearless concurrency.
+\end{enumerate}
+Also relevant to this course, but here we are in week 12, so we're not going to talk about it.
+\begin{enumerate}[noitemsep]
+\item[Ch10:] lifetimes;
+\item[Ch19:] unsafe Rust.
+\end{enumerate}
+
+\section*{Ownership in Rust [Chapter 4.1]}
+Also known as ``how to fight the borrow checker and win''.
+
+Rust uses ownership types to manage its heap. Ownership types were not invented by the Rust
+community, but Rust is the first production-scale language to deploy it. The alternatives
+are {\tt malloc}/{\tt free} in C, or {\tt new}/GC in Java. Rust does still have a stack, but
+we'll see when things go on the stack vs when they go on the heap.
+
+\subsection*{The Rules}
+\begin{enumerate}[noitemsep]
+\item Each value in Rust has a variable that \emph{owns} it.
+\item This variable is \emph{unique}.
+\item When the owner goes out of scope, the value will be dropped (aka freed).
+\end{enumerate}
+
+Variable scopes are fairly standard.
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    println!("start");
+    { // no s
+      let s = "I am s";
+      println!("s is {}", s);
+    } // s now out of scope
+  }
+\end{lstlisting}
+
+OK, let's put something on the heap. We'll be using Rust {\tt String} objects rather than
+string literals. String literals are compile-time constants. String objects contain a heap component,
+which may be allocated and freed.
+
+(What can go wrong with heap allocation? You might not free/free too late;
+free too early; double free. GC manages this through an approximation: if you have no more pointers to it,
+then it doesn't spark joy, and you don't need it anymore. Rust goes a different way.)
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    let s = String::from("hello"); // immutable String
+    let mut s2 = String::from("459 assignments"); // mutable String
+    s2.push_str(", maybe?");
+    println!("got string {}", s);
+  }
+\end{lstlisting}
+
+Rust uses rule \#3: if something goes out of scope, then drop (free) it.
+This is quite like C++ RAII (Resource Acquisition is Initialization).
+
+Still, we need a solution for objects that live beyond their original scope, e.g.
+return values.
+\begin{lstlisting}[language=Rust]
+  fn return_a_string() -> String {
+    let s = String::from("longevity");
+    return s; // transfers ownership (moves) to caller
+  }
+
+  fn main() {
+    let returned_string = return_a_string();
+    println!("string {}", returned_string);
+  }
+\end{lstlisting}
+
+So, Rust frees owned values when variables go out of scope. Also, Rust calls
+``drop'' (akin to a destructor) on objects that go out of scope. Note that
+going out of scope, not the drop call, is what actually causes the free.
+
+\section*{Transferring Ownership (aka move semantics)}
+
+Let's look at an example.
+\begin{lstlisting}[language=Rust]
+  let s1 = String::from("no surprise");
+  println!("can print {}", s1);
+  let s2 = s1;
+  println!("can still print {}", s2);
+  println!("this line won't compile! {}", s1); // no longer owns
+\end{lstlisting}
+
+(Note that string literals, or ints, or anything only on the stack,
+doesn't have this behaviour---they are copied, or technically, they
+have the ``Copy'' trait.)
+
+OK, so what's going on? Let's take a step back.
+
+Rust strings are a hybrid, containing both a stack part and a heap part.
+
+\begin{center}
+\begin{tikzpicture}
+\draw (0,1) node {stack};
+\draw (0,0) node (one) {
+\begin{tabular}{|l|l|}
+\multicolumn{2}{l}{s1} \\
+\hline
+len & 5 \\ \hline
+ptr & \\ \hline
+\end{tabular}
+};
+
+\draw (0,-2) node (two) {
+\begin{tabular}{|l|l|} 
+\multicolumn{2}{l}{s2} \\ \hline
+len & 5 \\ \hline
+ptr & \\ \hline
+\end{tabular}
+};
+
+\draw (3,0.8) node {heap};
+\draw (3, -1) node (s) {
+\begin{tabular}{|l|l|} \hline
+index & value \\ \hline
+0 & 'n' \\ \hline
+1 & 'o' \\ \hline
+\ldots & \ldots \\ \hline
+\end{tabular}
+};
+
+\path[draw,-{Latex[length=3mm]}] (one) ++ (0.4,-0.38) -- (s.west);
+\path[draw,-{Latex[length=3mm]}] (two) ++ (0.4,-0.38) -- (s.west);
+
+\end{tikzpicture}
+\end{center}
+
+The assignment {\tt let s2 = s1} carries out a shallow copy of the stack part. Rust
+does not automatically copy the heap part.
+
+Now, recall that Rust has automatic memory reclamation. How can that
+work? What gets freed?  Here, {\tt s1} and {\tt s2} are in the same
+scope. When they go out of scope, what should get freed? We
+don't want to double free.
+
+\paragraph{Key idea.} For automatic memory reclamation to work, we give {\tt let s2 = s1} \emph{move semantics}
+(as in C++). After the move, {\tt s1} is no longer valid.
+Ownership of the heap part is moved from {\tt s1} to {\tt s2} by the assignment.
+
+That is, {\tt s1} no longer owns the heap object and is not responsible for freeing the heap part
+when it goes out of scope. Only when {\tt s2} goes out of scope do we free the heap object.
+And because the heap object only has one owner, it is only freed once.
+
+Note: deep copy is possible with ``clone'', but we have to trigger that explicitly.
+
+Want to know more about ownership? Here's a blog post:
+\begin{center}
+  \url{http://squidarth.com/rc/rust/2018/05/31/rust-borrowing-and-ownership.html}
+\end{center}
+
+% -- lecture 2 cut point
+
+
+
+
+
+
+
+
+\chapter*{38 --- Rust Concurrency}
+
+\addcontentsline{toc}{chapter}{38 --- Rust Concurrency}
+
+\section*{Functions and Return Values}
+
+Move semantics also applies to function calls and return values, e.g.
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    let s = String::from("moving to callee");
+    callee(s); // afterwards, s is invalid
+  }
+  fn callee(param:String) {
+    println!("got {}, param");
+  } // param goes out of scope, object dropped
+\end{lstlisting}
+If you return something, then the ownership passes back to the caller.
+Tuples help pass ownership of multiple objects, but this is still quite
+high-overhead for developers.
+
+\paragraph{``Can I please borrow your object?''}
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    let s = String::from("459");
+    let len = calculate_length(s);
+    println!("string {} has length {}", s /* we still have it! */,
+             len);
+  }
+  fn calculate_length(s:&String) -> usize { // note the & for borrow
+    s.len() // last expr is return value
+  } // s is ref so nothing goes out of scope
+\end{lstlisting}
+  
+\section*{Borrowing and mutation} Like other variables, references are immutable by default.
+We can have mutable references, though.
+\begin{lstlisting}[language=Rust]
+  fn change(s:&mut String) {
+    s.push_str("more");
+  }
+  fn main() {
+    let mut main_str = String::from("some ");
+    change(&mut main_str); // create mutable ref to main_str
+  }
+\end{lstlisting}
+
+\paragraph{There can be only one (mutable).} The following code won't compile:
+\begin{lstlisting}[language=Rust]
+  let mut s = String::from("one");
+  let r1 = &mut s;
+  let r2 = &mut s; // rustc complains!
+\end{lstlisting}
+In fact, while {\tt r1} is in scope, you can't do anything with the original {\tt s}.
+The only way to access the string is through {\tt r1}. Once {\tt r1} goes out of scope,
+you can create {\tt r2}.
+
+Since there is only one way to access {\tt r1}, then there will be no race conditions.
+
+This is OK:
+\begin{lstlisting}[language=Rust]
+  let mut s = String::from("one");
+  let r1 = &s;
+  let r2 = &s; // no problem!
+\end{lstlisting}
+But you can't then do {\tt let r3 = \&mut s;}.
+
+\paragraph{How many?} You can have as many outstanding immutable refs as you want.
+If there are any immutable refs, you can't have \emph{any} mutable refs. The immutable
+refs must go out of scope first.
+
+You also can't commit use-after-free errors: you can't return a ref that outlives
+its value. Would've been useful on A4!
+\begin{lstlisting}[language=Rust]
+  fn dangle() -> &String {
+    let s = String::from("hello");
+    &s // rustc complains: s goes out of scope with active refs
+  }
+\end{lstlisting}
+
+Rust also has \emph{smart pointers}, which may be reference
+counted. This is like C++'s smart pointers, specifically {\tt
+  shared\_ptr} (but Rust can tell you about some things at compile
+time which C++ will tell you at runtime). Normal Rust objects are more
+like {\tt unique\_ptr}.
+
+We need reference counted heap objects e.g. to implement graphs. We don't have
+enough time to talk about smart pointers, but Chapter 15 of the Rust book is good.
+
+\section*{Fearless Concurrency}
+As with many other aspects of Rust, we trade compiler errors for runtime
+errors; in this case, runtime concurrency errors like race conditions.
+That is, the type system ensures concurrency safety!
+
+Rust uses a fork/join model like pthreads. It delegates to the operating
+system's threads support and hence implements 1:1 threads.
+\begin{lstlisting}[language=Rust]
+  let handle = thread::spawn(|| { // closure (can put args between ||)
+    // thread code goes here
+  });
+  // main thread continues here
+  handle.join.unwrap(); // unwrap: panic in case of error
+\end{lstlisting}
+This is not too different from C++.
+
+OK, how do we share data between threads? We can move it from main to thread:
+\begin{lstlisting}[language=Rust]
+  let v = vec![1,2,3];
+  let handle = thread::spawn(move || { // move: everything accessed inside closure is moved
+    println!("vector {:?}", v);
+  }); // no longer have access to v in main
+  handle.join().unwrap();
+\end{lstlisting}
+Rust is saving you from being able to concurrently access {\tt v} in main and thread.
+
+But that's only one way! This isn't quite enough.
+
+\subsection*{Message Passing}
+One way to share data is message passing. We've seen this before, when we talked about OpenMPI.
+In this case, each value still only has one owner. We use \emph{channels}. The ownership passes
+from the sender, through the channel, to the receiver.
+\begin{lstlisting}[language=Rust]
+  use std::thread;
+  use std::sync::mpsc; // multi producer, single consumer
+
+  fn main() {
+    let (tx, rx) = mpsc::channel(); // tx is cloneable
+    thread::spawn(move || { // here, tx goes to closure
+      let val = String::from("april");
+      tx.send(val).unwrap(); // val moved from sender
+    });
+    let received = rx.recv().unwrap();
+    println!("got: {}", received);
+  }
+\end{lstlisting}
+Note the send/receive pair. There is also {\tt try\_recv} to do nonblocking receives.
+
+\subsection*{Shared State}
+People debated for a long time which was better: shared state (like pthreads) or channels.
+Rust supports both. Of course, the problem with shared state is race conditions.
+Like manual memory management, we can manually acquire and release mutexes. What could
+possibly go wrong? Rust's ownership system will help.
+
+We'll need to talk about multiple ownership. But let's talk about mutexes first.
+\begin{lstlisting}[language=Rust]
+  use std::sync::Mutex;
+  fn main() {
+    let m = Mutex::new(5); // mutex guards access to an i32
+    {
+      let mut num = m.lock.unwrap();
+      // unwrap: maybe some other thread panicked while holding lock;
+      //         then we panick too.
+      *num = 6; // "deref" the mutex (is actually a smart pointer)
+    } // release lock when num goes out of scope
+    println!("m={:?}", m);
+  }
+\end{lstlisting}
+Well, that's fine, but it's just one thread. We really do need multiple ownership
+to share data. The shared data needs to be owned by all threads, and a naive solution
+will get rejected by the borrow checker. Instead, we have to use \emph{reference counted
+  cells}, implemented by {\tt Arc}.
+% end of 3rd lecture
+\begin{lstlisting}[language=Rust]
+  use std::sync::{Mutex, Arc};
+  use std::thread;
+  fn main() {
+    let counter = Arc::new(Mutex::new(0)); // atomic reference cell
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+      let counter = Arc::clone(&counter); // clone the Arc
+      let handle = thread::spawn(move || {
+        let mut num = counter.lock().unwrap();
+        *num += 1;
+      });
+      handles.push(handle);
+    }
+    for handle in handles {
+      handle.join.unwrap();
+    }
+    println!("result: {}", *counter.lock().unwrap());
+  }
+\end{lstlisting}
+Rust guarantees that you have the appropriate lock, using ownership (possibly multiple ownership).
+Rust does not guarantee lack of deadlocks.
 
 
 

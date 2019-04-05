@@ -26,6 +26,7 @@ all: $(SLIDES_PO) $(NOTES_T) notebook clean
 	@pdflatex -interaction=batchmode $*.tex > /dev/null;
 	@pdflatex -interaction=batchmode $*.tex > /dev/null;
 	$(eval NAME := `grep -ohP '(\\\lecture\{\s?.*---\s?)\K([A-Za-z0-9\-\\\&;,:\/ ]*[A-Za-z0-9])' $*.tex| sed -e 's@/@ @g' -e 's/[^a-zA-Z0-9 -]//g' -e 's/  / /g' -e 's/ /_/g'`)
+	@echo $*-$(NAME)
 	@mv $*.pdf $*-$(NAME).pdf
 	
 notebook:

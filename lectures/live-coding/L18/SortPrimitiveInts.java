@@ -16,7 +16,7 @@ class SortPrimitiveInts {
             long start = System.nanoTime();
             Arrays.sort(array);
             long time = System.nanoTime() - start;
-            System.out.println(time / 1000000000.0);
+            //System.out.println(time / 1000000000.0);
         }
     }
 }
