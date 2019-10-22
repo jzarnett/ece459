@@ -9,7 +9,7 @@ NOTES_T := $(NOTES:%.tex=%.pdf)
 
 ENVS := slides
 
-all: $(SLIDES_PO) $(NOTES_T) notebook clean
+all: $(SLIDES_PO) $(NOTES_T) prereqs notebook clean
 
 %-slides.pdf: env := slides
 %-slides.pdf: %.tex
@@ -36,6 +36,19 @@ notebook:
 	@bibtex notebook > /dev/null;
 	@pdflatex -interaction=batchmode notebook.tex > /dev/null;
 	@pdflatex -interaction=batchmode notebook.tex > /dev/null;
+
+prereqs: 
+	@echo building pthreads
+	@pdflatex -interaction=batchmode  pthreads.tex > /dev/null;
+	@bibtex pthreads > /dev/null;
+	@pdflatex -interaction=batchmode pthreads.tex > /dev/null;
+	@pdflatex -interaction=batchmode pthreads.tex > /dev/null;
+	@echo building synchronization
+	@pdflatex -interaction=batchmode synchronization.tex > /dev/null;
+	@bibtex synchronization > /dev/null;
+	@pdflatex -interaction=batchmode synchronization.tex > /dev/null;
+	@pdflatex -interaction=batchmode synchronization.tex > /dev/null;
+	
 
 clean:
 	rm -f *.aux *.log *.bbl *.blg *.brf *.cb *.ind *.idx *.ilg *.pdfsync   \
