@@ -110,7 +110,7 @@ int foo() {
 }
 \end{lstlisting}
 
-This returns the previous value. There is no assignment (=) operator for {\tt atomic\_flag}s. Although I guess in C++ you could define one if you wanted. This is kind of a dangerous thing about C++. If in C you see a line of code like \texttt{z = x + y;} you can have a pretty good idea about what it does and you can infer that there's some sort of natural meaning to the + operator there, like addition or concatenation. In C++, however, this same line of code tells you nothing, unless you know (1) the type of \texttt{x}, (2) the type of \texttt{y}, and (3) how the \texttt{+} operator is defined on those two operands \textit{in that order}. But I'm digressing.
+This returns the previous value. There is no assignment (=) operator for {\tt atomic\_flag}s. Although I guess in C++ you could define one if you wanted. 
 
 \paragraph{More general C++ atomics.} Boolean flags are nice, but we want more.
 C++11 supports arbitrary types as atomic. Here'a an example declaration:
@@ -150,6 +150,60 @@ ai.write(tmp);
 ai.unlock();
 \end{lstlisting}
 But, hardware can do that atomically. It can also do other RMWs: {\tt +-, \&=, etc, compare-and-swap}.
+
+\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86).
+Here's some pseudocode for it.
+  \begin{lstlisting}[language=C]
+int compare_and_swap (int* reg, int oldval, int newval) 
+{
+  int old_reg_val = *reg;
+  if (old_reg_val == oldval) 
+     *reg = newval;
+  return old_reg_val;
+}
+  \end{lstlisting}
+
+Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it.
+
+
+\paragraph{Implementing a Spinlock.}
+You can use compare-and-swap to implement spinlock:
+  \begin{lstlisting}[language=C]
+void spinlock_init(int* lock) { *lock = 0; }
+
+void spinlock_lock(int* lock) {
+    while(compare_and_swap(lock, 0, 1) != 0) {}
+    __asm__ ("mfence");
+}
+
+void spinlock_unlock(int* lock) {
+    __asm__ ("mfence");
+    *lock = 0;  
+}
+  \end{lstlisting}
+You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
+
+\paragraph{ABA Problem}
+Sometimes you'll read a location twice.
+If the value is the same both times, nothing has changed, right?\\[1em]
+
+\emph{No.} This is an {\bf ABA problem}.\\[1em]
+
+The ABA problem is not any sort of acronym nor a reference to this~\cite{abba}. It's a value that is A, then changed to B, then changed back to A. The ABA problem is a big mess for the designer of lock-free Compare-And-Swap routines. This sequence will give some example of how this might happen~\cite{abaproblem}:
+
+\begin{enumerate}
+	\item $P_{1}$ reads $A_{i}$ from location $L_{i}$.
+	\item $P_{k}$ interrupts $P_{1}$; $P_{k}$ stores the value $B$ into $L_{i}$.
+	\item $P_{j}$ stores the value $A_{i}$ into $L_{i}$.
+	\item $P_{1}$ resumes; it executes a false positive CAS.
+\end{enumerate} 
+
+It's a ``false positive'' because $P_{1}$'s compare-and-swap operation succeeds even though the value at $L_{i}$ has been modified in the meantime. If this doesn't seem like a bad thing, consider this. If you have a data structure that will be accessed by multiple threads, you might be controlling access to it by the compare-and-swap routine. What should happen is the algorithm should keep trying until the data structure in question has not been modified by any other thread in the meantime. But with a false positive we get the impression that things didn't change, even though they really did.
+
+You can combat this by ``tagging'': modify value with a nonce upon each
+write.  You can also keep the value separately from the nonce; double
+compare and swap atomically swaps both value and nonce.
+
 
 More info on C++11 atomics:\\
 \url{http://preshing.com/20130618/atomic-vs-non-atomic-operations/}
