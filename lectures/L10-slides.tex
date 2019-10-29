@@ -1,7 +1,7 @@
 \input{configuration}
 \usepackage{multirow}
 
-\title{Lecture 10 --- Use of Locks }
+\title{Lecture 10 --- Use of Locks, Reentrancy}
 
 \author{Jeff Zarnett \& Patrick Lam \\ \small \texttt{\{jzarnett, patrick.lam\}@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -17,18 +17,20 @@
  \end{frame}
 
 
+\part{Use of Locks}
+\frame{\partpage}
 
 
 \begin{frame}
 \frametitle{Use of Locks}
-\begin{changemargin}{2cm}
+
 \vspace*{-3em}
 In previous courses: learned about locking and how it works.
 
 Before: was enough to avoid bad stuff.
 
 Now: Still important, but not enough.
-\end{changemargin}
+
 
 \end{frame}
 
@@ -142,6 +144,18 @@ void* consumer( void* arg ) {
 \begin{frame}
 \frametitle{Anything to Kick Out?}
 
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/kickout.png}
+\end{center}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Anything to Kick Out?}
+
 At first glance it is probably not very obvious but the \texttt{consume} function takes a regular integer, any old integer, not a pointer of some sort. 
 
 So we could, inside the critical section, read the value of the buffer at the current index into a temp variable. 
@@ -221,6 +235,17 @@ Are we done?
 
 
 \begin{frame}
+\frametitle{``Do you think you got him?''}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/gothim.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
 \frametitle{Locks Have Costs}
 
 Keeping the critical section as small as possible is important because it speeds up performance (reduces the serial portion of your program). 
@@ -241,11 +266,6 @@ So we need to use them to prevent data races, but it's not as simple as it sound
 
 We have choices about the granularity of locking, and it is a trade-off.
 
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
 
   \begin{center}
     \includegraphics[scale=0.5]{images/lock-all-the-things}
@@ -303,7 +323,6 @@ We aren't even talking about under-locking (i.e., remaining race conditions).
 \begin{frame}
 \frametitle{Lock Overhead}
 
-\begin{changemargin}{2cm}
   Using a lock isn't free. You pay:
   \begin{itemize}
     \item allocated memory for the locks;
@@ -313,14 +332,12 @@ We aren't even talking about under-locking (i.e., remaining race conditions).
 
 
   These costs scale with the number of locks that you have.
-\end{changemargin}
 \end{frame}
 
 
 \begin{frame}
 \frametitle{Lock Contention}
 
-\begin{changemargin}{1cm}
 \vspace*{-3em}
  Most locking time is wasted waiting for the lock to become available.\\[1em]
 We can fix this by:
@@ -329,7 +346,6 @@ We can fix this by:
         \item making the locking regions smaller (more granular); or
         \item making more locks for independent sections.
       \end{itemize}
-\end{changemargin}
 
 
 \end{frame}
@@ -339,7 +355,19 @@ We can fix this by:
 
 Finally, the more locks you have, the more you have to worry about deadlocks.
 
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/deadlock.jpg}
+\end{center}
+
 As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Deadlocks}
+
+
 
 Okay, in a formal sense, the four conditions for deadlock are:
 
@@ -426,24 +454,6 @@ void f2() {
 \end{frame}
 
 
-\begin{frame}
-\frametitle{Why Ordering Works}
-
-If the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. 
-
-Let us define this function as $f(R_{i})$, that maps a resource to an integer value. 
-
-This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. 
-
-Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once.
-
-To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. 
-
-If these two protocols are followed, then a circular-wait condition cannot hold.
-
-
-\end{frame}
-
 
 \begin{frame}[fragile]
 \frametitle{Trylock}
@@ -469,6 +479,19 @@ void f1() {
 \end{lstlisting}
 
 This prevents the hold and wait condition.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{There Can Be Only One}
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/giantlock.jpg}\\
+	\hfill Photo Credit: Craig Middleton\footnote{\url{https://www.flickr.com/photos/craigmiddleton/3579668458}}
+\end{center}
+
 
 \end{frame}
 
@@ -515,8 +538,18 @@ Two major implications:
 
 On the other end of the spectrum is \emph{fine-grained locking}. 
 
-The big
-advantage: it maximizes parallelization in your program.
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/tinylocks.jpeg}
+\end{center}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Fine-Grained Locking} 
+
+The big advantage: it maximizes parallelization in your program.
 
 However, it also comes with a number of disadvantages:
   \begin{itemize}
@@ -538,6 +571,364 @@ However, it also comes with a number of disadvantages:
 
 
 \end{frame}
+
+\part{Reentrancy}
+\frame{\partpage}
+
+
+\begin{frame}
+\frametitle{Out and In Again}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/revolvingdoor.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Non-Reentrant C Function}
+
+The trivial example of a non-reentrant C function:
+
+\begin{lstlisting}[language=C]
+int tmp;
+
+void swap( int x, int y ) {
+    tmp = y;
+    y = x;
+    x = tmp;
+}
+\end{lstlisting}
+
+Why is this non-reentrant?
+
+How can we make it reentrant?
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reentrancy}
+
+  
+    $\Rightarrow$ A function can be suspended in the middle and \\ {\bf re-entered}
+      (called again) before the previous execution returns.\\[1em]
+    
+     Does not always mean {\bf thread-safe} (although it usually is).
+      \begin{itemize}
+        \item Recall: {\bf thread-safe} is essentially ``no data races''.
+      \end{itemize}
+ ~\\[1em]
+  Moot point if the function only modifies local data, e.g. {\tt sin()}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example}
+
+  
+
+  Courtesy of Wikipedia (with modifications):
+  \begin{lstlisting}[language=C]
+int t;
+ 
+void swap(int *x, int *y) {
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example---Explained (a trace)}
+
+  
+  \begin{lstlisting}[language=C]
+call swap(&a, &b);
+ t = *x;                // t = 3 (a)
+ *x = *y;               // a = 4 (b)
+ call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    t = *x;             // t = 1 (x)
+    *x = *y;            // x = 2 (y)
+    *y = t;             // y = 1
+ *y = t;                // b = 1
+
+Final values:
+a = 4, b = 1
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed}
+
+  
+  \begin{lstlisting}[language=C][escapechar=@]
+int t;
+ 
+void swap(int *x, int *y) {
+    int s;
+ 
+    @\alert{s = t}@;  // save global variable
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+    @\alert{t = s}@;  // restore global variable
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed---Explained (a trace)}
+
+  
+  \begin{lstlisting}[language=C]
+call swap(&a, &b);
+s = t;                 // s = UNDEFINED
+t = *x;                // t = 3 (a)
+*x = *y;               // a = 4 (b)
+call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    s = t;             // s = 3
+    t = *x;            // t = 1 (x)
+    *x = *y;           // x = 2 (y)
+    *y = t;            // y = 1
+    t = s;             // t = 3
+*y = t;                // b = 3
+t = s;                 // t = UNDEFINED
+
+Final values:
+a = 4, b = 3
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{Interrupt Handling}
+
+
+Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. 
+
+Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted, or we pause and resume.
+
+Either way, if the code is not reentrant we will run into problems.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Thread Safe vs. Reentrant}
+
+Let us also draw a distinction between thread safe code and reentrant code. 
+
+A thread safe operation is one that can be performed from more than one thread at the same time. 
+
+On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. 
+
+Or it can be re-started without affecting the outcome. 
+
+If a function is not reentrant, it may not be possible to make it thread safe. 
+
+And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Thread Safe Non-Reentrant Example}
+{\scriptsize
+\begin{lstlisting}[language=C]
+int length = 0;
+char *s = NULL;
+
+// Note: Since strings end with a 0, if we want to
+// add a 0, we encode it as "\0", and encode a
+// backslash as "\\".
+
+
+// WARNING! This code is buggy - do not use!
+void AddToString(int ch)
+{
+  EnterCriticalSection(&someCriticalSection);
+  // +1 for the character we're about to add
+  // +1 for the null terminator
+  char *newString = realloc(s, (length+1) * sizeof(char));
+  if (newString) {
+    if (ch == '\0' || ch == '\\') {
+      AddToString('\\'); // escape prefix
+    }
+    newString[length++] = ch;
+    newString[length] = '\0';
+    s = newString;
+  }
+  LeaveCriticalSection(&someCriticalSection);
+}
+\end{lstlisting}
+}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Analysis of This Example}
+
+Is it thread safe? Sure---there is a critical section protected by the mutex \texttt{someCriticalSection}. 
+
+But is is re-entrant? Nope. 
+
+The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s}.
+
+That is no longer valid because it got stomped by the earlier call to \texttt{realloc}.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Functional Programming}
+
+Interestingly, functional programming languages (NOT procedural like C) such as Scala and so on, lend themselves very nicely to being parallelized. 
+
+Why? 
+
+Because a purely functional program has no side effects and they are very easy to parallelize.
+
+Any impure function has to indicate that in its function signature.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Functional Programming}
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/functional.png}
+\end{center}
+{\small \url{https://www.fpcomplete.com/blog/2017/04/pure-functional-programming}}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Joel on Functional}
+
+\begin{quote}
+\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}
+\end{quote}
+\hfill --- Joel Spolsky
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{OOP: \texttt{getBrain().damage()}}
+
+Object oriented programming kind of gives us some bad habits in this regard. 
+
+We tend to make a lot of \texttt{void} methods. 
+
+In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. 
+
+If a function returns nothing, what does it do? 
+
+For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Functional Programming in Your C++}
+
+{\tt algorithms} has been part of C++ since C++11.\\
+
+C++17 (not well supported yet) introduces parallel and vectorized {\tt algorithms};\\
+\qquad you specify an execution policy, compiler does it:\\
+\qquad ({\tt sequenced}, {\tt parallel},
+or {\tt parallel\_unsequenced}).\\[1em]
+
+Some examples of algorithms:\\
+\qquad {\tt sort}, {\tt reverse}, {\tt is\_heap}\ldots\\[1em]
+
+Other examples of algorithms:\\
+\qquad {\tt for\_each\_n}, {\tt exclusive\_scan}, {\tt reduce}\\[1em]
+If you know functional programming (e.g. Haskell), these are:\\
+\qquad {\tt map}, {\tt scanl}, {\tt fold1/foldl1}.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Side Effects}
+
+Side effects are sort of undesirable (and definitely not functional), but not necessarily bad. 
+
+Printing to console is unavoidably making use of a side effect, but it's what we want. 
+
+We don't want to call print reentrantly, because two threads trying to write at the same time to the console would result in jumbled output. 
+
+Or alternatively, restarting the print routine might result in some doubled characters on the screen.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Purity}
+
+The notion of purity is related to side effects.
+
+A function is \emph{pure} if it has no side effects and if its outputs depend solely on its inputs.
+
+Pure functions should be implemented as thread-safe and reentrant.
+
+\end{frame}
+
+
 
 
 
