@@ -2,389 +2,225 @@
 
 \begin{document}
 
-\lecture{18 --- Reentrancy, Inlining, High-Level Languages}{\term}{Patrick Lam}
+\lecture{18 --- Data \& Task Parallelism}{\term}{Patrick Lam}
+
+
+\section*{Data and Task Parallelism}
+There are two broad categories of paralellism: data parallelism and
+task parallelism. An analogy to data parallelism is hiring a call
+center to (incompetently) handle large volumes of support calls,
+\emph{all in the same way}. Assembly lines are an analogy to task
+parallelism: each worker does a \emph{different} thing.
+
+More precisely, in data parallelism, multiple threads perform the
+\emph{same} operation on separate data items. For instance, you have a
+big array and want to double all of the elements. Assign part of the
+array to each thread. Each thread does the same thing: double array
+elements.
+
+In task parallelism, multiple threads perform \emph{different}
+operations on separate data items. So you might have a thread that
+renders frames and a thread that compresses frames and combines them
+into a single movie file.
+
+We'll continue by looking at a number of parallelization patterns,
+examples of how to apply them, and situations where they might apply.
+
+\subsection*{Data Parallelism with SIMD}
+The ``typical'' boring standard uniprocessor is Single Instruction Single Data (SISD) but since the mid-1980s we've had more options than that. We'll talk about single-instruction multiple-data (SIMD) later on in
+this course, but here's a quick look. Each SIMD
+instruction operates on an entire vector of data. These instructions
+originated with supercomputers in the 70s. More recently, GPUs; the
+x86 SSE instructions; the SPARC VIS instructions; and the
+Power/PowerPC AltiVec instructions all implement SIMD.
+
+\paragraph{Code.} Let's look at an application of SIMD instructions.
 
-\section*{Reentrancy}
-
-Recall from a bit earlier the idea of a side effect of a function call. 
-
-The trivial example of a non-reentrant C function:
-\begin{lstlisting}[language=C]
-int tmp;
-
-void swap( int x, int y ) {
-    tmp = y;
-    y = x;
-    x = tmp;
-}
-\end{lstlisting}
-
-Why is this non-reentrant? Because there is a global variable \texttt{tmp} and it is changed on every invocation of the function. We can make the code reentrant by moving the declaration of \texttt{tmp} inside the function, which would mean that every invocation is independent of every other. And thus it would be thread safe, too.
-
-Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted (or we're going to break off handling what we're doing and call the same ISR in the middle of the current one). Either way, if the code is not reentrant we will run into problems.
-
-If a function is not reentrant, it may not be possible to make it thread safe. And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
-
-Let us also draw a distinction between thread safe code and reentrant code. A thread safe operation is one that can be performed from more than one thread at the same time. On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. Or it can be re-started without affecting the outcome. See this code example from~\cite{tont:threadsafe}:
-\begin{lstlisting}[language=C]
-int length = 0;
-char *s = NULL;
-
-// Note: Since strings end with a 0, if we want to
-// add a 0, we encode it as "\0", and encode a
-// backslash as "\\".
-
-
-// WARNING! This code is buggy - do not use!
-
-
-void AddToString(int ch)
-{
-  EnterCriticalSection(&someCriticalSection);
-  // +1 for the character we're about to add
-  // +1 for the null terminator
-  char *newString = realloc(s, (length+1) * sizeof(char));
-  if (newString) {
-    if (ch == '\0' || ch == '\\') {
-      AddToString('\\'); // escape prefix
-    }
-    newString[length++] = ch;
-    newString[length] = '\0';
-    s = newString;
-  }
-  LeaveCriticalSection(&someCriticalSection);
-}
-\end{lstlisting}
-
-Is it thread safe? Sure---there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
-
-The GNU C library attempts to document thread-safety of their code here:
-\url{https://www.gnu.org/software/libc/manual/html_node/POSIX-Safety-Concepts.html}.
-
-\subsection*{Functional Programming and Parallelization}
-Interestingly, functional programming languages (by which I do NOT mean procedural programming languages like C) such as Haskell and Scala and so on, lend themselves very nicely to being parallelized. Why? Because a purely functional program has no side effects and they are very easy to parallelize. If a function is impure, its functions signature will indicate so. Thus spake Joel\footnote{``Thus Spake Zarathustra'' is a book by Nietzsche, and this was not a spelling error.}:
-
-\begin{quote}
-\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}~\cite{joel:functional}
-\end{quote}
-
-This assumes of course that there is no data dependency between functions. Obviously, if we need a computation result, then we have to wait. 
-
-Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
-
-\paragraph{C++: the functional version?} {\tt algorithms} has been part of C++ since C++11. It provides algorithm implementations as part of the standard library. Some of the algorithms are standard: {\tt sort}, {\tt reverse}, {\tt is\_heap}\ldots
-
-What's new in C++17, though, is parallel and vectorized {\tt
-algorithms}. You can specify an execution policy for these algorithms
-({\tt sequenced\_policy}, {\tt parallel\_policy}, or {\tt
-parallel\_unsequenced\_policy}). The compiler and runtime make it
-so. (Or, they don't. As of this writing in 2018, mainstream C++
-compilers don't support C++17 yet).
-
-As part of this process, C++17 also introduced some new algorithms, such as
-{\tt for\_each\_n}, {\tt exclusive\_scan}, and {\tt reduce}.
-If you know functional programming (e.g. Haskell), these are also known as
-{\tt map}, {\tt scanl}, and {\tt fold1/foldl1}.
-
-Rainer Grimm writes more about these in blogposts from February and May of 2017:
-\cite{grimm17:_paral_algor_stand_templ_librar} \cite{grimm17:_c}.
-
-Side effects are not functional and sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's what we want. We don't want to call print reentrantly; interleaved print calls would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
-
-The notion of purity is related to side effects. A function is pure if it has no side effects and if its outputs depend solely on its inputs. (The use of the word pure shouldn't imply any sort of moral judgement on the code). Pure functions should also be implemented to be thread-safe and reentrant.
-
-
-\section*{Good Programming Practices: Inlining}
-We have seen the notion of inlining:
-  \begin{itemize}
-    \item Instructs the compiler to just insert the function code in-place,
-      instead of calling the function.
-    \item Hence, no function call overhead!
-    \item Compilers can also do better---context-sensitive---operations they couldn't
-      have done before.
-  \end{itemize}
-
-OK, so inlining removes overhead. Sounds like better performance! Let's inline everything!
-There are two ways of inlining in C++.
-
-\paragraph{Implicit inlining.} (defining a function inside a class definition):
-  \begin{lstlisting}[language=C]
-class P {
-public:
-    int get_x() const { return x; }
-...
-private:
-    int x;
-};
-  \end{lstlisting}
-
-\paragraph{Explicit inlining.} Or, we can be explicit:
-  \begin{lstlisting}[language=C]
-inline max(const int& x, const int& y) {
-    return x < y ? y : x;
-}
-  \end{lstlisting}
-
-\paragraph{The Other Side of Inlining.}
-Inlining has one big downside:
-  \begin{itemize}
-    \item Your program size is going to increase.
-  \end{itemize}
-   This is worse than you think:
-      \begin{itemize}
-        \item Fewer cache hits.
-        \item More trips to memory.
-      \end{itemize}
-   Some inlines can grow very rapidly (C++ extended constructors).
-  Just from this your performance may go down easily.
-
-  Note also that inlining is merely a suggestion to compilers~\cite{gcc:inlining}.
-  They may ignore you.
-  For example:
-  \begin{itemize}
-    \item taking the address of an ``inline'' function and using it; or
-    \item virtual functions (in C++),
-  \end{itemize}
-  will get you ignored quite fast.
-
-\paragraph{Implications of inlining.} Inlining can make your life worse in two ways.
-First, debugging is more difficult (e.g. you can't set a breakpoint in a function that
-  doesn't actually exist).
- Most compilers simply won't inline code with debugging symbols on.
- Some do, but typically it's more of a pain.
-
-Second, it can be a problem for library design:
-  \begin{itemize}
-    \item If you change any inline function in your library, any users
-      of that library have to {\bf recompile} their program if the
-      library updates. (Congratulations, you made a non-binary-compatible change!)
-  \end{itemize}
-This would not be a problem for non-inlined functions---programs execute the new function
-dynamically at runtime.
-
-\section*{High-Level Language Performance Tweaks}
-So far, we've only seen C---we haven't seen anything complex, and C is
-low level, which is good for learning what's really going on.
-
- Writing compact, readable code in C is hard, especially when \#define
-macros and {\tt void *} beckon.
-
-    C++11 has made major strides towards readability and
-    efficiency---it provides light-weight abstractions. We'll look at
-    a couple of examples.
-
-\paragraph{Sorting.} Our goal is simple: we'd like to sort a bunch of integers.
-In C, you would usually just use qsort from {\tt stdlib.h}.
-
-  \begin{lstlisting}
-void qsort (void* base, size_t num, size_t size,
-            int (*comparator) (const void*, const void*));
-  \end{lstlisting}
-
-This is a fairly ugly definition (as usual, for generic C functions). How ugly is it?
-Let's look at a usage example.
-  \begin{lstlisting}[language=C]
-#include <stdlib.h>
-
-int compare(const void* a, const void* b)
-{
-    return (*((int*)a) - *((int*)b));
-}
-
-int main(int argc, char* argv[])
-{
-    int array[] = {4, 3, 5, 2, 1};
-    qsort(array, 5, sizeof(int), compare);
-}
-  \end{lstlisting}
-This looks like a nightmare, and is more likely to have bugs than what we'll see next.
-
-
-C++ has a sort with a much nicer interface\footnote{\ldots well, nicer to use, after you get over templates.}:
-
-  \begin{lstlisting}[language=C++]
-template <class RandomAccessIterator>
-void sort (
-    RandomAccessIterator first,
-    RandomAccessIterator last
-);
-
-template <class RandomAccessIterator, class Compare>
-void sort (
-    RandomAccessIterator first,
-    RandomAccessIterator last,
-    Compare comp
-);
-  \end{lstlisting}
-It is, in fact, easier to use:
-  \begin{lstlisting}[language=C++]
-#include <vector>
-#include <algorithm>
-
-int main(int argc, char* argv[])
-{
-    std::vector<int> v = {4, 3, 5, 2, 1};
-    std::sort(v.begin(), v.end());
-}
-  \end{lstlisting}
-
-{\bf Note:} Your compare function can be a function or a functor. (Don't know what functors
-are? In C++, they're functions with state.) By default,
-  {\tt sort} uses {\tt operator$<$} on the objects being sorted.
-
-  \begin{itemize}
-    \item Which is less error prone?
-    \item Which is {\bf faster}?
-  \end{itemize}
-
-The second question is empirical. Let's see. We generate an array of 2 million ints
-and sort it (10 times, taking the average).
-
-\begin{itemize}
-\item qsort: 0.49 seconds
-\item C++ sort: 0.21 seconds
-\end{itemize}
-
-The C++ version is {\bf twice} as fast. Why?
-      \begin{itemize}
-        \item The C version just operates on memory---it has no clue about the
-          data.
-        \item We're throwing away useful information about what's being sorted.
-        \item A C function-pointer call prevents inlining of the compare function.
-      \end{itemize}
-OK. What if we write our own sort in C, specialized for the data?
-
-\begin{itemize}
-\item Custom C sort: 0.29 seconds
-\end{itemize}
-
-Now the C++ version is still faster (but it's close). But, this is
-quickly going to become a maintainability nightmare.
-      \begin{itemize}
-        \item Would you rather read a custom sort or 1 line?
-        \item What (who) do you trust more?
-      \end{itemize}
-
-\subsection*{Lesson}
-Abstractions will not make your program slower. 
-
-\noindent
-They allow speedups and are much easier to maintain and read.
-
-\subsection*{Vectors vs Lists}
-Consider two
-problems.
-
-\begin{enumerate}
-\item Generate {\bf N} random integers and insert them into (sorted)
-      sequence.
-      
-      {\bf Example:} 3 4 2 1
-      
-      \begin{itemize}
-        \item 3
-        \item 3 4
-        \item 2 3 4
-        \item 1 2 3 4
-      \end{itemize}
-
-\item Remove {\bf N} elements one-at-a-time by going to a random position
-      and removing the element.
-
-      {\bf Example:} 2 0 1 0
-      
-      \begin{itemize}
-        \item 1 2 4
-        \item 2 4
-        \item 2
-        \item 
-      \end{itemize}
-\end{enumerate}
-
-For which {\bf N} is it better to use a list than a vector (or array)?
-
- 
-\paragraph{Complexity analysis.} As good computer scientists, let's analyze
-the complexity.  
-
-{\bf Vector}:\\[-2em]
-      \begin{itemize}
-        \item Inserting\\[-2em]
-          \begin{itemize}
-            \item $O(\log n)$ for binary search
-            \item $O(n)$ for insertion (on average, move half the elements)
-          \end{itemize}
-        \item Removing\\[-2em]
-          \begin{itemize}
-            \item $O(1)$ for accessing
-            \item $O(n)$ for deletion (on average, move half the elements)
-          \end{itemize}
-      \end{itemize}
-
-{\bf List}:\\[-2em]
-      \begin{itemize}
-        \item Inserting\\[-2em]
-          \begin{itemize}
-            \item $O(n)$ for linear search
-            \item $O(1)$ for insertion
-          \end{itemize}
-        \item Removing\\[-2em]
-          \begin{itemize}
-            \item $O(n)$ for accessing
-            \item $O(1)$ for deletion
-          \end{itemize}
-      \end{itemize}
-
-Therefore, based on their complexity, lists should be better.
-
-\paragraph{Reality.} OK, here's what happens. 
 \begin{verbatim}
-$ ./vector_vs_list 50000
-Test 1
-======
-vector: insert 0.1s   remove 0.1s   total 0.2s
-list:   insert 19.44s   remove 5.93s   total 25.37s
-Test 2
-======
-vector: insert 0.11s   remove 0.11s   total 0.22s
-list:   insert 19.7s   remove 5.93s   total 25.63s
-Test 3
-======
-vector: insert 0.11s   remove 0.1s   total 0.21s
-list:   insert 19.59s   remove 5.9s   total 25.49s
+void vadd(double * restrict a, double * restrict b, int count) {
+  for (int i = 0; i < count; i++)
+    a[i] += b[i];
+}
 \end{verbatim}
 
-{\bf Vectors} dominate lists, performance wise. Why?
-  \begin{itemize}
-    \item Binary search vs. linear search complexity dominates.
-    \item Lists use far more memory.
-      {\bf On 64 bit machines:}
-      \begin{itemize}
-        \item Vector: 4 bytes per element.
-        \item List: At least 20 bytes per element.
-      \end{itemize}
-    \item Memory access is slow, and results arrive in blocks:
-      \begin{itemize}
-        \item Lists' elements are all over memory, hence many
-          cache misses.
-        \item A cache miss for a vector will bring a lot more usable data.
-      \end{itemize}
-  \end{itemize}
+Compiling this without SIMD on a 32-bit x86 ({\tt gcc -m32 -march=i386 -S}) might give this:
+\begin{verbatim}
+loop:
+  fldl  (%edx)
+  faddl (%ecx)
+  fstpl (%edx)
+  addl  8, %edx
+  addl  8, %ecx
+  addl  1, %esi
+  cmp   %eax, %esi
+  jle   loop
+\end{verbatim}
 
-So, here are some tips for getting better performance.
-  \begin{itemize}
-    \item Don't store unnecessary data in your program.
-    \item Keep your data as compact as possible.
-    \item Access memory in a predictable manner.
-    \item Use vectors instead of lists by default.
-    \item Programming abstractly can save a lot of time.
-    \item Often, telling the compiler more gives you better code.
-    \item Data structures can be critical, sometimes more than complexity.
-    \item {\bf Low-level code != Efficient}.
-    \item Think at a low level if you need to optimize anything.
-    \item Readable code is good code---different hardware needs different
-      optimizations.
-  \end{itemize}
+We can instead compile to SIMD instructions ({\tt gcc -m32 -march=prescott -mfpmath=sse})
+and get something like this:
+\begin{verbatim}
+loop:
+  movupd (%edx),%xmm0
+  movupd (%ecx),%xmm1
+  addpd  %xmm1,%xmm0
+  movpd  %xmm0,(%edx)
+  addl   16,%edx
+  addl   16,%ecx
+  addl   2,%esi
+  cmp    %eax,%esi
+  jle    loop
+\end{verbatim}
+The \emph{packed} operations ({\tt p}) operate on multiple data
+elements at a time (what kind of parallelism is this?)
+The implication is that the loop only needs to loop half as many times.
+Also, the instructions themselves are more efficient, because they're
+not stack-based x87 instructions.
+
+SIMD is different from the other types of parallelization we're
+looking at, since there aren't multiple threads working at once.
+It is complementary to using threads, and good for cases
+where loops operate over vectors of data. These loops could also be
+parallelized; multicore chips can do both, achieving high throughput.
+SIMD instructions also work well on small data sets, where thread startup
+cost is too high, while registers are just there to use.
+
+We'll see a case study that uses SIMD (also known as vector
+instructions) in Lecture 19. In~\cite{lemire18:_multic_simd}, Daniel Lemire argues that vector
+instructions are, in general, a more efficient way to parallelize code
+than threads. That is, when applicable, they use less overall CPU
+resources (cores and power) and can even run faster.
+
+\section*{Case Study on SIMD: Stream VByte }
+
+\hfill ``Can you run faster just by trying harder?''
+
+The performance improvements we've seen to date have been leveraging parallelism
+to improve throughput. Decreasing latency is trickier---it often requires domain-specific
+tweaks.
+
+Sometimes it's classic computer science: Quantum Flow found a place
+where they could cache the last element of a list to reduce time
+complexity for insertion from $O(n^2)$ to $O(n \log n)$.
+
+\begin{center}
+\url{https://bugzilla.mozilla.org/show_bug.cgi?id=1350770}
+\end{center}
+
+We'll also look at a more involved example of decreasing latency today, Stream VByte~\cite{LEMIRE20181}.
+Even this example leverages parallelism---it uses vector instructions. But there
+are some sequential improvements, e.g. Stream VByte takes care to be predictable
+for the branch predictor.
+
+\paragraph{Context.} We can abstract the problem to that of storing a sequence of small integers.
+Such sequences are important, for instance, in the context of inverted indexes, which allow
+fast lookups by term, and support boolean queries which combine terms.
+
+Here is a list of documents and some terms that they contain:
+\begin{center}
+\begin{tabular}{r|l}
+docid & terms \\ \hline
+1 & dog, cat, cow\\
+2 & cat\\
+3 & dog, goat\\
+4 & cow, cat, goat\\
+\end{tabular}
+\end{center}
+
+The inverted index looks like this:
+\begin{center}
+\begin{tabular}{r|l}
+term & docs \\ \hline
+dog & 1, 3 \\
+cat & 1, 2, 4 \\
+cow & 1, 4 \\
+goat & 3, 4
+\end{tabular}
+\end{center}
+
+Inverted indexes contain many small integers in their lists: it is
+sufficient to store the delta between a doc id and its successor, and
+the deltas are typically small if the list of doc ids is sorted.
+(Going from deltas to original integers takes time logarithmic
+in the number of integers).
+
+VByte is one of a number of schemes that use a variable number of
+bytes to store integers.  This makes sense when most integers are
+small, and especially on today's 64-bit processors.
+
+VByte works like this:
+\vspace*{-1em}
+\begin{itemize}[noitemsep]
+\item $x$ between 0 and $2^7-1$, e.g. $17 = 0b10001$: $0xxx xxxx$, e.g. $0001 0001$;
+\item $x$ between $2^7$ and $2^{14}-1$, e.g. $1729 = 0b110 11000001$:
+                   $1xxx xxxx/0xxx xxxx$, e.g. $1100 0001/0000 1101$;
+\item $x$ between $2^{14}$ and $2^{21}-1$: $0xxx xxxx/1xxx xxxx/1xxx xxxx$;
+\item etc.
+\end{itemize}
+That is, the control bit, or high-order bit, is 0 if you have finished representing the integer,
+and 1 if more bits remain. (UTF-8 encodes the length, from 1 to 4, in high-order bits of the first byte.)
+
+It might seem that dealing with variable-byte integers might be
+harder than dealing fixed-byte integers, and it is. But there are performance benefits: because we are
+using fewer bits, we can fit more information into our limited RAM and
+cache, and even get higher throughput. Storing and reading 0s isn't an effective
+use of resources. However, a naive algorithm to decode VByte also gives
+lots of branch mispredictions.
+
+Stream VByte is a variant of VByte which works using SIMD instructions.
+Science is incremental, and Stream VByte builds on earlier work---masked VByte
+as well as {\sc varint}-GB and {\sc varint}-G8IU. The innovation in
+Stream VByte is to store the control and data streams separately.
+
+Stream VByte's control stream uses two bits per integer to represent the size of the integer:
+\begin{center}
+\vspace*{-1em}
+\begin{tabular}{ll@{~~~~~~~~}ll}
+00 & 1 byte & 10 & 3 bytes\\
+01 & 2 bytes & 11 & 4 bytes
+\end{tabular}
+\end{center}
+
+Each decode iteration reads a byte from the control stream and 16 bytes of data from memory.
+It uses a lookup table over the possible values of the control stream to decide how many
+bytes it needs out of the 16 bytes it has read, and then uses SIMD instructions to shuffle
+the bits each into their own integers. Note that, unlike VByte, Stream VByte uses all 8 bits
+of each data byte as data.
+
+For instance, if the control stream contains $0b1000~1100$, then the data stream
+contains the following sequence of integer sizes: $3, 1, 4, 1$. Out of the 16 bytes read,
+this iteration will use 9 bytes; it advances the data pointer by 9. It then uses the SIMD
+``shuffle'' instruction to put the decoded integers from the data stream at known positions in the
+128-bit SIMD register; in this case, it pads the first 3-byte integer with 1 byte, then
+the next 1-byte integer with 3 bytes, etc. Let's say that the input is
+{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. The 128-bit output is
+{\tt 0x00f8~23e1/0000~0027/2524 9748/0000/001b}, with the /s denoting separation
+between outputs. The shuffle mask is precomputed and, at
+execution time, read from an array.
+
+The core of the implementation uses three SIMD instructions:
+\begin{lstlisting}[language=C]
+  uint8_t C = lengthTable[control];
+  __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
+  __m128i Shuf = _mm_loadu_si128(shuffleTable[control]);
+  Data = _mm_shuffle_epi8(Data, Shuf);
+  databytes += C; control++;
+\end{lstlisting}
+
+\paragraph{Discussion.} The paper~\cite{LEMIRE20181} includes a number of benchmark results
+showing how Stream VByte performs better than previous techniques on a realistic input.
+Let's discuss how it achieves this performance.
+
+\begin{itemize}[noitemsep]
+\item control bytes are sequential: the processor can always prefetch the next control byte, because
+its location is predictable;
+\item data bytes are sequential and loaded at high throughput;
+\item shuffling exploits the instruction set so that it takes 1 cycle;
+\item control-flow is regular (executing only the tight loop which retrieves/decodes control
+and data; there are no conditional jumps).
+\end{itemize}
+We're exploiting SIMD, so this isn't quite strictly single-threaded performance.
+Considering branch prediction and caching issues, though,
+certainly improves single-threaded performance.
 
 
 \input{bibliography.tex}
