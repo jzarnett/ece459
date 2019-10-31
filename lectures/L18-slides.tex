@@ -1,6 +1,6 @@
 \input{configuration}
 
-\title{Lecture 18 --- Reentrancy, Inlining, HLL }
+\title{Lecture 18 --- Data \& Task Parallelism }
 
 \author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -15,1012 +15,458 @@
 
  \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\part{Reentrancy}
-\frame{\partpage}
-
-\begin{frame}[fragile]
-\frametitle{Non-Reentrant C Function}
-
-The trivial example of a non-reentrant C function:
-
-\begin{lstlisting}[language=C]
-int tmp;
-
-void swap( int x, int y ) {
-    tmp = y;
-    y = x;
-    x = tmp;
-}
-\end{lstlisting}
-
-Why is this non-reentrant?
-
-How can we make it reentrant?
-
-\end{frame}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Reentrancy}
+  \frametitle{Data and Task Parallelism}
 
   
-    $\Rightarrow$ A function can be suspended in the middle and \\ {\bf re-entered}
-      (called again) before the previous execution returns.\\[1em]
-    
-     Does not always mean {\bf thread-safe} (although it usually is).
-      \begin{itemize}
-        \item Recall: {\bf thread-safe} is essentially ``no data races''.
-      \end{itemize}
- ~\\[1em]
-  Moot point if the function only modifies local data, e.g. {\tt sin()}.
+     \structure{Data parallelism} is performing \emph{the same} operations on
+      different input.\\
+
+     {\bf Example:} doubling all elements of an array.\\[1em]
+
+     \structure{Task parallelism} is performing \emph{different} operations
+      on different input.
+
+    {\bf Example:} playing a video file: one thread decompresses
+      frames, another renders.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Data Parallelism: Single Instruction, Multiple Data}
+
+  
+    We'll discuss SIMD in more detail later. An overview:
+    \begin{itemize}
+    \item You can load a bunch of data and perform 
+      arithmetic.
+    \item Intructions process multiple data items simultaneously.
+      (Exact number is hardware-dependent).
+    \end{itemize}
+    For x86-class CPUs, MMX and SSE extensions provide SIMD instructions.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Reentrancy Example}
+  \frametitle{SIMD Example}
 
   
+  Consider the following code:
 
-  Courtesy of Wikipedia (with modifications):
-  \begin{lstlisting}[language=C]
-int t;
- 
-void swap(int *x, int *y) {
-    t = *x;
-    *x = *y;
-    // hardware interrupt might invoke isr() here!
-    *y = t;
-}
- 
-void isr() {
-    int x = 1, y = 2;
-    swap(&x, &y);
-}
-...
-int a = 3, b = 4;
-...
-    swap(&a, &b);
+  \begin{lstlisting}
+void vadd(double * restrict a, double * restrict b, 
+          int count) {
+  for (int i = 0; i < count; i++)
+    a[i] += b[i];
+}    
   \end{lstlisting}
+
+    In this scenario, we have a regular operation over block data.\\[1em]
+
+    We could use threads, but we'll use SIMD.
+
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Reentrancy Example---Explained (a trace)}
+  \frametitle{SIMD Example---Assembly without SIMD}
 
   
-  \begin{lstlisting}[language=C]
-call swap(&a, &b);
- t = *x;                // t = 3 (a)
- *x = *y;               // a = 4 (b)
- call isr();
-    x = 1; y = 2;
-    call swap(&x, &y)
-    t = *x;             // t = 1 (x)
-    *x = *y;            // x = 2 (y)
-    *y = t;             // y = 1
- *y = t;                // b = 1
+If we compile this without SIMD instructions on a 32-bit x86, (flags {\tt -m32 -march=i386 -S}) we might get this:
 
-Final values:
-a = 4, b = 1
-
-Expected values:
-a = 4, b = 3
+  \begin{lstlisting}
+loop:
+  fldl  (%edx)
+  faddl (%ecx)
+  fstpl (%edx)
+  addl  8, %edx
+  addl  8, %ecx
+  addl  1, %esi
+  cmp   %eax, %esi
+  jle   loop
   \end{lstlisting}
+
+   Just loads, adds, writes and increments.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Reentrancy Example, Fixed}
+  \frametitle{SIMD Example---Assembly with SIMD}
 
   
-  \begin{lstlisting}[language=C][escapechar=@]
-int t;
- 
-void swap(int *x, int *y) {
-    int s;
- 
-    @\alert{s = t}@;  // save global variable
-    t = *x;
-    *x = *y;
-    // hardware interrupt might invoke isr() here!
-    *y = t;
-    @\alert{t = s}@;  // restore global variable
-}
- 
-void isr() {
-    int x = 1, y = 2;
-    swap(&x, &y);
-}
-...
-int a = 3, b = 4;
-...
-    swap(&a, &b);
+ Instead, compiling to SIMD instructions\\ ({\tt -m32 -mfpmath=sse -march=prescott}) gives:
+
+  \begin{lstlisting}
+loop:
+  movupd (%edx),%xmm0
+  movupd (%ecx),%xmm1
+  addpd  %xmm1,%xmm0
+  movpd  %xmm0,(%edx)
+  addl   16,%edx
+  addl   16,%ecx
+  addl   2,%esi
+  cmp    %eax,%esi
+  jle    loop
   \end{lstlisting}
+
+  \begin{itemize}
+    \item Now processing two elements at a time on the same core.
+    \item Also, no need for stack-based x87 code.
+  \end{itemize}
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reentrancy Example, Fixed---Explained (a trace)}
+\begin{frame}
+  \frametitle{SIMD Overview}
 
   
-  \begin{lstlisting}[language=C]
-call swap(&a, &b);
-s = t;                 // s = UNDEFINED
-t = *x;                // t = 3 (a)
-*x = *y;               // a = 4 (b)
-call isr();
-    x = 1; y = 2;
-    call swap(&x, &y)
-    s = t;             // s = 3
-    t = *x;            // t = 1 (x)
-    *x = *y;           // x = 2 (y)
-    *y = t;            // y = 1
-    t = s;             // t = 3
-*y = t;                // b = 3
-t = s;                 // t = UNDEFINED
-
-Final values:
-a = 4, b = 3
-
-Expected values:
-a = 4, b = 3
-  \end{lstlisting}
+  \begin{itemize}
+    \item Operations \emph{packed}: operate on multiple data elements 
+      at~the~same~time.
+    \vfill
+    \item On modern 64-bit CPUs, SSE has 16 128-bit registers.
+    \vfill
+    \item Very good if your data can be \emph{vectorized} and performs math.
+    \vfill
+    \item Usual application: image/video processing.
+    \vfill
+    \item We'll see more SIMD as we get into GPU programming: GPUs excel
+       at these types of applications.
+  \end{itemize}
   
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\begin{frame}
-\frametitle{Interrupt Handling}
-
-
-Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. 
-
-Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted, or we pause and resume.
-
-Either way, if the code is not reentrant we will run into problems.
-
-
-\end{frame}
 
 \begin{frame}
-\frametitle{Thread Safe vs. Reentrant}
+\frametitle{Single-Thread Performance}
 
-Let us also draw a distinction between thread safe code and reentrant code. 
-
-A thread safe operation is one that can be performed from more than one thread at the same time. 
-
-On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. 
-
-Or it can be re-started without affecting the outcome. 
-
-If a function is not reentrant, it may not be possible to make it thread safe. 
-
-And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Thread Safe Non-Reentrant Example}
-{\scriptsize
-\begin{lstlisting}[language=C]
-int length = 0;
-char *s = NULL;
-
-// Note: Since strings end with a 0, if we want to
-// add a 0, we encode it as "\0", and encode a
-// backslash as "\\".
-
-
-// WARNING! This code is buggy - do not use!
-void AddToString(int ch)
-{
-  EnterCriticalSection(&someCriticalSection);
-  // +1 for the character we're about to add
-  // +1 for the null terminator
-  char *newString = realloc(s, (length+1) * sizeof(char));
-  if (newString) {
-    if (ch == '\0' || ch == '\\') {
-      AddToString('\\'); // escape prefix
-    }
-    newString[length++] = ch;
-    newString[length] = '\0';
-    s = newString;
-  }
-  LeaveCriticalSection(&someCriticalSection);
-}
-\end{lstlisting}
-}
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Analysis of This Example}
-
-Is it thread safe? Sure---there is a critical section protected by the mutex \texttt{someCriticalSection}. 
-
-But is is re-entrant? Nope. 
-
-The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s}.
-
-That is no longer valid because it got stomped by the earlier call to \texttt{realloc}.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Functional Programming}
-
-Interestingly, functional programming languages (NOT procedural like C) such as Scala and so on, lend themselves very nicely to being parallelized. 
-
-Why? 
-
-Because a purely functional program has no side effects and they are very easy to parallelize.
-
-Any impure function has to indicate that in its function signature.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Functional Programming}
+``Can you run faster just by trying harder?''
 
 \begin{center}
-	\includegraphics[width=0.8\textwidth]{images/functional.png}
+\includegraphics[width=0.7\textwidth]{images/theflash.jpg}
 \end{center}
-{\small \url{https://www.fpcomplete.com/blog/2017/04/pure-functional-programming}}
-
 
 \end{frame}
-
 
 
 \begin{frame}
-\frametitle{Joel on Functional}
-
-\begin{quote}
-\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}
-\end{quote}
-\hfill --- Joel Spolsky
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{OOP: \texttt{getBrain().damage()}}
-
-Object oriented programming kind of gives us some bad habits in this regard. 
-
-We tend to make a lot of \texttt{void} methods. 
-
-In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. 
-
-If a function returns nothing, what does it do? 
-
-For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Functional Programming in Your C++}
-
-{\tt algorithms} has been part of C++ since C++11.\\
-
-C++17 (not well supported yet) introduces parallel and vectorized {\tt algorithms};\\
-\qquad you specify an execution policy, compiler does it:\\
-\qquad ({\tt sequenced}, {\tt parallel},
-or {\tt parallel\_unsequenced}).\\[1em]
-
-Some examples of algorithms:\\
-\qquad {\tt sort}, {\tt reverse}, {\tt is\_heap}\ldots\\[1em]
-
-Other examples of algorithms:\\
-\qquad {\tt for\_each\_n}, {\tt exclusive\_scan}, {\tt reduce}\\[1em]
-If you know functional programming (e.g. Haskell), these are:\\
-\qquad {\tt map}, {\tt scanl}, {\tt fold1/foldl1}.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Side Effects}
-
-Side effects are sort of undesirable (and definitely not functional), but not necessarily bad. 
-
-Printing to console is unavoidably making use of a side effect, but it's what we want. 
-
-We don't want to call print reentrantly, because two threads trying to write at the same time to the console would result in jumbled output. 
-
-Or alternatively, restarting the print routine might result in some doubled characters on the screen.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Purity}
-
-The notion of purity is related to side effects.
-
-A function is \emph{pure} if it has no side effects and if its outputs depend solely on its inputs.
-
-Pure functions should be implemented as thread-safe and reentrant.
-
-\end{frame}
-
-
-
-
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Previous Example: thread-safety}
-
-  
-  Is the previous reentrant code also thread-safe?\\
-
-  (This is more what we're concerned about in this course.)\\[1em]
-
-  Let's see:
-  \begin{lstlisting}[language=C]
-int t;
-
-void swap(int *x, int *y) {
-    int s;
- 
-    s = t;  // save global variable
-    t = *x;
-    *x = *y;
-    // hardware interrupt might invoke isr() here!
-    *y = t;
-    t = s;  // restore global variable
-}
-  \end{lstlisting}
-  
-  Consider two calls: {\tt swap(a, b)}, {\tt swap(c, d)} with\\
-  \quad {\tt a = 1, b = 2, c = 3, d = 4}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Previous Example: thread-safety trace}
-
-  
-  \begin{lstlisting}[language=C]
-global: t
-
-/* thread 1 */                       /* thread 2 */
-a = 1, b = 2;
-s = t;    // s = UNDEFINED
-t = a;    // t = 1
-                                     c = 3, d = 4;
-                                     s = t;    // s = 1
-                                     t = c;    // t = 3
-                                     c = d;    // c = 4
-                                     d = t;    // d = 3
-a = b;    // a = 2
-b = t;    // b = 3
-t = s;    // t = UNDEFINED
-                                     t = s;    // t = 1
-
-Final values:
-a = 2, b = 3, c = 4, d = 3, t = 1
-
-Expected values:
-a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Reentrancy vs Thread-Safety (1)}
-
-  
-  \begin{itemize}
-    \item Re-entrant does not always mean thread-safe (as we saw)
-      \begin{itemize}
-        \item But, for most sane implementations, it is thread-safe
-      \end{itemize}
-  \end{itemize}~\\[1em]
-
-  Ok, but are {\bf thread-safe} functions reentrant?
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reentrancy vs Thread-Safety (2)}
-
-  
-  Are {\bf thread-safe} functions reentrant? \alert{Nope.} Consider:
-
-  \begin{lstlisting}[language=C]
-int f() {
-    lock();
-    // protected code
-    unlock();
-}
-  \end{lstlisting}
-
-  Recall: {\bf Reentrant functions can be suspended in the middle of execution
-    and called again before the previous execution completes.}\\[1em]
-
-  {\tt f()} obviously isn't reentrant. Plus, it will deadlock.\\[1em]
-
-  Interrupt handling is more for systems programming, so the topic of reentrancy may or may not come
-  up again.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary of Reentrancy vs Thread-Safety}
-
-  
-  Difference between reentrant and thread-safe functions:\\[1em]
-
-  {\bf Reentrancy}
-  \begin{itemize}
-    \item Has nothing to do with threads---assumes a {\bf single thread}.
-    \item Reentrant means the execution can context switch at any point in
-      in a function, call the {\bf same function}, and {\bf complete} before
-      returning to the original function call.
-    \item Function's result does not depend on where the context switch happens.
-  \end{itemize}
-  \vfill
-  {\bf Thread-safety}
-  \begin{itemize}
-    \item Result does not depend on any interleaving of threads from
-      concurrency or parallelism.
-    \item No unexpected results from multiple concurrent executions of the function.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Another Definition of Thread-Safe Functions}
-
-  
-
-\begin{quote}
-  ``A function whose effect, when called by two or more threads, is guaranteed to
-  be as if the threads each executed the function one after another, in an
-  undefined order, even if the actual execution is interleaved.''
-\end{quote}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Past Example of an Exam Question}
-
-  
-
-  \begin{lstlisting}[language=C]
-void swap(int *x, int *y) {
-    int t;
-    t = *x;
-    *x = *y;
-    *y = t;
-}  
-  \end{lstlisting}
-  \vfill
-  \begin{itemize}
-    \item Is the above code thread-safe?
-    \vfill
-    \item Write some expected results for running two calls in parallel.
-    \vfill
-    \item Argue these expected results always hold, or show an example where
-      they do not.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\part{Good Practices}
-\frame{\partpage}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Inlining}
-
-  
-
-  We have seen the notion of inlining:
-  \begin{itemize}
-    \item Instructs the compiler to just insert the function code in-place,
-      instead of calling the function.
-    \item Hence, no function call overhead!
-    \item Compilers can also do better---context-sensitive---operations they couldn't
-      have done before.
-  \end{itemize}
-  \vfill
-  No overhead\ldots~ sounds like better performance\ldots~ \\let's inline everything!
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Inlining in C++}
-
-  
-  Implicit inlining (defining a function inside a class definition):
-  \begin{lstlisting}[language=C]
-class P {
-public:
-    int get_x() const { return x; }
-...
-private:
-    int x;
-};
-  \end{lstlisting}
-  \vfill
-Explicit inlining:
-  \begin{lstlisting}[language=C]
-inline max(const int& x, const int& y) {
-    return x < y ? y : x;
-}
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{The Other Side of Inlining}
-
-  
-
-  One big downside:
-  \begin{itemize}
-    \item Your program size is going to increase.
-  \end{itemize}
-   This is worse than you think:
-      \begin{itemize}
-        \item Fewer cache hits.
-        \item More trips to memory.
-      \end{itemize}
-   Some inlines can grow very rapidly (C++ extended constructors).\\[1em]
-  Just from this your performance may go down easily.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Compilers on Inlining}
-
-  
-
-  Inlining is merely a suggestion to compilers.\\
-  They may ignore you.\\[1em]
-
-  For example:
-n  \begin{itemize}
-    \item taking the address of an ``inline'' function and using it; or
-    \item virtual functions (in C++),
-  \end{itemize}
-  will get you ignored quite fast.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{From a Usability Point-of-View}
-
-  
-  Debugging is more difficult (e.g. you can't set a breakpoint in a function that
-  doesn't actually exist).
-  \begin{itemize}
-    \item Most compilers simply won't inline code with debugging symbols on.
-    \item Some do, but typically it's more of a pain.
-  \end{itemize}~\\[1em]
-
-  Library design:
-  \begin{itemize}
-    \item If you change any inline function in your library, any users
-      of that library have to {\bf recompile} their program if the
-      library updates. (non-binary-compatible change!)
-  \end{itemize}
-  Not a problem for non-inlined functions---programs execute the new function
-      dynamically at runtime.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Introduction}
-
-  
-    So far, we've only seen C---we haven't seen anything 
-      complex.\\[1em]
-
-    C is low level, which is good for learning what's
-    really going on.\\[2em]
-
-    Writing compact, readable code in C is hard. \\ Common C sights:
-      \begin{itemize}
-        \item {\bf \#define macros}
-        \item {\bf void*}
-      \end{itemize}
-    C++11 has made major strides towards readability and efficiency
-      (it provides light-weight abstractions).
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\section{Sorting}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Goal}
-
-
-  
-  Sort a bunch of integers.\\[1em]
-  In {\bf C}, usually use qsort from {\tt stdlib.h}.
-
-  \begin{lstlisting}[language=C]
-void qsort (void* base, size_t num, size_t size,
-            int (*comparator) (const void*, const void*));
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item A fairly ugly definition (as usual, for generic C functions)
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{How ugly? {\tt qsort} usage}
-
-  
-  \begin{lstlisting}[language=C]
-#include <stdlib.h>
-
-int compare(const void* a, const void* b)
-{
-    return (*((int*)a) - *((int*)b));
-}
-
-int main(int argc, char* argv[])
-{
-    int array[] = {4, 3, 5, 2, 1};
-    qsort(array, 5, sizeof(int), compare);
-}
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item This looks like a nightmare, and is more likely to have bugs.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{C++ {\tt sort}}
-
-  
-  C++ has a sort with a much nicer interface\footnote{\ldots nicer to use, after you get over templates (they're useful, I swear).}$\ldots$
-
-  \begin{lstlisting}[language=C]
-template <class RandomAccessIterator>
-void sort (
-    RandomAccessIterator first,
-    RandomAccessIterator last
-);
-
-template <class RandomAccessIterator, class Compare>
-void sort (
-    RandomAccessIterator first,
-    RandomAccessIterator last,
-    Compare comp
-);
-  \end{lstlisting}
-  
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{C++ {\tt sort} Usage}
-
-  
-  \begin{lstlisting}[language=C]
-#include <vector>
-#include <algorithm>
-
-int main(int argc, char* argv[])
-{
-    std::vector<int> v = {4, 3, 5, 2, 1};
-    std::sort(v.begin(), v.end());
-}
-  \end{lstlisting}
-  \vfill
-
-  {\bf Note:} Your compare function can be a function or a functor. \\By~default,
-  {\tt sort} uses {\tt operator$<$} on the objects being sorted.
-
-  \begin{itemize}
-    \item Which is less error prone?
-    \item Which is {\bf faster}?
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Timing Various Sorts}
-
-  
-  \begin{center}
-    [Shown: actual runtimes of {\tt qsort} vs {\tt sort}]\\[1em]
-  \end{center}
-
-     The C++ version is {\bf twice} as fast. Why?
-      \begin{itemize}
-        \item The C version just operates on memory---it has no clue about the
-          data.
-        \item We're throwing away useful information about what's being sorted.
-        \item A C function-pointer call prevents inlining of the compare function.
-      \end{itemize}
-     OK. What if we write our own sort in C, specialized for the data?
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Custom Sort}
-
-
-  \begin{center}
-    [Shown: actual runtimes of custom sort vs {\tt sort}]
-  \end{center}
-
-  \begin{itemize}
-    \item The C++ version is still faster (although it's close).
-    \item However, this is quickly going to become a maintainability nightmare.
-      \begin{itemize}
-        \item Would you rather read a custom sort or 1 line?
-        \item What (who) do you trust more?
-      \end{itemize}
-  \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Lesson}
-  
-\Huge
-    Abstractions will not make your program slower. \\[1em]
-
-    They 
-      allow speedups and are much easier to maintain and read.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Lecture Fun}
-
-  \begin{center}
+\frametitle{Single-Thread Performance}
 \Large
-    Let's throw Java-style programming (or at least collections) into the mix and see what happens.
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{changemargin}{2cm}
+Performance improvements to date have \\
+used parallelism
+to improve throughput. 
 
-\section{Vectors vs. Lists}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Decreasing latency is trickier---\\
+often requires domain-specific
+tweaks. 
+
+Today: one example of decreasing latency: \\
+\hspace*{2em} Stream VByte.
+\end{changemargin}
+
+\end{frame}
+
+
 \begin{frame}
-  \frametitle{Vectors vs. Lists: Problem}
-  
-  
+\frametitle{I have a cunning plan...}
 
-    1. Generate {\bf N} random integers and insert them into (sorted)
-      sequence.
-      
-  
+\Large
+\begin{changemargin}{2cm}
+Even Stream VByte uses parallelism:\\
+\hspace*{2em}vector instructions. 
 
-      {\bf Example:} 3 4 2 1
-      
-      \begin{itemize}
-        \item 3
-        \item 3 4
-        \item 2 3 4
-        \item 1 2 3 4
-      \end{itemize}
-  
-
-    2. Remove {\bf N} elements one at a time by going to a random position
-      and removing the element.
-
-  
-      {\bf Example:} 2 0 1 0
-      
-      \begin{itemize}
-        \item 1 2 4
-        \item 2 4
-        \item 2
-        \item 
-      \end{itemize}
-  
-  For which {\bf N} is it better to use a list than a vector (or array)?
-  
+But there
+are sequential improvements, \\
+e.g. Stream VByte takes care to be predictable
+for the branch predictor.
+\end{changemargin}
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Complexity}
-  
-  \begin{itemize}
-    \item {\bf Vector}
-      \begin{itemize}
-        \item Inserting
-          \begin{itemize}
-            \item $O(\log n)$ for binary search
-            \item $O(n)$ for insertion (on average, move half the elements)
-          \end{itemize}
-        \item Removing
-          \begin{itemize}
-            \item $O(1)$ for accessing
-            \item $O(n)$ for deletion (on average, move half the elements)
-          \end{itemize}
-      \end{itemize}
+\frametitle{Inverted Indexes (like it's CS 137 again!)}
 
-    \item {\bf List}
-      \begin{itemize}
-        \item Inserting
-          \begin{itemize}
-            \item $O(n)$ for linear search
-            \item $O(1)$ for insertion
-          \end{itemize}
-        \item Removing
-          \begin{itemize}
-            \item $O(n)$ for accessing
-            \item $O(1)$ for deletion
-          \end{itemize}
-      \end{itemize}
-  \end{itemize}
-  \vfill
-  Therefore, based on their complexity, lists should be better.
+\Large
+\begin{changemargin}{1cm}
+\vspace*{-1em}
+Abstractly: store a sequence of small integers.
+
+
+Why Inverted indexes?
+
+\hspace*{1cm}allow fast lookups by term;\\
+\hspace*{1cm}support boolean queries combining terms.
+
+\end{changemargin}
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Reality}
-  
-  \begin{center}
-    [Shown: actual runtimes of vectors and lists]
-  \end{center}
+\frametitle{Dogs, cats, cows, goats. In ur documents.}
+\Large
+\begin{changemargin}{2cm}
+\begin{center}
+\begin{tabular}{r|l}
+docid & terms \\ \hline
+1 & dog, cat, cow\\
+2 & cat\\
+3 & dog, goat\\
+4 & cow, cat, goat\\
+\end{tabular}
+\end{center}
+\end{changemargin}
 
-  
-  {\bf Vectors} dominate lists, performance wise. Why?
-  \vfill
-  \begin{itemize}
-    \item Binary search vs. linear search complexity dominates.
-    \vfill
-    \item Lists use far more memory.
-
-      {\bf On 64 bit machines:}
-      \begin{itemize}
-        \item Vector: 4 bytes per element.
-        \item List: At least 20 bytes per element.
-      \end{itemize}
-    \vfill
-    \item Memory access is slow, and results arrive in blocks:
-      \begin{itemize}
-        \item Lists' elements are all over memory, hence many
-          cache misses.
-        \item A cache miss for a vector will bring a lot more usable data.
-      \end{itemize}
-  \end{itemize}
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Performance Tips: Bullets}
+\frametitle{Inverting the Index}
 
-  
-  \begin{itemize}
-    \item Don't store unnecessary data in your program.
-    \vfill
-    \item Keep your data as compact as possible.
-    \vfill
-    \item Access memory in a predictable manner.
-    \vfill
-    \item Use vectors instead of lists by default.
-    \vfill
-    \item Programming abstractly can save a lot of time.
-  \end{itemize}
-  
+\large\begin{changemargin}{2cm}
+Here's the index and the inverted index:
+\begin{center}
+\begin{tabular}{r|l}
+docid & terms \\ \hline
+1 & dog, cat, cow\\
+2 & cat\\
+3 & dog, goat\\
+4 & cow, cat, goat\\
+\end{tabular} \hspace*{2em}
+\begin{tabular}{r|l}
+term & docs \\ \hline
+dog & 1, 3 \\
+cat & 1, 2, 4 \\
+cow & 1, 4 \\
+goat & 3, 4
+\end{tabular}
+\end{center}
+
+Inverted indexes contain many small integers.
+
+Deltas typically small if doc ids are sorted.
+\end{changemargin}
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\section{}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Summary (Reentrancy)}
+\frametitle{Storing inverted index lists: VByte}
 
+\Large\begin{changemargin}{2cm}
+\vspace*{-2em}
+VByte uses a variable number of bytes\\
+to store integers.  
 
-  \begin{itemize}
-    \item Reentrancy vs thread-safety.
-    \item Inlining: limit your inlining to trivial functions:
-      \begin{itemize}
-        \item makes debugging easier and improves usability;
-        \item won't slow down your program before you even start optimizing it.
-      \end{itemize}
-    \item Tell the compiler high-level information but think low-level.
-  \end{itemize}
-  
+Why? Most integers are
+small,\\
+especially on today's 64-bit processors.
+\end{changemargin}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Programming for Performance with the Compiler}
+\frametitle{How VByte Works}
 
-  
+\large\begin{changemargin}{1cm}
+VByte works like this:
 
-  \begin{itemize}
-    \item Often, telling the compiler more gives you better code.
-    \vfill
-    \item Data structures can be critical, sometimes more than complexity.
-    \vfill
-    \item {\bf Low-level code != Efficient}.
-    \vfill
-    \item Think at a low level if you need to optimize anything.
-    \vfill
-    \item Readable code is good code---\\ different hardware needs different
-      optimizations.
-  \end{itemize}
-  
+\begin{itemize}
+\item $x$ between 0 and $2^7-1$ (e.g. $17 = 0b10001$):\\
+\hspace*{1em}$0xxx xxxx$, e.g. $0001 0001$;
+\item $x$ between $2^7$ and $2^{14}-1$ (e.g. $1729 = 0b110 11000001$):\\
+\hspace*{1em}                   $1xxx xxxx/0xxx xxxx$ (e.g. $1100 0001/0000 1101$);\\
+\item $x$ between $2^{14}$ and $2^{21}-1$: \\
+\hspace*{1em}$0xxx xxxx/1xxx xxxx/1xxx xxxx$;
+\item etc.
+\end{itemize}
+
+Control bit, or high-order bit, is:\\
+\hspace*{2em}0 once done representing the int,\\
+\hspace*{2em}1 if more bits remain.
+\end{changemargin}
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Why VByte Helps}
+
+\large\begin{changemargin}{2cm}
+Isn't dealing with variable-byte integers harder?\\
+\hspace*{2em} $\bullet$~ Yup!
+
+But perf improves: \\
+\hspace*{2em} $\bullet$~  We are using fewer bits! 
+
+We fit more information into RAM and
+cache, and can get higher throughput. (think inlining)
+
+Storing and reading 0s isn't good use of resources. 
+
+However, a naive algorithm to decode VByte \\
+gives branch mispredicts.
+\end{changemargin}
+\end{frame}
+
+\begin{frame}
+\frametitle{Stream VByte}
+\vspace*{-2em}
+\large\begin{changemargin}{2cm}
+Stream VByte: a variant of VByte using SIMD.
+
+
+Science is incremental. \\
+Stream VByte builds on earlier work---\\
+\hspace*{2em}masked VByte, {\sc varint}-GB, {\sc varint}-G8IU. 
+
+Innovation in Stream VByte:\\
+\hspace*{2em}\emph{store the control and data streams separately}.
+\end{changemargin}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Control Stream}
+\vspace*{-4em}
+\large\begin{changemargin}{2cm}
+Stream VByte's control stream uses two bits per integer to represent the size of the integer:
+\begin{center}
+\vspace*{-3em}
+\begin{tabular}{ll@{~~~~~~~~}ll}
+00 & 1 byte & 10 & 3 bytes\\
+01 & 2 bytes & 11 & 4 bytes
+\end{tabular}
+\end{center}
+\end{changemargin}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Decoding Stream VByte}
+
+\large\begin{changemargin}{2cm}
+Per decode iteration:\\
+\hspace*{2em} reads 1 byte from the control stream,\\
+\hspace*{2em} and 16 bytes of data.
+
+
+Lookup table on control stream byte: decide how many
+bytes it needs out of the 16 bytes it has read.
+
+SIMD instructions: \\
+\hspace*{2em}shuffle the bits each into their own integers. 
+
+Unlike VByte, \\
+Stream VByte uses all 8 bits
+of data bytes as data.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Stream VByte Example}
+
+\large\begin{changemargin}{2cm}
+Say control stream contains $0b1000~1100$. \\
+Then the data stream
+contains the following sequence of integer sizes: $3, 1, 4, 1$. 
+
+Out of the 16 bytes read,
+this iteration uses 9 bytes; \\
+\hspace*{2em} $\Rightarrow$ it advances the data pointer by 9. 
+
+The SIMD
+``shuffle'' instruction puts decoded integers from data stream at known positions in the
+128-bit SIMD register.
+
+Pad the first 3-byte integer with 1 byte, then
+the next 1-byte integer with 3 bytes, etc. 
+\end{changemargin}
+\end{frame}
+
+\begin{frame}
+\frametitle{Stream VByte: Shuffling the Bits}
+\vspace*{-1em}
+\large\begin{changemargin}{1cm}
+Say the data input is:\\
+{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. 
+
+The 128-bit output is:\\
+{\tt 0x00f8~23e1/0000~0027/2524 9748/0000/001b}\\
+/s denote separation
+between outputs. 
+
+Shuffle mask is precomputed and
+read from an array.
+\end{changemargin}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{SIMD Instructions}
+
+\vspace*{-1em}
+\large\begin{changemargin}{1cm}
+The core of the implementation uses\\
+three SIMD instructions:
+\begin{lstlisting}[language=C]
+  uint8_t C = lengthTable[control];
+  __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
+  __m128i Shuf = _mm_loadu_si128(shuffleTable[control]);
+  Data = _mm_shuffle_epi8(Data, Shuf);
+  databytes += C; control++;
+\end{lstlisting}
+\end{changemargin}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{But Does It Work?!}
+
+\vspace*{-1em}
+\large\begin{changemargin}{1cm}
+Stream VByte performs better than previous techniques on a realistic input.
+
+
+Why?
+
+\begin{itemize}
+\item control bytes are sequential:\\
+\hspace*{1em} CPU can always prefetch the next control byte, \\
+\hspace*{1em} because
+its location is predictable;
+\item data bytes are sequential \\
+\hspace*{1em}and loaded at high throughput;
+\item shuffling exploits the instruction set: \\
+\hspace*{1em}takes 1 cycle;
+\item control-flow is regular \\
+\hspace*{1em}(tight loop which retrieves/decodes control
+\& data;\\
+\hspace*{1em}no conditional jumps).
+\end{itemize}
+\end{changemargin}
+\end{frame}
+
+
+
 
 \end{document}
 

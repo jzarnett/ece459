@@ -4,8 +4,200 @@
 
 \lecture{15 --- Memory Consistency}{\term}{Patrick Lam and Jeff Zarnett}
 
+\section*{OpenMP Memory Model, Its Pitfalls, and How to Mitigate Them}
+OpenMP uses a {\bf relaxed-consistency, shared-memory} model. This almost certainly doesn't 
+do what you want. Here are its properties:
+
+\begin{itemize}
+    \item All threads share a single store called
+      \emph{memory}---this store may not actually represent RAM.
+    \item Each thread can have its own {\it temporary} view of memory.
+    \item A thread's {\it temporary} view of memory is not required to be
+      consistent with memory.
+\end{itemize}
+
+We'll talk more about memory models later. Now we're going to talk about 
+the OpenMP model and why it's a problem.
+
+\paragraph{Memory Model Pitfall.} Consider this code.
+
+  \begin{lstlisting}[language=C]
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1) // [1]                atomic(a = 1) // [3]
+atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{lstlisting}
+
+Does this code actually prevent simultaneous execution?
+Let's reason about possible states.
+
+  \begin{center}
+  \begin{tabular}{r r r r | r r}
+    \multicolumn{4}{c|}{Order} & t1 tmp & t2 tmp\\
+    \hline
+    1 & 2 & 3 & 4 & 0 & 1\\
+    1 & 3 & 2 & 4 & 1 & 1\\
+    1 & 3 & 4 & 2 & 1 & 1\\
+    3 & 4 & 1 & 2 & 1 & 0\\
+    3 & 1 & 2 & 4 & 1 & 1\\
+    3 & 1 & 4 & 2 & 1 & 1\\
+  \end{tabular}
+  \end{center}
+
+Looks like it (at least intuitively).
+
+Sorry! With OpenMP's memory model, no guarantees:
+the update from one thread may not be seen by the other.
+
+\paragraph{Restoring Sanity with Flush.} We do rely on 
+shared memory working ``properly'', but that's expensive.
+So OpenMP provides the {\bf flush} directive.
+
+  \begin{center}
+    {\tt \#pragma omp }{\bf flush} {\it[(list)]}
+  \end{center}
+
+This directive makes the thread's temporary view of memory consistent with main
+      memory; it:
+\begin{itemize}
+    \item enforces an order on the memory operations of the variables.
+\end{itemize}
+
+The variables in the list are called the {\it flush-set}. 
+If you give no variables, the compiler will determine them for you.
+
+Enforcing an order on the memory operations means:
+\begin{itemize}
+    \item All read/write operations on the {\it flush-set} which happen
+      before the {\bf flush} complete before the flush executes.
+    \item All read/write operations on the {\it flush-set} which happen
+      after the {\bf flush} complete after the flush executes.
+    \item Flushes with overlapping {\it flush-sets} can not be reordered.
+\end{itemize}
+
+To show a consistent value for a variable between two threads, OpenMP
+must run statements in this order:
+
+  \begin{enumerate}
+    \item $t_1$ writes the value to $v$;
+    \item $t_1$ flushes $v$; 
+    \item $t_2$ flushes $v$ also;
+    \item $t_2$ reads the consistent value from $v$.
+  \end{enumerate}
+
+Let's revise the example again.
+  \begin{lstlisting}[language=C]
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1)                       atomic(a = 1)
+flush(b)                            flush(a)
+flush(a)                            flush(b)
+atomic(tmp = a)                     atomic(tmp = b)
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{lstlisting}
+
+OK. Will this now prevent simultaneous access?
+
+Well, no.
+
+The compiler can reorder the {\tt flush(b)} in thread 1 or {\tt
+  flush(a)} in thread 2. If {\tt flush(b)} gets reordered to after the
+protected section, we will not get our intended operation.
+
+\paragraph{Correct Example.} We have to provide a list of variables
+to {\tt flush} to prevent re-ordering:
+  \begin{lstlisting}[language=C]
+                    a = b = 0
+/* thread 1 */                      /* thread 2 */
+
+atomic(b = 1)                       atomic(a = 1)
+flush(a, b)                         flush(a, b)
+atomic(tmp = a)                     atomic(tmp = b)
+if (tmp == 0) then                  if (tmp == 0) then
+    // protected section                // protected section
+end if                              end if
+  \end{lstlisting}
+
+\paragraph{Where There Is Implicit Flush:}
+  \begin{itemize}[noitemsep]
+    \item {\tt omp barrier}
+    \item at entry to, and exit from, {\bf omp critical};
+    \item at exit from {\bf omp parallel}; 
+    \item at exit from {\bf omp for};
+    \item at exit from {\bf omp sections};
+    \item at exit from {\bf omp single}.
+  \end{itemize}
+
+\paragraph{Where There's No Implicit Flush:}
+  \begin{itemize}[noitemsep]
+    \item at entry to {\bf for};
+    \item at entry to, or exit from, {\bf master};
+    \item at entry to {\bf sections};
+    \item at entry to {\bf single};
+    \item at exit from {\bf for}, {\bf single} or {\bf sections} with a {\bf nowait}
+      \begin{itemize}
+        \item {\bf nowait} removes implicit flush along with the implicit barrier
+      \end{itemize}
+  \end{itemize}
+
+This is not true for OpenMP versions before 2.5, so be careful.
+
+\paragraph{Final thoughts on flush.} We've seen that it's very difficult to use flush properly. Really, you should be using mutexes or other synchronization instead of flush~\cite{flush}, because you'll probably just get it wrong. But now you know what flush means.
+
+
+\section*{Why Your Code is Slow}
+OpenMP code too slow? Avoid these pitfalls:
+  \begin{enumerate}
+    \item Unnecessary flush directives.
+    \item Using critical sections or locks instead of atomic.
+    \item Unnecessary concurrent-memory-writing protection:
+      \begin{itemize}
+        \item No need to protect local thread variables.
+        \item No need to protect if only accessed in {\bf single} or
+          {\bf master}.
+      \end{itemize}
+    \item Too much work in a critical section.
+    \item Too many entries into critical sections.
+  \end{enumerate}
+
+\paragraph{Example: Too Many Entries into Critical Sections.}~
+
+  \begin{lstlisting}[language=C]
+#pragma omp parallel for
+for (i = 0; i < N; ++i) { 
+    #pragma omp critical
+    {
+        if (arr[i] > max) max = arr[i];
+    } 
+}
+  \end{lstlisting}
+
+would be better as:
+
+  \begin{lstlisting}[language=C]
+#pragma omp parallel for
+for (i = 0 ; i < N; ++i) { 
+    #pragma omp flush(max)
+    if (arr[i] > max) {
+          #pragma omp critical
+          {
+                if (arr[i] > max) max = arr[i];
+          }
+    }
+}
+\end{lstlisting}
+
+
+
 \section*{Memory Consistency, Memory Barriers, and Reordering}
-Today we'll talk a bit more about memory consistency, memory barriers
+Now we'll talk a bit more about memory consistency, memory barriers
 and reordering in general. We'll start with instruction reordering by
 the CPU and move on to reordering initiated by the compiler.  I'll
 also touch on some CPU instructions for atomic operations.
@@ -191,62 +383,6 @@ useful (again, {\tt volatile} is not meant to help with threading, and
 will have a different behaviour for threading on different
 compilers/hardware).
 
-\section*{Atomic Operations}
- We saw the {\bf atomic} directive in OpenMP as well as C++11 atomics. Most OpenMP atomic expressions map to atomic hardware instructions.
-However, other atomic instructions exist, and we've seen the C++11 ones earlier as well.
-
-\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86).
-Here's some pseudocode for it.
-  \begin{lstlisting}[language=C]
-int compare_and_swap (int* reg, int oldval, int newval) 
-{
-  int old_reg_val = *reg;
-  if (old_reg_val == oldval) 
-     *reg = newval;
-  return old_reg_val;
-}
-  \end{lstlisting}
-
-Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it.
-
-
-\paragraph{Implementing a Spinlock.}
-You can use compare-and-swap to implement spinlock:
-  \begin{lstlisting}[language=C]
-void spinlock_init(int* lock) { *lock = 0; }
-
-void spinlock_lock(int* lock) {
-    while(compare_and_swap(lock, 0, 1) != 0) {}
-    __asm__ ("mfence");
-}
-
-void spinlock_unlock(int* lock) {
-    __asm__ ("mfence");
-    *lock = 0;  
-}
-  \end{lstlisting}
-You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
-
-\section*{ABA Problem}
-Sometimes you'll read a location twice.
-If the value is the same both times, nothing has changed, right?\\[1em]
-
-\emph{No.} This is an {\bf ABA problem}.\\[1em]
-
-The ABA problem is not any sort of acronym nor a reference to this~\cite{abba}. It's a value that is A, then changed to B, then changed back to A. The ABA problem is a big mess for the designer of lock-free Compare-And-Swap routines. This sequence will give some example of how this might happen~\cite{abaproblem}:
-
-\begin{enumerate}
-	\item $P_{1}$ reads $A_{i}$ from location $L_{i}$.
-	\item $P_{k}$ interrupts $P_{1}$; $P_{k}$ stores the value $B$ into $L_{i}$.
-	\item $P_{j}$ stores the value $A_{i}$ into $L_{i}$.
-	\item $P_{1}$ resumes; it executes a false positive CAS.
-\end{enumerate} 
-
-It's a ``false positive'' because $P_{1}$'s compare-and-swap operation succeeds even though the value at $L_{i}$ has been modified in the meantime. If this doesn't seem like a bad thing, consider this. If you have a data structure that will be accessed by multiple threads, you might be controlling access to it by the compare-and-swap routine. What should happen is the algorithm should keep trying until the data structure in question has not been modified by any other thread in the meantime. But with a false positive we get the impression that things didn't change, even though they really did.
-
-You can combat this by ``tagging'': modify value with a nonce upon each
-write.  You can also keep the value separately from the nonce; double
-compare and swap atomically swaps both value and nonce.
 
 \section*{C/C++11 Memory Model}
 
@@ -318,52 +454,6 @@ Alright, we have some defined behaviour now.  Honestly, it depends how these thi
 
 We probably still don't like this because we don't have mutual exclusion here and we can get several different answers, some of which are probably ``wrong'' (for whatever definition of a correct answer is), but at least our set of potential wrong answers is smaller. So that's a start. Compilers have to follow the new rules in generating code, so their output will behave as if the architecture followed the standard memory model. That's something. 
 
-\section*{Good C++ Practice}
-Lots of people use postfix ({\tt i++}) out of habit, but prefix ({\tt ++i}) is better.
-In C, this isn't a problem. 
-In some languages (like C++), it can be.
-
-\paragraph{Why? Overloading.} In C++, you can overload the {\tt ++} and {\tt -\!-} operators.
-
-\vspace*{-1em}
-\begin{minipage}{.5\textwidth}
-  \begin{lstlisting}[language=C]
-class X {
-public:
-  X& operator++();
-  const X operator++(int);
-};
-\end{lstlisting}\end{minipage}\begin{minipage}{.5\textwidth}
-  \begin{lstlisting}[language=C]
-X x;
-++x; // x.operator++();
-x++; // x.operator++(0);
-  \end{lstlisting}
-  \end{minipage}
-
-Prefix is also known as {\bf increment and fetch}, and might be implemented like this:
-  \begin{lstlisting}[language=C]
-X& X::operator++() {
-  *this += 1;
-  return *this;
-}
-  \end{lstlisting}
-
-  Postfix is also known as {\bf fetch and increment}. Note that you have to make a copy of
-the old value:
-  \begin{lstlisting}[language=C]
-const X X::operator++(int) {
-  const X old = *this;
-  ++(*this);
-  return old;
-}
-  \end{lstlisting}
-
-So, if you're the least concerned about efficiency (and why else would you be
-taking programming for performance?), always use
-  \emph{prefix} increments/decrements instead of defaulting to postfix. This isn't really an issue if the operator is in a statement all on its own (e.g. a standalone line, or the last part of a for loop) because the compiler is (presumably) smart enough to know that this can be optimized as the return value is not assigned. Only use {\tt postfix} when you really mean it, to be on the safe side.
-  
-Mind you, if you're doing something like \texttt{array[i++]} or something similarly ``clever'', you might want to think twice about this. There's a lot of potential for error or misunderstanding in a code review. Remember, clever is hard to grep for.
 
 \input{bibliography.tex}
 
