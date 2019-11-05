@@ -1,7 +1,7 @@
 \input{configuration}
 \usepackage{soul}
 
-\title{Lecture 27 --- Memory Profiling }
+\title{Lecture 27 --- Memory Profiling, Profiler Guided Optimization }
 
 \author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -16,7 +16,10 @@
 
  \end{frame}
 
-
+\part{Memory Profiling}
+\begin{frame}
+\partpage
+\end{frame}
 
 \begin{frame}
 \frametitle{\st{Memory Profiling} Return to Asgard}
@@ -526,6 +529,438 @@ As is often the case, \\ we have examined the tool on a trivial program.
 Let's see if we can do some\\
  live demos of Massif at work.
 \end{changemargin}
+\end{frame}
+
+\part{Profiler Guided Optimization}
+\begin{frame}
+\partpage
+\end{frame}
+
+\begin{frame}
+\frametitle{Profiler Guided Optimization}
+
+\Large
+\begin{changemargin}{2cm}
+
+Using static analysis, \\
+the compiler makes its best predictions about runtime behaviour.
+
+Example: branch prediction. 
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{A Branch To Predict}
+\begin{changemargin}{1.5cm}
+\begin{lstlisting}[language=C,basicstyle=\large]
+void whichBranchIsTaken(int a, int b)
+{
+    if (a < b) {
+        puts("a is less than b.");
+    } else {
+        puts("b is >= a.");
+    }
+}
+\end{lstlisting}
+\end{changemargin}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{A Virtual Call to Devirtualize}
+
+\begin{changemargin}{2cm}
+\begin{lstlisting}[language=C,basicstyle=\large]
+void devirtualization(int count)
+{
+    for (int i = 0; i < count; i++)
+    {
+        (*p) (x, y);
+    }
+}
+\end{lstlisting}
+\end{changemargin}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{A Switch to Predict}
+\begin{changemargin}{2cm}
+\begin{lstlisting}[language=C,basicstyle=\large]
+void switchCaseExpansion(int i)
+{
+    switch (i)
+    {
+    case 1:
+        puts("I took case 1.");
+        break;
+    case 2:
+        puts("I took case 2.");
+        break;
+    }
+}
+\end{lstlisting}
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Adapting to an Uncertain World}
+\large
+\begin{changemargin}{2cm}
+How can we know where we go?
+\begin{itemize}
+\item could provide hints\ldots
+\end{itemize}
+
+Java HotSpot virtual machine: \\
+updates predictions on the fly. 
+
+So, just guess.\\
+If wrong, the Just-in-Time compiler adjusts \& recompiles.
+
+The compiler runs and it does its job and that's it; the program is never updated with newer predictions if more data becomes known.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Profiling Mitigates Uncertainty}
+
+\large
+\begin{changemargin}{2cm}
+C: usually no adaptive runtime system.
+
+POGO:
+\begin{itemize}
+\item observe actual runs;
+\item predict the future.
+\end{itemize}
+
+So, we need multi-step compilation:
+\begin{itemize}
+\item compile with profiling;
+\item run to collect data;
+\item recompile with profiling data to optimize.
+\end{itemize}
+
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step One: Measure}
+
+\large
+\begin{changemargin}{2cm}
+First, generate an executable with instrumentation. 
+
+The compiler inserts a bunch of probes into the generated code to record data. 
+\begin{itemize}
+\item Function entry probes;
+\item Edge probes;
+\item Value probes.
+\end{itemize}
+
+Result: instrumented executable \\
+plus empty database file (for profiling data).
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step Two: Training Day}
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/training-day.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Step Two: Training Day}
+\large
+\begin{changemargin}{2cm}
+
+Second, run the instrumented executable.
+
+Real-world scenarios are best.
+
+Ideally, spend training time on perf-critical sections. 
+
+Use as many runs as you can stand.
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step Two: Training Day}
+
+\large
+\begin{changemargin}{2cm}
+Don't exercise every part of the program\\
+(ain't SE 465 here!)
+
+That would be counterproductive.
+
+Usage data must match real world scenarios,\\
+or compiler gets misfacts about what's important. 
+
+Or you might end up teaching it that almost nothing
+is important\ldots (``everything's on the exam!'')
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step Three: Recompile}
+
+\large
+\begin{changemargin}{2cm}
+Finally, compile the program again.
+
+Inputs: source plus training data.
+
+Outputs: (you hope) a better output executable than\\
+from static analysis alone.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Summary Graphic}
+
+\begin{center}
+	\includegraphics[width=0.75\textwidth]{images/pogo-workflow.jpg}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Save Some Steps}
+
+\large
+\begin{changemargin}{2cm}
+Not necessary to do all three steps for every build. 
+
+Re-use training data while it's still valid.
+
+Recommended dev workflow:
+\begin{itemize}
+\item dev A performs these steps, \\
+checks the training data into source control
+\item whole team can use profiling information for their compiles.
+\end{itemize}
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Not fixing all the problems in the world}
+
+\large
+\begin{changemargin}{2cm}
+What does it mean for it to be better? 
+
+The algorithms will aim for \\
+speed in areas that are ``hot''. 
+
+The algorithms will aim for \\
+minimal code size in areas that are ``cold'' .
+
+Less than 5\% of methods compiled for speed.
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Combining Training Runs}
+
+\large
+\begin{changemargin}{2cm}
+Can combine multiple training runs and manually give suggestions about important scenarios.
+
+The more a scenario runs in the training data, \\
+the more important it will be, \\
+from POGO's point of view.
+
+Can merge multiple runs \\
+with user-assigned weightings.
+\end{changemargin}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Behind the Scenes}
+
+\large
+\begin{changemargin}{2cm}
+In the optimize phase, compiler uses the training data for:
+
+\begin{enumerate}
+\item Full and partial inlining
+\item Function layout
+\item Speed and size decision
+\item Basic block layout 
+\item Code separation
+\item Virtual call speculation
+\item Switch expansion
+\item Data separation
+\item Loop unrolling
+\end{enumerate}
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Muh Gainz}
+
+\large
+\begin{changemargin}{2cm}
+Most performance gains from inlining.
+
+Decisions based on the call graph path profiling. 
+
+But: behaviour of function \texttt{foo} may be very different when called from \texttt{B} than when called from \texttt{D}. 
+
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/callpaths.png}
+\end{center}
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Another Call Graph}
+
+\large
+Example 2 of relationships between functions.\\
+Numbers on edges represent the number of invocations:
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/callpaths2.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The POGO View of the World}
+\large
+When considering what to do here, POGO takes the view like this:
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/callpaths3.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The POGO View of the World}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/callpaths4.png}
+\end{center}
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Page Locality}
+
+\large
+\begin{changemargin}{1cm}
+Call graph profiling data also good for packing blocks.
+
+Put most common cases nearby.\\
+Put successors after their predecessors.
+
+Packing related code = fewer page faults (cache misses).
+
+Calling a function in same page as caller =  ``page locality''.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Block Layout}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/blocklayout.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Dead Code?}
+
+\large
+\begin{changemargin}{1cm}
+According to the author, ``dead'' code goes in its own special block. 
+
+Probably not truly dead code (compile-time unreachable).
+
+Instead: code that never gets invoked in training.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Benchmark Results}
+\large \begin{changemargin}{2cm}
+OK, how well does POGO work?
+
+The application under test is a standard benchmark suite (Spec2K):
+\end{changemargin}
+
+\begin{center}
+\begin{tabular}{l|l|l|l|l|l}
+	\textbf{Spec2k:} & \textbf{sjeng} & \textbf{gobmk} & \textbf{perl} & \textbf{povray} & \textbf{gcc}\\ \hline
+	\textbf{App Size:} &  {Small} & {Medium} & {Medium} & {Medium} & {Large} \\ \hline
+	\textbf{Inlined Edge Count} & 50\% & 53\% & 25\% & 79\% & 65\% \\ \hline
+	\textbf{Page Locality} & 97\% & 75\% & 85\% & 98\% & 80\% \\ \hline
+	\textbf{Speed Gain} & 8.5\% & 6.6\% & 14.9\% & 36.9\% & 7.9\% \\ 
+\end{tabular}
+\end{center}
+
+\large \begin{changemargin}{2cm}
+We can speculate about how well synthetic benchmarks results translate to real-world application performance\ldots
+\end{changemargin}
+
 \end{frame}
 
 
