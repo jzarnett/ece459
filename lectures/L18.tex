@@ -26,6 +26,19 @@ into a single movie file.
 We'll continue by looking at a number of parallelization patterns,
 examples of how to apply them, and situations where they might apply.
 
+\subsection*{You're not using those bytes, are you?}
+So as a first idea we might think of saving some space by considering the range of, for example, an integer. An \texttt{int} is likely to be 4 bytes, although you have to remember that this is system-specific and the C standard requires only ``at least two''. But let us assume for the sake of an example that an integer is 4 bytes. If we have an integer array of capacity $N$ that uses $N \times 4$ bytes and if we want to do something like increment each element, we iterate over the array and increment it, which is a read of 4 and write of 4. Now, if we could live with limiting our maximum value from 2,147,483,647 (signed, or 4,294,967,295 unsigned) to 32,767  (signed, or 65,535 unsigned), we could reduce in half the amount of space needed for this array and make operations like incrementing take half as much time!
+
+Aside from the obvious tradeoff of limiting the maximum value, the other hidden cost is that of course things that were simple like \texttt{array[i]++} is more complicated. What do we do now?
+
+Instead of just \texttt{++} which is \texttt{+=1} we need to calculate the new number to add. The interesting part is about how to represent the upper portion of the number. For just adding 1 it might be simple, and we can manually break out our calculators or draw a bit vector or think in hexadecimal about how to convert a number if it's more difficult. But you wouldn't -- you would probably just use bit shift to calculate it. But one must be careful with that as well: the bit shift does sign extension which sometimes you don't want (or does unexpected things), and if we have to bit shift on every iteration of the loop, it's not clear that this is better than two assignment statements...
+
+Maybe you think this example is silly because of the existence of the \texttt{short} type in C. Which you could certainly use to reduce the size of the array, but then modifying each \texttt{short} in a different instruction defeats the purpose.
+
+But then you know we can also take it a step farther: if it's a 64-bit processor there's no reason why you couldn't modify 8 bytes in a single instruction. The principle is the same, even if the math is a little more complex.
+
+What we've got here is a poor-person version of Single Instruction Multiple Data (SIMD), because we have to do our own math in advance and/or do a lot of bit shifting every time we want to use a value... This is a pain. Fortunately, we don't have to...
+
 \subsection*{Data Parallelism with SIMD}
 The ``typical'' boring standard uniprocessor is Single Instruction Single Data (SISD) but since the mid-1980s we've had more options than that. We'll talk about single-instruction multiple-data (SIMD) later on in
 this course, but here's a quick look. Each SIMD
@@ -34,14 +47,20 @@ originated with supercomputers in the 70s. More recently, GPUs; the
 x86 SSE instructions; the SPARC VIS instructions; and the
 Power/PowerPC AltiVec instructions all implement SIMD.
 
-\paragraph{Code.} Let's look at an application of SIMD instructions.
+SIMD provides an advantage by using a single control unit to command multiple processing units and therefore the amount of overhead in the instruction stream. This is something that we do quite frequently in the everyday: if I asked someone to erase the board, it's more efficient if I say ``erase these segments of the board'' (and clearly indicate which segments) than if I say ``erase this one'' and when that's done, then say ``erase the that one''... and so on. So we can probably get some performance benefit out of this!
 
-\begin{verbatim}
+There is the downside, though, that because there's only the one control unit, all the processing units are told to do the same thing. That might not be what you want, so SIMD is not something we can use in every situation. There are also diminishing returns: the more processing units you have, the less likely it is that you can use all of that power effectively (because it will be less likely to have enough identical operations)~\cite{sse}.
+
+\paragraph{Compilation.} Let's look at an example of SIMD instructions when they are compiled.
+
+By default your compiler will assume a particular architecture; which one exactly is dependent on how the compiler was configured. This can be overridden in your compile-time options with the \texttt{march} parameter. Default options are usually pretty generic, since your CPU will reject an instruction it doesn't know. The lowest possible baseline is likely the 386 instruction set (this CPU came out in 1985!). But we can clearly see a difference in the code compiled for an architecture without SSE and then with:
+
+\begin{lstlisting}[language=C]
 void vadd(double * restrict a, double * restrict b, int count) {
   for (int i = 0; i < count; i++)
     a[i] += b[i];
 }
-\end{verbatim}
+\end{lstlisting}
 
 Compiling this without SIMD on a 32-bit x86 ({\tt gcc -m32 -march=i386 -S}) might give this:
 \begin{verbatim}
@@ -76,6 +95,8 @@ The implication is that the loop only needs to loop half as many times.
 Also, the instructions themselves are more efficient, because they're
 not stack-based x87 instructions.
 
+So this is a piece of good news, for once: there's automatic use of the SSE instructions if your compiler knows the target machine architecture supports them. However, we can also explicitly invoke these instructions, although we won't do a lot of that. Instead, we'll learn more about how they work and then do some measures as to whether they really do. 
+
 SIMD is different from the other types of parallelization we're
 looking at, since there aren't multiple threads working at once.
 It is complementary to using threads, and good for cases
@@ -84,11 +105,45 @@ parallelized; multicore chips can do both, achieving high throughput.
 SIMD instructions also work well on small data sets, where thread startup
 cost is too high, while registers are just there to use.
 
-We'll see a case study that uses SIMD (also known as vector
-instructions) in Lecture 19. In~\cite{lemire18:_multic_simd}, Daniel Lemire argues that vector
+Data alignment, however, is an issue. According to~\cite{sse}: ``Data must be 16-byte aligned when loading to and storing from the 128-bit XMM registers used by SSE/SSE2/SSE3/SSSE3. This must be done to avoid severe performance penalties.''. That's a pretty harsh restriction. If you've heard me talk about the dangers of unaligned data before, I usually give you something that looks like this as an example:
+
+\begin{lstlisting}[language=C]
+typedef struct {
+  bool marked;
+  int w;
+  int x;
+  int y;
+  int z;
+} position;
+\end{lstlisting}
+
+This potentially results in the integer values being unaligned if the boolean type is of size 1. But now you might be in trouble even if you deleted that boolean type out of the structure because your \texttt{w} parameter might not be 16-byte aligned even if it's 4-byte aligned. 
+
+Alignment headaches can be reduced by using the SSE specific types (and there are some) as the compiler will automatically see to it that the memory is allocated in accordance with this requirement. But then we're sort of back to packing our larger types ourselves, or at least writing them as a smaller type array and telling the compiler to pretend it's now a 128-bit type.
+
+In~\cite{lemire18:_multic_simd}, Daniel Lemire argues that vector
 instructions are, in general, a more efficient way to parallelize code
 than threads. That is, when applicable, they use less overall CPU
 resources (cores and power) and can even run faster.
+
+\paragraph{Worked Example.} So let's say that you actually wanted to try it out. Let's consider an example from~\cite{simd}. In this example, as well as a lot of others, a \texttt{union} type is defined that allows you to choose your view of the type: either one large vector type or its components (e.g., 4 floats or 4 ints or 8 shorts or whatever you like). This example also uses gcc vector support, which is another layer of indirection: it will try to use SSE if it can but will use something else if not.
+
+\begin{lstlisting}[language=C]
+typedef int v4sf __attribute__ ((mode(V4SF))); // vector of four single floats
+union f4vector {
+  v4sf v;
+  float f[4];
+};
+
+union f4vector add( f4vector a, f4vector b ) {
+  union c;
+  a.f[0] = 1; a.f[1] = 2; a.f[2] = 3; a.f[3] = 4;
+  b.f[0] = 5; b.f[1] = 6; b.f[2] = 7; b.f[3] = 8;
+  c.v = a.v + b.v;
+  return c;
+}
+\end{lstlisting}
+
 
 \section*{Case Study on SIMD: Stream VByte }
 
