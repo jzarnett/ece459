@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 29 ---Clusters \& Cloud Computing}
+\title{Lecture 30 --- Introduction to Queueing Theory}
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\author{Jeff Zarnett\\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -16,642 +16,493 @@
  \end{frame}
 
 
-\part{MPI \& Clusters}
-\frame{\partpage}
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Continuing to Switch Gears}
+\frametitle{Queueing Theory}
 
-  
+Literally the theory of queues -- what makes queues appear, how will they behave, and how do we make them go away? 
 
-  So far, we've seen how to make things fast on one computer:
+
+Queueing theory has played a role in your life whether you know it or not. 
+
+This is how tech support at Rogers or Bell or Telus or whomever decides just how many customer service agents to have available at any given time. 
+
+``Your call is important to us; please hold while we ignore it.''
+
+Queueing theory is applicable to lots of fields, including industrial design, call centres, telecom systems, and computers executing transactions. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Questions Queueing Theory Helps Answer}
+
 \begin{itemize}
-\item threads;
-\item compiler optimizations;
-\item GPUs.
-\end{itemize}
-  To get a lot of bandwidth, though, you need lots of computers, \\
-   \qquad (if you're lucky and the problem allows!)\\[1em]
-
-  Today: programming for performance \\ \qquad with multiple computers via MPI.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Key Idea: Explicit Communication}
-
-  
-  Mostly we've seen shared-memory systems;\\
-  \qquad complication: must manage contention.\\[1em]
-
-  Recently, GPU programming: explicitly copy data.\\[1em]
-
-  Message-passing: yet another paradigm.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{What is MPI?}
-
-
-
-  {\bf Message Passing Interface:}
-
-  A language-independent communation protocol\\ for parallel computers.
-
-  \begin{itemize}
-    \item Use it to run the same code on a number of \structure{nodes}\\ \qquad (different hardware
-      threads; or servers in a cluster).
-    \item Provides explicit message passing between nodes.
-    \item Is the dominant model for high performance computing\\ \qquad (de-facto~standard).
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{High Level View of MPI}
-
-  
-
-    MPI is a type of SPMD (single process, multiple data).\\[2em]
-
-    Idea: have multiple instances of the same program, \\ all working on
-      different data.\\[0.5em]
-
-    The program could be running on the same machine, \\ or a cluster of machines.\\[0.5em]
-
-    MPI facilitates communication of data between processes.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{MPI Functions}
-  
-
-  \begin{lstlisting}
-// Initialize MPI
-int MPI_Init(int *argc, char **argv)
-
-// Determine number of processes within a communicator
-int MPI_Comm_size(MPI_Comm comm, int *size)
-
-// Determine processor rank within a communicator
-int MPI_Comm_rank(MPI_Comm comm, int *rank)
-
-// Exit MPI (must be called last by all processors)
-int MPI_Finalize()
-
-// Send a message
-int MPI_Send (void *buf,int count, MPI_Datatype datatype,
-              int dest, int tag, MPI_Comm comm)
-
-// Receive a message
-int MPI_Recv (void *buf,int count, MPI_Datatype datatype,
-              int source, int tag, MPI_Comm comm,
-              MPI_Status *status)
-    
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{MPI Function Notes}
-  
-
-  \begin{itemize}
-    \item {\tt MPI\_Comm}: a \structure{communicator}, \\
-      \qquad often {\tt MPI\_COMM\_WORLD} for global channel.
-    \item {\tt MPI\_Datatype}: just an enum, e.g. {\tt MPI\_FLOAT\_INT}, etc.\\[1em]
-
-
-    \item {\tt dest}/{\tt source}: ``rank'' of the process (in a communicator) \\
-      to send a
-      message to/receive a message from;\\
-        \qquad you may use {\tt MPI\_ANY\_SOURCE} in {\tt MPI\_Recv}.\\[1em]
-
-    \item Both {\tt MPI\_Send} and {\tt MPI\_Recv} are blocking calls---\\
-      \qquad see {\tt man MPI\_Send} or {\tt man MPI\_Recv} for more details.
-
-    \item The {\tt tag} allows you to organize your messages, \\ \qquad so you can
-      filter all but a specific tag.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Hello, World in MPI}
-  
-As with OpenCL kernels:\\
-\quad first, figure out what ``current'' process is supposed to compute.\\
-
-{\small
-\begin{verbatim}
-// http://www.dartmouth.edu/~rc/classes/intro_mpi/
-#include <stdio.h>
-#include <mpi.h>
-
-int main (int argc, char * argv[])
-{
-  int rank, size;
-
-  /* start MPI */
-  MPI_Init (&argc, &argv);	
-  /* get current process id */
-  MPI_Comm_rank (MPI_COMM_WORLD, &rank);	
-  /* get number of processes */
-  MPI_Comm_size (MPI_COMM_WORLD, &size);	
-  printf("Hello world from process %d of %d\n", rank, size);
-  MPI_Finalize();
-  return 0;
-}
-\end{verbatim}
-}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Longer MPI Example (from Wikipedia)}
-  
-
-  Here's a common example:
-
-  \begin{itemize}
-    \item The ``master'' (rank 0) process creates some strings \\ \qquad and sends them
-      to the worker processes.
-    \item The worker processes modify their string \\ \qquad and send it back to the master.
-  \end{itemize}
-
-  Source:\\
-  {\small \url{http://en.wikipedia.org/wiki/Message_Passing_Interface}}.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example Code (1)}
-  
-
-  \begin{lstlisting}
-/*
-  "Hello World" MPI Test Program
- */
- #include <mpi.h>
- #include <stdio.h>
- #include <string.h>
- 
- #define BUFSIZE 128
- #define TAG 0
- 
- int main(int argc, char *argv[])
- {
-   char idstr[32];
-   char buff[BUFSIZE];
-   int numprocs;
-   int myid;
-   int i;
-   MPI_Status stat;
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example Code (2)}
-  
-
-  \begin{lstlisting}
-   /* all MPI programs start with MPI_Init; all 'N'
-    * processes exist thereafter
-    */
-   MPI_Init(&argc,&argv); 
-
-   /* find out how big the SPMD world is */
-   MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
-
-   /* and this processes' rank is what? */
-   MPI_Comm_rank(MPI_COMM_WORLD, &myid);
- 
-   /* At this point, all programs are running equivalently;
-    * the rank distinguishes the roles of the programs in
-    * the SPMD model, with rank 0 often used specially...
-    */
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example Code (3)}
-  
-
-  \begin{lstlisting}
-   if(myid == 0)
-   {
-     printf("%d: We have %d processors\n", myid, numprocs);
-     for(i=1; i<numprocs; i++)
-     {
-       sprintf(buff, "Hello %d! ", i);
-       MPI_Send(buff, BUFSIZE, MPI_CHAR, i, TAG,
-                MPI_COMM_WORLD);
-     }
-     for(i=1; i<numprocs; i++)
-     {
-       MPI_Recv(buff, BUFSIZE, MPI_CHAR, i, TAG,
-                MPI_COMM_WORLD, &stat);
-       printf("%d: %s\n", myid, buff);
-     }
-   }
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example Code (4)}
-  
-
-  \begin{lstlisting}
-   else
-   {
-     /* receive from rank 0: */
-     MPI_Recv(buff, BUFSIZE, MPI_CHAR, 0, TAG,
-              MPI_COMM_WORLD, &stat);
-     sprintf(idstr, "Processor %d ", myid);
-     strncat(buff, idstr, BUFSIZE-1);
-     strncat(buff, "reporting for duty", BUFSIZE-1);
-     /* send to rank 0: */
-     MPI_Send(buff, BUFSIZE, MPI_CHAR, 0, TAG,
-              MPI_COMM_WORLD);
-   }
- 
-   /* MPI Programs end with MPI Finalize; this is a weak
-    * synchronization point.
-    */
-   MPI_Finalize();
-   return 0;
- }
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Compiling with OpenMPI}
-  
-
-  \begin{lstlisting}
-// Wrappers for gcc (C/C++)
-mpicc
-mpicxx
-
-// Compiler Flags
-OMPI_MPICC_CFLAGS
-OMPI_MPICXX_CXXFLAGS
-
-// Linker Flags
-OMPI_MPICC_LDFLAGS
-OMPI_MPICXX_LDFLAGS
-  \end{lstlisting}
-
-OpenMPI does not recommend that you set the flags yourself. \\ To see them, try:
-
-  \begin{lstlisting}
-# Show the flags necessary to compile MPI C applications
-shell$ mpicc --showme:compile
-
-# Show the flags necessary to link MPI C applications
-shell$ mpicc --showme:link
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Compiling and Running}
-
-
-
-  \begin{lstlisting}
-mpirun -np <num_processors> <program>
-mpiexec -np <num_processors> <program> # a synonym
-  \end{lstlisting}
-
-  
-   Starts {\tt num\_processors} instances of the program using MPI.
-
-  \begin{lstlisting}
-jon@riker examples master % mpicc hello_mpi.c 
-jon@riker examples master % mpirun -np 8 a.out
-0: We have 8 processors
-0: Hello 1! Processor 1 reporting for duty
-0: Hello 2! Processor 2 reporting for duty
-0: Hello 3! Processor 3 reporting for duty
-0: Hello 4! Processor 4 reporting for duty
-0: Hello 5! Processor 5 reporting for duty
-0: Hello 6! Processor 6 reporting for duty
-0: Hello 7! Processor 7 reporting for duty
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item By default, MPI uses the lowest-latency communication resource available; shared 
-      memory, in this case.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{MPI Matrix Multiplication Example}
-
- Highlights of:
-   {\scriptsize \url{http://www.nccs.gov/wp-content/training/mpi-examples/C/matmul.c}}.\\
-  
-
-  To compute the matrix product $AB$:
-\begin{enumerate}
-\item Initialize MPI.
-\item If the current process is the master task (task id 0):
-\begin{enumerate}
-\item Initialize matrices.
-\item Send work to each worker task: \\
-row number (offset); number of rows;
-row contents from $A$; complete contents of matrix $B$.
-
-{\scriptsize
-\begin{verbatim}
-MPI_Send(&a[offset][0], rows*NCA, MPI_DOUBLE, dest, 
-         mtype, MPI_COMM_WORLD);
-\end{verbatim}
-}
-
-\item Wait for results from all worker tasks (\verb+MPI_Recv+).
-\item Print results.
-\end{enumerate}
-\item For all other tasks:
-\begin{enumerate}
-\item Receive offset, number of rows, partial matrix $A$, and complete matrix $B$, using {\tt MPI\_Recv}:
-
-{\scriptsize
-\begin{verbatim}
-MPI_Recv(&offset, 1, MPI_INT, MASTER, 
-         mtype, MPI_COMM_WORLD, &status);
-\end{verbatim}
-}
-\item Do the computation.
-\item Send the results back to the sender.
-\end{enumerate}
-\end{enumerate}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Other Things MPI Can Do}
-  
-  
-
-    We can use nodes on a network (by using a {\tt hostfile}).\\[1em]
-    We can even use MPMD:
-      \begin{itemize}
-        \item {\it multiple processes, multiple data}
-      \end{itemize}~\\
-
-  \begin{lstlisting}
-% mpirun -np 2 a.out : -np 2 b.out
-  \end{lstlisting}
-
-  This launches a single parallel application.
-
-  \begin{itemize}
-    \item All in the same {\tt MPI\_COMM\_WORLD}; but
-    \item Ranks 0 and 1 are instances of {\tt a.out}, and
-    \item Ranks 2 and 3 are instances of {\tt b.out}.
-  \end{itemize}~\\
-
-  You could also use the {\tt --app} flag with an appfile \\ instead of typing out
-  everything.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Performance Considerations}
-
-  
-
- Your bottleneck for performance here is message-passing.\\[1em]
- Keep the communication to a minimum!\\[1em]
- In general, the more machines/farther apart they are, the slower the communication.\\[1em]
-
-Each step from multicore
-machines to GPU programming to MPI triggers an
-order-of-magnitude decrease in communication bandwidth and  similar
-increase in latency.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\part{Cloud Computing}
-\frame{\partpage}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Using a Cluster}
-
-  
-    Historically:
-\begin{itemize}
-  \item find \$\$\$;
-  \item buy and maintain pile of expensive machines.
+ \item Given a choice between a single machine with speed $s$ or $n$ machines, each with speed $s/n$, which should we choose?
+ \item If the arrival rate and service rate double, how does the mean response time change?
+ \item Should we try to balance load or is that a waste of time/effort?
+ \item Can we give priority to certain operations without harming another category of job?
+ \item How do job size variability and heavy-tailed workloads affect our choices of scheduling policy?
+ \item If 12 servers is enough to handle 9 jobs per second, do we need 12~000 servers if we have an arrival rate if 9~000 jobs per second?
 \end{itemize}
 
-  Not anymore! \\[1em]
-
-  We'll talk about Amazon's Elastic Compute Cloud (EC2)\\ and
-  principles behind it.
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
-  \frametitle{Evolution of servers}
+\frametitle{Formal Terms and Bank Analogies}
 
-  
-
-You want a server on the Internet.
 \begin{itemize}
-\item 
-  Once upon a time: had to get a physical machine hosted (e.g. in a rack).\\
-  Or, live with inferior shared hosting.\\[1em]
-\item Virtualization: pay for part of a
-  machine on that rack.  \\
-  A win: you're usually not maxing out a computer, and you'd
-  be perfectly happy to share it with others, as long as there are
-  good security guarantees. All users can get root access.\\[1em]
-\item Clouds enable you to add more machines on-demand. \\ Instead of
-  having just one virtual server, spin up dozens (or
-  thousands) of server images when you need more compute
-  capacity. \\
+	\item Server - The banking centre fulfilling customer requests.
+	\item Customer - Initiator of service requests.
+	\item Wait time - The time a customer spends waiting in line.
+	\item Service time - The time from when a teller starts to serve a customer up to the time when the next customer is called forward.
+	\item Arrival rate - The rate at which customers arrive.
+	\item Service rate - the rate at which customer requests are serviced.
 
-  Servers typically share persistent storage, also in
-  the cloud. 
-\end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Paying for Computes}
-
-  
-Cloud computing:
-\begin{itemize}
-\item pay according to the number of machines, or
-instances, that you've started up.
-\end{itemize}
-~\\[1em]
-
-Providers offer different instance
-sizes;\\
-\qquad sizes vary according to the \\ \qquad number of cores, local
-storage, and memory.\\[1em]
-
-Some instances even have GPUs!
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Launching Instances}
-
-  
-Need more computes? Launch an instance!\\[1em]
-
-Input: Virtual Machine image.\\[1em]
-
-Mechanics: use a command-line or web-based tool.\\[1em]
-
-New instance gets an IP address and is network-accessible. \\
-You have full root access to that instance.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{What to Launch?}
-
-  
-Amazon provides public images:
-\begin{itemize}
-\item different Linux distributions;
-\item Windows Server; and
-\item OpenSolaris (maybe not anymore?). 
 \end{itemize}
 
-You can build an image which contains software you
-want, including Hadoop and OpenMPI.
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
-  \frametitle{Cleanup}
+\frametitle{Formal Terms and Bank Analogies}
 
-  
-Presumably you don't want to pay forever for your instances.\\[1em]
-
-When you're done with an instance:
 \begin{itemize}
-\item shut it down, stop paying for it.
+	\item Utilization - The fraction of the teller's time used actually handling customer requests (not idling).
+	\item Queue length - The total number of customers waiting, or currently with a teller, or both.
+	\item Response time - The sum of wait and service time for a single visit.
+	\item Residence time - The total response time if a customer visits several tellers (or the same one multiple times).
+	\item Throughput - The rate at which customers get their requests serviced and dealt with.
 \end{itemize}
 
-All data on instance goes away.
-  
 \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data Storage}
-  
-To keep persistent results:
-\begin{itemize}
-\item mount a storage device,
-also on the cloud (e.g. Amazon Elastic Block Storage); or, 
-\item connect to a database on a persistent server (e.g. Amazon SimpleDB or
-Relational Database Service); or, 
-\item you can store files on the Web (e.g. Amazon S3). 
-\end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary}
-
-  
-
-  \begin{itemize}
-    \item MPI is a powerful tool for highly parallel computing across multiple
-      machines.\\[1em]
-    \item MPI Programming is similar to a more powerful version of {\tt fork/join}; 
-but you have to manage communication more explicitly.\\[1em]
-    \item Saw cloud computing basics.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}
-\frametitle{Movie Hour, featuring NoSQL Bane}
-
-Let's take a humorous look at cloud computing: James Mickens' session from Monitorama PDX 2014. 
+\frametitle{Mathematical Symbol Table}
 
 \begin{center}
-\url{https://vimeo.com/95066828}
+	\includegraphics[width=0.85\textwidth]{images/math-symbols.png}
 \end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Trade-Offs}
+
+It's actually (allegedly) a trade-off: if I have to wait too long to do my banking, I could always take my business elsewhere. 
+
+Minimizing customer wait time makes customers happy, so that's something the bank should want. 
+
+It would also be nice if the bank trains its tellers well, so they can complete all operations, even unusual ones, quickly and efficiently, reducing service time.
+
+Overstaffed is bad and understaffed is also bad. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Computer World}
+
+Back to the realm of computers: you have lots of queues in your computer. 
+
+The CPU uses a time-sharing scheduler to run as many concurrent programs as possible. 
+
+A router has a queue for packets (data) that has a maximum size, and if this is exceeded, packets will be simply dropped. 
+
+Queueing theory gives us a formal framework with which to grapple with our problems instead of just guessing.
 
 
 \end{frame}
+
+
+
+\begin{frame}
+\frametitle{Simple Example}
+
+Imagine we have a system with one CPU that serves a queue of jobs in First-Come-First-Served (FCFS) order with an arrival rate $\lambda$ of 3 jobs per second. 
+
+Each job takes some amount of time and resources. 
+
+Suppose the average service rate $\mu$ is 5 jobs per second. 
+
+The system is not overloaded -- 3 jobs per second arriving is less than 5 jobs per second being serviced. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Scale Up}
+
+Suppose now that your boss says that tomorrow the arrival rate will double.
+
+If you do nothing: 6 jobs arriving per second, on average, to a system that can service, on average, 5 jobs per second. 
+
+You have been allocated some budget to replace the CPU with a faster one.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Simple Example Scaling}
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/qt-example1.png}
+\end{center}
+
+Goal: Customers should not notice the increase in arrival rate. 
+
+So, should we (1) double the CPU speed; (2) more than double the CPU speed; or (3) less than double the CPU speed?
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Option 3}
+
+
+The answer is (3) - we don't need to double the CPU speed. 
+
+We can see later in formal terms why this is the case, but think for a minute about what it is? 
+
+If we double the service rate and double the arrival rate, we actually get half the mean response time...
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Alternate Scenario}
+
+There are always $N=6$ jobs running at a time. 
+
+As soon as a job completes, a new one is started (this is called a \alert{closed system}). 
+
+Each job goes through to be processed on one of two servers, each of which has a service time $\mu$ of 1 job per 3 seconds.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Closed System}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/qt-example2.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Only Trying to Help...}
+
+Bad news: sometimes, improvements do nothing. 
+
+If we replace server 1 with one which is $2\times$ faster (so 2 jobs per 3 seconds), does that help? \emph{Nope. Not really.}
+
+Does raising $N$ help? \emph{Nope, negligible effect.}
+
+Strangely, dropping $N$ to 1 means the server replacement makes a difference, if you can call that improvement.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Open It Up}
+
+What if it's an \alert{open system} where arrival times are independent of completion?
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/qt-example2-2.png}
+\end{center}
+
+In this case, yes, replacing server 1 makes a huge difference!
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{One Fast Server, or $n$ Slow Ones?}
+
+Do we want one fast server or $n$ slower ones? 
+
+What is better if we want to minimize the mean response time when we have non-preemptable jobs?
+
+\begin{center}
+	\includegraphics[width=0.9\textwidth]{images/qt-example3.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Answer: It Depends}
+
+One big factor is the variability of the job sizes. 
+
+Imagine you are at the grocery store and most people have 12 items or fewer and there's one guy who's buying 85 items. 
+
+You don't want to be standing in line with milk and eggs behind someone who is trying to buy six of everything, do you? 
+
+So if there's high variability, you probably want multiple servers.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Alternatives}
+
+What if the load is low? 
+
+Chances are you would prefer the one fast server instead of having some number of servers doing nothing.
+
+What if jobs are interruptible (preemptible)? 
+
+You could always use a single fast machine to simulate $n$ slow machines, so a single fast machine is at least as good as the alternative. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Digression on Load Balancing}
+
+Imagine your typical ``server farm'' - you have $n$ servers that are all responsible for handling incoming requests. 
+
+Let's imagine all servers are the same (or close enough). 
+
+What we typically see in load balancing is assignment of tasks to servers via some dispatcher:
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/central-dispatcher.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Assignment Policies}
+
+There are a few different task assignment policies - ways in which we can assign work to servers:
+
+\begin{itemize}
+	\item Random
+	\item Round-Robin
+	\item Shortest-Queue
+	\item Size-Interval-Task-Assignment
+	\item Least-Work-Left
+	\item Central-Queue
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Red Line Overload}
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/topgun.jpg}
+\end{center}
+
+``You'll never say hello to you\\
+Until you get it on the red line overload\\
+You'll never know what you can do\\
+Until you get it up as high as you can go''
+ 
+\hfill - Kenny Loggins
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Red Line Overload}
+
+Earlier I mentioned it would probably be bad to see 6 jobs arriving per second to a system that can handle 5 per second. 
+
+This doesn't seem like rocket science, but it bears repeating. 
+
+In our discussion we require that $\lambda \leq \mu$ and assume that $\lambda < \mu$. 
+
+That is to say, we are not overloaded.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Red Line Overload}
+
+Remember now that the values for $\lambda$ and $\mu$ are averages. 
+
+It could happen that temporarily we ``fall behind'' a bit, but then make up for it a little later on... 
+
+Think about the long term, though---if we are not at least keeping up then this will eventually get out of hand. 
+
+How badly? Well, in the limit, the queue length goes to infinity.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The Proof is the Proof}
+
+Let's represent time with $t$ and define $N(t)$ as the number of jobs in the system at time $t$.
+
+$A(t)$ represents arrivals by time $t$ and $D(t)$ represents departures by time $t$.
+
+\begin{center}
+	$E[N(t)] = E[A(t)] - E[D(t)] \geq \lambda t - \mu t = t (\lambda - \mu) $
+\end{center}
+
+If arrivals exceed departures  $t (\lambda - \mu) $ also goes to infinity.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Raise the Throughput}
+
+Raising $\mu$ is generally desirable. 
+
+This is, after all, programming for performance---the faster we complete work, the more work we can get done in the same amount of time. 
+
+Improving the service rate, however, does not necessarily improve the throughput. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Wait, What?}
+
+We've assumed that the arrival rate is less than the service rate. 
+
+So we have enough capacity to handle all incoming work. 
+
+So the limiting factor on completed work is actually arriving work. 
+
+We have the capacity to do at least what is arriving and possibly a bit more. 
+
+Adding more work capacity doesn't mean more work gets done if there isn't any more work to do.
+
+So raising $\mu$ increases the maximum possible throughput, but does not necessarily increase the actual throughput.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{But Closed Systems...}
+
+
+In a closed system: one in which there is always more work to do and as soon as one item is finished the next one enters the queue. 
+
+ In that case, we are running at capacity all the time, so actually $\mu$ is the controlling factor -- the throughput is exactly the service rate. 
+ 
+ \begin{center}
+	\includegraphics[width=0.4\textwidth]{images/tandem-closed.png}
+\end{center}
+
+What is the throughput here?  Intuition suggests min($\mu_{1}, \mu_{2}$), right? 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Throughput in the Closed System}
+
+
+
+Sometimes. This is okay if the slower server is always busy, but that's not always the case. 
+
+What if $N$ is 1? Okay, that's a bit of an exception case though. 
+
+What about $N$ being 2? Then the slower server has some work to do at all times right?
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Throughput in the Closed Systems}
+
+Nope, sadly not. 
+
+Sometimes the slow server is faster than the fast server, because $\mu_{1}$ and $\mu_{2}$ are just averages. 
+
+And averages can be misleading! 
+
+The average family might have 2.3 children (or whatever the figure is), but you can't exactly have 0.3 of a child...
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Don't Guess...}
+Some smart folks at IBM wanted to know, given the arrival rate $\lambda$, what was the mean job size, $E[S]$ (which is $1/\mu$). 
+
+Our experiment should be a hundred runs of sending a single job into the system and averaging the values. 
+
+This is okay, but does not reflect reality where we have things like caching of data and multiple concurrent jobs. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Don't Guess...}
+
+The open system strategy is: ramp up $\lambda$. 
+
+Keep piling more jobs on the system. 
+
+At some point the system will not be able to keep up. Once the completion rate levels off, we hit the limit and we have a value for $\mu$.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Don't Guess...}
+
+The closed system strategy: set it up so there is always work to do. 
+
+In closed systems, there's often consideration given to \textit{think time} -- this is what happens when the user is on the command line and dispatching work to do. 
+
+To keep the system totally busy in the stress test, we need think time to be zero---so additional work is always available. 
+
+And then we can simply measure the jobs completing per second, giving us $\mu$ directly.
+
+
+\end{frame}
+
+
 
 \end{document}
 
