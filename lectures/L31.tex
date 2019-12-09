@@ -2,155 +2,166 @@
 
 \begin{document}
 
-\lecture{31 --- Introduction to Queueing Theory}{\term}{Jeff Zarnett}
+\lecture{31 --- Probability, Convergence, \& Ergodicity}{\term}{Jeff Zarnett}
 
-\section*{A Short Introduction to Queueing Theory}
+\section*{A Comically Short Review of Probability}
 
-Queueing theory is literally the theory of queues---what makes queues appear, how will they behave, and how do we make them go away? Queueing theory has played a role in your life whether you know it or not: this is how tech support at Rogers or Bell or Telus or whomever decides just how many customer service agents to have available at any given time. Of course, your local telecom chooses to minimize the number of employees at the cost of making you wait (``Your call is important to us; please hold while we ignore it.'') but they study carefully how much waiting is too much waiting and how much is too little. Queueing theory is applicable to lots of fields, including industrial design, call centres, telecom systems, and computers executing transactions. 
+So as a quick preface -- to understand some of this material you would be well served to have some familiarity with this subject. I imagine you took a course on probability earlier, but perhaps this material is not exactly fresh in your mind. That being the case, a review of the subject by reading, say~\cite{swps,pmd} will help. But let's go over some of it, in brief. 
 
-To scale up a system, we have a lot of choices to make, and these will work best if they are supported by data. Queueing theory helps us decide what's best. Here are a few possible examples, from~\cite{pmd}:
+Suppose we are doing an experiment like rolling dice (a favourite of statistics profs everywhere). We associate the outcomes of these experiments with is called a random variable. A random variable $X$ has many instances, each with some probability; if you roll a fair die $X$ can have instances of ${1, 2, 3, 4, 5, 6}$, each with a probability of $1/6$ (because we defined this die to be perfectly fair). In a die roll, the events (values of the roll) are discrete - you can't roll 2.1 or 5.5. Time is generally modelled as continuous, but in reality there are limits to how accurately we can measure time on a computer. The resolution depends on the hardware. 
 
-\begin{itemize}
- \item Given a choice between a single machine with speed $s$ or $n$ machines, each with speed $s/n$, which should we choose?
- \item If the arrival rate and service rate double, how does the mean response time change?
- \item Should we try to balance load or is that a waste of time/effort?
- \item Can we give priority to certain operations without harming another category of job?
- \item How do job size variability and heavy-tailed workloads affect our choices of scheduling policy?
- \item If 12 servers is enough to handle 9 jobs per second, do we need 12~000 servers if we have an arrival rate if 9~000 jobs per second?
-\end{itemize}
+Building on this, we can think of the outcome of an experiment as an ``event''. Probability theory loves to talk about events. We can ask ourselves all kinds of questions like: what is the probability of rolling four 1s on a 20-sided-die in a row\footnote{I played a dwarf warrior in D\&D, although truthfully Shadowrun was always much more my style. Elven decker!}? Looking at this from the perspective of application programmers, we say the number of users at time $t$ can be represented by a random variable $U$ and then we can ask ourselves what is the probability of $U$ being greater than 1000?
 
-I tend to tell stories about banks that imply I hate them. Not really, they're just a place where there's likely to be a queue and I'm likely to be annoyed and thinking about how to optimize this situation. So let's define some terms formally, to make sure we're all on the same page when it comes to terminology and language. Some of these will seem obvious, but let's be complete (like the book~\cite{swps}):
+Probability is usually defined as some sort of experiment with a sample space $\Omega$ and some subset of this $E$ is an \textit{event}. A standard example: you have a perfectly fair coin. Possible outcomes are heads, tails, and very rarely, edge (look, it could happen). Each outcome is an event with a certain probability -- i.e., chance of happening -- usually written $P\{E_{n}\}$.
 
-\begin{itemize}
-	\item Server - The banking centre fulfilling customer requests.
-	\item Customer - Initiator of service requests.
-	\item Wait time - The time a customer spends waiting in line.
-	\item Service time - The time from when a teller starts to serve a customer up to the time when the next customer is called forward.
-	\item Arrival rate - The rate at which customers arrive.
-	\item Service rate - the rate at which customer requests are serviced.
-	\item Utilization - The fraction of the teller's time used actually handling customer requests (not idling).
-	\item Queue length - The total number of customers waiting, or currently with a teller, or both.
-	\item Response time - The sum of wait and service time for a single visit.
-	\item Residence time - The total response time if a customer visits several tellers (or the same one multiple times).
-	\item Throughput - The rate at which customers get their requests serviced and dealt with.
-\end{itemize}
+If the coin coming up heads is an event $E_{1}$ and it coming up tails $E_{2}$ are these independent? No, they are not. They are mutually exclusive - if the coin comes up heads it cannot possibly also come up tails. Events are sets and we can do unions and intersections and such. The formal definition of mutual exclusivity is $E_{1} \cap E_{2} = \emptyset$. Independence, on the other hand, means the probability of $E_{1}$ does not change if event $E_{2}$ has occurred.
 
-The mathematical symbols for this are represented in the following table~\cite{swps}:
-
+Conditional probability is also important: what is the probability of event $E$ given that event $F$ has occurred? The notation is $P\{ E~|~F \}$ and it has a definition (as long as $P\{F\}$ is not zero): 
 
 \begin{center}
-	\includegraphics[width=0.65\textwidth]{images/math-symbols.png}
+	$P\{E~|~F\} = \dfrac{P\{E \cap F\}}{P\{F\}}$
 \end{center}
 
-If you're cynical like me, you will think the bank works very hard to not have tellers in the bank to maximize your wait time and minimize their staffing costs. It's actually (allegedly) a trade-off: if I have to wait too long to do my banking, I could always take my business elsewhere (but is that likely to happen?). Minimizing customer wait time makes customers happy, so that's something the bank should want. It would also be nice if the bank trains its tellers well, so they can complete all operations, even unusual ones, quickly and efficiently, reducing the service time. The bank is not a charity operation so they will of course want to minimize staffing, but it knows that overstaffed is bad and understaffed is also bad. 
+If events $E$ and $F$ are independent, then $P\{E \cap F\}$ is equal to $P\{E\} \cdot P\{F\}$. That is, the probability of $E$ is not affected by the occurrence of $F$. Suppose you flip a coin four times and it comes up heads each time (event $F$). What is the probability that the next coin flip will be tails (event $E$)? Sadly, a lot of people think that after four heads, now tails is ``due'' and the chance of it being tails is higher than the usual 50-50 (minus the edge case). This is not true -- the next coin flip is independent of all the coin flips that went before it.
 
-Back to the realm of computers: you have lots of queues in your computer. The CPU uses a time-sharing scheduler to run as many concurrent programs as possible. A router has a queue for packets (data) that has a maximum size, and if this is exceeded, packets will be simply dropped. 
-
-Queueing theory gives us a formal framework with which to grapple with our problems instead of just guessing. Remember how bad we are at guessing. 
-
-
-\paragraph{Example.} Let's look at a simple example from~\cite{pmd}. Imagine we have a system with one CPU that serves a queue of jobs in First-Come-First-Served (FCFS) order with an arrival rate $\lambda$ of 3 jobs per second. Each job takes some amount of time and resources, but we can ignore the particulars for right now. Suppose the average service rate $\mu$ is 5 jobs per second (or stated another way, the average job requires $0.2s$ to service). The system is not overloaded: 3 jobs per second arriving is less than 5 jobs per second being serviced. Our terminology for describing the mean response time will be $E[T]$. 
-
-
-Suppose now that your boss says that tomorrow the arrival rate will double. If you do nothing, you can imagine, there will be a problem: we would have 6 jobs arriving per second, on average, to a system that can service, on average, 5 jobs per second. You have been allocated some budget to replace the CPU with a faster one, and you should choose one so that the jobs still have a mean response time of $E[T]$. This situation is depicted below~\cite{pmd}:
-
+A statistics professor would probably come knock down my door and give me a savage beating if I also did not mention Bayes Law. If we want $P\{ F~|~E \}$, but have $P\{ E~|~F \}$ can we get it? Yes, if we know $P\{F\}$ and $P\{E\}$. Bayes law is:
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/qt-example1.png}
+	$P\{F~|~E\} = \dfrac{P\{E~|~F\} \cdot P\{F\}}{P\{E\}}$
 \end{center}
 
-That is, customers should not notice the increase in arrival rate. So, should we (1) double the CPU speed; (2) more than double the CPU speed; or (3) less than double the CPU speed?
-
-The answer is (3): we don't need to double the CPU speed. We can see later in formal terms why this is the case, but think for a minute about why it is? If we double the service rate and double the arrival rate, we actually get half the mean response time...
-
-\paragraph{Example 2.} Okay, how about another example from~\cite{pmd}. There are always $N=6$ jobs running at a time. As soon as a job completes, a new one is started (this is called a \textit{closed system}). Each job goes through to be processed on one of two servers (and it is 50-50 where the job ends up), each of which has a service time $\mu$ of 1 job per 3 seconds. Again, depicted below~\cite{pmd}:
-
+For now let us focus on discrete random variables (i.e., those with a countable number of values). For a random variable $X$ we can define a probability mass function (p.m.f.);
 
 \begin{center}
-	\includegraphics[width=0.3\textwidth]{images/qt-example2.png}
+	$p_{x}(a) = P \{ X = a \},$ where $\sum\limits_{x}^{~} p_{x}(x) = 1$
+\end{center}
+	and the cumulative distribution function is:
+\begin{center}
+	$F_{x}(a) = P \{ X \leq a \} = \sum\limits_{x \leq a} p_{x}(x)$
 \end{center}
 
-Bad news: sometimes, improvements do nothing. If we replace server one which is twice as fast (so 2 jobs per 3 seconds), does that help? Nope. Not really. Does raising $N$ help? Nope, negligible effect. The bottleneck device is the limiting factor. Strangely, dropping $N$ to 1 means the server replacement makes a difference, if you can call that improvement. 
+There are five distributions we want to discuss: Bernoulli, Binomial, Geometric, Poisson, and Exponential. The Poisson distribution is the one to focus on, but let's not overlook anything important.
 
-What if it's an \textit{open system} where arrival times are independent of completion, as below~\cite{pmd}?
+Bernoulli represents a coin flip: so the coin has a probability $p$ of coming up heads and $1-p$ of coming up tails. So the random variable $X$ associated evaluates to 1 (heads) with probability $p$ and 0 (tails) with probability $1-p$. Thus the p.m.f. is $p_{x}(1) = p$ and $p_{x}(0) = 1 - p$. 
 
+The Binomial distribution builds upon the Bernoulli distribution. A coin with probability $p$ of coming up heads flipped $n$ times (assuming coin flips are independent). The random variable $X$ if it's Binomial, represents the number of heads when flipping a Bernoulli coin $n$ times. So $X$ can take on values of $\{0, 1, \ldots, n\}$. 
+
+The Geometric distribution builds on Bernoulli. Again suppose we have the coin with probability $p$ of coming up heads. If we want to ask how many (independent) coin flips it will take until it comes up heads, the Geometric distribution answers this question. $X$ is the number of flips until we get the result we want.
+
+Applying this to the realm of computing, as in~\cite{pmd}. Suppose we have a server farm that has $n$ disks, each of which independently dies (fails) with probability $p$ in a year. So what is the appropriate model for each of these questions?
+
+\begin{enumerate}
+	\item How many disks die in the first year?
+	\item Given disk $d$, how long until this disk dies?
+	\item After one year, is a specific disk $d$ alive or dead?
+\end{enumerate}
+
+The answers are (1) Binomial, (2) Geometric, and (3) Bernoulli.
+
+Now let us turn to the Poisson distribution; this is very common in computing. This is our somewhat ``natural'' idea of randomness. This distribution arises when we have a mixture of a very large number of sources, each with a very small probability. So this is a lot like the number of arrivals to a website or packets at a router in some unit time. If a random variable $X$ has a Poisson distribution, the p.m.f. is:
+
+\[
+	p_{x}(i) = \dfrac{e^{-\lambda}\lambda^{i}}{i!},\mbox{ where $i = 0, 1, 2\ldots$}.
+\]
+
+One more thing: there are also continuous random variables, and although we won't talk much about them, we should also consider the exponential distribution. This is a distribution where the probability density function (p.m.f.) drops off exponentially. If $x \geq 0$, then $f_{x}(x) = \lambda e^{-\lambda x})$. The cumulative distribution function, i.e., $F_{x}(x) = P\{ X \leq x \}$ is the integration of this function from negative infinity to $x$, equal to $1-e^{-\lambda x}$ (again, for $x \geq 0$). What we care about here is actually the inverse of this, $\overline{F_{x}}(x)$, the probability that the value is greater than $x$ -- namely, the outliers or the ``tail'' of the distribution. Note that we see a constant drop-off of $e^{-\lambda}$ with each unit increase of $x$. Heavy tails are not very nice. 
+
+
+How about expectation and variance. Recall the notation here $E[X]$ is the expected value of a random variable $X$. Expected value is, not kidding, just a ``weighted average''\footnote{One of the biggest light bulb moments of my undergraduate life.}. Let's say you're entering into a game where you pay \$3 to play. If you have a 50\% chance of losing all your money, a 10\% chance of winning \$10, and a 40\% chance of getting your \$3 back, should you play?
+
+Do the math: your expected return is $(0.5 \times 0) + (0.1 \times 10) + (0.4 \times 3) \rightarrow 0 + 1 + 1.2 = 2.2$. So you expect that by playing this game, for every \$3 entry, you get back \$2.20 (on average). It doesn't seem like a good investment, does it? Econ 101 logic would tell you the answer is: how much do you value the fun of playing and the hope and excitement of winning? If it's equal to or more than \$0.80 then it is worth it.
+
+Proofs of these exist in the textbook(s) but let's not belabour the point by proving it. Just take my word for it that the expectation for a Geometric distribution with probability $p$ is $1/p$: so if we have a coin where the probability of landing heads is $1/3$, then we expect it takes 3 flips to get heads. If a Poisson distribution applies to something, the expectation $E[\lambda] = \lambda$. Okay, that's nice.
+
+The weighted average is nice, but it's not the whole story. If your numbers are 5, 6, and 7, then their average is 6. But the average of the numbers 0, 6, and 12 is also 6. But we should know already that averages can be misleading. A student who takes six courses in a term is unlikely to find that these six exams are distributed equally over the three week exam period as 2, 2, and 2, with at least a little time between any two exams. On the contrary, said student may find there are four in the first week, then a long pause before the next, or two back to back, or even two at once. This student might think the registrar's office hates him or her, but rest assured, it is nothing personal. An average arrival rate of 1 request per second could still, with some probability, produce 3 arrivals in a single second. These should illustrate the idea that we can have an average that seems benign but have outlier situations that are actually messy to deal with.
+
+The formal definition of variance of a random variable $X$ is the expected squared difference of $X$ from its mean:
+
+\[
+	\mathrm{Var}(X) = E[X^{2}] - (E[X])^{2}
+\]
+
+Just take my word for it at the moment that the following table, copied from the book~\cite{pmd} is correct:
 
 \begin{center}
-	\includegraphics[width=0.3\textwidth]{images/qt-example2-2.png}
+\begin{tabular}{l|l|l}
+	\textbf{Distribution} & \textbf{Mean} & \textbf{Variance}\\ \hline
+	Bernoulli & $p$ & $p(1-p)$\\ \hline
+	Binomial & $np$ & $np(1-p)$\\ \hline
+	Geometric & $\dfrac{1}{p}$ & $\dfrac{1-p}{p^{2}}$ \\ \hline
+	Poisson & $\lambda$ & $\lambda$
+\end{tabular}
 \end{center}
 
-In this case, yes, replacing server 1 makes a huge difference!
+There is plenty more that you should know about (conditional probability, exponential distributions, etc.) but let us break off this thrilling review of probability and put it to use.
 
-\paragraph{Example 3.} A third example, this time addressing directly the question of do we want one fast server or $n$ slower ones? Horse-sized duck and duck-sized horses jokes aside, what is better if we want to minimize the mean response time when we have non-preemptable jobs (i.e., once started, a job has to run to completion and cannot be interrupted)~\cite{pmd}:
+\section*{Convergence}
 
+Think back to calculus class. Remember when we talk about limits: $\lim_{x\to\infty} f(x)$. There is an answer for this if the function does (somehow) converge on some value, such as the function $f(x) = 1/x^{2}$ converging to 0.
+
+We would like to see that our random variables converge. You might flip a coin four times and all four times it comes up heads. That doesn't match our expectation that we should have about half heads and half tails. We have convergence if, given enough samples and enough sample paths, it will converge to the 0.5 we expect. There may be some sample paths that don't converge (e.g., continually coming up heads), but they have a ``probability mass'' of zero (i.e., they are incredibly unlikely).  There are in fact uncountably many ``bad paths'', each with probability zero (but that's okay). Zero probability doesn't mean it can't happen, mind you.
+
+An image of what convergence looks like~\cite{pmd}:
 
 \begin{center}
-	\includegraphics[width=0.6\textwidth]{images/qt-example3.png}
+	\includegraphics[width=0.6\textwidth]{images/convergence.png}
 \end{center}
 
-The answer is ``it depends''. That's frustrating, but this is Sparta. Or at least, real life. One big factor is the variability of the job sizes. Imagine you are at the grocery store and most people have 12 items or fewer\footnote{Not less. Fewer. It is countable; therefore fewer. Yes, I am obsessive about this.} and there's one guy who's buying 85 items. You don't want to be standing in line with milk and eggs behind someone who is trying to buy six of everything, do you? So if there's high variability, you probably want multiple servers -- the guy buying the whole store can hold up line \#1 and you can go to line \#4 and you're out and done before he is finished.
+We won't concern ourselves with systems where there is no convergence. We'll just deal with situations where there is a convergence. Almost every sample path (series of experiments) will eventually behave well if we take enough samples. That is, get past the initial conditions. But sampling is important in our discussion about scalability...
 
-What if the load is low? Chances are you would prefer the one fast server instead of having some number of servers doing nothing.
+\section*{Tim and Enzo}
+A small but important digression on the subject of sampling, measurement, and testing, from~\cite{pmd}. You have an idea of what an average is, but there are two different relevant types of average here---the time average and ensemble average. 
 
-What if jobs are interruptible (preemptible)? You could always use a single fast machine to simulate $n$ slow machines, so a single fast machine is at least as good as the alternative. 
+Let us just focus on having a single First-Come-First-Serve queue. Every second, a new job arrives with probability $p$ and if there is any work to do, the job being worked on is completed with probability $q$ (and $q > p$). As a definition, let $N(v)$ equal the number of jobs in the system at a time $v$. In the story, Tim and Enzo are trying to simulate the FCFS system to determine what is the average number of jobs in the system. 
 
-\subsection*{A Digression on Load Balancing}
+Tim decides he's going to run it as one really long simulation. He simulates the queue over a very long period, logging as he goes, taking a million samples. Then he takes the average value over those samples to get the average number of jobs.
 
-Imagine your typical ``server farm'' - you have $n$ servers that are all responsible for handling incoming requests. Let's imagine all servers are the same (or close enough). What we typically see in load balancing is assignment of tasks to servers via some dispatcher~\cite{pmd}:
+Enzo does something slightly different: instead of having one super long simulation, he does 1000 shorter simulations. He waits until the simulation has run for 1000 seconds and then samples the queue at exactly that point, obtaining one value. This experiment is restarted with a new random seed. So after obtaining a thousand samples, he averages these, and Enzo produces another average number of jobs.
+
+A little illustration of Tim and Enzo from~\cite{pmd}:
 
 \begin{center}
-	\includegraphics[width=0.6\textwidth]{images/central-dispatcher.png}
+	\includegraphics[width=0.5\textwidth]{images/timenzo.png}
 \end{center}
 
-This isn't the only kind of load balancing we can do; there is also the ability to do after-the-fact assignment (or work-stealing), which consists of monitoring the various queues and reassigning work if it's piling up somewhere.
+So -- who has done this correctly, Tim or Enzo?
 
-There are a few different task assignment policies---ways in which we can assign work to servers~\cite{pmd}:
+The time average has potential problems because we are only looking at a single sequence and maybe something very unusual has happened here in this single run. The ensemble average is more likely what we talk about when we talk about the system being at ``steady state'' (i.e., past the initial conditions). So we kind of like the Enzo approach. Plus, this is programming for performance (or as a student said, programming for parallelism) -- we can do 1000 simulations concurrently if we have enough CPU cores! Tim's approach still has some merit though.
 
-\begin{itemize}
-	\item Random: Exactly what it sounds like.
-	\item Round-Robin: The $i$th job goes to host $i$ modulo $n$.
-	\item Shortest-Queue: The job goes to the server with the shortest queue.
-	\item Size-Interval-Task-Assignment: Short jobs go to one server, medium to another, long to another...
-	\item Least-Work-Left: A job goes to the server that has the least total remaining work, where work is the sum of the size of the jobs.
-	\item Central-Queue: Rather than being assigned to a host directly, when a server needs work to do, it gets the first job in the central queue.
-\end{itemize}
+A note about initial conditions: both the Tim and Enzo approaches here require caring about the initial conditions. Enzo needs to make sure that the initial conditions (startup costs etc) have attenuated before the measurement point. Tim needs to ensure that the initial conditions impact a sufficiently small portion of all his measurements.
 
-Which of these policies yields the lowest mean response time? Answer: truthfully, nobody knows. It depends, of course, on your job variability and and that sort of thing, but it hasn't been well studied. PhD, anyone?
+But! If we have a nicely behaved system, the time average and the ensemble average are the same (so both Tim and Enzo can be correct). What is a nicely behaved system? The word for this is \textit{ergodic}. That probably did not help, so what is an ergodic system? It is a system that is positive recurrent, aperiodic, and irreducible.
 
-\subsection*{Red Line Overload\footnote{You've seen ``Top Gun'', right? \url{https://www.youtube.com/watch?v=siwpn14IE7E}}}
+\textit{Irreducibility} means a process should be able to get from one state to any other state (where state is the number of jobs in the system). This means the initial state of the system does not matter. So if we started at 0 jobs or 10 we could still get to any state in the system (jobs at 2 or 27)\ldots
 
-Earlier I mentioned it would probably be bad to see 6 jobs arriving per second to a system that can handle 5 per second. This doesn't seem like rocket science, but it bears repeating. In our discussion we require that $\lambda \leq \mu$ and assume that $\lambda < \mu$. That is to say, we are not overloaded (as engineering students you may be amused by the idea that you might one day NOT be overloaded). Remember now that the values for $\lambda$ and $\mu$ are averages, so it could happen that temporarily we ``fall behind'' a bit, but then make up for it a little later on, or we temporarily get ahead before a bunch more work gets piled on. Think about the long term, though -- if we are not at least keeping up then this will eventually get out of hand. How badly? Well, in the limit, the queue length goes to infinity.
+\textit{Positive recurrence} means that given an irreducible system, any state $i$ is revisited infinitely often, and the time between visits to that state are finite. So we can define a certain state as being a ``restart''. The logical choice in the case of a queue or similar is the idea of the queue being empty. Every time the queue gets down to zero jobs, it's a ``restart'' of sorts. 
 
-The justification comes from~\cite{pmd}: Let's represent time with $t$, its usual symbol and define $N(t)$ as the number of jobs in the system at time $t$. $A(t)$ represents arrivals by time $t$ and $D(t)$ represents departures by time $t$. So:
+This is what makes Tim's view and Enzo's view potentially the same. A single long run (Tim's view) is just like a number of independent runs (Enzo's view). Every time we get down to zero jobs in the queue, it's a restart. 
+
+The \textit{aperiodicity} condition is required for the ensemble average to make sense or exist. That is to say, the state of the system should not be related to the time; i.e., it is not the case that the system is in state 0 when $t$ is even and state 1 when $t$ is odd. Otherwise the way Enzo chooses to sample, i.e., $t = 1000$, is potentially going to skew the result.
+
+A graphical illustration, also from~\cite{pmd}, that shows how the time average over a single long run can be considered a chain of restarts or ``renewals''.
 
 \begin{center}
-	$E[N(t)] = E[A(t)] - E[D(t)] \geq \lambda t - \mu t = t (\lambda - \mu) $
+	\includegraphics[width=0.5\textwidth]{images/systemrestart.png}
 \end{center}
 
-The tiniest bit of calculus says that if arrivals exceed departures, taking the limit as $t$ goes to infinity means $t (\lambda - \mu) $ also goes to infinity. Whoops. So to prevent this terrible situation we just happily assume that this doesn't happen\footnote{I'm reminded of a funny engineering saying that says if you encounter a system that is nonlinear, you can decide that nonlinear systems are too difficult to reason about, assume the system is linear, and proceed.}. 
+Both Tim and Enzo are correct for ergodic systems. Either method works to determine measurements and queueing theory values. Enzo's method has some advantages, e.g. parallelism and the ability to produce confidence intervals.
 
-Raising $\mu$ is generally desirable. This is, after all, programming for performance -- the faster we complete work, the more work we can get done in the same amount of time. Improving the service rate, however, does not necessarily improve the throughput. 
-
-Wait, what? We've assumed that the arrival rate is less than the service rate. So we have enough capacity to handle all incoming work. So the limiting factor on completed work is actually arriving work. We have the capacity to do at least what is arriving and possibly a bit more. Adding more work capacity doesn't mean more work gets done if there isn't any more work to do. You might be capable of completing six assignments for this class in a term, but if you're (mercifully) only assigned four, then you will only complete four. So raising $\mu$ increases the maximum possible throughput, but does not necessarily increase the actual throughput.
-
-But just to make you suffer, things are very different in a closed system: one in which there is always more work to do and as soon as one item is finished the next one enters the queue. This is the case in batch systems. You know, the old mainframe kind of processing where you submit your job to be run overnight and in the morning you get a result. Hopefully the one you wanted. In that case, we are running at capacity all the time, so actually $\mu$ is the controlling factor -- the throughput is exactly the service rate. 
-
-Not that open networks are particularly intuitive, but closed networks can kind of mess with our intuition in general. Imagine we have a closed system with Multiprogramming Level (MPL) of $N$ as below~\cite{pmd}:
+We've talked about the average number of jobs, but perhaps what we also care about is how long a job spends in the system, on average. We could compute either the time or ensemble average. 
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/tandem-closed.png}
+	Time Average = $\lim_{t\to\infty}\dfrac{\sum_{i=1}^{A(t)} T_{i}}{A(t)},$
 \end{center}
 
-What is the throughput here? Intuition suggests min($\mu_{1}, \mu_{2}$), right? Sometimes. This is okay if the slower server is always busy, but that's not always the case. What if $N$ is 1? Okay, that's a bit of an exception case though. What about $N$ being 2? Then the slower server has some work to do at all times right? Nope, sadly not. Sometimes the slow server is faster than the fast server, because $\mu_{1}$ and $\mu_{2}$ are just averages. And averages can be misleading! The average family might have 2.3 children (or whatever the figure is), but you can't exactly have 0.3 of a child...
+where $A(t)$ is the number of arrivals by time $t$ and $T_{i}$ is the time in the system of arrival $i$. The average is taken over one sample path.
 
-\subsection*{Don't Guess...}
-One final anecdote from~\cite{pmd} on the subject of measuring $\mu$. Some smart folks at IBM wanted to know, given the arrival rate $\lambda$, what the mean job size, $E[S]$ (which is $1/\mu$) was. Well, $E[S]$ is the mean time required for a job in isolation, so our experiment should be a hundred runs of sending a single job into the system and averaging the values. This is okay, but does not reflect reality where we have things like caching of data and multiple concurrent jobs. There are two basic strategies we can follow, depending on whether it is an open or closed system for getting a value for $\mu$, allowing simple computation of $E[S]$.
+\begin{center}
+	Ensemble Average = $\lim_{t\to\infty}E[T_{i}],$
+\end{center}
 
-The open system strategy is: ramp up $\lambda$. Keep piling more jobs on the system. At some point the system will not be able to keep up. Once the completion rate levels off, we hit the limit and we have a value for $\mu$.
-
-The closed system strategy: set it up so there is always work to do. In closed systems, there's often consideration given to \textit{think time} -- this is what happens when the user is on the command line and dispatching work to do. The user sends a command and awaits a result. After the result, some time passes while the user decides what to do next (or does code editing before running the compiler again). To keep the system totally busy in the stress test, we need think time to be zero -- so additional work is always available. And then we can simply measure the jobs completing per second, giving us $\mu$ directly.
+where $E[T_{i}]$ is the average time in the system of job $i$, average being taken over all sample paths.
 
 \input{bibliography.tex}
 
 \end{document}
-practical queueing theory:  https://www.youtube.com/watch?v=IPxBKxU8GIQ
