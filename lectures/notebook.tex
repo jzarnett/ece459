@@ -11180,49 +11180,35 @@ Still, alerts and tickets are a great way to make user pain into developer pain.
 
 
 
-\chapter*{36 --- Programming Languages and P4P}
+\chapter*{35 --- Rust}
 
-\addcontentsline{toc}{chapter}{36 --- Programming Languages and P4P}
+\addcontentsline{toc}{chapter}{35 --- Rust}
 
-In ECE 459 we've used C/C++ as systems languages:
-\vspace*{-1.5em}
-\begin{itemize}[noitemsep]
-\item C: ``portable assembly language'';
-\item C++: can be much higher-level; we've seen C++ abstractions like threads, algorithms, STL, etc.
-\end{itemize}
-The focus of this course hasn't been on security. But in many cases, writing insecure fast code
-isn't the right thing.
+\section*{This, Too, Shall Fade and Pass Away}
+In ECE~459 we've used C and \CPP~as systems languages. A lot of your previous courses have been in one of those and it's entirely possible that one of those was your first programming language and perhaps even the one you've used the most. The languages themselves have their strengths and weaknesses, of course, but there's no denying that these languages come without some of the niceties found in other languages like clever static type checking and garbage collection.
 
-\paragraph{Question.} Is it possible to write secure C/C++?
-\vspace*{-1.5em}
-\begin{itemize}[noitemsep]
-\item[\emph{problems:}] memory errors, race conditions
-\item[\emph{tools:}] Valgrind tools memcheck, helgrind; code review; other static tools e.g. Coverity.
-\end{itemize}
 
-Here are some points of view on this question.
+The nature of the languages make it hard, or even impossible, to write code that is fast, correct, and secure. The focus of this course hasn't been on security. But in many cases, writing insecure fast code isn't the right thing. Is it even possible to write secure C and \CPP?
 
-\paragraph{Robert O'Callahan.}
-\begin{quote}
-\vspace*{-1.5em}
-``I cannot consistently write safe C/C++ code.\footnote{\url{https://robert.ocallahan.org/2017/07/confession-of-cc-programmer.html}}'' (17 July 2017)
-\end{quote}
-\vspace*{-1em}
-(Holds a PhD in CS from Carnegie Mellon University; was Distinguished Engineer
-at Mozilla for 10 years; etc.)
+Maybe not. The usual arguments are something along the lines of experience. Experience isn't it either, given this quotation fromRobert O'Callahan: ``I cannot consistently write safe C/\CPP~ code.\footnote{\url{https://robert.ocallahan.org/2017/07/confession-of-cc-programmer.html}}'' (17 July 2017) (Holds a PhD in CS from Carnegie Mellon University; was Distinguished Engineer at Mozilla for 10 years; etc.)
 
-\paragraph{Stephen Kell.} ``Some Were Meant for C'' (Onward '17)~\cite{Kell:2017:MCE:3133850.3133867}: One could have safe C implementations;
-C is good for interoperating with low-level sytems (e.g. reproduce systems' memory layouts).
-
-\paragraph{Chrome.} March 2019: disclosure of Chrome use-after-free vulnerability\footnote{\url{https://security.googleblog.com/2019/03/disclosing-vulnerabilities-to-protect.html}}; 0-day attacks
+What about use of better tools and best practices? March 2019: disclosure of Chrome use-after-free vulnerability\footnote{\url{https://security.googleblog.com/2019/03/disclosing-vulnerabilities-to-protect.html}}; 0-day attacks
 observed in the wild. Google implements best practices, and has all the tools and developers that
 money can buy!
 
-\section*{Rust} Enough of talking about the failings of C and C++.
-We'll talk about Rust, an alternative to C/C++. It is a new-school
-secure systems programming language used by Mozilla's Project Quantum. This material is based
+Much of the advice about how to avoid these problems comes down to ``try harder'', which is... not helpful. If the strategy is just dragging people and saying that they need to pay more attention, or be more careful, or other similar phrase... this is going to constantly be an uphill battle. Expecting people to be perfect and make no mistakes is unrealistic. What we want is to make mistakes impossible.
+
+A lot of the problems we frequently encounter are the kind that can be found by Valgrind, such as memory errors or race conditions. Other tools like code reviews and Coverity (static analysis defect-finding tool). These are good, but not perfect. Valgrind, for example, only reports errors that it actually sees executed, so until and unless every function and every code path is run, it might not report a problem. Static analysis tools try to track down problems at compile-time, and that seems like a lot better of a solution.
+
+
+I like to solve not just an individual problem, but an entire class of problems all at once. A recent example: if you change the contents of a list in a background thread while it's being rendered, the rendering thread will fail because the list has changed. I can fix the line of code so the list manipulation does not happen during rendering, and that fixes it once, but not forever: in the future another person could write code that calls this function from a background thread. There's no good way (in Java, sadly) to make it so invoking this function incorrectly is a compile-time error, so the best I can do is set a trap in it that throws an error if called inappropriately, so that the responsible developer will find what they did wrong during development and testing. Compile-time error checking is preferable to run-time.
+
+This brings us to Rust. It is an alternative to C/\CPP. It is a new-school
+secure systems programming language used by Mozilla's Project Quantum. A design goal of this language is to avoid issues with memory allocation and concurrency. We'll consider both concepts, but we won't dwell too much on the syntax (mostly for time reasons). It's worth reading up on the topic (outside of lecture) if you are curious about the language, though, and it might help you to understand the examples better.  
+
+\section*{Rust} This material is based
 on \emph{The Rust Programming Language} by Steve Klabnik and Carol
-Nichols\cite{klabnik18:_rust_progr_languag} and I'll make references as appropriate.
+Nichols~\cite{klabnik18:_rust_progr_languag} and I'll make references as appropriate.
 
 Here's some Rust code.
 \vspace*{-.5em}
@@ -11260,14 +11246,28 @@ Let's consider two examples that look similar but have drastically different mea
 
 In the first case, old ``x'' still exists but is inaccessible under the name ``x''.
 In the second case, the storage cell for ``x'' used to contain 33 and then contains 5.
-The difference matters, for instance, when there are references to ``x''.
+The difference matters, for instance, when there are references to ``x''. This example is a bit silly though; the real usage for shadowing is perhaps something more familiar, specifically parsing (or other transformation): 
 
-[NB: Rust also has compile-time {\tt const}s.]
+\begin{lstlisting}[language=Rust]
+let mut guess = String::new();
 
-\paragraph{Rust vs C++: immutability.} In C, you can cast away {\tt const}-ness; not so in Rust.
-If something is not mutable in Rust, you can't cast it into mutability. Also, in Rust, structs or
-tuples are either all mutable or all immutable. (Although interior mutability is a thing in Rust. We're
-not talking about it.)
+io::stdin().read_line(&mut guess)
+    .expect("Failed to read line");
+
+let guess: u32 = guess.trim().parse()
+     .expect("Please type a number!");
+\end{lstlisting}
+
+In this example, the data is read in as a string and then turned into an unsigned integer. We like this because we can re-use the variable name without having things like \texttt{guess} and \texttt{guess\_parsed} or other ``what do I call this now'' problems.
+
+\paragraph{Rust immutability.} 
+By default, a variable in Rust is immutable. You can make it mutable if you choose, explicitly by declaring it as mutable. Lots of concurrency issues involve the internal state of objects that are accessed by different threads. Structs or tuples are either all mutable or all immutable.(Although interior mutability is a thing in Rust. We're not talking about it.)
+
+Rust obviously has compile-time constants and they are truly unmodifiable. These have to be known at compile time, and are truly a fixed value. This is different from an immutable type which is determined at runtime but cannot be changed once it has been assigned.
+
+In C, you can cast away {\tt const}-ness; not so in Rust.
+If something is not mutable in Rust, you can't cast it into mutability.
+
 
 \paragraph{Perf implications.}
 We mentioned immutability in Lecture 7. The best way to avoid having
@@ -11277,26 +11277,14 @@ data structure is immutable but you want to update it (as we often do
 with data structures), you need to copy the data structure, at least
 partially. That can be slow.
 
-% - on whiteboard, stopped here after 1 hour
-
-
-
-
-
-
-
-
-\chapter*{37 --- Ownership in Rust}
-
-\addcontentsline{toc}{chapter}{37 --- Ownership in Rust}
 
 \paragraph{Runtime safety.} We said that Rust is safe. One way in which it is safe is for
 arrays. Rust has tuples and structs. Hard to go out of bounds on those. Rust also has arrays.
 Like with any language, one can imagine going beyond the ends of an array. Rust defines
 the behaviour of going beyond the end of an array: it is a runtime exception (``panic''),
-unlike C/C++, where it is undefined behaviour.
+unlike C/\CPP, where it is undefined behaviour.
 
-\vspace*{-2em}
+
 \begin{lstlisting}[language=Rust]
   let a = [1,2,3,4,5];
   let index = 10;
@@ -11308,7 +11296,7 @@ Let's step back and do some Rust propaganda.
 \begin{itemize}[noitemsep]
 \item harder to write unsafe code: compiler + runtime ensure safety. No arrays-out-of-bounds accesses, null pointers (at all), wild pointers;
 \item yet can still write low-level code;
-\item supports zero-cost abstractions (like C++ as discussed in L18);
+\item supports zero-cost abstractions (like \CPP);
 \item designed with ergonomics in mind;
 \item type system obviates need for either garbage collection or manual memory management (which you will get wrong)\footnote{Well, mostly. Sometimes you need to use ref-counted data, and we'll see that.};
 \item type system prevents race conditions;
@@ -11316,18 +11304,6 @@ Let's step back and do some Rust propaganda.
 \end{itemize}
 As far as I know, Firefox's rendering engine, Project Servo, is the largest deployed Rust codebase. [size?]
 
-\paragraph{Rust lectures outline.} Here's what else we are going to talk about. Chapter references from
-\emph{The Rust Programming Language}.
-\begin{enumerate}[noitemsep]
-\item[Ch4:] what's special about Rust: \emph{ownership};
-\item[Ch15:] smart pointers (briefly);
-\item[Ch16:] fearless concurrency.
-\end{enumerate}
-Also relevant to this course, but here we are in week 12, so we're not going to talk about it.
-\begin{enumerate}[noitemsep]
-\item[Ch10:] lifetimes;
-\item[Ch19:] unsafe Rust.
-\end{enumerate}
 
 \section*{Ownership in Rust [Chapter 4.1]}
 Also known as ``how to fight the borrow checker and win''.
@@ -11372,7 +11348,7 @@ then it doesn't spark joy, and you don't need it anymore. Rust goes a different 
 \end{lstlisting}
 
 Rust uses rule \#3: if something goes out of scope, then drop (free) it.
-This is quite like C++ RAII (Resource Acquisition is Initialization).
+This is quite like \CPP~RAII (Resource Acquisition is Initialization).
 
 Still, we need a solution for objects that live beyond their original scope, e.g.
 return values.
@@ -11456,7 +11432,7 @@ scope. When they go out of scope, what should get freed? We
 don't want to double free.
 
 \paragraph{Key idea.} For automatic memory reclamation to work, we give {\tt let s2 = s1} \emph{move semantics}
-(as in C++). After the move, {\tt s1} is no longer valid.
+(as in \CPP). After the move, {\tt s1} is no longer valid.
 Ownership of the heap part is moved from {\tt s1} to {\tt s2} by the assignment.
 
 That is, {\tt s1} no longer owns the heap object and is not responsible for freeing the heap part
@@ -11469,20 +11445,6 @@ Want to know more about ownership? Here's a blog post:
 \begin{center}
   \url{http://squidarth.com/rc/rust/2018/05/31/rust-borrowing-and-ownership.html}
 \end{center}
-
-% -- lecture 2 cut point
-
-
-
-
-
-
-
-
-\chapter*{38 --- Rust Concurrency}
-
-\addcontentsline{toc}{chapter}{38 --- Rust Concurrency}
-
 \section*{Functions and Return Values}
 
 Move semantics also applies to function calls and return values, e.g.
@@ -11549,7 +11511,7 @@ If there are any immutable refs, you can't have \emph{any} mutable refs. The imm
 refs must go out of scope first.
 
 You also can't commit use-after-free errors: you can't return a ref that outlives
-its value. Would've been useful on A4!
+its value.
 \begin{lstlisting}[language=Rust]
   fn dangle() -> &String {
     let s = String::from("hello");
@@ -11558,9 +11520,9 @@ its value. Would've been useful on A4!
 \end{lstlisting}
 
 Rust also has \emph{smart pointers}, which may be reference
-counted. This is like C++'s smart pointers, specifically {\tt
+counted. This is like \CPP's smart pointers, specifically {\tt
   shared\_ptr} (but Rust can tell you about some things at compile
-time which C++ will tell you at runtime). Normal Rust objects are more
+time which \CPP~will tell you at runtime). Normal Rust objects are more
 like {\tt unique\_ptr}.
 
 We need reference counted heap objects e.g. to implement graphs. We don't have
@@ -11580,7 +11542,7 @@ system's threads support and hence implements 1:1 threads.
   // main thread continues here
   handle.join.unwrap(); // unwrap: panic in case of error
 \end{lstlisting}
-This is not too different from C++.
+This is not too different from \CPP.
 
 OK, how do we share data between threads? We can move it from main to thread:
 \begin{lstlisting}[language=Rust]
@@ -11595,7 +11557,7 @@ Rust is saving you from being able to concurrently access {\tt v} in main and th
 But that's only one way! This isn't quite enough.
 
 \subsection*{Message Passing}
-One way to share data is message passing. We've seen this before, when we talked about OpenMPI.
+One way to share data is message passing. We've seen this before (OpenMPI).
 In this case, each value still only has one owner. We use \emph{channels}. The ownership passes
 from the sender, through the channel, to the receiver.
 \begin{lstlisting}[language=Rust]
