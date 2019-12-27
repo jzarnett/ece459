@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 8 --- Asynchronous I/O, epoll, select}
+\title{Lecture 8 --- Asynchronous I/O}
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca, jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -129,6 +129,10 @@ $\cdots$\\[2em]
     Key idea: give {\tt epoll} a bunch of file descriptors;\\
      \hspace*{2em}wait for events to happen.\\[1em]
 
+\begin{center}
+	\includegraphics[width=0.2\textwidth]{images/waitforit.jpg}
+\end{center}
+
      Steps:
      \begin{enumerate}
        \item create an instance ({\tt epoll\_create1});
@@ -198,39 +202,72 @@ Upon return from {\tt epoll\_wait}, we have {\tt nr\_events} events ready.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Level-Triggered and Edge-Triggered Events}
-  
-    Default {\tt epoll} behaviour is \structure{level-triggered}:\\
-    \quad return whenever data is ready.\\[1em]
 
-    Can also specify (via {\tt epoll\_ctl}) \structure{edge-triggered} behaviour:\\
-    \quad return whenever there is a change in readiness.\\[1em]
-  
+
+\begin{frame}[fragile]
+\frametitle{epoll Example}
+
+\begin{lstlisting}[language=C]
+#define MAX_EVENTS 10
+struct epoll_event ev, events[MAX_EVENTS];
+int listen_sock, conn_sock, nfds, epollfd;
+
+/* Code to set up listening socket, 'listen_sock',
+   (socket(), bind(), listen()) omitted */
+
+epollfd = epoll_create1(0);
+if (epollfd == -1) {
+    perror("epoll_create1");
+    exit(EXIT_FAILURE);
+}
+
+ev.events = EPOLLIN;
+ev.data.fd = listen_sock;
+if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listen_sock, &ev) == -1) {
+    perror("epoll_ctl: listen_sock");
+    exit(EXIT_FAILURE);
+}
+\end{lstlisting}
+
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}[fragile]
+\frametitle{epoll Example}
+
+\begin{lstlisting}[language=C]
+for (;;) {
+    nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
+    if (nfds == -1) {
+        perror("epoll_wait");
+        exit(EXIT_FAILURE);
+    }
+
+    for (n = 0; n < nfds; ++n) {
+        if (events[n].data.fd == listen_sock) {
+            conn_sock = accept(listen_sock, (struct sockaddr *) &addr, &addrlen);
+            if (conn_sock == -1) {
+                perror("accept");
+                exit(EXIT_FAILURE);
+            }
+            setnonblocking(conn_sock);
+            ev.events = EPOLLIN | EPOLLET;
+            ev.data.fd = conn_sock;
+            if (epoll_ctl(epollfd, EPOLL_CTL_ADD, conn_sock,
+                        &ev) == -1) {
+                perror("epoll_ctl: conn_sock");
+                exit(EXIT_FAILURE);
+            }
+        } else {
+            do_use_fd(events[n].data.fd);
+        }
+    }
+}
+\end{lstlisting}
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Asynchronous I/O}
-  
-    POSIX standard defines \structure{aio} calls.\\[1em]
-
-    These work for disk as well as sockets.\\[1em]
-
-    Key idea: you specify the action to occur when I/O is ready:
-    \begin{itemize}
-      \item nothing;
-      \item start a new thread;
-      \item raise a signal
-    \end{itemize}
-
-    Submit the requests using e.g. {\tt aio\_read} and {\tt aio\_write}.\\[1em]
-    Can wait for I/O to happen using {\tt aio\_suspend}.
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
@@ -393,13 +430,147 @@ The status of the cURL easy handle is updated.
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+\begin{frame}[fragile]
+	\frametitle{cURL Multi Example}
+
+	\begin{lstlisting}[language=C]
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <curl/multi.h>
+
+#define MAX_WAIT_MSECS 30*1000 /* Wait max. 30 seconds */
+
+const char *urls[] = {
+  "http://www.microsoft.com",
+  "http://www.yahoo.com",
+  "http://www.wikipedia.org",
+  "http://slashdot.org"
+};
+#define CNT 4
+
+size_t cb(char *d, size_t n, size_t l, void *p) {
+  /* take care of the data here, ignored in this example */
+  return n*l;
+\end{lstlisting}
+
+\end{frame}
+
+\begin{frame}[fragile]
+	\frametitle{cURL Multi Example}
+
+	\begin{lstlisting}[language=C]
+void init( CURLM *cm, int i ) {
+  CURL *eh = curl_easy_init();
+  curl_easy_setopt( eh, CURLOPT_WRITEFUNCTION, cb );
+  curl_easy_setopt( eh, CURLOPT_HEADER, 0L );
+  curl_easy_setopt( eh, CURLOPT_URL, urls[i] );
+  curl_easy_setopt( eh, CURLOPT_PRIVATE, urls[i]) ;
+  curl_easy_setopt( eh, CURLOPT_VERBOSE, 0L );
+  curl_multi_add_handle( cm, eh );
+}
+
+int main( int argc, char** argv ) {
+    CURLM *cm = NULL;
+    CURL *eh = NULL;
+    CURLMsg *msg = NULL;
+    CURLcode return_code = 0;
+    int still_running = 0; 
+    int msgs_left = 0;
+    int http_status_code;
+    const char *szUrl;
+
+    curl_global_init( CURL_GLOBAL_ALL );
+    cm = curl_multi_init( );
+    
+    for ( int i = 0; i < CNT; ++i ) {
+        init( cm, i );
+    }
+\end{lstlisting}
+
+\end{frame}
+
+\begin{frame}[fragile]
+	\frametitle{cURL Multi Example}
+
+	\begin{lstlisting}[language=C]
+    curl_multi_perform( cm, &still_running );
+
+    do {
+        int numfds = 0;
+        int res = curl_multi_wait( cm, NULL, 0, MAX_WAIT_MSECS, &numfds );
+        if( res != CURLM_OK ) {
+            fprintf( stderr, "error: curl_multi_wait() returned %d\n", res );
+            return EXIT_FAILURE;
+        }
+        curl_multi_perform( cm, &still_running );
+
+    } while( still_running );
+\end{lstlisting}
+
+\end{frame}
+
+\begin{frame}[fragile]
+	\frametitle{cURL Multi Example}
+
+	\begin{lstlisting}[language=C]
+    while ( ( msg = curl_multi_info_read( cm, &msgs_left ) ) ) {
+        if ( msg->msg == CURLMSG_DONE ) {
+            eh = msg->easy_handle;
+            return_code = msg->data.result;
+            if ( return_code != CURLE_OK ) {
+                fprintf( stderr, "CURL error code: %d\n", msg->data.result );
+                curl_multi_remove_handle( cm, eh );
+                curl_easy_cleanup( eh );
+                continue;
+            }
+            http_status_code = 0; szUrl = NULL;
+            curl_easy_getinfo( eh, CURLINFO_RESPONSE_CODE, &http_status_code );
+            curl_easy_getinfo( eh, CURLINFO_PRIVATE, &szUrl );
+
+            if( http_status_code == 200 ) {
+                printf( "200 OK for %s\n", szUrl ) ;
+            } else {
+                fprintf( stderr, "GET of %s returned http status code %d\n",
+                     szUrl, http_status_code );
+            }
+            curl_multi_remove_handle( cm, eh );
+            curl_easy_cleanup( eh );
+        } else {
+            fprintf( stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg );
+        }
+    }
+\end{lstlisting}
+
+\end{frame}
+
+\begin{frame}[fragile]
+	\frametitle{cURL Multi Example}
+
+	\begin{lstlisting}[language=C]
+    curl_multi_cleanup( cm );
+    curl_global_cleanup();
+    return 0;
+}
+\end{lstlisting}
+
+\end{frame}
+
 
 \begin{frame}
-\frametitle{Long Example}
+	\frametitle{Scaling This}
 
-The long example is too big for the slides. 
+	The developer claims that you can have multiple thousands of connections in a single multi handle.
 
-We'll have to take look at it in the notes!
+	60k ought to be enough for anyone!
+\end{frame}
+
+
+\begin{frame}
+	\frametitle{cURL + select}
+	\begin{center}
+		\includegraphics[width=0.55\textwidth]{images/harold.jpg}
+	\end{center}
 
 
 \end{frame}
@@ -513,75 +684,6 @@ We'll have to take look at it in the notes!
      \item read the return value.
    \end{enumerate}
 
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Asynchronous I/O Code Example I: Setup}
-
-  
-\begin{lstlisting}
-#include <aio.h>
-
-int main() {
-    // so far, just like normal
-    int file = open("blah.txt", O_RDONLY, 0);
-
-    // create buffer and control block
-    char* buffer = new char[SIZE_TO_READ];
-    aiocb cb;
-    
-    memset(&cb, 0, sizeof(aiocb));
-    cb.aio_nbytes = SIZE_TO_READ;
-    cb.aio_fildes = file;
-    cb.aio_offset = 0;
-    cb.aio_buf = buffer;
-\end{lstlisting}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Asynchronous I/O Code Example II: Read}
-
-  
-\begin{lstlisting}
-    // enqueue the read
-    if (aio_read(&cb) == -1) { /* error handling */ }
-
-    do {
-      // ... do something else ...
-    while (aio_error(&cb) == EINPROGRESS); // poll
-
-    // inspect the return value
-    int numBytes = aio_return(&cb);
-    if (numBytes == -1) { /* error handling */ }
-
-    // clean up
-    delete[] buffer;
-    close(file);
-\end{lstlisting}
-  
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Nonblocking I/O in Servers using Select/Poll}
-
-  
-    Each thread handles multiple connections.\\[1em]
-
-    When a thread is ready, it uses select/poll to find work.\\
-
-    \begin{itemize}
-      \item perhaps it needs to read from disk into a mmap'd tempfile;
-      \item perhaps it needs to copy the tempfile to the network.
-    \end{itemize}~\\
-    In either case, the thread does work and updates the request state.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
