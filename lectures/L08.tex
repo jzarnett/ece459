@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{8 --- Asynchronous I/O, epoll, select}{\term}{Patrick Lam}
+\lecture{8 --- Asynchronous I/O}{\term}{Patrick Lam}
 
 \section*{Asynchronous/non-blocking I/O}
 
@@ -127,40 +127,58 @@ calls instead of one, but allows sub-second latency.)
 Upon return from {\tt epoll\_wait}, we know that we have {\tt
   nr\_events} events ready.
 
-\subsection*{Level-Triggered and Edge-Triggered Events}
-One relevant concept for these polling APIs is the concept of
-\emph{level-triggered} versus \emph{edge-triggered}.  The default {\tt
-  epoll} behaviour is level-triggered: it returns whenever data is
-ready. One can also specify (via {\tt epoll\_ctl}) edge-triggered
-behaviour: return whenever there is a change in readiness.
 
-%\paragraph{Another Live Demo.} Now let's run some code (socket.c) that creates a
-%server and reads from it, in either level-triggered mode or edge-triggered mode.
+Here's a super quick example from the man page for epoll (\url{http://man7.org/linux/man-pages/man7/epoll.7.html}:
 
-One would think that level-triggered mode would return from {\tt read}
-whenever data was available, while edge-triggered mode would return
-from {\tt read} whenever new data came in. Level-triggered does behave
-as one would guess: if there is data available, {\tt read()} returns
-the data. However, edge-triggered mode returns whenever the
-state-of-readiness of the socket changes (from no-data-available to
-data-available). Play with it and get a sense for how it works.
+\begin{lstlisting}[language=C]
+#define MAX_EVENTS 10
+struct epoll_event ev, events[MAX_EVENTS];
+int listen_sock, conn_sock, nfds, epollfd;
 
-Good question to think about: when is it appropriate to choose one or the other?
+/* Code to set up listening socket, 'listen_sock',
+   (socket(), bind(), listen()) omitted */
 
-\subsection*{Asynchronous I/O}
-As mentioned above, the POSIX standard defines {\tt aio} calls.
-Unlike just giving the {\tt O\_NONBLOCK} flag, using {\tt aio} works
-for disk as well as sockets.
+epollfd = epoll_create1(0);
+if (epollfd == -1) {
+    perror("epoll_create1");
+    exit(EXIT_FAILURE);
+}
 
-\paragraph{Key idea.} You specify the action to occur when I/O is ready:
-    \begin{itemize}
-      \item nothing;
-      \item start a new thread; or
-      \item raise a signal.
-    \end{itemize}
+ev.events = EPOLLIN;
+ev.data.fd = listen_sock;
+if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listen_sock, &ev) == -1) {
+    perror("epoll_ctl: listen_sock");
+    exit(EXIT_FAILURE);
+}
 
-Your code submits the requests using e.g. {\tt aio\_read} and {\tt aio\_write}.
-If needed, wait for I/O to happen using {\tt aio\_suspend}.
+for (;;) {
+    nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
+    if (nfds == -1) {
+        perror("epoll_wait");
+        exit(EXIT_FAILURE);
+    }
+
+    for (n = 0; n < nfds; ++n) {
+        if (events[n].data.fd == listen_sock) {
+            conn_sock = accept(listen_sock, (struct sockaddr *) &addr, &addrlen);
+            if (conn_sock == -1) {
+                perror("accept");
+                exit(EXIT_FAILURE);
+            }
+            setnonblocking(conn_sock);
+            ev.events = EPOLLIN | EPOLLET;
+            ev.data.fd = conn_sock;
+            if (epoll_ctl(epollfd, EPOLL_CTL_ADD, conn_sock,
+                        &ev) == -1) {
+                perror("epoll_ctl: conn_sock");
+                exit(EXIT_FAILURE);
+            }
+        } else {
+            do_use_fd(events[n].data.fd);
+        }
+    }
+}
+\end{lstlisting}
 
 \section*{Using cURL Asynchronously}
 We've already seen that network communication is a great example of a way that you could use asynchronous  I/O. You can start a network request and move on to creating more without waiting for the results of the first one. For requests to different recipients, it certainly makes sense to do this.
@@ -317,8 +335,13 @@ int main( int argc, char** argv ) {
 
 You may wonder about re-using an easy handle rather than removing and destroying it and making a new one. The official docs say that you can re-use one, but you have to remove it from the multi handle and then re-add it, presumably after having changed anything that you want to change about that handle. 
 
-In this example all requests had the same (useless) callback, but of course you could have different callbacks for different easy handles if you wanted them to do different things. 
+Because a handle could be replaced with another one (or the same one), you could have a situation where there are constantly handles in progress and you might never be at a situation where there are no messages left. And that is okay.
 
+In this example all requests had the same (useless) callback, but of course you could have different callbacks for different easy handles if you wanted them to do different things.
+
+How well does this scale? The developer claims that you can have multiple thousands of connections in a single multi handle\footnote{See this post from the mailing list: \url{https://curl.haxx.se/mail/lib-2011-11/0078.html}}. And 60k ought to be enough for anyone!
+
+\paragraph{I enjoy pain!} You can use cURL with \texttt{select()} if you wish, although it comes with an anti-recommendation: I think you shouldn't do it. But you can if you want. In some ways, cURL does make things less painful because it does some of the grunt work for you. Don't do it. Please no.
 
 \section*{Building Servers: Concurrent Socket I/O}
 
@@ -393,50 +416,6 @@ The basic workflow is as follows:
      \item (if needed) periodically check whether request is done; and
      \item read the return value.
    \end{enumerate}
-
-Some code which uses the Linux asynchronous I/O model is:
-\begin{lstlisting}[language=C]
-#include <aio.h>
-
-int main() {
-    // so far, just like normal
-    int file = open("blah.txt", O_RDONLY, 0);
-
-    // create buffer and control block
-    char* buffer = new char[SIZE_TO_READ];
-    aiocb cb;
-    
-    memset(&cb, 0, sizeof(aiocb));
-    cb.aio_nbytes = SIZE_TO_READ;
-    cb.aio_fildes = file;
-    cb.aio_offset = 0;
-    cb.aio_buf = buffer;
-
-    // enqueue the read
-    if (aio_read(&cb) == -1) { /* error handling */ }
-
-    do {
-      // ... do something else ...
-    while (aio_error(&cb) == EINPROGRESS); // poll
-
-    // inspect the return value
-    int numBytes = aio_return(&cb);
-    if (numBytes == -1) { /* error handling */ }
-
-    // clean up
-    delete[] buffer;
-    close(file);
-\end{lstlisting}
-
-\paragraph{Using Select/Poll.} The idea is to improve performance
-by letting each thread handle multiple connections.
-When a thread is ready, it uses select/poll to find work:
-    \begin{itemize}
-      \item perhaps it needs to read from disk into a mmap'd tempfile;
-      \item perhaps it needs to copy the tempfile to the network.
-    \end{itemize}
-
-In either case, the thread does work and updates the request state.
 
 \input{bibliography.tex}
 
