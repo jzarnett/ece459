@@ -169,7 +169,19 @@ One thread per puzzle (\texttt{sudoku\_threads.c}). In this implementation
 each thread takes an entire puzzle from start to finish: read it, process it, 
 write it to a file. This is pretty straightforward.
 
-\paragraph{Strategy Two.}
+\paragraph{Strategy Two.} Workers with specific jobs (\texttt{sudoku\_workers.c}). In this implementation, different threads 
+have different jobs: some threads read the input file, some process puzzles
+(that is, execute the \texttt{solve(}) function), 
+and some write the output.
+	
+There's no reason why you must have equal numbers of each kind of thread.
+You can choose whatever distribution of threads makes the most sense. You
+should probably experiment to find out what works best. In this version,
+if the argument specifying the number of threads is less than 3 (i.e., you
+cannot have at least one thread of each type), it is okay to exit with an
+error message.
+
+\paragraph{Strategy Three.}
 
 One puzzle, multiple threads (\texttt{sudoku\_multi.c}). In this strategy, 
 multiple threads contribute to solving a single puzzle. In particular, 
@@ -185,14 +197,16 @@ space is filled with 1, the next thread tries all possibilities where
 it is filled with 2... etc.
 Because you will want to support more than max 9 threads, this should be
 done at the second level: the initial state being given to a
-thread is based on filling the first two empty spaces. 
+thread is based on filling the first two empty spaces. Phrased another way,
+you are splitting solve into the top level and subsequent levels.
 
 You will want to give each thread a new copy of
-the puzzle (copying the data) that it can play around with and try its 
-possible solutions out, without interfering with other threads' attempts.
-Because a well-designed Sudoku puzzle has only one 
-correct solution, only one thread will find the answer. Make sure 
-you use that thread's solution when printing.
+the puzzle that it can use,
+without interfering with other threads' attempts. That new copy of the 
+puzzle will be the initial state for that thread to solve.
+As a well-designed Sudoku puzzle has only one 
+correct solution, only one thread will find the correct answer.
+You may need to copy it back.
 
 Sometimes, your number of threads is less than 9. In that case,
 you won't try all possibilities at once. That's fine! When a thread finishes
@@ -203,17 +217,6 @@ next set of possibilities where the space is filled with $y$.
 
 
 
-\paragraph{Strategy Three.} Workers with specific jobs (\texttt{sudoku\_workers.c}). In this implementation, different threads 
-have different jobs: some threads read the input file, some process puzzles
-(that is, execute the \texttt{solve}) function), 
-and some write the output.
-	
-There's no reason why you must have equal numbers of each kind of thread.
-You can choose whatever distribution of threads makes the most sense. You
-should probably experiment to find out what works best. In this version,
-if the argument specifying the number of threads is less than 3 (i.e., you
-cannot have at least one thread of each type), it is okay to exit with an
-error message.
 
 \paragraph{General Notes.}
 A quick way to get a look at how long your code has executed is the 
@@ -235,10 +238,16 @@ issues that you cannot fix because they are in a library not under your
 control. You may also have benign race conditions. If either of those 
 is the case, just make a note of that in your report for the marker to read.
 
-You will want to avoid repeatedly creating \& destroying threads.
-Think of strategy for how threads get work. You might consider using a thread 
-pool where the threads are created once and take work out of a queue or
-something to that effect.
+As an \textbf{optional} way that you can make your solution even more optimal, 
+you can avoid repeatedly creating \& destroying threads.
+In that case, you have 
+a thread pool: threads are created once and take work out of a queue or other 
+data container. A quick outline of that strategy: imagine putting a data 
+structure (a puzzle or a data structure containing a puzzle) on a queue. 
+Access to the queue can be controlled with a semaphore: a thread wanting to 
+take work waits on the queue semaphore; something putting work on should post 
+on the semaphore. When a thread takes an item, it works on it, and reports
+results before it is ready to take the next item.
 
 Also in the repository is a verifier tool. This tool can be used to validate
 output files against an external service that checks the solution. You can
