@@ -9,7 +9,9 @@ do
                       '(\\lecture.*\s?---\s?)\K([A-Za-z0-9\-\\\&,;:\/ ]*[A-Za-z0-9])' $lectureNumber.tex \
                       | sed -e 's@/@ @g' -e 's/[^a-zA-Z0-9 -]//g' -e 's/  / /g' -e 's/ /_/g')" )
         echo "$lectureNote.pdf: $lectureNumber.tex
-	rm -rf \$@
+	rm -f \$@
+	pdflatex -jobname=$lectureNote \$<
+	bibtex $lectureNote
 	pdflatex -jobname=$lectureNote \$<
 	pdflatex -jobname=$lectureNote \$<" > ./makefileDependencies/$lectureNote.d
 done
@@ -20,7 +22,7 @@ do
                 '(\\title.*\s?---\s?)\K([A-Za-z0-9\-\\\&,;:\/ ]*[A-Za-z0-9])' $slideNumber-slides.tex \
                 | sed -e 's@/@ @g' -e 's/[^a-zA-Z0-9 -]//g' -e 's/  / /g' -e 's/ /_/g')" )
         echo "$slide.pdf: $slideNumber-slides.tex
-	rm -rf \$@
+	rm -f \$@
 	pdflatex -jobname=$slide \$<
 	pdflatex -jobname=$slide \$<" > ./makefileDependencies/$slide.d
 done
