@@ -31,7 +31,7 @@ clean:
 	rm -f *.aux *.log *.bbl *.blg *.brf *.cb *.ind *.idx *.ilg *.pdfsync   \
 	*.inx *.ps *.dvi *.toc *.out *.nav *.snm *.d *.bak _region* *.vrb
 	rm -f $(LECTURE_NOTES) $(SLIDES)
-	rm -rf auto
+	rm -rf auto makefileDependencies
 
 mrproper: clean
 	rm -f *.pdf
