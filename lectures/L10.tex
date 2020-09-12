@@ -2,388 +2,466 @@
 
 \begin{document}
 
-\lecture{10 --- Use of Locks, Reentrancy}{\term}{Jeff Zarnett}
+\lecture{10 --- Concurrency and Parallelism}{\term}{Jeff Zarnett, based on original by Patrick Lam}
 
-\section*{Appropriate Use of Locking}
+\section*{Concurrency and Parallelism}
+Concurrency and parallelism both give up the
+total ordering between instructions in a sequential program, for
+different purposes. We're going to focus on threads, but if you need a review of the details and differences of processes vs threads, you might like to read   \url{https://www.purplealienplanet.com/node/50}. 
 
-In previous courses you learned about locking and how it all works, then we did a quick recap of what you need to know about it. And perhaps you were given some guidance in the use of locks, but probably in earlier scenarios it was sufficient to just avoid all the bad stuff (data races, deadlock, starvation). That's important but is no longer enough. Now we need to use locking and other synchronization techniques appropriately. 
+\paragraph{Concurrency.} We'll refer to the use of threads for
+structuring programs as concurrency. Here, we're not aiming
+for increased performance. Instead, we're trying to write the program
+in a natural way. Concurrency makes sense as a model for distributed
+systems, or systems where multiple components interact, with no ordering
+between these components, like graphical user interfaces.
 
-I like to say that critical sections should be as large as they need to be but no larger. That is to say, if we have some shared data that needs to be protected by some mutual exclusion constructs, we need to consider carefully where to place the statements. They should be placed such that the critical section contains all of the shared accesses, both reads \textit{and} writes, but also does contain any extraneous statements. The ones that don't need to be there are those that don't operate on shared data. 
+\paragraph{Parallelism.} We're studying parallelism in this class, where
+we try to do multiple things at the same time in an attempt to increase
+throughput. Concurrent programs may be easier to parallelize.
 
-This can mean that a block of code or contents of a function need to be re-arranged to move some statements up or down so they are no longer in the critical section. Sometimes control flow or other very short statements might get swept into the critical section being created to make sure all goes as planned but those should be the exception rather than the rule.
+\subsection*{Limits to parallelization}
+I mentioned briefly in Lecture 1 that programs often have a sequential
+part and a parallel part. We'll quantify this observation today
+and discuss its consequences.
 
-Let's consider a short code example from the producer-consumer problem. We have some global variables below that will be initialized as appropriate. There is also a definition of the function that will consume the data.
-
-\begin{lstlisting}[language=C]
-sem_t spaces;
-sem_t items;
-int counter;
-int* buffer;
-int pindex = 0;
-int cindex = 0;
-int ctotal = 0;
-pthread_mutex_t prod_mutex;
-pthread_mutex_t con_mutex;
-
-void consume( int to_consume );
-
-\end{lstlisting}
-
-And then here is our single-threaded code for the consumer. We want our consumer threads to consume exactly {\tt MAX\_ITEMS\_CONSUMED} items and then cleanly exit; we don't want anything to stay stuck at a mutex for instance.
-
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( ctotal < MAX_ITEMS_CONSUMED ) {
-    sem_wait( &items );
-    consume( buffer[cindex] );
-    buffer[cindex] = -1;
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    sem_post( &spaces );
-  }
-}
-\end{lstlisting}
-
-To this we need to add some mutual exclusion if we want to allow multiple consumers at the same time. I'll leave aside the case of only allowing one consumer by putting the lock and unlock statements outside the while loop since that defeats the purpose of having multiple threads altogether. One approach we could take is that which allows exactly one consumer to run at a time, as below. But what's wrong with this?
-
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( ctotal < MAX_ITEMS_CONSUMED ) {
-    pthread_mutex_lock( &con_mutex );
-    sem_wait( &items );
-    consume( buffer[cindex] );
-    buffer[cindex] = -1;
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    sem_post( &spaces );
-    pthread_mutex_unlock( &con_mutex );
-  }
-}
-\end{lstlisting}
-
-What I recommend is of course to analyze this function one statement at a time and look into which of these access global variables. We're not worried about statements like locking, wait, or post, but let's look at the rest and decide if they really belong. Can any statements be removed from the critical section?
-
-We could think about moving {\tt sem\_wait} before the lock acquisition, but it doesn't solve any problem. If {\tt sem\_wait} comes first, then after the last item is consumed the next thread gets blocked on the semaphore and does not terminate. If we do not swap the order, then we could have threads that make it to the {\tt sem\_wait} and other threads get blocked but get stuck at the lock acquisition. Regardless of where they are stuck, stuck threads won't do anything bad, but they also never terminate. Such threads would be tricky to terminate: {\tt pthread\_join} would block the main thread, and thread cancellation is not only dangerous, but also difficult, because it's not clear which thread should be cancelled and which one has finished.
-
-We can move the {\tt sem\_post} after the unlock if we're trying to reduce critical sections.
-
-At first glance it is probably not very obvious but the \texttt{consume} function takes a regular integer, any old integer, not a pointer of some sort. So we could, inside the critical section, read the value of the buffer at the current index into a temp variable. That temp variable then can be given to the \texttt{consume} function at any time... outside of the critical section. Everything else inside our lock and unlock statements seems to be shared data: operates on \texttt{cindex} or \texttt{ctotal}.
-
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( ctotal < MAX_ITEMS_CONSUMED ) {
-    pthread_mutex_lock( &con_mutex );
-    sem_wait( &items );
-    int temp = buffer[cindex];
-    buffer[cindex] = -1;
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    pthread_mutex_unlock( &con_mutex );
-    sem_post( &spaces );
-    consume( temp );
-  }
-}
-\end{lstlisting}
-
-Next question then. With nothing left to take away, is there something left to add? Yes! The condition of the while loop checks the value of \texttt{ctotal} and that is a read of shared data. Now we maybe have a problem. How do we get that inside the critical section? One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing (the end of the loop might be mispredicted...).  Instead what I'd recommend is to make the loop a while true loop and then have a test of the value to determine when we should break out of the loop. You then do have to move the lock before the sem\_wait. See the example below, remembering of course there is the potential pitfall of forgetting to unlock the mutex if we are going to the break statement:
-
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( 1 ) { 
-    pthread_mutex_lock( &con_mutex );  
-    if ( ctotal == MAX_ITEMS_CONSUMED ) {
-      pthread_mutex_unlock( &con_mutex );
-      break;
-    }   
-    sem_wait( &items );
-    int temp = buffer[cindex];
-    buffer[cindex] = -1; 
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    pthread_mutex_unlock( &con_mutex );
-    sem_post( &spaces );
-    consume( temp );
-  }
-  pthread_exit( NULL );
-}
-\end{lstlisting}
-
-At this stage we should (mostly) be happy with the conversion of the function to support multithreaded operation. This conversion isn't the only way, but there are others. Remember, though, that keeping the critical section as small as possible is important because it speeds up performance (reduces the serial portion of your program). But that's not the only reason. The lock is a resource, and contention for that resource is itself expensive.
-
-\section*{Locking Granularity}
-
-Alright, we already know that locks prevent data races. If this is news to you, how did you pass the operating systems course?! So we need to use them to prevent data races, but it's not as simple as it sounds. We have choices about the granularity of locking, and it is a trade-off (like always).
-
-\textit{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. \textit{
-Fine-grained locking} requires more careful design,
-increases locking overhead and is more prone to bugs (deadlock etc).  
-Locks' extents constitute their {\it granularity}. In coarse-grained locking, you
-lock large sections of your program with a big lock; in fine-grained
-locking, you divide the locks and protect smaller sections with multiple smaller locks.
-
-We'll discuss three major concerns when using locks:
-  \begin{itemize}
-    \item overhead;
-    \item contention; and
-    \item deadlocks.
-  \end{itemize}
-We aren't even talking about under-locking (i.e., remaining race conditions). We'll assume there are adequate locks and that data accesses are protected. 
-
-\paragraph{Lock Overhead.}
-  Using a lock isn't free. You pay:
-  \begin{itemize}
-    \item allocated memory for the locks;
-    \item initialization and destruction time; and
-    \item acquisition and release time.
-  \end{itemize}
-  These costs scale with the number of locks that you have.
-
-\paragraph{Lock Contention.}
- Most locking time is wasted waiting for the lock to become available.
-We can fix this by:
-      \begin{itemize}
-        \item making the locking regions smaller (more granular); or
-        \item making more locks for independent sections.
-      \end{itemize}
-
-\paragraph{Deadlocks.} Finally, the more locks you have, the more you have to worry about deadlocks.
-
-As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
-
-Okay, in a formal sense, the four conditions for deadlock are:
-
-\begin{enumerate}
-	\item \textbf{Mutual Exclusion}: A resource belongs to, at most, one process at a time.
-	\item \textbf{Hold-and-Wait}: A process that is currently holding some resources may request additional resources and may be forced to wait for them.
-	\item \textbf{No Preemption}: A resource cannot be ``taken'' from the process that holds it; only the process currently holding that resource may release it.
-	\item \textbf{Circular-Wait}: A cycle in the resource allocation graph.
-\end{enumerate}
-
-
-Consider, for instance, two processors trying to get two locks.
+\paragraph{Scalable Algorithms.} 
+Remember from ECE~250/CS~138 that we often care about the worst case run-time performance of the algorithm. A bad algorithm has terrible runtime characteristics for a large data set. Trying to do an insertion sort on a small array is fine (actually... recommended); doing it on a huge array is madness. Choosing a good algorithm is very important if we want it to scale.  But you know that already; you're not in a 4$^{th}$ year engineering course to have me tell you that you can use quicksort rather than bubble sort.
 
 \begin{center}
-  \begin{tabular}{ll}
-\begin{minipage}{.4\textwidth}
-      {\bf Thread 1}
-
-      \verb+Get Lock 1+
-
-      \verb+Get Lock 2+
-
-      \verb+Release Lock 2+
-
-      \verb+Release Lock 1+
-\end{minipage} & 
-\begin{minipage}{.4\textwidth}
-      {\bf Thread 2}
-
-      \verb+Get Lock 2+
-
-      \verb+Get Lock 1+
-
-      \verb+Release Lock 1+
-
-      \verb+Release Lock 2+
-\end{minipage}
-\end{tabular}
+	\includegraphics[width=0.75\textwidth]{images/big-o-complexity}\\
+	Big-O Complexity comparison from ~\cite{bigocheatsheet}
 \end{center}
 
- Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops! They
- both wait for each other. (Deadlock!).
 
-To avoid deadlocks, always be careful if your code {\bf acquires a
-  lock while holding one}.  You have two choices: (1) ensure
-consistent ordering in acquiring locks; or (2) use trylock.
+\paragraph{Amdahl's Law.} One classic model of parallel execution
+is Amdahl's Law. In 1967, Gene Amdahl argued that improvements in
+processor design for single processors would be more effective than
+designing multi-processor systems. Here's the argument. Let's say that
+you are trying to run a task which has a serial part, taking fraction 
+$S$, and a parallelizable part, taking fraction $P = 1-S$. Define $T_s$
+to be the total 
+amount of time needed on a single-processor system.
+Now, moving to a parallel system with $N$ processors, the parallel
+time $T_p$ is instead:
+\[ T_p = T_s \cdot (S + \frac{P}{N}). \]
+{\bf As $N$ increases, $T_p$ is dominated by $S$, limiting potential
+speedup.}
 
-As an example of consistent ordering:
+We can restate this law in terms of speedup, which is the 
+original time $T_s$ divided by the sped-up time $T_p$:
+\[ \mbox{speedup} = \frac{T_s}{T_p} = \frac{1}{S+P/N}. \]
+Replacing $S$ with $(1-P)$, we get:
+\[ \mbox{speedup} = \frac{1}{(1-P)+P/N}, \]
+and
+\[ \mbox{max speedup} = \frac{1}{(1-P)}, \]
+since $\frac{P}{N} \rightarrow 0$.
+
+\paragraph{Plugging in numbers.} If $P = 1$, then we can indeed get good
+scaling; running on an $N$-processor machine will give you a speedup
+of $N$. Unfortunately, usually $P < 1$.  Let's see what happens.
+
 \begin{center}
-\begin{tabular}{ll}
-\begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
-void f1() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&l1);    
-}
-\end{lstlisting}
-\end{minipage}&
-\begin{minipage}{.4\textwidth}
-\begin{lstlisting}[language=C]
-void f2() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&l1);    
-}
-  \end{lstlisting}
-\end{minipage}
+\begin{tabular}{r|r}
+$P$ & speedup ($N=18$) \\ \hline
+1 & 18 \\
+0.99 & $\sim$ 15 \\
+0.95 & $\sim$ 10 \\
+0.5 & $\sim$ 2
 \end{tabular}
 \end{center}
-This code will not deadlock: you can only get {\bf l2} if you have
-{\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
-identity is not statically visible.
-
-Or another example, with threads $P$ and $Q$ attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
-
-To generalize and formalize this principle, if the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
+Graphically, we have something like this:
+\begin{center}
+  \includegraphics[width=0.5\textwidth]{images/parallel-scaling}
+\end{center}
 
 
-Alternately, you can use trylock. Recall that Pthreads' {\tt trylock}
-returns 0 if it gets the lock. But if it doesn't, your thread doesn't get blocked. Checking the return value is important, but at the very least, this code also won't deadlock: it will give up {\bf l1} if it can't get {\bf l2}.
-  \begin{lstlisting}[language=C]
-void f1() {
-    lock(&l1);
-    while (trylock(&l2) != 0) {
-        unlock(&l1);
-        // wait
-        lock(&l1);
-    }
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-  \end{lstlisting}
-  (Incidentaly, using trylocks can also help you measure lock contention.)
-  
-This prevents the hold and wait condition, which was one of the four conditions. A process attempts to lock a group of resources at once, and if it does not get everything it needs, it releases the locks it received and tries again. Thus a process does not wait while holding resources.
+Amdahl's Law tells you how many cores you can hope to leverage in an
+execution given a fixed problem size, if you can estimate $P$.
 
-\subsection*{Coarse-Grained Locking}
-One way of avoiding problems due to locking is to use few locks
-(perhaps just one!). This is \emph{coarse-grained locking}.
-It does have a couple of advantages:
-  \begin{itemize}
-    \item it is easier to implement;
-    \item with one lock, there is no chance of deadlocking; and
-    \item it has the lowest memory usage and setup time possible.
-  \end{itemize}
+Let us consider an example from~\cite{mte241}: Suppose we have a task that can be executed in 5~s and this task contains a loop that can be parallelized. Let us also say initialization and recombination code in this routine requires 400~ms. So with one processor executing, it would take about 4.6~s to execute the loop. If we split it up and execute on two processors it will take about 2.3~s to execute the loop. Add to that the setup and cleanup time of 0.4~s and we get a total time of 2.7~s. Completing the task in 2.7~s rather than 5~s represents a speedup of about~46\%. Applying the formula, we get the following run times:
 
-It also, however, has one big disadvantage in terms of programming for performance: your parallel program will quickly become sequential.
+\begin{center}
+	\begin{tabular}{l|l}
+	\textbf{Processors} & \textbf{Run Time (s)} \\ \hline
+	1 & 5\\
+	2 & 2.7\\
+	4 & 1.55\\
+	8 & 0.975\\
+	16 & 0.6875 \\
+	32 & 0.54375 \\
+	64 & 0.471875 \\
+	128 & 0.4359375\\
+	\end{tabular}
+\end{center}
 
-\paragraph{Example: Python (and other interpreters).}
-Python puts a lock around the whole interpreter (known as the
-\emph{global interpreter lock}).  This is the main reason (most)
-scripting languages have poor parallel performance; Python's just an
-example.
+   \paragraph{Empirically estimating parallel speedup $P$.}
+Assuming that you know things that are actually really hard to know, here's a formula for estimating speedup. You don't have to commit it to memory:
+  \[P_{\mbox{\scriptsize estimated}} = \frac{\frac{1}{\mbox{\em speedup}}-1}{\frac{1}{N}-1}.\]
 
-Two major implications:
-\begin{itemize}
-\item The only performance benefit you'll see from threading is if one of the threads is
-      waiting for I/O.
-\item But: any non-I/O-bound threaded program will be {\bf slower} than the sequential
-      version (plus, the interpreter will slow down your system).
+It's just an estimation, but you can use it to guess the fraction of parallel code, given $N$ and the speedup. You can then use $P_{\mbox{\scriptsize estimated}}$ to predict speedup for a different number of processors.
+
+\paragraph{Consequences of Amdahl's Law.}
+For over 30 years, most performance gains did indeed come from
+increasing single-processor performance. The main reason that we're
+here today is that, as we saw last time,
+single-processor performance gains have hit the wall.
+
+By the way, note that we didn't talk about the cost of synchronization
+between threads here. That can drag the performance down even more.
+
+\paragraph{Amdahl's Assumptions.}
+Despite Amdahl's pessimism, we still all have multicore computers today.
+Why is that? Amdahl's Law assumes that:
+\begin{itemize}[noitemsep]
+    \item problem size is fixed (read on);
+    \item the program, or the underlying implementation, behaves the same on 1 processor as on $N$ processors; and
+    \item that we can accurately measure runtimes---i.e. that overheads don't matter.
 \end{itemize}
 
-You might think ``this is stupid, who would ever do this?'' Yet a lot of OS kernels do in fact have (or at least had) a ``big kernel lock'', including Linux and the Mach Microkernel. This lasted in Linux for quite a while, from the advent of SMP support up until sometime in 2011. As much as this ruins performance, correctness is more important. We don't have a class ``programming for correctness'' (software testing? Hah!) because correctness is kind of assumed. What we want to do here is speed up our program as much as we can while maintaining correctness...
+% replace Amdahl's law with how branch predictors work
+\paragraph{Generalizing Amdahl's Law.} We made a simplification,
+which was that programs only have one parallel part and one serial part.
+Of course, this is not true. The program may have many parts,
+ each of which we can tune to a different degree.
 
-\subsection*{Fine-Grained Locking}
-On the other end of the spectrum is \emph{fine-grained locking}. The big
-advantage: it maximizes parallelization in your program.
+Let's generalize Amdahl's Law:
 
-However, it also comes with a number of disadvantages:
-  \begin{itemize}
-    \item if your program isn't very parallel, it'll be mostly wasted memory and setup time;
-    \item plus, you're now prone to deadlocks; and
-    \item fine-grained locking is generally more error-prone (be sure you grab the right lock!)
-  \end{itemize}
+\begin{itemize}
+\item  $f_1, f_2, \ldots, f_n$: fraction of time in part $n$
+\item  $S_{f_1}, S_{f_n}, \ldots, S_{f_n}$: speedup for part $n$
+\end{itemize}
 
-\paragraph{Examples.}
+Then,
+\[\mbox{\em speedup} = \frac{1}{\frac{f_1}{S_{f_1}} + \frac{f_2}{S_{f_2}} + \ldots +
+     \frac{f_n}{S_{f_n}}}.\]
 
-    Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
+\paragraph{Example.} Consider a program with 4 parts in the following scenario:
 
-    You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
+\begin{center}
+     \begin{tabular}{r|r|r|r}
+     \multicolumn{2}{l}{} & \multicolumn{2}{|c}{Speedup} \\
+     Part & Fraction of Runtime & Option 1 & Option 2\\
+     \hline
+     1 & 0.55 & 1  & 2\\
+     2 & 0.25 & 5  & 1\\
+     3 & 0.15 & 3  & 1\\
+     4 & 0.05  & 10 & 1\\
+     \end{tabular}
+ \end{center}
+
+     (Note: these speedups don't have to be speedups from parallelization.)
     
-\section*{Reentrancy}
+   We can implement either Option 1 or Option 2. 
+   Which option is better?
 
-Recall from a bit earlier the idea of a side effect of a function call. 
+   ``Plug and chug'' the numbers:
+ \begin{itemize}
+ \item  {\bf Option 1.}
 
-The trivial example of a non-reentrant C function:
-\begin{lstlisting}[language=C]
-int tmp;
+   \[ \mbox{\em speedup} = \frac{1}{0.55 + \frac{0.25}{5} + \frac{0.15}{3} + \frac{0.05}{5}}
+     = 1.53  \]
 
-void swap( int x, int y ) {
-    tmp = y;
-    y = x;
-    x = tmp;
-}
-\end{lstlisting}
+ \item  {\bf Option 2.}
 
-Why is this non-reentrant? Because there is a global variable \texttt{tmp} and it is changed on every invocation of the function. We can make the code reentrant by moving the declaration of \texttt{tmp} inside the function, which would mean that every invocation is independent of every other. And thus it would be thread safe, too.
+   \[\mbox{\em speedup} = \frac{1}{\frac{0.55}{2} + 0.45} = 1.38 \hspace*{5.5em}\]
+\end{itemize}
 
-Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted (or we're going to break off handling what we're doing and call the same ISR in the middle of the current one). Either way, if the code is not reentrant we will run into problems.
+\subsection*{A more optimistic point of view}
+In 1988, John Gustafson pointed
+out\footnote{\url{http://www.scl.ameslab.gov/Publications/Gus/AmdahlsLaw/Amdahls.html}}
+that Amdahl's Law only applies to fixed-size problems, but that the
+point of computers is to deal with bigger and bigger problems.
 
-If a function is not reentrant, it may not be possible to make it thread safe. And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
+In particular, you might vary the input size, or the grid resolution,
+number of timesteps, etc. When running the software, then, you might
+need to hold the running time constant, not the problem size: you're
+willing to wait, say, 10 hours for your task to finish, but not 500
+hours. So you can change the question to: how big a problem can you
+run in 10 hours?
 
-Let us also draw a distinction between thread safe code and reentrant code. A thread safe operation is one that can be performed from more than one thread at the same time. On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. Or it can be re-started without affecting the outcome. See this code example from~\cite{tont:threadsafe}:
-\begin{lstlisting}[language=C]
-int length = 0;
-char *s = NULL;
+According to Gustafson, scaling up the problem tends to increase the
+amount of work in the parallel part of the code, while leaving the
+serial part alone. As long as the algorithm is linear, it is possible
+to handle linearly larger problems with a linearly larger number of
+processors.
 
-// Note: Since strings end with a 0, if we want to
-// add a 0, we encode it as "\0", and encode a
-// backslash as "\\".
-
-
-// WARNING! This code is buggy - do not use!
+Of course, Gustafson's Law works when there is some ``problem-size''
+knob you can crank up.  As a practical example, observe Google, which
+deals with huge datasets.
 
 
-void AddToString(int ch)
-{
-  EnterCriticalSection(&someCriticalSection);
-  // +1 for the character we're about to add
-  // +1 for the null terminator
-  char *newString = realloc(s, (length+1) * sizeof(char));
-  if (newString) {
-    if (ch == '\0' || ch == '\\') {
-      AddToString('\\'); // escape prefix
-    }
-    newString[length++] = ch;
-    newString[length] = '\0';
-    s = newString;
-  }
-  LeaveCriticalSection(&someCriticalSection);
-}
-\end{lstlisting}
+\section*{Software Design Issues: Will it Parallelize?}
 
-Is it thread safe? Sure---there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
 
-The GNU C library attempts to document thread-safety of their code here:
-\url{https://www.gnu.org/software/libc/manual/html_node/POSIX-Safety-Concepts.html}.
+\paragraph{Locking and Synchronization Points.}
+Think back to a concurrency course and the discussion of locking. We'll be coming back to this subject before too long. But for now, suffice it to say, that the more locks and locking we need, the less scalable the code is going to be. You may think of the lock as a resource and the more threads or processes that are looking to acquire that lock, the more ``resource contention'' we have, and the more waiting and coordination are going to be necessary. We're going to revisit the subject of wise use locks in more detail soon.
 
-\subsection*{Functional Programming and Parallelization}
-Interestingly, functional programming languages (by which I do NOT mean procedural programming languages like C) such as Haskell and Scala and so on, lend themselves very nicely to being parallelized. Why? Because a purely functional program has no side effects and they are very easy to parallelize. If a function is impure, its functions signature will indicate so. Thus spake Joel\footnote{``Thus Spake Zarathustra'' is a book by Nietzsche, and this was not a spelling error.}:
+The previous paragraph applies as well to other concurrency constructs like semaphores, condition variables, etc. Any time a thread is forced to wait is going to be a limitation on the ability to parallelize the problem.
 
-\begin{quote}
-\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}~\cite{joel:functional}
-\end{quote}
+\paragraph{Memory Allocators.}
+Assuming we're not working with an embedded system where all memory is statically allocated in advance, there will be dynamic memory allocation. The memory allocator is often centralized and may support only one thread allocating or deallocating at a time. This means it does not necessarily scale very well. There are, however, some techniques for dynamic memory allocation that allow these things to work in parallel.
 
-This assumes of course that there is no data dependency between functions. Obviously, if we need a computation result, then we have to wait. 
+\paragraph{Overhead.}
+A first implementation might involve starting a thread for a task, then destroying it when it is complete. If there are many tasks and tasks are short-lived, then the fraction of time creating and destroying the threads may be significant.
 
-Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
+ But that's not the only way. We can have a pool of workers. The workers are created once and only once. Then the application just submits units of work, and then on the other side these units of work are allocated to workers. The number of workers will scale based on the available hardware. This is neat as a programming practice: as the application developer we don't care quite so much about the underlying hardware. Let the operating system decide how many workers there should be, to figure out the optimal way to process the units of work.
+ 
+Suppose you have to decide, though, how many threads should you create.
+This depends
+on which resources your threads use; if you are writing
+computationally-intensive threads, then you probably want to have
+fewer threads than the number of virtual CPUs. You can also use
+Amdahl's Law to estimate the maximum useful number of threads, as
+discussed previously.
 
-\paragraph{C++: the functional version?} {\tt algorithms} has been part of C++ since C++11. It provides algorithm implementations as part of the standard library. Some of the algorithms are standard: {\tt sort}, {\tt reverse}, {\tt is\_heap}\ldots
+Here's a longer discussion of thread pools:
 
-What's new in C++17, though, is parallel and vectorized {\tt
-algorithms}. You can specify an execution policy for these algorithms
-({\tt sequenced\_policy}, {\tt parallel\_policy}, or {\tt
-parallel\_unsequenced\_policy}). The compiler and runtime make it
-so. (Or, they don't. As of this writing in 2018, mainstream C++
-compilers don't support C++17 yet).
+\begin{center}
+\url{http://www.ibm.com/developerworks/library/j-jtp0730.html}
+\end{center}
 
-As part of this process, C++17 also introduced some new algorithms, such as
-{\tt for\_each\_n}, {\tt exclusive\_scan}, and {\tt reduce}.
-If you know functional programming (e.g. Haskell), these are also known as
-{\tt map}, {\tt scanl}, and {\tt fold1/foldl1}.
+Modern languages provide thread pools; Java's
+\url{java.util.concurrent.ThreadPoolExecutor}~\cite{java:threadpoolexecutor}, C\#'s
+\url{System.Threading.ThreadPool}~\cite{csharp:threadpool}, and GLib's {\tt GThreadPool}~\cite{gnome:threadpool} all implement thread pools. 
 
-Rainer Grimm writes more about these in blogposts from February and May of 2017:
-\cite{grimm17:_paral_algor_stand_templ_librar} \cite{grimm17:_c}.
+\paragraph{Threads and CPUs.} In your operating systems class,
+you've seen implementations of threads (``lightweight processes'').
+We'll call these threads \emph{software threads}, and we'll program
+with them throughout the class. Each software thread corresponds to a
+stream of instructions that the processor executes. On a old-school
+single-core, single-processor machine, the operating system
+multiplexes the CPU resources to execute multiple threads
+concurrently; however, only one thread runs at a time on the single
+CPU.
 
-Side effects are not functional and sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's what we want. We don't want to call print reentrantly; interleaved print calls would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
+On the other hand, a modern chip contains a number of \emph{hardware
+threads}, which correspond to the virtual CPUs. These are sometimes
+known as \emph{strands}. The operating system still needs to 
+multiplex the software threads onto the hardware threads, but now has
+more than one hardware thread to schedule work onto.
 
-The notion of purity is related to side effects. A function is pure if it has no side effects and if its outputs depend solely on its inputs. (The use of the word pure shouldn't imply any sort of moral judgement on the code). Pure functions should also be implemented to be thread-safe and reentrant.
+
+
+\paragraph{Implementing (or Simulating) Hardware Threads.} 
+There are a number of ways to implement multiple software threads; for
+instance, the simplest possible implementation, {\bf kernel-level
+threading} (or 1:1 model) dedicates one core to each thread. The kernel schedules threads
+on different processors. (Note that kernel involvement will always be required to
+take advantage of a multicore system). This model is used by Win32, as well as
+POSIX threads for Windows and Linux. The 1:1 model allows concurrency and parallelism.
+
+Alternately, we could make one core execute multiple threads. In the
+{\bf user-level threading}, or N:1, model, the single core would keep
+multiple contexts and could 1) switch every 100 cycles; 2) switch
+every cycle; 3) fetch one instruction from each thread each cycle; or
+4) switch every time the current thread hits a long-latency event
+(cache miss, etc.) This model allows for quick context switches, but
+does not leverage multiple processors. (Why would you use these?) The N:1 model is used by
+GNU Portable Threads.
+
+Finally, it's possible to both use multiple cores and put multiple
+threads onto one core, in a {\bf hybrid threading}, or M:N, model. Here, we map $M$ application threads to $N$ kernel threads. This
+is a compromise between the previous two models, which both allows
+quick context switches and the use of multiple processors. However, it
+requires increased complexity; the library provides scheduling
+services, which may not coordinate well with kernel, and increases
+likelihood of priority inversion (which you've seen in Operating
+Systems).  This method is used by modern Windows threads.
+
+
+\section*{Choose Your Pain}
+The first design decision that you need to solve when parallelizing programs
+is whether you should use threads or processes. Threads are basically light-weight processes which piggy-back on
+          processes' address space.
+
+Traditionally (pre-Linux 2.6) you had to use {\tt
+  fork}~(for~processes) and {\tt clone} (for threads). But {\tt clone}
+is not POSIX compliant, and its man page says that it's
+Linux-specific---FreeBSD uses {\tt rfork()}. (POSIX is the standard
+for Unix-like operating systems).
+
+\paragraph{When processes are better.} {\tt fork} is safer and more secure than threads.
+
+  \begin{enumerate}
+    \item Each process has its own virtual address space:
+      \begin{itemize}
+        \item Memory pages are not copied, they are copy-on-write. Therefore, processes use less memory than you would expect.
+      \end{itemize}
+    \item Buffer overruns or other security holes do not expose other~processes.
+    \item If a process crashes, the others can continue.
+  \end{enumerate}
+
+{\bf Example:} In the Chrome browser, each tab is a separate
+process. Scott McCloud explained this:
+\url{http://www.scottmccloud.com/googlechrome/}.
+
+\paragraph{When threads are better.} Threads are easier and faster.
+
+  \begin{enumerate}
+    \item Interprocess communication (IPC) is more complicated and slower than interthread
+          communication; must use operating system utilities (pipes, semaphores, shared
+              memory, etc) instead of thread library (or just memory reads and writes).
+    \item Processes have much higher startup, shutdown, and synchronization costs than threads.
+    \item pthreads fix the issues of {\tt clone} and provide a
+          uniform interface for most systems. (You'll work with them in Assignment 1.)
+  \end{enumerate}
+
+\paragraph{How to choose?}
+  If your application is like this:
+  \begin{itemize}
+    \item mostly independent tasks, with little or no communication;
+    \item task startup and shutdown costs are negligible compared to overall runtime; and
+    \item want to be safer against bugs and security holes,
+  \end{itemize}
+then processes are the way to go. If it's the opposite of this, then use threads.
+
+For performance reasons, along with ease and consistency across systems, we'll use threads. We will describe both pthreads and C++ 11 threads, in particular.
+
+\paragraph{Overhead.} The common wisdom is that processes are
+expensive, threads are cheap. Let's verify this with a benchmark on a
+laptop (included in the live-coding directory on GitHub) which creates and destroys 50,000 threads:
+  \begin{lstlisting}[basicstyle=\scriptsize]
+jon@riker examples master % time ./create_fork 
+0.18s user 4.14s system 34% cpu 12.484 total
+jon@riker examples master % time ./create_pthread 
+0.73s user 1.29s system 107% cpu 1.887 total
+  \end{lstlisting}
+
+Clearly pthreads incur much lower overhead than {\tt fork}. pthreads
+offer a speedup of 6.5 over processes in terms of startup and teardown costs.
+
+\subsection*{Parallelization using Threads or Processes}
+We'll be looking at thread-based or process-based parallelization for the
+next bit. We don't care about the distinction between threads and processes
+for the moment. In fact, we could even distribute work over multiple systems. But the idea is, if you are looking to parallelize your program, you should think about which of the following patterns makes the most sense.
+
+\paragraph{Pattern 1: Multiple Independent Tasks.} If you're just trying to maximize
+system utilization, you can use one system to run a number of independent
+tasks; for instance, you can put both a web server and database on
+one machine. If the web server happens to be memory-bound while the
+database is I/O-bound, then both can use system resources. If the web
+server isn't talking to the database (rare these days!), then the tasks
+would not get in each others' way.
+
+Most services probably ought to be run under virtualization these
+days, unless they're trivial or not mission-critical.
+
+A more relevant example of multiple independent tasks occurs in
+cluster/grid/cloud computing: the cloud might run a number of
+independent tasks, and each node would run some of the tasks. The
+cloud can retry a task (on a different node, perhaps) if it fails on
+some node. Note that the performance ought to increase linearly with
+the number of threads, since there shouldn't be communication between
+the tasks.
+
+\paragraph{Pattern 2: Multiple Loosely-Coupled Tasks.} Some applications contain
+tasks which aren't quite independent (so there is some inter-task
+communication), but not much.  In this case, the tasks may be
+different from each other. The communication might be from the tasks
+to a controller or status monitor; it would usually be asynchronous or
+be limited to exceptional situations.
+
+Refactoring an application this way can help with latency: if you 
+split off the CPU-intensive computations into a sub-thread, then
+the main thread can respond to user input more quickly.
+
+Here's an example. Assume that an application needs to receive and
+forward network packets, and also must log packet activity to disk.
+Then the two tasks are clear: receive/forward, and log. Since logging
+to disk is a high-latency event, a single-threaded application might
+incur latency while writing to disk. Splitting into subtasks allows
+the receive/forward to run without waiting for previous packets to be
+logged, thus increasing the throughput of the system.
+
+\paragraph{Pattern 3: Multiple Copies of the Same Task.} A common variant of
+multiple independent tasks is multiple copies of the same task
+(presumably on different data). In this case, we'd require there to be
+no communication between the different copies, which would enable
+linear speedup. An example is a rendering application running on
+multiple distinct animations. We gain throughput, but need to wait
+just as long for each task to complete.
+
+\paragraph{Pattern 4: Single Task, Multiple Threads.} This is the classic
+vision of ``parallelization'': for instance, distribute array
+processing over multiple threads, and let each thread compute the
+results for a subset of the array.
+
+This pattern, unlike many of the others before it, can actually
+decrease the time needed to complete a unit of work, since it gets
+multiple threads involved in doing the single unit simultaneously.
+The result is improved latency and therefore increased throughput.
+Communication can be a problem, if the data is not nicely
+array-structured, or has dependencies between different array parts.
+
+Other names and variations for this pattern include ``fork-join'',
+where the main process forks its execution and gives work to all of
+the threads, with the join synchronizing threads and combining the
+results; and ``divide-and-conquer'', where a thread spawns subthreads
+to compute smaller and smaller parts of the solution.
+
+\paragraph{Pattern 5: Pipeline of Tasks.} We've seen pipelining in the context of
+computer architecture. It can also work for software. For instance,
+you can use pipelining for packet-handling software, where multiple
+threads, as above, might confound the order. If you use a three-stage
+pipeline, then you can have three packets in-flight at the same time,
+and you can improve throughput by a factor of 3 (given appropriate
+hardware).  Latency would tend to remain the same or be worse (due to
+communication overhead).
+
+Some notes and variations on the pipeline: 1) if a stage is
+particularly slow, then it can limit the performance of the entire
+pipeline, if all of the work has to go through that stage; and 2) you
+can duplicate pipeline stages, if you know that a particular stage is
+going to be the bottleneck.
+
+\paragraph{Pattern 6: Client-Server.} Botnets work this way (as does \verb+SETI@Home+,
+etc). To execute some large computation, a server is ready to tell
+clients what to do.  Clients ask the server for some work, and the
+server gives work to the clients, who report back the results. Note
+that the server doesn't need to know the identity of the clients for
+this to work.
+
+A single-machine example is a GUI application where the server part
+does the backend, while the client part contains the user interface.
+One could imagine symbolic algebra software being designed that way.
+Window redraws are an obvious candidate for tasks to run on clients.
+
+Note that the single server can arbitrate access to shared resources.
+For instance, the clients might all need to perform network access.
+The server can store all of the requests and send them out in an
+orderly fashion.
+
+The client-server pattern enables different threads to share work
+which can somehow be parcelled up, potentially improving
+throughput. Typically, the parallelism is somewhere between single
+task, multiple threads and multiple loosely-coupled tasks. It's also a
+design pattern that's easy to reason about.
+
+\paragraph{Pattern 7: Producer-Consumer.} The producer-consumer is 
+a variant on the pipeline and client-server models. In this case, the
+producer generates work, and the consumer performs work. An example is
+a producer which generates rendered frames, and a consumer which
+orders these frames and writes them to disk. There can be any number
+of producers and consumers. This approach can improve throughput
+and also reduces design complexity.
+
+\paragraph{Combining Strategies.} If one of the patterns suffices,
+then you're done. Otherwise, you may need to combine strategies.
+For instance, you might often start with a pipeline, and then 
+use multiple threads in a particular pipeline stage to handle one
+piece of data. Or, as I alluded to earlier, you can replicate
+pipeline stages to handle different data items simultaneously.
+
+Note also that you can get synergies between different patterns.
+For instance, consider a task which takes 100 seconds. First, you
+take 80 seconds and parallelize it 4 ways (so, 20 seconds). This
+reduces the runtime to 40 seconds. Then, you can take the serial 
+20 seconds and split it into two threads. This further reduces 
+runtime to 30 seconds. You get a $2.5\times$ speedup from the
+first transformation and $1.3\times$ from the second, if you do it
+after the first. But, if you only did the second parallelization,
+you'd only get a $1.1\times$ speedup.
 
 
 \input{bibliography.tex}

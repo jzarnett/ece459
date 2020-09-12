@@ -1,8 +1,9 @@
 \input{configuration}
+\usepackage{multirow}
 
-\title{Lecture 13 --- OpenMP}
+\title{Lecture 13 --- Dependencies and Speculation }
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -16,923 +17,676 @@
  \end{frame}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{From pthreads to OpenMP}
-
-
-    So far: Pthreads and automatic parallelization.
-    
-    Next: ``Manual'' parallelization using OpenMP (Open Multiprocessing).
-          
-    You specify parallelization; compiler implements.
-    
-    \begin{center}
-    \includegraphics[width=0.4\textwidth]{images/makeitso.jpg}
-    \end{center}
-    
-    ``I want 10 turnstiles.''
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Make It So, Number One}
+  \frametitle{Next topic: Dependencies}
 
-You use OpenMP by specifying \alert{directives} in the code.
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/dependency.jpeg}
+\end{center}
 
-Directives look like \texttt{\#pragma omp ...}
+     \structure{Dependencies} are the main
+      limitation to parallelization.\\[1em]
+     Example: computation must be evaulated as {\tt XY} and not {\tt YX}.\\[1em]
+  
+\end{frame}
 
-There are 16 directives; each applies to the immediately-following statement.
+\begin{frame}
+  \frametitle{Not synchronization}
 
-Some have a list as an argument (a list of variable names)
+  
+      Assume (for now) no synchronization problems.\\[1em]
+      Only trying to identify code that is safe to run in
+      parallel.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{Dependencies: Analogies}
+
+Must extract bicycle from garage before closing garage door.
+
+Must close washing machine door before starting the cycle.
+
+Must be called on before answering questions? (sort of)
+
+Students must submit assignment before course staff can mark the assignment.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Dependencies: Analogies}
+
+Must install package $X$ before running package $Y$.
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/debian_main.png}
+\end{center}
+\hfill xkcd 797
+	
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Memory-carried Dependencies}
+
+Dependencies limit the amount of parallelization.
+\vfill
+Can we execute these 2 lines in parallel?
+\begin{lstlisting}[language=C]
+x = 42
+x = x + 1  
+\end{lstlisting}
+\pause
+\alert{No.}\\[1em]
+\begin{itemize}
+\item Assume x initially 1. What are possible outcomes?
+\pause \newline \structure{~~~x = 43 or x = 42 or x = 2}\\[1em]
+
+\end{itemize}
+
+Next, we'll classify dependencies.
+
+
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{Modern compilers support OpenMP}
 
-All major compilers have OpenMP: (gcc, clang, Solaris, Intel, Microsoft).
 
-Benefits:
+
+\begin{frame}
+\frametitle{Summary of Memory-carried Dependencies}
+
+Well, turns out our memory-carried dependencies are the hazards:
+\begin{center}
+\begin{tabular}{ll|p{2.8cm}p{3.2cm}}
+& & \multicolumn{2}{c}{Second Access} \\ 
+&  & \bf Read & \bf Write \\ \hline
+\multirow{2}{*}{First Access} & \bf Read & No Dependency Read After Read (RAR)  & Anti-dependency Write After Read (WAR) \\[0.5em]
+& \bf Write & True Dependency Read After Write (RAW) & Output Dependency Write After Write (WAW) \\
+\end{tabular}
+\end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (1)}
+
+Can we run these lines in parallel? \\ ~~~(initially a[0] and a[1] are 1)
+\begin{lstlisting}[language=C]
+a[4] = a[0] + 1
+a[5] = a[1] + 2
+\end{lstlisting}
+\pause
+\structure{Yes.}\\[1em]
 \begin{itemize}
-	\item Switch parallelism on and off via compile option
-	\item Make the compiler do hard work
-	\item Makes algorithms easier to read
-	\item Apply them only in parts where needed, incrementally
+\item There are no dependencies between these lines.
+\item However, this is not how we normally use arrays\ldots
 \end{itemize}
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Simple For Loop Exampe}
+\frametitle{Loop-carried Dependencies (2)}
 
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-  void calc (double *array1, double *array2, int length) {
-    #pragma omp parallel for
-    for (int i = 0; i < length; i++) {
-      array1[i] += array2[i];
+What about this? (all elements initially 1)
+\begin{lstlisting}[language=C]
+for (int i = 1; i < 12; ++i)
+    a[i] = a[i-1] + 1
+\end{lstlisting}
+\pause
+\alert{No, a[2] = 3 or a[2] = 2.}\\[1em]
+\begin{itemize}
+\item Statements depend on previous loop iterations.
+\item An example of a \structure{loop-carried dependency}.
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (3)}
+
+Can we parallelize this? (again, all elements initially 1)
+\begin{lstlisting}[language=C]
+for (int i = 4; i < 12; ++i)
+    a[i] = a[i-4] + 1
+\end{lstlisting}
+\pause
+\structure{Yes, to a degree.}\\[1em]
+\begin{itemize}
+\item We can execute 4 statements in parallel:
+\begin{itemize}
+  \item a[4] = a[0] + 1, a[8] = a[4] + 1
+  \item a[5] = a[1] + 1, a[9] = a[5] + 1
+  \item a[6] = a[2] + 1, a[10] = a[6] + 1
+  \item a[7] = a[3] + 1, a[11] = a[7] + 1
+\end{itemize}  
+\end{itemize}
+
+\pause
+\structure{Always consider dependencies between iterations.}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Larger example: Loop-carried Dependencies}
+{\small \begin{lstlisting}[language=C]
+  // Repeatedly square input, return number of iterations before 
+  // absolute value exceeds 4, or 1000, whichever is smaller.
+  int inMandelbrot(double x0, double y0) {
+    int iterations = 0;
+    double x = x0, y = y0, x2 = x*x, y2 = y*y;
+    while ((x2+y2 < 4) && (iterations < 1000)) {
+      y = 2*x*y + y0;
+      x = x2 - y2 + x0;
+      x2 = x*x; y2 = y*y;
+      iterations++;
     }
+    return iterations;
   }
-\end{lstlisting}
-
-The directive instructs the compiler to parallelize the loop.
-
-Developer's responsibility to make sure this is safe!
-
-You don't need to declare {\tt restrict}, but it's a good idea.
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{{\tt \#pragma omp parallel for}}
-
-  Let's look at the parts of this \verb+#pragma+.\\[1em]
-  
-  \begin{center}
-	\includegraphics[width=0.6\textwidth]{images/Feuerwehr-Tetris.jpg}\\
-	\hfill Source: Feuerwehrmagazin.de
- \end{center}
-
-\end{frame}
-
-\begin{frame}[containsverbatim]
-  \frametitle{{\tt \#pragma omp parallel for}}
-  \begin{itemize}
-    \item \verb+#pragma omp+ indicates an OpenMP directive;
-    \vfill
-    \item {\tt parallel} indicates the start of a parallel region.
-    \vfill
-    \item {\tt for} tells OpenMP: run the next {\tt for} loop in parallel.
-  \end{itemize}
-
-
-The runtime library starts
-  a number of threads \&  assigns a subrange of the range to 
-  each of the threads.
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Loops of a Certain Kind}
-
-  
-\begin{verbatim}
-    for (int i = 0; i < length; i++) { ... }
-\end{verbatim}~\\[1em]
-
-    Can only parallelize loops which satisfy these conditions:
-\begin{itemize}
-\item form:~{\tt for (init expr; test expr; increment expr)};
-\item loop variable must be integer (signed or unsigned), pointer, or a C++
-random access iterator;
-\item loop variable must be initialized to one end of the range;
-\item loop increment amount must be loop-invariant (constant with respect to the loop body); and
-\item test expression must be one of {\tt >}, {\tt >=}, {\tt <}, or {\tt <=}, and the comparison value (bound) must be loop-invariant.
-\end{itemize}
-
-{\bf Note:} these restrictions thus also apply to automatically parallelized
-loops.
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{Parallelized Code Generated}
-  
-  Get together a team!
-  
-  \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/nickfury.png}
-\end{center}
-
-  \begin{enumerate}
-    \item Compiler generates code to spawn a \alert{team}
-of threads; automatically splits off worker-thread code into a
-separate procedure.
-    \item Generated code uses {\tt fork-join} parallelism; when the
-master thread hits a parallel region, it gives work to the worker
-threads, which execute and report back.
-    \item Afterwards, the master thread
-continues running, while the worker threads wait for more work .
-  \end{enumerate}
-\end{frame}
-
-
-\begin{frame}[containsverbatim]
-  \frametitle{Parallelized Code Generated}
-
-You can specify the number of threads by setting the
-\verb+OMP_NUM_THREADS+ environment variable. \\
-
-(You can also adjust by calling 
-\verb+omp_set_num_threads()+).
-
-\begin{itemize}
-  \item Solaris compiler tells you what it did if you use the flags \verb+-xopenmp -xloopinfo+, or \verb+er_src+.
-\end{itemize}
-
-  
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Variable Scoping}
-OpenMP includes three keywords for variable scope and storage:
-\begin{itemize}
-        \item private
-        \item shared
-        \item threadprivate
-\end{itemize}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}[fragile]
-\frametitle{Private Variable}
-
-
-Private: new storage, on a per-thread basis, for the variable.
-
-The scope from the start of the region to the end of that region.
-
-The variable is destroyed afterwards.
-
-Thread equivalent:
-
-  \begin{lstlisting}[language=C]
-void* run(void* arg) {
-    int x;
-    // use x
+\end{lstlisting} 
 }
-  \end{lstlisting}
-
+How can we parallelize this? \\
+\pause
+\begin{itemize}
+\item Run {\tt inMandelbrot} sequentially for each point, but parallelize
+different point computations.
+\end{itemize}
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-\begin{frame}[fragile]
-\frametitle{Shared Variable}
-
-Shared: the opposite of a private variable.
- 
-All threads have access to the same block of data when accessing such a variable.
-
-Thread equivalent:
-
-  \begin{lstlisting}[language=C]
-int x;
-
-void* run(void* arg) {
-    // use x
-}
-  \end{lstlisting}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Threadprivate}
-
-Threadprivate: This is like private, in that each thread makes a copy of the variable. 
-
-However, the scope 
-is different. 
-
-Such variables are accessible to the thread in any parallel region.
-
-This example will make things clearer. The OpenMP code:
-  \begin{lstlisting}[language=C]
-int x;
-#pragma omp threadprivate(x)
-  \end{lstlisting}
-  maps to this Pthread pseudocode:
-  \begin{lstlisting}[language=C]
-int x;
-int x[NUM_THREADS];
-
-void* run(void* arg) {
-  // int* id = (int*) arg;
-  // use x[*id]
-}
-  \end{lstlisting}
-
-
-
-\end{frame}
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{I Do Declare...}
+  \frametitle{Critical Paths}
+
+  
+
+  Should be familiar with critcal paths from other courses (Gantt charts).\\[1em]
+
+  Consider the following diagram (edges are tasks):
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/declare.jpg}
-\end{center}
+\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
+                    semithick,initial text=]
+  \node[initial,block] (s0) {Start};
+  \node[block] (s1) [right=of s0] {S1};
+  \node[block] (s2) [right=of s1] {S2};
+  \node[bw] (s3) [right=of s2] {Finish};
 
-A variable may not appear in {\bf more than one clause} on the same
-directive. 
-(There's an exception for {\tt firstprivate} and {\tt
-  lastprivate}) 
-  
-Default: vars
-declared in regions are private; those outside regions are
-shared. 
-
-(An exception: anything with dynamic storage is
-shared).
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Solaris, why...}
-
-
-Let's look at the defaults that OpenMP uses to parallelize the {\tt parallel-for} code:
-\begin{lstlisting}
-% er_src parallel-for.o
-     1.   <Function: calc>
-    
-    Source OpenMP region below has tag R1
-    Private variables in R1: i
-    Shared variables in R1: array2, length, array1
-     2.     #pragma omp parallel for
-
-    Source loop below has tag L1
-    L1 autoparallelized
-    L1 parallelized by explicit user directive
-    L1 parallel loop-body code placed in function _$d1A2.calc 
-                     along with 0 inner loops
-    L1 multi-versioned for loop-improvement:
-                     dynamic-alias-disambiguation. 
-        Specialized version is L2
-     3.     for (int i = 0; i < length; i++) {
-     4.       array1[i] += array2[i];
-     5.     }
-     6.   }
-\end{lstlisting}
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Override!}
-  
-You can disable the default rules
-by specifying {\tt default(none)} on the {\tt parallel},
-or you can give explicit scoping:
-
-\begin{lstlisting}
-#pragma omp parallel for private(i) 
-                         shared(length, array1, array2)
-\end{lstlisting}
-
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Directives...}
-
-\begin{center}
-	\includegraphics[width=0.3\textwidth]{images/krennic.png}
-\end{center}
-
-Oh.... Wait... Directives, not Directors.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Directives: Parallel}
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf parallel} {\it [clause [[,] clause]*]}
-  \end{center}
-
-This is the most basic directive in OpenMP.
-It tells OpenMP to form a team of threads and start parallel execution.
-
-
-The thread that enters the region becomes the {\bf master} (thread 0).
-
-Allowed Clauses: {\bf if, num\_threads, default, private, firstprivate,
-    shared, copyin, reduction}.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Parallel}
-
- \tikzstyle{brace} = [decorate,decoration={brace},thick]
-  \tikzstyle{transition} = [rectangle, draw=blue!50, fill=blue!20, thick,
-                            text width=6.75cm, align=center]
-  \tikzstyle{thread} = [->, >=stealth', very thick]
-  \tikzstyle{master} = [->, >=stealth', very thick, red]
-
-
-\begin{center}
-  \begin{tikzpicture}[decoration={brace}]
-
-    \node[transition] (begin) {{\tt \#pragma omp parallel}\\begin block};
-    \node[transition] (end) [below=of begin] {end block};
-
-    \draw[master]   (   0,   1.55) to (   0,   0.55);
-
-    \draw[master]   (-3.5, -0.525) to (-3.5, -1.525);
-    \draw[thread]   (-2.5, -0.525) to (-2.5, -1.525);
-    \draw[thread]   (-1.5, -0.525) to (-1.5, -1.525);
-    \draw[thread]   (-0.5, -0.525) to (-0.5, -1.525);
-    \draw[thread]   ( 0.5, -0.525) to ( 0.5, -1.525);
-    \draw[thread]   ( 1.5, -0.525) to ( 1.5, -1.525);
-    \draw[thread]   ( 2.5, -0.525) to ( 2.5, -1.525);
-    \draw[thread]   ( 3.5, -0.525) to ( 3.5, -1.525);
-
-    \draw[master]   (   0,  -2.08) to (   0,  -3.08);
-
-    \draw[decorate, thick, red] (-4,  -3.08) -- (-4,  -2.08)
-      node[red, anchor=east, midway, outer sep=0.1cm] {Master Thread};
-    \draw[decorate, thick]      (-4, -1.525) -- (-4, -0.525)
-      node[anchor=east, midway, outer sep=0.1cm] {Thread Team};
-    \draw[decorate, thick, red] (-4,   0.55) -- (-4,   1.55)
-      node[red, anchor=east, midway, outer sep=0.1cm] {Master Thread};
+  \path (s0) edge node {A} (s1)
+        (s1) edge node {B} (s2)
+        (s2) edge node {D} (s3)
+        (s0) edge[bend left=30] node {C} (s2);
 \end{tikzpicture}
 \end{center}
 
+  \begin{itemize}
+    \item B depends on A, C has no dependencies, and D depends on B and C.
+    \item Can execute A-then-B in parallel with C.
+    \item Keep dependencies in mind when calculating speedups for more
+      complex programs.
+  \end{itemize}
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Breaking Dependencies}
+
+  
+  \structure{Speculation}: architects use it to predict
+      branch targets.
+  
+  \begin{center}
+  	\includegraphics[width=0.5\textwidth]{images/6sided_dice.jpg}
+  \end{center}
+  	\hfill Image Credit: Diacritica
+
+Roll the dice and see how we do!
+
+\end{frame}
+  
+
+\begin{frame}
+\frametitle{Breaking Dependencies}
+
+We need not wait for the branch to be evaluated.
+
+We'll use speculation at a coarser-grained level: speculatively parallelize code.
+
+Two ways: \alert{speculative execution} and
+      \alert{value speculation}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Parallel Code Example}
+  \frametitle{Speculative Execution: Example}
 
- \begin{lstlisting}[language=C]
-#pragma omp parallel
-{
-    printf("Hello!");
+  
+Consider the following code:
+  
+  \begin{lstlisting}[language=C]
+void doWork(int x, int y) {
+    int value = longCalculation(x, y);
+    if (value > threshold) {
+      return value + secondLongCalculation(x, y);
+    }
+    else {
+      return value;
+    }
 }
   \end{lstlisting}
 
-  If the number of threads is 4, this produces:
+  Will we need to run {\tt secondLongCalculation}?
+  \vfill  
+  \begin{itemize}
+    \item<2> OK, so: could we execute {\tt longCalculation} and {\tt secondLongCalculation}
+      in parallel if we didn't have the conditional?
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Speculative Execution: Assume No Conditional}
+
+  
+  Yes, we could parallelize them. Consider this code:
+    
+    \begin{lstlisting}[language=C]
+  void doWork(int x, int y) {
+    thread_t t1, t2;
+    point p(x,y);
+    int v1, v2;
+    thread_create(&t1, NULL, &longCalculation, &p);
+    thread_create(&t2, NULL, &secondLongCalculation, &p);
+    thread_join(t1, &v1);
+    thread_join(t2, &v2);
+    if (v1 > threshold) {
+      return v1 + v2;
+    } else {
+      return v1;
+    }
+  }
+    \end{lstlisting}
+
+  We do both the calculations in parallel and return the same result as before.
+
+  \begin{itemize}
+    \item What are we assuming about {\tt longCalculation} and
+{\tt secondLongCalculation}?
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Estimating Impact of Speculative Execution}
+
+  
+  $T_1$: time to run {\tt longCalculation}.
+
+  $T_2$: time to run {\tt secondLongCalculation}.
+
+  $p$: probability that {\tt secondLongCalculation} executes.\\[1em]
+
+  In the normal case we have:
+    \[T_{\mbox{\scriptsize normal}} = T_1 + pT_2.\]
+
+  $S$: synchronization overhead.\\
+  Our speculative code takes:
+    \[ T_{\mbox{\scriptsize speculative}} = \mbox{max}(T_1, T_2) + S.\]
+
+    \structure{Exercise.} When is speculative code faster? Slower? \\ How could you improve it?
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Shortcomings of Speculative Execution}
+
+  
+  Consider the following code:
+  
   \begin{lstlisting}[language=C]
-Hello!
-Hello!
-Hello!
-Hello!
+void doWork(int x, int y) {
+    int value = longCalculation(x, y);
+    return secondLongCalculation(value);
+}
   \end{lstlisting}
 
+  Now we have a true dependency; can't use speculative~execution.\\[1em]
+
+  But: if the value is predictable, we can execute
+      {\tt secondLongCalculation} using the predicted value.\\[1em]
+
+  This is \structure{value speculation}.
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-\begin{frame}
-\frametitle{If...}
-
-  \begin{center}
-    {\bf if}({\it primitive-expression})    
-  \end{center}
-The {\tt if} clause allows you to control at runtime whether or not to run
-multiple threads or just one thread in its associated parallel section.
-
-
-If {\it primitive-expression} evaluates to {\tt 0}, i.e. {\tt false}, then
-only one thread will execute in the parallel section. 
-
-(It's what you would expect.)
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Be Specific}
-
-If the parallel section is going to run multiple threads (e.g. {\tt if} expression
-is true; or if there is no {\tt if} expression), we can then specify how many threads.
-
-  \begin{center}
-    {\bf num\_threads}({\it integer-expression})    
-  \end{center}
-
-This spawns at most {\bf num\_threads}, depending on the number of
-threads available.  
-
-It can only guarantee the number of threads
-requested if {\bf dynamic adjustment} for number of threads is off and
-enough threads aren't busy.
-
-
-\end{frame}
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Directives: Reduction}
+  \frametitle{Value Speculation Implementation}
 
-Recall that we introduced the concept of a reduction, e.g.
+% note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
+  
+  This Pthread code does value speculation:
+  
+  \begin{lstlisting}[language=C]
+void doWork(int x, int y) {
+    thread_t t1, t2;
+    point p(x,y);
+    int v1, v2, last_value;
+    thread_create(&t1, NULL, &longCalculation, &p);
+    thread_create(&t2, NULL, &secondLongCalculation,
+                  &last_value);
+    thread_join(t1, &v1);
+    thread_join(t2, &v2);
+    if (v1 == last_value) {
+      return v2;
+    } else {
+      last_value = v1;
+      return secondLongCalculation(v1);
+    }
+}
+  \end{lstlisting}
 
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-  for (int i = 0; i < length; i++) total += array[i];
-\end{lstlisting}
-
-What is the appropriate scope for {\tt total}? 
-
-We want each thread
-to be able to write to it, but we don't want race conditions.
-
-
-Fortunately, OpenMP can deal with reductions as a special case:
-
-\verb!   #pragma omp parallel for reduction (+:total)!
-
+  Note: this is like memoization (plus parallelization).
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Estimating Impact of Value Speculation}
+
+  
+  $T_1$: time to run {\tt longCalculatuion}.
+
+  $T_2$: time to run {\tt secondLongCalculation}.
+
+  $p$: probability that {\tt secondLongCalculation} executes again.
+
+  $S$: synchronization overhead.\\[1em]
+
+  In the normal case, we have:
+    \[ T = T_1 +T_2.\]
+
+  This speculative code takes:
+    \[ T = \mbox{max}(T_1, T_2) + S + pT_2.\]
+
+    \structure{Exercise.} Again, when is speculative code faster? Slower? How could you improve it?
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{When Can We Speculate?}
+
+  
+  Required conditions for safety:
+
+  \begin{itemize}
+    \item {\tt longCalculation} and {\tt secondLongCalculation} must not call
+      each other.
+    \item {\tt secondLongCalculation} must not depend on
+      any values set or modified by {\tt longCalculation}.
+    \item The return value of {\tt longCalculation} must be deterministic.
+  \end{itemize}
+
+  General warning: Consider \structure{side effects} of function calls.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 
 \begin{frame}
-\frametitle{Reduction Operators}
-
-The {\tt total} variable is the accumulator for a
-reduction over {\tt +}. 
-
-OpenMP will create local copies of {\tt total} and 
-combine them at the end of the parallel region.
-
-{\bf Operators (and their associated initial value)}
-  \begin{center}
-    \begin{tabular}{l r | l r | l r | l r | l r}
-      + & (0) & -  &  (0) &    $\mid$ & (0) & \&\& & (1) & max & MIN\\
-      * & (1) & \& & (\~{}0) & \^{} & (0) &   $\mid\mid$ & (0) & min & MAX\\ 
-    \end{tabular}
-  \end{center}
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Directives: For}
-
-Inside a parallel section, we can
-specify a for loop clause, as follows.
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf for} {\it [clause [[,] clause]*]}
-  \end{center}
-
-    Iterations of the loop will be distributed among the
-      current team of threads.
-      
-    Loop variable is implicitly private; OpenMP sets the
-      correct values.
-
-  Allowed Clauses: {\bf private, firstprivate, lastprivate, reduction, schedule,
-    collapse, ordered, nowait}.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Schedule it in...}
+\frametitle{Side Effects}
 
 \begin{center}
-	\includegraphics[width=0.7\textwidth]{images/schedule.jpeg}
+	\includegraphics[width=0.4\textwidth]{images/side-effects.jpg}
+\end{center}
+\hfill Image Credit: Kes, Cartoonstock
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Side Effects}
+
+As a general warning: Consider the \alert{side effects} of function calls. 
+
+They have a big impact on parallelism. Side effects are problematic, but why? 
+
+For one thing they're kind of unpredictable. 
+
+Side effects are changes in state that do not depend on the function input. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Side Effects}
+
+Calling a function or expression has a side effect if it has some visible effect on the outside world. 
+
+Some things necessarily have side effects, like printing to the console. 
+
+Others are side effects which may be avoidable if we can help it, like modifying a global variable.
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Software Transactional Memory}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/timetravel.jpg}
 \end{center}
 
+
 \end{frame}
 
 
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{More Control: schedule}
+  \frametitle{STM: Introduction}
 
-  \begin{center}
-    {\bf schedule}({\it kind[, chunk\_size]})
-  \end{center}
 
-    The {\bf chunk\_size} is the number of iterations a thread
-      should handle at a time. 
-      
-{\bf kind} is one of:
+    Instead of programming with locks, we have transactions on memory.
       \begin{itemize}
-        \item {\bf static}
-		\item {\bf dynamic}
-        \item {\bf guided}
-        \item {\bf auto}
-        \item {\bf runtime}
+        \item Analogous to database transactions
       \end{itemize}
+    An old idea; recently saw some renewed interest.\\[1em]
 
-OpenMP tries to guess how many iterations to distribute to each thread
-in a team.
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Schedule Example}
-
-The default of equal number of iterations isn't always optimal:
-
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-  double calc(int count) {
-    double d = 1.0;
-    for (int i = 0; i < count*count; i++) d += d;
-    return d;
-  }
-
-  int main() {
-    double data[200][200];
-    int i, j;
-    #pragma omp parallel for private(i, j) shared(data)
-    for (int i = 0; i < 200; i++) {
-      for (int j = 0; j < 200; j++) {
-        data[i][j] = calc(i+j);
-      }
-    }
-    return 0;
-  }
-\end{lstlisting}
-
-Telling OpenMP to use a \emph{dynamic schedule} can enable better
-parallelization.
+    A series of memory operations either all succeed; or \\ \qquad
+     all fail (and get
+      rolled back), and are later retried.
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Collapse}
+  \frametitle{STM: Benefits}
 
-  \begin{center}
-    {\bf collapse}({\it n})
-  \end{center}
 
-    This collapses {\it n} levels of loops. 
-    
-    Obviously, this only has
-    an effect if $n \ge 2$; otherwise, nothing happens. 
-    
-    Collapsed loop
-    variables are also made private.
+    Simple programming model: need not worry about lock
+      granularity or deadlocks.\\[1em]
 
+    Just group lines of code that should logically be one operation
+      in an {\tt atomic} block!\\[1em]
+
+    It is the responsibility of the implementer to ensure the code
+      operates as an atomic transaction.
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-\begin{frame}
-\frametitle{Ordered}
-
- \begin{center}
-    {\tt \#pragma omp }{\bf ordered}
-  \end{center}
-
-    To use this directive, the containing loop must have an {\bf ordered} clause.
-   
-   
-    OpenMP will ensure that the ordered directives are executed the same
-      way the sequential loop would (one at a time).
-  
-  
-    Each iteration of the loop may execute {\bf at most one} ordered
-      directive.
-
-\end{frame}
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Ordnung muss sein}
+  \frametitle{STM: Implementing a Motivating Example}
 
-This use of Ordered does not work:
-
-  \begin{lstlisting}
-void work(int i) {
-  printf("i = %d\n", i);
-}
-...
-int i;
-#pragma omp for ordered
-for (i = 0; i < 20; ++i) {
-
-  #pragma omp ordered
-  work(i);
-
-  // Each iteration of the loop has 2 "ordered" clauses!
-  #pragma omp ordered 
-  work(i + 100);
-}
-\end{lstlisting}
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Ordnung muss wirklich sein}
-
-Here is a valid use of the ordered clause:
- \begin{lstlisting}
-void work(int i) {
-  printf("i = %d\n", i);
-}
-...
-int i;
-#pragma omp for ordered
-for (i = 0; i < 20; ++i) {
-  if (i <= 10) {
-    #pragma omp ordered
-    work(i);
-  }
-  if (i > 10) {
-    // two ordered clauses are mutually-exclusive
-    #pragma omp ordered
-    work(i+100);
-  }
-}
-  \end{lstlisting}
-
-{\bf Note:} if we change {\tt i \textgreater\- 10} to {\tt i \textgreater\- 9}, 
-the use becomes invalid because the iteration $i=9$ contains two {\tt ordered}
-directives.
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Larger Example}
 
   \begin{lstlisting}[language=C]
-#include <omp.h>
-#include <stdio.h>
-
-int main(int argc, char *argv[])
-{
-    int j, k, a;
-    #pragma omp parallel num_threads(2)
-    {
-        #pragma omp for collapse(2) ordered private(j,k) \
-                        schedule(static,3)
-        for (k = 1; k <= 3; ++k)
-            for (j = 1; j <= 2; ++j) {
-                #pragma omp ordered
-                printf("t[%d] k=%d j=%d\n",
-                       omp_get_thread_num(),
-                       k, j);
-            }
-    }
-    return 0;
+transfer_funds(Account* sender, Account* receiver,
+               double amount) {
+  atomic {
+    sender->funds -= amount;
+    receiver->funds += amount;
+  }
 }
   \end{lstlisting}
+  [Note: bank transfers aren't actually atomic!]\\[1em]
+
+    With locks we have two main options:
+      \begin{itemize}
+        \item Lock everything to do with modifying accounts \\ 
+\qquad (slow; may forget to use lock).
+        \item Have a lock for every account \\ 
+\qquad (deadlocks; may forget to use lock).
+      \end{itemize}
+    With STM, we do not have to worry about remembering to acquire locks,
+      or about deadlocks.
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{STM: Drawbacks}
+
+
+    Rollback is key to STM. \\
+     \qquad But, some things cannot be rolled back. \\
+     \qquad (write to the screen, send packet over network)\\[1em]
+
+    Nested transactions. \\
+     \qquad What if an inner transaction succeeds, \\ yet the
+      transaction aborts? \\[1em]
+
+    Limited transaction size: \\
+ \qquad Most implementations (especially
+    all-hardware) \\ have a limited transaction size.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Basic STM Implementation (Software)}
+
+
+    In all atomic blocks, record all reads/writes to a log.\\[1em]
+    At the end of the block, running thread verifies that no other threads
+      have modified any values read.\\[1em]
+    If validation is successful, changes are {\bf committed}.\\
+    Otherwise, the block is {\bf aborted} and re-executed.\\[2em]
+
+  Note: Hardware implementations exist too.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Output of Larger Example}
-
-\begin{lstlisting}
-    t[0] k=1 j=1
-    t[0] k=1 j=2
-    t[0] k=2 j=1
-    t[1] k=2 j=2
-    t[1] k=3 j=1
-    t[1] k=3 j=2
-  \end{lstlisting}
-
-{\bf Note:} the output will be determinstic; still, the program will run two threads as long as the thread limit is at least 2.
+  \frametitle{Basic STM Implementation Issues}
 
 
-\end{frame}
+    Since you don't protect against dataraces (just rollback),\\
+      a datarace may trigger a fatal error in your program.
 
-
-\begin{frame}[fragile]
-\frametitle{Remember Parallel}
-
-This directive is shorthand:
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf parallel for} {\it [clause [[,] clause]*]}
-  \end{center}
-
-We could equally well write:
-
-  \begin{lstlisting}
-#pragma omp parallel
-{
-    #pragma omp for
-    {
-
-    }
+  \begin{lstlisting}[language=C]
+atomic {
+  x++;
+  y++;
 }
   \end{lstlisting}
 
-
-Allowed Clauses: everything allowed by {\tt parallel} and {\tt for}, except
-  {\bf nowait}.
-
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Directives: Sections}
-
- \begin{center}
-    {\tt \#pragma omp }{\bf parallel sections} {\it [clause [[,] clause]*]}
-  \end{center}
-
-  As with parallel for, this is basically shorthand for:
-  
-  \begin{lstlisting}
-#pragma omp parallel
-{
-    #pragma omp sections
-    {
-
-    }
+  \begin{lstlisting}[language=C]
+atomic {
+  if (x != y)
+     while (true) { }
 }
   \end{lstlisting}
 
-  Allowed Clauses: everything allowed by {\tt parallel} and {\tt sections}, except
-  {\bf nowait}.
-
+ In this silly example, assume initially {\tt x = y}. You may think the
+      code will not go into an infinite loop, but it can.
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{All the Single Threads}
-
-When we'd be otherwise running many threads, we can state
-that some particular code block should be run by only one method.
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf single}
-  \end{center}
-    Only a single thread executes the region following the directive.
-    The thread is not guaranteed to be the master thread.
-
-  Allowed Clauses: {\bf private, firstprivate, copyprivate, nowait}.
- Must not use {\bf copyprivate} with {\bf nowait}
+  \frametitle{STM Implementations}
 
 
+
+  Note: Typically STM performance is no worse than twice as slow as
+  fine-grained locks.
+
+  \begin{itemize}
+    \item Toward.Boost.STM (C++)
+
+    \item SXM (Microsoft, C\#)
+
+    \item Built-in to the language (Clojure, Haskell)
+
+    \item AtomJava (Java)
+
+    \item Durus (Python)
+  \end{itemize}
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Master... Apprentice... Heartborne... 7th Seeker}
+  \frametitle{STM Summary}
 
-  \subsection*{Master} Sometimes we do want to guarantee that only the master
-thread runs some code.
-  \begin{center}
-    {\tt \#pragma omp }{\bf master}
-  \end{center}
 
-    This is similar to the {\bf single} directive, except that the master thread (and only the master thread) is guaranteed to enter this region.
-    No implied barriers. 
+     Software Transactional Memory provides a more natural approach to
+      parallel programming: \\ \qquad no need to deal with locks and their associated problems.\\[1em]
 
-Also, no clauses.
+     Currently slow,\\ \qquad but a lot of research is going into improving it. (futile?)\\[1em]
+
+     Operates by either completing an atomic block,\\ or retrying (by rolling
+      back) until it successfully completes.
 
 \end{frame}
-
-
-\begin{frame}
-\frametitle{Man the Barricades}
-
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf barrier}
-  \end{center}
-
-     Waits for all the threads in the team to reach the barrier before
-      continuing.
-      
-     Loops, sections, and single all have an implicit barrer at the end of their
-      region (unless you use {\bf nowait}).
-      
-      
-     A barrier inside an {\tt if} statement must be {\tt \{  \}} separated.
-
-     This mechanism is analogous to {\tt pthread\_barrier} in pthreads.
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Critical}
-
- \begin{center}
-    {\tt \#pragma omp }{\bf critical} {\it [(name)]}
-  \end{center}
-
-    The enclosed region is guaranteed to only run one thread at a time
-      (on a per-name basis).
-    
-    This is the same as a block of code in pthreads surrounded by a {\tt mutex} lock
-      and unlock.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Atomic}
-
-We can also request atomic operations:
-
-    {\tt \#pragma omp }{\bf atomic} [{\bf read $\mid$ write $\mid$ update $\mid$ capture}]\\
-    {\it expression-stmt}
-    
-This ensures that a specific storage location is updated
-    atomically.  
-    
-    Atomics should be more efficient than using critical
-    sections (or else why would they include it?)
-
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Oh, Think Twice...}
-
- Write your code so that simply eliding OpenMP directives gives a valid program. For instance, this is wrong:
-  \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-if (a != 0)
-    #pragma omp barrier // wrong!
-if (a != 0)
-    #pragma omp taskyield // wrong!
-  \end{lstlisting}
-
-  Use this instead:
-  \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-if (a != 0) {
-    #pragma omp barrier
-}
-if (a != 0) {
-    #pragma omp taskyield
-}
-  \end{lstlisting}
-
-
-\end{frame}
-
 
 
 \end{document}

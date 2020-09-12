@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 12 --- Autoparallelization }
+\title{Lecture 12 --- Lock Convoys, Atomics, Lock-Freedom}
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -15,934 +15,639 @@
 
  \end{frame}
  
+
+\begin{frame}
+\frametitle{Question of the Day}
+\Large
+\vspace*{-3em}
+Why does it take a long time for a line of cars \\
+to start at a green light?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Convoys}
+\begin{center}
+\includegraphics[width=0.9\textwidth]{images/L08-DOT-111-convoy.jpg}\\
+By Roy Luck [CC BY 2.0 (http://creativecommons.org/licenses/by/2.0)], \\
+via Wikimedia Commons
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock Convoys}
+\begin{center}
+\scalebox{0.4}{
+\input{images/L08-convoy-full}}
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Problem}
+\begin{center}
+\Large
+\vspace*{-2em}
+Too much CPU time handling context switches!
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Weird Side Effects of Lock Convoys}
+
+Threads acquire the lock frequently and they are running for very short periods of time before blocking. 
+
+Other, unrelated threads of the same priority get to run for an unusually large percentage of the (wall-clock) time. 
+
+You might think another process is the real offender.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Unfairness is Fair?}
+
+In Windows Vista and later, the problem is solved because locks are unfair.
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/skepticalkid.jpg}
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Unfairness is Fair?}
+
+Windows XP: if a lock $\ell$ is unlocked by $A$ and there is a thread $B$ waiting, then $B$ gets it.
+
+$B$ is no longer blocked, and $B$ already owns the lock when it wakes up.
+
+The lock can never be ``stolen''; hence ``fair''.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Fair is Unfair}
+
+
+But! There is a period of time where the lock is held by $B$, but $B$ is not running.
+
+If thread $C$ starts to run and requests $\ell$, it gets stuck, and we pay more context switch costs.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{How Unfairness Mitigates Lock Convoys}
+
+
+Thread $A$ releases lock $\ell$. $B$ wants it.
+
+Let's be unfair. $B$ doesn't get it.
+
+Say $B$ runs next. Then it requests $\ell$ and gets it.
+
+What if $C$ runs next instead? Then it computes.
+\begin{itemize}
+\item If $C$ wants $\ell$, it gets it; maybe releases before switchout.
+\item If $C$ didn't need $\ell$, nothing to see here.
+\end{itemize}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Diagnosing Lock Convoys}
+
+\begin{center}
+\input{images/L08-detecting-convoy}
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Starvation?}
+
+Changing the locks to be unfair does risk starvation. 
+
+Windows does give a thread priority boost, temporarily, after it gets unblocked, to see to it that the unblocked thread does actually get a chance to run.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Do Your Own Dirty Work}
+
+Although it can be nice to be able to give away such a problem to the OS developers, we might have to solve it for ourselves. 
+
+
+\end{frame}
  
+
 \begin{frame}
-\frametitle{Automatic Parallelization}
+\frametitle{I am le tired...}
 
 \begin{center}
-\includegraphics[width=0.9\textwidth]{images/auto-par.jpg}
+	\includegraphics[width=0.5\textwidth]{images/pusheen-sleep.png}
 \end{center}
-\hfill Image Credit: Volkswagen
 
+We could make the threads that are NOT in the lock convoy call a sleep() system call fairly regularly to give other threads a chance to run. 
 
-Wait\ldots autonomous vehicles is a different course\ldots
 
 \end{frame}
 
+
+\begin{frame}
+\frametitle{Sleep, Data, Sleep}
+
+This solution is lame, though, because we're changing the threads that are not the offenders.
+
+It just band-aids the situation so the convoy does not totally trash performance. 
+
+Still, we are doing a lot of thread switches, which themselves are expensive as outlined above.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Sharing is Caring}
+
+\begin{center}
+Young toekans sharing food
+
+\includegraphics[width=\textwidth]{images/L08-sharing.jpg}
+
+Credit: Sander van der Wel via Flickr, Wikimedia Commons
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Sharing is Caring}
+
+The next idea is sharing: can we use a reader-writer lock to allow much more concurrency than we would get if everything used exclusive locking? 
+
+If there will be a lot of writes then there's limited benefit to this speedup, but if reads are the majority of operations then it is worth doing. 
+
+We can also try to find a way to break a critical section up into two or more smaller ones, if that can be done correctly!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Nevermind, I wanted something else...}
+
+The next idea has to do with changing when (and how) you need the data. 
+
+Shrink the critical section to just pull a copy of the shared data and operate on the shared data. 
  
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Three Address Code}
+ 
+But you saw the earlier discussion about critical section sizes, right? So you did that already...?
 
-  
-  \begin{itemize}
-    \item An intermediate code used by compilers
-      for analysis and optimization.
-    \vfill
-    \item Statements represent one fundamental operation---we
-      can consider each operation \structure{atomic}.
-    \vfill
-    \item Statements have the form:\\
-      $\qquad result := operand_1\:operator\:operand_2$
-    \vfill
-    \item Useful for reasoning about data races,\\ and easier to read than assembly. \\
-            \hspace*{1cm} (separates out memory reads/writes).
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{GIMPLE}
+\end{frame} 
 
-  
-  \begin{itemize}
-    \item GIMPLE is the three address code used by {\tt gcc}.
-    \vfill
-    \item To see the GIMPLE representation of your code use the
-      {\tt -fdump-tree-gimple} flag.
-    \vfill
-    \item To see all of the three address code generated by the compiler use
-      {\tt -fdump-tree-all}. You'll probably just be interested in the
-      optimized version.
-    \vfill
-    \item Use GIMPLE to reason about your code at a low level without
-      having to read assembly.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{The {\tt restrict} Keyword}
+\begin{frame}[fragile]
+\frametitle{Try, Try Again}
 
-   
-   A feature available as of C99: ``The restrict type qualifier allows programs to
-      be written so that translators can produce significantly faster
-      executables.''
-  \begin{itemize}
-    \item {\tt gcc} 5+ support C11 or better by default.
-  \end{itemize}
-~\\
-   {\tt restrict} means: you are promising the
-      compiler that the pointer will never \structure{alias} (another pointer
-      will not point to the same data) for the lifetime of the pointer.
-  
+The last solution suggested is to use try-lock primitives:
+
+\begin{lstlisting}[language=C]
+int retries = 0;
+while(pthread_mutex_trylock( &lock ) != 0 ) { /* 0 indicates lock acquired */
+  if ( retries < SPIN_LIMIT ) {
+    retries++;
+    sleep(0);
+    continue;
+  }
+  pthread_mutex_lock( &lock );
+  break;
+}
+\end{lstlisting}
+
+If we reach the limit then we just give up and enter the queue!
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 
 \begin{frame}
-\frametitle{Take the Vow}
+\frametitle{Polling?!}
+
+It looks like polling for the critical section. 
+
+The limit on the number of tries helps in case the critical section belongs to a low priority thread and we need the current thread to be blocked.
+
+Under this scheme, if $A$ is going to release the critical section, $B$ does not immediately become the owner. 
+
+$A$ may keep running and $A$ might even get the critical section again before $B$ tries again to acquire the lock (and may succeed). 
+
+Even if the spin limit is as low as 2, this means two threads can recover from contention without creating a convoy
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{You've been... THUNDERSTRUCK!}
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/solemnlyswear.jpg}
+\includegraphics[width=.8\textwidth]{images/L08-thundering-herd.jpg}
+
+Credit: public domain, Famous Players, 1925
 \end{center}
 
+\end{frame}
+
+
+\begin{frame}
+\frametitle{You've been... THUNDERSTRUCK!}
+
+The lock convoy has some similarities with a different problem called the \alert{thundering herd problem}. 
+
+In the thundering herd problem, some condition is fulfilled (e.g., broadcast on a condition variable) and it triggers a large number of threads to wake up. 
+
+It is likely they can't all proceed, so some will get blocked and then awoken again all at once in the future. 
+
+In this case it would be better to wake up one thread at a time instead of all of them.
 
 \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example of {\tt restrict} (1)}
+\begin{frame}
+\frametitle{Lost Wakeups}
 
-  
-    Pointers declared with {\tt restrict} must
-       never point to the same data.
-~\\[1em]
-    From Wikipedia:
+\begin{center}
+\includegraphics[width=.8\textwidth]{images/L08-sleeping-beauty.jpg}
 
-  \begin{lstlisting}[language=C]
-void updatePtrs(int* ptrA, int* ptrB, int* val) {
-    *ptrA += *val;
-    *ptrB += *val;
-}
-  \end{lstlisting}
- Would declaring all these pointers as
-      {\tt restrict} generate better code?
-  
+Credit: public domain, John Collier, \emph{Sleeping Beauty}, 1929
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Lost Wakeups}
+
+
+Beware! Waking up one thread at a time only works when threads are identical.
+
+Otherwise, you're better off waking all the threads just in case, to avoid correctness issues.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example of {\tt restrict} (2)}
+\begin{frame}
+\frametitle{Locks and Atomics}
 
-  
-    Let's look at the GIMPLE:
+ Atomics are a lower-overhead alternative to
+locks as long as you're doing suitable operations. 
 
-  \begin{lstlisting}[language=C][numbers=left]
-void updatePtrs(int* ptrA, int* ptrB, int* val) {
- D.1609 = *ptrA;
- D.1610 = *val;
- D.1611 = D.1609 + D.1610;
- *ptrA = D.1611;
- D.1612 = *ptrB;
- D.1610 = *val;
- D.1613 = D.1612 + D.1610;
- *ptrB = D.1613;
-}
-  \end{lstlisting}
+Sometimes: just want that operations are indivisible.
 
-  \begin{itemize}
-    \item Could any operation be left out if all the pointers
-      didn't overlap?
-  \end{itemize}  
-  
+Key idea: an \alert{atomic operation} is indivisible.\\
+\quad Other threads see state before or after the operation; nothing in between.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Example of {\tt restrict} (3)}
+  \frametitle{About C++ atomics}
 
-  
-  \begin{lstlisting}[language=C][numbers=left]
-void updatePtrs(int* ptrA, int* ptrB, int* val) {
- D.1609 = *ptrA;
- D.1610 = *val;
- D.1611 = D.1609 + D.1610;
- *ptrA = D.1611;
- D.1612 = *ptrB;
- D.1610 = *val;
- D.1613 = D.1612 + D.1610;
- *ptrB = D.1613;
-}
-  \end{lstlisting}
-  \begin{itemize}
-    \item If {\tt ptrA} and {\tt val} are not equal, you don't have to
-      reload the data on {\bf line 7}.
-    \item Otherwise, you would: there might be a call\\{\tt ~~~~updatePtrs(\&x, \&y,
-      \&x);}
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\vspace*{-2em}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example of {\tt restrict} (4)}
-  
-  Hence, this markup allows optimization:
-  \begin{lstlisting}[language=C]
-void updatePtrs(int* restrict ptrA, 
-                int* restrict ptrB,
-                int* restrict val)
-  \end{lstlisting}
-  Note: you can get the optimization by just declaring {\tt ptrA} and
-      {\tt val} as {\tt restrict}; {\tt ptrB} isn't needed for this optimization
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\Large
+    Use the default {\tt std::memory\_order}.\\
+    (= sequential consistency)\\[1em]
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Summary of {\tt restrict}}
-
-  
-  \begin{itemize}
-    \item Use {\tt restrict} whenever you know the pointer will not alias
-      another pointer (also declared {\tt restrict})
-  \end{itemize}
-
-    It's hard for the compiler to infer pointer aliasing information;
-    it's easier for you to specify it.\\[1em]
-
-    $\Rightarrow$ compiler can better optimize your code (more perf!)\\[1em]
+    \alert{Don't use relaxed atomics unless you're an expert!}\\[1em]
     
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Summary of {\tt restrict}}
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/i-lied.jpg}
-\end{center}
-
-    Caveat: don't lie to the compiler, or  you will get
-      \alert{undefined behaviour}.\\[1em]
-
-    Aside: {\tt restrict} is not the same as {\tt const}. {\tt const} data can still be
-      changed through an alias.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Automatic Parallelization of Example Code}
-
-
-  Let's try automatic parallelization.
-  \vfill
-  Compiling with {\tt solarisstudio} and automatic parallelization yields
-  the following:
-
-
-{\scriptsize
-  \begin{lstlisting}[language=C]
-% solarisstudio-cc -O3 -xautopar -xloopinfo omp_vector.c 
-"omp_vector.c", line 5: PARALLELIZED, and serial version generated                 
-"omp_vector.c", line 15: not parallelized, call may be unsafe
-  \end{lstlisting}
-}
-
-  How will this code compare to our manual efforts? \\
-  (If you weren't in class, you'll have to try it yourself.)
-  \vfill
-  {\bf Note:} {\tt solarisstudio} generates two versions of the code, 
-  and decides, at runtime, if the parallel code would be faster.
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example Code to Parallelize}
-
-
-  \begin{lstlisting}[language=C][numbers=left]
-#include <stdlib.h>
-
-void setup(double *vector, int length) {
-    int i;
-    for (i = 0; i < length; i++)
-    {
-        vector[i] += 1.0;
-    }
-}
-
-int main()
-{
-    double *vector;
-    vector = (double*) malloc(sizeof(double)*1024*1024);
-    for (int i = 0; i < 1000; i++)
-    {
-        setup (vector, 1024*1024);
-    }
-    // if you don't read vector, compiler NOPs everything
-    printf("%f\n", vector[0]);
-}
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Automatic Parallelization of Example Code}
-
-
-  Let's try automatic parallelization.
-  \vfill
-  Compiling with {\tt solarisstudio} and automatic parallelization yields
-  the following:
-
-
-{\scriptsize
-  \begin{lstlisting}[language=C]
-% solarisstudio-cc -O3 -xautopar -xloopinfo omp_vector.c 
-"omp_vector.c", line 5: PARALLELIZED, and serial version generated                 
-"omp_vector.c", line 15: not parallelized, call may be unsafe
-  \end{lstlisting}
-}
-
-  How will this code compare to our manual efforts? \\
-  (If you weren't in class, you'll have to try it yourself.)
-  \vfill
-  {\bf Note:} {\tt solarisstudio} generates two versions of the code, 
-  and decides, at runtime, if the parallel code would be faster.
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Autoparallelization implementation: OpenMP}
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/openmp.png}
-\end{center}
-
-  Under the hood, most parallelization frameworks use {\tt OpenMP},
-      which we'll see next lecture.
-      
-  For now: you can control the number of threads with the
-      {\tt OMP\_NUM\_THREADS} environment variable.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Automatic Parallelization in {\tt gcc}}
-
-
-  {\tt gcc} (since 4.3) can also auto-parallelize loops via Graphite. \\[1em]
-  Parallelization has been getting better, \\ \qquad but not super well-maintained.\\[1em]
-  I think {\tt gcc} can insert a runtime check of loop iteration count.\\[2em]
-  
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/dandc.jpg}
-\end{center}
-
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Automatic Parallelization in {\tt gcc}}  
-  Magic incantation:\\
-  \qquad {\tt gcc -O2 -floop-parallelize-all }\\
-  \qquad \qquad {\tt -ftree-parallelize-loops=4 -fopt-info}\\[1em]
-  {\tt -floop-parallelize-all:} parallelize all the things\\
-  {\tt -ftree-parallelize-loops=N:} use {\tt N} threads\\[1em]
-
-  {\bf Note:} {\tt gcc} uses {\tt OpenMP} but overrides
-  {\tt OMP\_NUM\_THREADS} with {\tt N} above.
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Sample {\tt -fopt-info} output}
-
-\begin{verbatim}
-$ gcc L11-omp_vector.c -O2 \
- -floop-parallelize-all -ftree-parallelize-loops=4 -fopt-info 
-L11-omp_vector.c:14:3: note: parallelizing inner loop 1
-L11-omp_vector.c:23:3: note: loop nest optimized
-L11-omp_vector.c:15:15: note: parallelizing inner loop 4
-
-line 14: for (i = 0; i < length; i++) {
-line 15: vector[i] += 1.0;
-line 23: for (int i = 0; i < 1000; i++) {
-\end{verbatim}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Understanding Automatic Parallelization in {\tt gcc}}
-
-
-  Want to better understand?\\
-  Look at the assembly code to see the parallelizations\\
-  (obviously, impractical for a large project).\\[-7em]
-\begin{verbatim}
-$ gcc -std=c99 -O3 -ftree-parallelize-loops=4 \
-    omp_vector_gcc.c -S -o omp_vector_gcc_auto.s
-\end{verbatim}
-  [Or, you can use {\tt objdump} on files compiled with {\tt -g}.]
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-
-\begin{center}
-	\includegraphics[width=0.3\textwidth]{images/microscope.jpeg}
-\end{center}
-
-  \frametitle{{\tt gcc} assembly output}
-  Older gcc generated a {\tt .s} file with:
-  \begin{lstlisting}[language=C]
-call    GOMP_parallel_start
-leaq    80(%rsp), %rdi
-call    setup._loopfn.0
-call    GOMP_parallel_end
-  \end{lstlisting}
-  \vfill
-  {\bf Note:} {\tt gcc} also parallelizes {\tt main.\_loopfn.2} and
-  {\tt main.\_loopfn.3}, although it looks like it serves little purpose.
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Loops gcc Can Handle}
-
-
-  Single loop:
-  \begin{lstlisting}[language=C]
-for (i = 0; i < 1000; i++)
-    x[i] = i + 3;
-  \end{lstlisting}
-  \vfill
-  Nested loops with simple dependency:
-  \begin{lstlisting}[language=C]
-for (i = 0; i < 100; i++)
-    for (j = 0; j < 100; j++)
-        X[i][j] = X[i][j] + Y[i-1][j];
-  \end{lstlisting}
-  \vfill
-  Single loop with not-very-simple dependency:
-  \begin{lstlisting}[language=C]
-for (i = 0; i < 10; i++)
-    X[2*i+1] = X[2*i];
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{More Loops gcc Can Handle}
-
-
-  Single loop with if statement:
-  \begin{lstlisting}[language=C]
-for (j = 0; j <= 10; j++)
-    if (j > 5) X[i] = i + 3;
-  \end{lstlisting}
-  \vfill
-  Triangle loop:
-  \begin{lstlisting}[language=C]
-for (i = 0; i < 100; i++)
-    for (j = i; j < 100; j++)
-        X[i][j] = 5;
-  \end{lstlisting}
-  \vfill
-  Examples from: \url{http://gcc.gnu.org/wiki/AutoparRelated}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary of Conditions for Automatic Parallelization}
-
-
-  From Chapter 10 of
-  Oracle's \emph{Fortran Programming Guide}
-  \footnote{\scriptsize \url{http://download.oracle.com/docs/cd/E19205-01/819-5262/index.html}}
-  translated to C, a loop must:
-
-  \begin{itemize}
-    \item have a recognized loop style, e.g., {\tt for} loops with
-      bounds that don't vary per-iteration;
-    \item have no dependencies between data accessed in loop bodies for
-      each iteration;
-    \item not conditionally change scalar variables read after the loop
-      terminates, or change any scalar variable across iterations; and
-    \item have enough work in the loop body to make parallelization profitable.
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Let's Race}
-
-\begin{center}
-	\includegraphics[width=\textwidth]{images/imbatman.jpg}
-\end{center}
-
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example Code to Parallelize (once more)}
-
-
-  \begin{lstlisting}[language=C][numbers=left]
-#include <stdlib.h>
-
-void setup(double *vector, int length) {
-    int i;
-    for (i = 0; i < length; i++)
-    {
-        vector[i] += 1.0;
-    }
-}
-
-int main()
-{
-    double *vector;
-    vector = (double*) malloc(sizeof(double)*1024*1024);
-    for (int i = 0; i < 1000; i++)
-    {
-        setup (vector, 1024*1024);
-    }
-    // if you don't read vector, compiler NOPs everything
-    printf("%f\n", vector[0]);
-}
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Manually Parallelizing the Example Code}
-
-
-  What can we do to parallelize this code?
-  \vfill
-  {\bf Option 1:} \uncover<2->{ horizontal~ \qquad \begin{minipage}{7em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}}
-
-  \begin{itemize}
-    \item<2-> Create 4 threads; each thread does 1000 iterations on its own sub-array.
-  \end{itemize}
-
-  {\bf Option 2:} \uncover<3->{ bad horizontal~~ \begin{minipage}{7em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}}
-
-  \begin{itemize}
-    \item<3-> 1000 times, create 4 threads which each operate once on the sub-array.
-  \end{itemize}
-
-  {\bf Option 3:} \uncover<4->{~~vertical $ \quad \: \qquad \mid \mid \mid\mid \:\: \mid \mid \mid \mid \:\: \mid \mid \mid \mid\:\: \mid \mid \mid \mid$}
-  \begin{itemize}
-    \item<4-> Create 4 threads; for each element, the owning thread does 1000 iterations on that element.
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Manual Parallelization Demo}
-
-  Methodology: compiling with {\tt solarisstudio}, \\ flags {\tt -O3 -lpthread}.\\[1em]
-
-  Which manual option performs better?
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Comparing Parallelization Results}
-
-
-How does autoparallelization compare to manual parallelization?
-   \begin{itemize}
-     \item<2-> Relative ordering: {\bf Option 3} \textgreater{} Automatic
-       \textgreater{} {\bf Option 1}
-     \item<2-> Automatic parallelization of {\bf Option 1} was better than
-       manual, why?
-     \item<3-> Manual {\bf Option 3} performed better, even though both used the
-       same number of threads, why?
-   \end{itemize}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{Lingering Questions about Runtimes}
-
-  
-    What happened here?\\[1em]
-  
-    \begin{tabular}{ll}
-      \begin{minipage}{5em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}& horizontal good: \\
-      & \qquad create 4 threads to do 1000 iterations on sub-arrays.\\
-      \begin{minipage}{5em} --- --- --- ---\\[-.8em] --- --- --- ---\\[-.8em] --- --- --- --- \end{minipage}& horizontal bad: \\
-      & \qquad 1000 times, create 4 threads to iterate on sub-array. \\
-      $ \mid \mid \mid\mid \: \mid \mid \mid \mid \: \mid \mid \mid \mid\: \mid \mid \mid \mid$& vertical:\\
-      & \qquad create 4 threads, handle 1 element at a time.\\[1em]
-    \end{tabular}
-    
-      
-      In 2015, {\tt perf stat -r 5} gave following task-clocks (in seconds):\\[1em]
-
-      \begin{center}
-      \begin{tabular}{lrrrr}
-        & H good & H bad & V & auto \\
-        gcc, no opt & 2.794 & 2.953 & 2.799\\
-        gcc, -O3 & 0.588 & 1.490 & 0.980\\
-        solaris, no opt & 3.175 & 3.291 & 2.966 \\
-        solaris, -xO4 & 0.494 & 1.453 & 2.739 & 0.688\\
-      \end{tabular}
-      \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[containsverbatim]
-  \frametitle{Runtimes---Why?}
-
-  
-    Observations:\\[1em]
-    \begin{itemize}
-    \item Good runs had 5 to 7 cpu-migrations; bad had 4000.
-    \item \# cycles varied from 2B to 9.7B (no opt).\\
-    \item Branch misses varied from 8k to 208k.
-    \end{itemize}
-  
-    
-
-    
-%%     gcc plain, bad: 4,004 cpu-migrations; 5.2B cycles; 75\% frontend cycles idle; 1B branches; 167k branch misses
-%% gcc -O3, bad: 4,003 cpu-migrations; 4.2B cycles; 80\% frontend cycles idle; 466k branches; 208k branch misses
-%% gcc plain, good: 5 cpu-migrations; 9.6B cycles; 39\% frontend cycles idle; 1B branches; 13k branch misses
-%% gcc -O3, good: 7 cpu-migrations; 2B cycles; 49\% frontend cycles idle; 525k branches; 8k branch misses
-
-%% gcc plain, V: 5 cpu-migrations; 9.7B cycles; 44\% frontend cycles idle; 1B branches; 1M branch misses
-%% gcc -O3, V: 7 cpu-migrations; 3.3B cycles; 69\% frontend cycles idle; 1B branches; 1M branch misses
-
-%% solaris auto: 0.688s; 3 cpu-migrations; 2.4B cycles; 72\% frontend cycles idle; 134M branches; 30k branch misses
-        
     
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+
+\begin{frame}
+\frametitle{Different Memory Options}
+
+\begin{itemize}
+		\item memory\_order\_acquire
+		\item memory\_order\_release
+		\item memory\_order\_acq\_rel
+		\item memory\_order\_consume
+		\item memory\_order\_relaxed
+		\item memory\_order\_seq\_cst
+\end{itemize}
+
+\end{frame}
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Case Study 2: Multiplying a Matrix by a Vector}
+  \frametitle{Really, don't use C++ relaxed atomics!}
+  \begin{center}
+    \includegraphics[width=.8\textwidth]{images/disapproving-bird}\\
+    Photo Credit: Danielle Guerard
+  \end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{C++ atomics: Key Idea}
+  
+    An \emph{atomic operation} is indivisible.\\[1em]
+    Other threads see state before or after the operation,
+    nothing in between.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-Let's see how automatic parallelization does on a more complicated
-program (could we parallelize this?):
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Simplest: {\tt atomic\_flag}}
+  
+    Represents a boolean flag.\\[1em]
+    \begin{lstlisting}[language=C]
+#include <atomic>
 
-  \begin{lstlisting}[language=C][numbers=left]
-void matVec (double **mat, double *vec, double *out,
-             int *row, int *col) 
-{
-  int i, j;
-  for (i = 0; i < *row; i++)
-  {
-    out[i] = 0;
-    for (j = 0; j < *col; j++)
-    {
-      out[i] += mat[i][j] * vec[j];
-    }
+atomic_flag f = ATOMIC_FLAG_INIT;
+    \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Operations on {\tt atomic\_flag}}
+  
+    Can clear, and can test-and-set:
+    \begin{lstlisting}[language=C]
+#include <atomic>
+
+atomic_flag f = ATOMIC_FLAG_INIT;
+int foo() {
+  f.clear();
+  if (f.test_and_set()) {
+    // was true
   }
 }
-  \end{lstlisting}
-
-
-  \begin{center}
-    Reminder:
-    \begin{math}
-      \begin{bmatrix} 1 & 2 & 3 \\ 4 & 5 & 6\end{bmatrix}
-      \begin{bmatrix} 1 \\ 2 \\ 3 \end{bmatrix}
-      =
-      \begin{bmatrix} 14 \\ 32 \end{bmatrix}
-    \end{math}
-  \end{center}
-
+    \end{lstlisting}
+    ~\\
+    \begin{tabbing}
+      {\tt test\_and\_set}: \= atomically sets to true, \\
+      \> returns previous value.
+    \end{tabbing}
+    No assignment (=) operator.
+  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Case Study: Automatic Parallelization, Attempt 1}
+  \frametitle{Using more general C++ atomics}
 
-  
-  Well, based on our knowledge, we could parallelize the outer loop.\\[1em]
-  Let's see what {\tt solarisstudio} will do for us\ldots
-  
 
-  \begin{lstlisting}[language=C]
-% solarisstudio-cc -xautopar -xloopinfo -O3 -c fploop.c
-"fploop.c", line 5: not parallelized, not a recognized for loop
-"fploop.c", line 8: not parallelized, not a recognized for loop
-  \end{lstlisting}
-
+    Declaring them:
   
-  \ldots it refuses to do anything, guesses?
+\begin{lstlisting}[language=C]
+#include <atomic>
+
+atomic<int> x;
+\end{lstlisting}
+
+Library's implementation: \\
+\hspace*{1em} on small types, lock-free operations;\\
+\hspace*{1em} on large types, mutexes.
+
   
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Case Study: Automatic Parallelization, Attempt 2}
-
-
-  \begin{itemize}
-    \item The loop bounds are not constant, since one of the variables may alias
-      {\tt row} or {\tt col}, even though {\tt int $\neq$ double}.
-  \end{itemize}
-~\\[1em]
-
-  So, let's add {\tt restrict} to {\tt row} and {\tt col} and see what
-  happens\ldots
-
-  \begin{lstlisting}[language=C]
-% solarisstudio-cc -O3 -xautopar -xloopinfo -c fploop.c
-"fploop.c", line 5: not parallelized, unsafe dependence
-"fploop.c", line 8: not parallelized, unsafe dependence
-  \end{lstlisting}
-
-  Now it recognizes the loop, but still won't parallelize it. Why?
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Case Study: Automatic Parallelization, Attempt 3}
-
-
-  \begin{itemize}
-    \item {\tt out} might alias {\tt mat} or {\tt vec}, which would make this
-      unsafe
-  \end{itemize}
-
-  Let's add another {\tt restrict} to {\tt out}:
-
-  \begin{lstlisting}[language=C]
-% solarisstudio-cc -O3 -xautopar -xloopinfo -c fploop.c
-"fploop.c", line 5: PARALLELIZED, and serial version
-  generated
-"fploop.c", line 8: not parallelized, unsafe dependence
-  \end{lstlisting}
-
-  Now, we can get the outer loop to parallelize.
-  
-  \begin{itemize}
-    \item Parallelizing the outer loop is almost always better than inner loops,
-      and usually it's a waste to do both, so we're done.
-  \end{itemize}
-
-  {\bf Note:} We can parallelize the inner loop as well (it's similar to
-the assignment). We'll see that {\tt solarisstudio} can do it automatically.
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Reductions}
+  \frametitle{What to do with Atomics}
+
+  
+
+    \Large
+    Kinds of operations:
+    \begin{itemize}
+    \item reads
+    \item writes
+    \item read-modify-write (RMW)
+    \end{itemize}
+    
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reads and Writes}
+
+  
+    C++ has syntax to make these all transparent:
+\begin{lstlisting}[language=C][language=C++]
+#include <atomic>
+#include <iostream>
+
+std::atomic<int> ai;
+int i;
+
+int main() {
+    ai = 4;
+    i = ai;
+    ai = i;
+    std::cout << i;
+}
+\end{lstlisting}
+Can also use {\tt i = ai.load()} and {\tt ai.store(i)}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Read-Modify-Write (RMW)}
+
+  
+    Consider {\tt ai++}.\\[1em]
+    This is equivalent to (under lock): \\
+    ~~~{\tt tmp = ai.read(); tmp++; ai.write(tmp); }\\[1em]
+    Hardware can do that atomically, and faster.\\[1em]
+    Other RMWs: {\tt +-, \&=, etc, compare-and-swap}\\[2em]
+
+    {\small
+      more info:\\ \url{http://preshing.com/20130618/atomic-vs-non-atomic-operations/}
+      }
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{Do Free Lunches Exist?}
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/highlander.jpeg}
+\includegraphics[width=0.6\textwidth]{images/freelunch.jpg}
 \end{center}
 
- Reductions combine input data into a smaller (summary) set.
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Lock Freedom}
+
+Suppose we'd like to operate in a world in which there are no locks. 
+
+Research has gone into the idea of lock-free data structures. 
+
+If you have a map and it will be shared between threads, the normal thing would be to protect access to the map with a mutex (lock). 
+
+But what if the data structure was written in such a way that we didn't have to do that? 
+
+That would be a lock-free data structure.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Use Locks Wisely!}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/usebombswisely.png}
+\end{center}
+
+Often, normal locking and unlocking behaviour is sufficient.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Use Locks Wisely!}
+
+
+We likely want to use it when we need to guarantee that progress is made. 
+
+Or: when we really can't use locks (e.g., signal handler), or where a thread dying while holding a lock results in the whole system hanging.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Non-Blocking Data Structure}
+
+Non-blocking data struct: one where no operation can result in being blocked. 
+
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/noblocks.jpg}
+\end{center}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Non-Blocking Data Structure}
+
+Java has concurrency-controlled data structures in which locking and unlocking is handled for you, but those can still be blocking. 
+
+Lock-free data structures are always inherently non-blocking. 
+
+A spin lock or busy-waiting approach is not lock free, because if the thread holding the lock is suspended then everyone else is stuck!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock-Free Data Structure}
+A lock-free data structure doesn't use any locks (duh) but there's also some implication that this is also thread-safe.
+
+You can't make all your data structures lock-free ones by just deleting all the mutex code (sorry). 
+
+Lock free also doesn't mean it's a free-for-all; there can be restrictions. 
+
+For example, a queue that allows one thread to append to the end while another removes from the front, but not 2 removals at the same time.
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Lock-Free Data Structure}
+
+The actual definition of lock-free is more formal. 
+
+If any thread performing an operation gets suspended during the operation, other threads accessing the data structure are still able to complete their tasks.
+
+This is distinct from the idea of waiting, though; an operation might still have to wait its turn or might get restarted.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Wait-Free Data Structures}
+
+You might need wait-free data structures. 
+
+This does not mean that nothing ever has to wait! 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Wait-Free Data Structures}
+
+
+It does mean that each thread trying to perform some operation will complete it within a bounded number of steps regardless of what any other threads do. 
+
+This means that a compare-and-swap routine with infinite retries is not wait free, because a very unlucky thread could potentially take infinite tries...
+
+The wait free data structures tend to be very complicated...
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{Reduction Example}
+\frametitle{Example Lock-Free Algorithm}
 
-Simplest instance: computing the sum of an array.
- 
-  Consider the following code:
+\begin{lstlisting}[language=C]
+void stack_push(stack* s, node* n) {
+    node* head;
+    do
+    {
+        head = s->head;
+        n->next = head;
+    }
+    while ( !atomic_compare_exchange(s->head, head, n) );
+} 
+\end{lstlisting}
 
-  \begin{lstlisting}[language=C]
-double sum (double *array, int length)
-{
-  double total = 0;
+\end{frame}
 
-  for (int i = 0; i < length; i++)
-    total += array[i];
-  return total;
+\begin{frame}[fragile]
+\frametitle{Example Wait-Free Algorithm}
+
+\begin{lstlisting}[language=C]
+void increment_reference_counter(rc_base* obj) {
+    atomic_increment(obj->rc);
 }
-  \end{lstlisting}
 
-  Can we parallelize this? 
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reduction Problems}
-
-
-  Barriers to parallelization:
-  \begin{enumerate}
-    \item value of {\tt total} depends on previous
-      iterations;
-    \item addition is actually non-associative for floating-point values
-      \\ (is this a problem?)
-  \end{enumerate}
-  ~\\[1em]
-  \begin{center}
-    Recall that ``associative'' means: 
-     \[a + (b + c) = (a + b) + c.\]
-  \end{center}
-	 In this case, the program probably isn't sensitive to rounding,
-      but you should always consider if an operation is associative.
+void decrement_reference_counter(rc_base* obj) {
+    if (0 == atomic_decrement(obj->rc))
+        delete obj;
+} 
+\end{lstlisting}
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Automatic Parallelization via Reduction}
 
 
-  If we compile the program with {\tt solarisstudio} and add the flag
-  {\tt -xreduction}, it will parallelize the code:
-
-
-  \begin{lstlisting}[language=C]
-% solarisstudio-cc -xautopar -xloopinfo -xreduction -O3 -c sum.c 
-"sum.c", line 5: PARALLELIZED, reduction, and serial version
-  generated
-  \end{lstlisting}
-~\\[1em]
-
-
-  {\bf Note:} If we try to do the reduction on {\tt fploop.c} with {\tt restrict}s added, we'll get the following:
-
-
-  \begin{lstlisting}[language=C]
-% solarisstudio-cc -O3 -xautopar -xloopinfo  -xreduction -c fploop.c
-"fploop.c", line 5: PARALLELIZED, and serial version generated
-"fploop.c", line 8: not parallelized, not profitable
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Dealing with Function Calls}
+\frametitle{To Lock Free, or Not to Lock Free}
 
-  
-  \begin{itemize}
-    \item A general function could have arbitary side effects.
-    \item Production compilers tend to avoid parallelizing any loops with
-      function calls.
-  \end{itemize}
-~\\[1em]
+Are lock-free programming techniques somehow better for performance? Maybe!
 
-  Some built-in functions, like {\tt sin()}, are ``pure'', have no side
-  effects, and are safe to parallelize.
-~\\[1em]
-  {\bf Note:} this is why functional languages are nice for parallel
-  programming: impurity is visible in type signatures.
+Lock free algorithms are about ensuring there is forward progress in the system and not really specifically about speed. 
+
+A particular algorithm implementation might be faster under lock-free algorithms.
+
+But often they are not. In fact, the lock free algorithms could be slower, in which case you use them because you must, not because it is particularly speedy.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Dealing with Function Calls in {\tt solarisstudio}}
-
-  
-  \begin{itemize}
-    \item For {\tt solarisstudio} you can use the {\tt -xbuiltin} flag to make
-      the compiler use its whitelist of ``pure'' functions.
-    \item The compiler can then parallelize a loop which uses {\tt sin()}
-      (you shouldn't replace built-in functions with your own if you use this
-      option).
-  \end{itemize}
-  \vfill
-  Other options which may work:
-  
-  \begin{enumerate}
-    \item Crank up the optimization level ({\tt -xO4}).
-    \item Explicitly tell the compiler to inline certain functions ({\tt
-      -xinline=}, or use the {\tt inline} keyword).
-  \end{enumerate}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary of Automatic Parallelization}
-
-  
-To help the compiler, we can:
-\begin{itemize}
-\item use {\tt restrict} (make a {\tt restrict}ed copy); and,
-\item make sure that loop bounds are constant (temporary
-variables). 
-\end{itemize}
-~\\
-Some compilers automatically create different versions
-for the alias-free case and the (parallelized) aliased case.\\[1em]
-
-At runtime, the program runs the aliased case if correct.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \end{document}

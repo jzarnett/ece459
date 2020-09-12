@@ -1,8 +1,31 @@
 \input{configuration}
 
-\title{Lecture 14 --- OpenMP Tasks }
+% Custom packages
+\usepackage{xcolor}
+\definecolor{solarizedBase03}{HTML}{FFFFFF}
+\definecolor{solarizedBase02}{HTML}{000000}
+\definecolor{solarizedBase00}{HTML}{657B83}
+\definecolor{solarizedBase0}{HTML}{000000}
+\definecolor{solarizedBase1}{HTML}{93A1A1}
+\definecolor{solarizedBase3}{HTML}{FDF6E3}
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+
+\usepackage[listings]{tcolorbox}
+\newtcbinputlisting{\codelisting}[2][]{
+    listing file={#2},
+    colback=solarizedBase03,
+    colframe=solarizedBase02,
+    colupper=solarizedBase0,
+    fonttitle=\bfseries\color{solarizedBase1},
+    listing options={basicstyle=\ttfamily\footnotesize},
+    listing only,
+    #1
+}
+\newtheorem{defn}{Definition}
+
+\title{Lecture 14 --- Early Termination, Reduced-Resource Computation }
+
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -16,502 +39,571 @@
  \end{frame}
 
 
-\begin{frame}[fragile]
-\frametitle{Task Manager}
+\begin{frame}
+\frametitle{Quitting Time}
 
-The main new feature in OpenMP 3.0 is the notion of \alert{tasks}. 
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/quitting-time.jpg}
+\end{center}
 
-When the program executes a \verb+#pragma omp task+ statement, the code
-inside the task is split off as a task and scheduled to run sometime
-in the future. 
-
-Tasks are more flexible than parallel sections.
-
-They also have lower overhead.
+Knowing when to quit is wise.
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Tasks}
+\frametitle{Two Strategies}
+There are two basic ideas. 
 
- \begin{center}
-    {\tt \#pragma omp }{\bf task} {\it [clause [[,] clause]*]}
-  \end{center}~\\
-
-Generates a task for a thread in the team to run.
-     When a thread enters the region it may:
 \begin{itemize}
-        \item immediately execute the task; or
-        \item defer its execution. (any other thread may be assigned the task)
+\item Skip some parts of work
+\item Intentionally reduce accuracy to speed things up. 
 \end{itemize}
 
-  Allowed Clauses: {\bf if, final, untied, default, mergeable, private,
-  firstprivate, shared}
+You may implement these strategies when you're writing an exam.
+
+Your program might support only one.
 
 \end{frame}
 
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{{\tt if} Clause}
+  \frametitle{Early Phase Termination}
 
- \begin{center}
-  {\bf if} {\it(scalar-logical-expression)}
-  \end{center}
- 
-    When expression is {\tt false}, generates an \alert{undeferred task}.
 
-The generating task region is suspended until the undeferred task finishes.
 
+  We've seen barriers before.\\
+
+  No thread may proceed past a barrier until all of the threads
+reach the barrier.\\[1em]
+
+  This may slow down the program: maybe one of the threads is horribly
+  slow.\\[1em]
+
+  Solution: kill the slowest thread.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: Objection}
+
+\Huge
 \begin{center}
-\includegraphics[width=0.4\textwidth]{images/doitnow.jpeg}
+``Oh no, that's going to change the meaning of the program!''
+\end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: When is it OK anyway?}
+
+
+OK, so we don't want to be completely crazy.\\[1em]
+
+Instead: 
+\begin{itemize}
+\item develop a statistical model of the program behaviour.
+\item only kill tasks that don't introduce unacceptable distortions.
+\end{itemize}
+
+~\\[1em]
+
+When we run the program: \\ \qquad get the output, plus a confidence interval.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Oh noooo!}
+
+Example:
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/mariokart.jpg}
 \end{center}
 
 \end{frame}
 
+
+
 \begin{frame}
-\frametitle{{\tt final} Clause}
+\frametitle{Remember, Remember...}
 
-  \begin{center}
-  {\bf final} {\it(scalar-logical-expression)}
-  \end{center}
+Many problems are mathematically hard in nature: to find the optimal solution you have to consider every possibility. 
 
-    When expression is {\tt true}, generates a final task.
-    
-    All tasks within a final task are {\it included}.
-    
-    Included tasks are undeferred and also execute immediately in the same thread.
+Well, what this strategy presupposes is: don't.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Route Sucks}
+
+Imagine the travelling salesperson problem, just for the sake of an example. 
+
+There are $n$ points to visit and you want to minimize the amount of travel time. 
+
+The only way to know if a solution is best is to consider every possible route.
+
+One way we can know if we're wasting time is to remember previous outcomes.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Route Sucks}
+
+The solution we're evaluating will have some travel cost in units (maybe kms). 
+
+If the currently-accumulated cost in kms is larger than the total of the thus-far best solution, give up. 
+
+Another idea?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Close Enough is Good Enough}
+
+Another approach is to stop as soon as you have a solution that's reasonable. 
+
+If our target is to get total travel under 500 km then we can stop searching as soon as we find one that satisfies this constraint.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{You Have Ten Chances}
+
+You can also choose to reduce the amount of effort by trying, say, five or ten different possibilities and seeing which of those is the best.
+
+There's no guarantee you'll get an optimal solution.
+
+Interesting to think about: what does Google Maps do?
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Trading Accuracy for Performance}
+
+
+    Consider Monte Carlo integration.\\
+    It illustrates a general tradeoff: accuracy vs performance.\\
+  
+    Martin Rinard generalized the accuracy vs performance tradeoff with:
+      \begin{itemize}
+        \item early phase termination [OOPSLA07]
+        \item loop perforation [CSAIL TR 2009]
+      \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: Two Examples}
+
+
+
+Monte Carlo simulators: \\
+Raytracers:
+\begin{itemize}
+\item already picking points randomly.
+\end{itemize}
+
+In both cases: spawn a lot of threads.\\[1em]
+Could wait for all threads to complete;\\
+or just compensate for missing data points,\\
+assuming they look like points you did compute.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Calling the Election}
+
+In other cases, some threads simply take too long, but we don't need all of them to produce a result. 
+
+If we are evaluating some protocol where the majority wins, we can stop as soon as sufficient results have been returned.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/dewey.jpg}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{A Solution Exists!}
+
+For some categories of problem, we know not only that a solution will exist, but also how many steps it takes to solve (optimally). 
+
+Consider the Rubik's Cube:
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/rubikscube.jpg}
+\end{center}
+
+Brute force?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Rubik's Cube}
+
+Okay, that's fun to talk about, but it's always better if we see it in action? 
+
+Let's play around with \url{https://rubiks-cube-solver.com/}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Austerity Programs for Computer Programs}
+
+We do more with less! 
+
+Well, you can use \texttt{float} instead of \texttt{double}. 
+
+But you can also work with integers to represent floating point numbers.
+
+But when is it appropriate?
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Circuit Analysis}
+
+You're entering points that were measured (with some error) and you're computing using machine numbers (also with some error).
+
+The question is whether the simulation is good enough.
+
+What resistors are going to be put in your circuit board?
+
+is there any point in calculating it down to five decimal places when the resistors you buy have a tolerance of $\pm$5\%? 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Circuit Analysis}
+
+
+No, and if you took a circuits course with Prof. Barby he would be very disappointed if you said yes.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/barby.png}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{\texttt{iddqd}}
+
+Quake III: ``fast inverse square root''. 
+
+For graphics processing, sometimes you want to calculate $1/\sqrt{x}$.
+.
+Square root (or similar) is usually calculated by some interpolation or root-finding method
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{Examples of if and final}
+\frametitle{Fast Inverse Square Root}
 
-  \begin{lstlisting}[language=C]
-void foo () {
-    int i;
-    #pragma omp task if(0) // This task is undeferred
-    {
-        #pragma omp task
-        // This task is a regular task
-        for (i = 0; i < 3; i++) {
-            #pragma omp task
-            // This task is a regular task
-            bar();
-        }
-    }
-    #pragma omp task final(1) // This task is a regular task
-    {
-        #pragma omp task // This task is included
-        for (i = 0; i < 3; i++) {
-            #pragma omp task
-            // This task is also included
-            bar();
-        }
-    }
+\begin{lstlisting}[language=C]
+float FastInvSqrt(float x) {
+  float xhalf = 0.5f * x;
+  int i = *(int*)&x;         // evil floating point bit level hacking
+  i = 0x5f3759df - (i >> 1);  // what the fuck?
+  x = *(float*)&i;
+  x = x*(1.5f-(xhalf*x*x));
+  return x;
 }
-  \end{lstlisting}
+\end{lstlisting}
+
+ Now this probably seems like dark magic, and it is. 
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Untied we stan... wait...}
+\frametitle{Float to Int?}
 
 \begin{center}
-  {\bf untied}
+	\includegraphics[width=0.4\textwidth]{images/float-to-int.png}
 \end{center}
+
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Oh, never mind...}
+
+
+The clever hack is somewhat obsoleted now by the fact that CPU instructions now exist to give you fast inverse square root. 
+
+This was obviously not something you could rely on in 1999.
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{The N-Body Simulation}
+
+A common physics problem that programmers are asked to simulate is the N-Body problem.
+
+\begin{center}
+\includegraphics[width=0.8\textwidth]{images/Galaxy_Cluster_sim.png}
+\end{center}
+\hfill Image Credit: Michael L. Umbricht 
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Trade Accuracy for Performance}
+
+You could look for optimizations that trade off accuracy for performance. 
+
+As you might imagine, using \texttt{float} instead of \texttt{double}.
+
+
+More? Then we need some domain knowledge. 
+
+Hint: consider the formula: $F = \dfrac{Gm_{1}m_{2}}{r^{2}}$. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The N-Body Simulation}
+
+Let's assume it's OpenCL converted and is optimized.
+
+Can we use \texttt{float} instead of \texttt{double}?
+
+What if we want more?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Estimation is Okay}
+
+Points that are far away contribute only very small forces. 
+
+So you can estimate them (crudely). 
+
+The idea is to divide the points into a number of ``bins'' which are cubes representing a locale of some sort. 
+
+Then, compute the centre of mass for each bin. 
+
+When calculating the forces: centre of mass for faraway bins; individual particles for nearby particles.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This used to be an assignment... }
+
+A more concrete explanation with an example: suppose the space  is divided into $[0, 1000]^3$, so we can take bins which are cubes of length 100. 
+
+This gives 1000 bins. 
+
+To increase the accuracy, what should we do?
+
+To increase the speed, what should we do?
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Compute Centre of Mass}
+
+Compute all of the masses in parallel: create one thread per bin, and add a point's
+position if it belongs to the bin:
+
+\begin{lstlisting}
+    int xbin, ybin, zbin; // initialize with bin coordinates
+    int b;
+    for (i = 0; i < POINTS; i++) {
+        if (pts[i] in bin coordinates) {
+            cm[b].x += pts[i].x; // y, z too
+            cm[b].w += 1.0f;
+        }
+    }
+    cm[b].x /= cm[b].w; // etc
+\end{lstlisting}
+
+Note that this parallelizes with the number of bins.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Map Points}
+
+For the next step, the program needs to keep track of the points in
+each bin. 
+
+ In a second phase,
+iterate over all bins again, this time putting coordinates into the
+proper element of {\tt binPts}, a two-dimensional array.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Save Time}
+
+The payoff from all these calculations is to save time while calculating forces. 
+
+In this example, we'll compute exact forces for the points in the same bin and the directly-adjacent bins in each direction
+
+That makes 27 bins in all, with 6 bins sharing a square, 12 bins sharing an edge, and 8 bins sharing a point with the centre bin). 
+
+If there is no adjacent bin 
+(i.e., this is an edge), just act as if there are no points 
+in the place where the nonexistent bin would be. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{More Overhead}
+
+Necessarily, writing the program like this is going to mean more than one kernel.
+
+This does mean there is overhead for each kernel, meaning the total amount of overhead goes up. 
+
+Is it worth it? 
+
+With 500*64 points:
+\begin{itemize}
+\item    OpenCL, no approximations (1 kernel): 0.182s
+\item    OpenCL, with approximations (3 kernels): 0.168s
+\end{itemize}
+
+With 5000*64 points:
+\begin{itemize}
+\item    OpenCL, no approximations (1 kernel): 6.131s
+\item    OpenCL, with approximations (3 kernels): 3.506s
+\end{itemize}
+
+
+\end{frame}
+
+
+
+
+%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Loop Perforation}
+
+
+  Like early-phase termination, but for sequential programs:\\
+  \qquad throw away data that's not actually useful.
+
+  \begin{lstlisting}
+for (i = 0; i < n; ++i) sum += numbers[i];
+  \end{lstlisting}
+
+  \begin{center}
+    $\Downarrow$
+  \end{center}
+
+  \begin{lstlisting}
+for (i = 0; i < n; i += 2) sum += numbers[i];
+sum *= 2;
+  \end{lstlisting}
+
+  This gives a speedup of $\sim$ 2 if {\tt numbers[]} is nice.\\[1em]
+
+  Works for video encoding: can't observe difference.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Applications of Reduced Resource Computation}
+
+
+  Loop perforation works for:
   \begin{itemize}
-    \item A suspended task can be resumed by any thread.
-    \item ``untied'' is ignored if used with {\bf final}.
-    \item Interacts poorly with thread-private variables and {\tt gettid()}.
+   \item evaluating forces on water molecules (summing numbers);
+   \item Monte-Carlo simulation of swaption pricing;
+   \item video encoding.
   \end{itemize}
 
+  More on the video encoding example:\\
+  Changing loop increments from 4 to 8 gives:
+\begin{itemize}
+ \item speedup of 1.67;
+ \item signal-to-noise ratio decrease of 0.87\%;
+ \item bitrate increase of 18.47\%;
+ \item visually indistinguishable results.
+\end{itemize}
 
 \end{frame}
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-\begin{frame}
-\frametitle{Mergeable}
-
-\begin{center}
-  {\bf mergeable}
-\end{center}
-
-  \begin{itemize}
-    \item For an undeferred or included task,
-    allows the implementation to generate a merged task instead.
-    \item In a merged task, the implementation may re-use the environment from its generating task (as if there was no task directive).
-  \end{itemize}
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/mindmeld.jpg}
-\end{center}
-
-\end{frame}
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Bad Mergeable Example}
-
-  \begin{lstlisting}[language=C]
-#include <stdio.h>
-void foo () {
-    int x = 2;
-    #pragma omp task mergeable
-    {
-        x++; // x is by default firstprivate
-    }
-    #pragma omp taskwait
-    printf("%d\n",x); // prints 2 or 3
-}
-  \end{lstlisting}
-  
-    This is an incorrect usage of {\bf mergeable}: the output depends
-      on whether or not the task got merged.
-  
-  
-    Merging tasks (when safe) produces more efficient code.
-\end{frame}
+  \frametitle{Video Encoding Skeleton Code}
 
 
-\begin{frame}[fragile]
-\frametitle{Yield}
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf taskyield}
-  \end{center}
-
-This directive specifies that the current task can be suspended in favour of another task.
-
-  Here's a good use of {\bf taskyield}.
-
-  \begin{lstlisting}[language=C]
-void foo (omp_lock_t * lock, int n) {
-    int i;
-    for ( i = 0; i < n; i++ )
-    #pragma omp task
-    {
-        something_useful();
-        while (!omp_test_lock(lock)) {
-            #pragma omp taskyield
-        }
-        something_critical();
-        omp_unset_lock(lock);
-    }
-}
-  \end{lstlisting}
-
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Taskwait}
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf taskwait}
-  \end{center}~\\[1em]
-
-     Waits for the completion of the current task's child tasks.
-
-\begin{center}
-\includegraphics[width=0.6\textwidth]{images/stillwaiting.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Task Example 1: Web Server}
-
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-#pragma omp parallel
-  /* a single thread manages the connections */
-  #pragma omp single nowait
-  while (!end) {
-    process any signals
-    foreach request from the blocked queue {
-      if (request dependencies are met) {
-        extract from the blocked queue
-        /* create a task for the request */
-        #pragma omp task untied
-          serve_request(request);
-      }
-    }
-    if (new connection) {
-      accept_connection();
-      /* create a task for the request */
-      #pragma omp task untied
-        serve_request(new connection);
-    }
-    select();
+\begin{lstlisting}
+min = DBL_MAX;
+index = 0;
+for (i = 0; i < m; i++) {
+  sum = 0;
+  for (j = 0; j < n; j++) sum += numbers[i][j];
+  if (min < sum) {
+    min = sum;
+    index = i;
   }
+}
 \end{lstlisting}
+The optimization changes the loop increments and then compensates. 
 
 \end{frame}
 
-
-\begin{frame}[fragile]
-\frametitle{Task Example 2: Tree Traversal}
-
-  \begin{lstlisting}[language=C]
-struct node {
-    struct node *left;
-    struct node *right;
-};
-extern void process(struct node *);
-
-void traverse(struct node *p) {
-    if (p->left) {
-        #pragma omp task
-        // p is firstprivate by default
-        traverse(p->left);
-    }
-    if (p->right) {
-        #pragma omp task
-        // p is firstprivate by default
-        traverse(p->right);
-    }
-    process(p);
-}    
-  \end{lstlisting}
-
-To guarantee a post-order traversal,
-insert an explicit \verb+#pragma omp taskwait+
-after the two calls to {\tt traverse} and before the
-call to {\tt process}.
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Task Example 3: Linked List Processing}
- \begin{lstlisting}[language=C]
-// node struct with data and pointer to next
-extern void process(node* p);
-
-void increment_list_items(node* head) {
-    #pragma omp parallel
-    {
-        #pragma omp single
-        {
-            node * p = head;
-            while (p) {
-                #pragma omp task
-                {
-                    process(p);
-                }
-                p = p->next;
-            }
-        }
-    }
-}
-  \end{lstlisting}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Make ALL the Tasks!}
-
-Let's see what happens
-if we spawn lots of tasks in a {\tt single} directive.
-
-  \begin{lstlisting}[language=C]
-#define LARGE_NUMBER 10000000
-double item[LARGE_NUMBER];
-extern void process(double);
-
-int main() {
-    #pragma omp parallel
-    {
-        #pragma omp single
-        {
-            int i;
-            for (i=0; i<LARGE_NUMBER; i++) {
-                #pragma omp task
-                // i is firstprivate, item is shared
-                process(item[i]);
-            }
-        }
-    }
-}
-  \end{lstlisting}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Make ALL the Tasks!}
-
-In this case, the main loop (which executes in one thread only, due to {\tt single}) generates tasks and queues them for execution.
-
-When too many tasks get generated and are waiting, OpenMP suspends the main thread, runs some tasks, then resumes the loop in the main thread.
-
-Any thread may pick up a task and execute it. Without {\tt untied}, a thread that starts a task has to finish running that task.
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Over to You!}
-
-
-If we {\tt untied} the spawned tasks, that would enable the tasks to
-migrate between threads when suspended.
-
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/baton.jpg}
-\end{center}
-
-
-Avoid threadprivate data that
-will be wrong after a thread migration.
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{More Scoping}
-
-Besides the {\tt shared}, {\tt private} and {\tt threadprivate}, OpenMP also 
-supports {\tt firstprivate} and {\tt lastprivate},
-
-Firstprivate:
-  \begin{lstlisting}
-int x;
-
-void* run(void* arg) {
-    int thread_x = x;
-    // use thread_x
-}
-  \end{lstlisting}
-
-
-Lastprivate:
-  \begin{lstlisting}
-int x;
-
-void* run(void* arg) {
-    int thread_x;
-    // use thread_x
-    if (last_iteration) {
-        x = thread_x;
-    }
-}
-  \end{lstlisting}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Copy-In}
-
-{\tt copyin} is like firstprivate, but for threadprivate variables.
-
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/copying.png}
-\end{center}
-
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Copy-In}
-
-Pseudocode for {\tt copyin}:
-  \begin{lstlisting}[language=C]
-int x;
-int x[NUM_THREADS];
-
-void* run(void* arg) {
-  x[thread_num] = x;
-  // use x[thread_num]
-}
-  \end{lstlisting}
-
-The {\tt copyprivate} clause is only used with {\tt single}.
-
-
-It copies the specified private variables from the thread to all other
-threads. It cannot be used with {\tt nowait}.
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Catch Me Outside...}
-
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-int tid, a, b;
-
-#pragma omp threadprivate(a)
-
-int main(int argc, char *argv[])
-{
-    printf("Parallel #1 Start\n");
-    #pragma omp parallel private(b, tid)
-    {
-        tid = omp_get_thread_num();
-        a = tid;
-        b = tid;
-        printf("T%d: a=%d, b=%d\n", tid, a, b);
-    }
-
-    printf("Sequential code\n");
-    printf("Parallel #2 Start\n");
-    #pragma omp parallel private(tid)
-    {
-        tid = omp_get_thread_num();
-        printf("T%d: a=%d, b=%d\n", tid, a, b);
-    }
-
-    return 0;
-}    
-  \end{lstlisting}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Catch Me Outside...}
-
-Produces as output: 
-\begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield}]
-% ./a.out
-Parallel #1 Start
-T6: a=6, b=6
-T1: a=1, b=1
-T0: a=0, b=0
-T4: a=4, b=4
-T2: a=2, b=2
-T3: a=3, b=3
-T5: a=5, b=5
-T7: a=7, b=7
-Sequential code
-Parallel #2 Start
-T0: a=0, b=0
-T6: a=6, b=0
-T1: a=1, b=0
-T2: a=2, b=0
-T5: a=5, b=0
-T7: a=7, b=0
-T3: a=3, b=0
-T4: a=4, b=0
-\end{lstlisting}
-
-
-
-\end{frame}
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \end{document}

@@ -2,420 +2,245 @@
 
 \begin{document}
 
-\lecture{8 --- Asynchronous I/O}{\term}{Patrick Lam}
+\lecture{8 --- Cache Coherency}{\term}{Patrick Lam \& Jeff Zarnett}
 
-\section*{Asynchronous/non-blocking I/O}
-
-Let's start with some juicy quotes.
+\section*{Cache Coherency}
 
 \begin{center}
-  \fbox{\includegraphics[width=.7\textwidth]{images/aio-linux.png}}\\
-{\scriptsize (mirrored at \url{compgeom.com/~piyush/teach/4531_06/project/hell.html})}
-   \\[2em]
+    \includegraphics[width=0.5\textwidth]{images/coherency}
 
-   ``Asynchronous I/O, for example, is often infuriating.''\\
-\hfill --- Robert Love. {\em Linux System Programming, 2nd ed, } page 215.
-
+\hfill ---Wikipedia
 \end{center}
 
-To motivate the need for non-blocking I/O, consider some standard I/O code:
+Today we'll look at what support the architecture provides for memory ordering, in
+particular in the form of cache coherence. Since this isn't an
+architecture course, we'll look at this material more from the point
+of view of a user, not an implementer.
 
-\begin{lstlisting}[language=C]
-    fd = open(...);
-    read(...);
-    close(fd);
-\end{lstlisting}
+The problem is, of course, that each CPU likely its own cache. If it does then these data may be out of sync -- the value that CPU 1 has for a particular piece of data might be different from the value that CPU 4 has. The simplest method, and a horrible solution, would be the ability to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?...). The compiler and OS and such will require the data to be read from main memory, always. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is \textit{coherency}.
 
-This isn't very performant. The problem is that the {\tt read} call will
-{\em block}. So, your program doesn't get to use the zillions of CPU cycles that
-are happening while the I/O operation is occurring.
-
-\paragraph{As seen previously: threads.} That can be fine if
-you have some other code running to do work---for instance, other threads
-do a good job mitigating the I/O latency, perhaps doing I/O themselves.
-But maybe you would rather not use threads. Why not?
-
-\begin{itemize}
-\item potential race conditions;
-\item overhead due to per-thread stacks; or
-\item limitations due to maximum numbers of threads.
-\end{itemize}
-
-\paragraph{Non-blocking I/O.} The main point of this lecture, though,
-is non-blocking/asynchronous I/O. The simplest example:
-
-\begin{lstlisting}[language=C]
-    fd = open(..., O_NONBLOCK);
-    read(...); // returns instantly!
-    close(fd);
-\end{lstlisting}
-
-In principle, the {\tt read} call is supposed to return instantly,
-whether or not results are ready. That was easy!
-
-Well, not so much. The {\tt O\_NONBLOCK} flag actually only has the
-desired behaviour on sockets. The semantics of {\tt O\_NONBLOCK} is
-for I/O calls to not block, in the sense that they should never wait
-for data while there is no data available.
-
-Unfortunately, files always have data available. Under Linux, you'd have
-to use {\tt aio} calls to be able to send requests to the I/O subsystem
-asynchronously and not, for instance, wait for the disk to spin up.
-We won't talk about them, but they operate along the same lines as what
-we will see. They just have a different API.
-
-\paragraph{Conceptual view: non-blocking I/O.} Fundamentally,
-there are two ways to find out whether I/O is ready to be queried:
-polling (under UNIX, implemented via {\tt select}, {\tt poll},
-and {\tt epoll}) and interrupts (under UNIX, signals).
-
-
-We will describe {\tt epoll}. It is the most modern and
-flexible interface. If you want to learn about \texttt{select} and \texttt{poll} at a lower level: \url{https://github.com/jzarnett/ece252/blob/master/lectures/L29-Asynchronous_I_O_with_select_poll.pdf }
-
-The key idea is to give {\tt epoll} a bunch of file descriptors and
-wait for events to happen. In particular:
-     \begin{itemize}
-       \item create an epoll instance ({\tt epoll\_create1});
-       \item populate it with file descriptors ({\tt epoll\_ctl}); and
-       \item wait for events ({\tt epoll\_wait}).
-     \end{itemize}
-Let's run through these steps in order.
-
-\paragraph{Creating an {\tt epoll} instance.} Just use the API:
-    \begin{lstlisting}[language=C]
-   int epfd = epoll_create1(0);
-    \end{lstlisting}
-
-The return value {\tt epfd} is typed like a UNIX file
-descriptor---{\tt int}---but doesn't represent any files; instead, use
-it as an identifier, to talk to {\tt epoll}.
-
-The parameter ``{\tt 0}'' represents the flags, but the only available flag
-is {\tt EPOLL\_CLOEXEC}. Not interesting to you.
-
-\paragraph{Populating the {\tt epoll} instance.} Next, you'll want
-{\tt epfd} to do something. The obvious thing is to add some {\tt fd}
-to the set of descriptors watched by {\tt epfd}:
-    \begin{lstlisting}[language=C]
-   struct epoll_event event;
-   int ret;
-   event.data.fd = fd;
-   event.events = EPOLLIN | EPOLLOUT;
-   ret = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &event);
-    \end{lstlisting}
-
-You can also use {\tt epoll\_ctl} to modify and delete descriptors from {\tt epfd}; read the manpage to find out how.
-
-\paragraph{Waiting on an {\tt epoll} instance.} Having completed
-the setup, we're ready to wait for events on any file descriptor in {\tt epfd}.
-    \begin{lstlisting}[language=C]
-  #define MAX_EVENTS 64
-
-  struct epoll_event events[MAX_EVENTS];
-  int nr_events;
-
-  nr_events = epoll_wait(epfd, events, MAX_EVENTS, -1);
-    \end{lstlisting}
-
-The given {\tt -1} parameter means to wait potentially forever;
-otherwise, the parameter indicates the number of milliseconds to wait.
-(It is therefore ``easy'' to sleep for some number of milliseconds by
-starting an {\tt epfd} and using {\tt epoll\_wait}; takes two function
-calls instead of one, but allows sub-second latency.)
-
-Upon return from {\tt epoll\_wait}, we know that we have {\tt
-  nr\_events} events ready.
-
-
-Here's a super quick example from the man page for epoll (\url{http://man7.org/linux/man-pages/man7/epoll.7.html}:
-
-\begin{lstlisting}[language=C]
-#define MAX_EVENTS 10
-struct epoll_event ev, events[MAX_EVENTS];
-int listen_sock, conn_sock, nfds, epollfd;
-
-/* Code to set up listening socket, 'listen_sock',
-   (socket(), bind(), listen()) omitted */
-
-epollfd = epoll_create1(0);
-if (epollfd == -1) {
-    perror("epoll_create1");
-    exit(EXIT_FAILURE);
-}
-
-ev.events = EPOLLIN;
-ev.data.fd = listen_sock;
-if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listen_sock, &ev) == -1) {
-    perror("epoll_ctl: listen_sock");
-    exit(EXIT_FAILURE);
-}
-
-for (;;) {
-    nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
-    if (nfds == -1) {
-        perror("epoll_wait");
-        exit(EXIT_FAILURE);
-    }
-
-    for (n = 0; n < nfds; ++n) {
-        if (events[n].data.fd == listen_sock) {
-            conn_sock = accept(listen_sock, (struct sockaddr *) &addr, &addrlen);
-            if (conn_sock == -1) {
-                perror("accept");
-                exit(EXIT_FAILURE);
-            }
-            setnonblocking(conn_sock);
-            ev.events = EPOLLIN | EPOLLET;
-            ev.data.fd = conn_sock;
-            if (epoll_ctl(epollfd, EPOLL_CTL_ADD, conn_sock,
-                        &ev) == -1) {
-                perror("epoll_ctl: conn_sock");
-                exit(EXIT_FAILURE);
-            }
-        } else {
-            do_use_fd(events[n].data.fd);
-        }
-    }
-}
-\end{lstlisting}
-
-\section*{Using cURL Asynchronously}
-We've already seen that network communication is a great example of a way that you could use asynchronous  I/O. You can start a network request and move on to creating more without waiting for the results of the first one. For requests to different recipients, it certainly makes sense to do this.
-
-The cURL multi interface has a lot of similarities with the regular cURL interface. Here's a simple example from \url{https://curl.haxx.se/libcurl/c/https.html} (i.e., the official docs):
-
-\begin{lstlisting}[language=C]
-#include <stdio.h>
-#include <curl/curl.h>
- 
-int main( int argc, char** argv ) {
-  CURL *curl;
-  CURLcode res;
- 
-  curl_global_init(CURL_GLOBAL_DEFAULT);
- 
-  curl = curl_easy_init();
-  if( curl ) {
-    curl_easy_setopt(curl, CURLOPT_URL, "https://example.com/" );
-    res = curl_easy_perform( curl );
-    
-  if( res != CURLE_OK ) {
-      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-    }
-    curl_easy_cleanup(curl);
-  }
- 
-  curl_global_cleanup();
-  return 0;
-}
-\end{lstlisting}
-
-In the previous example, the call to \texttt{curl\_easy\_perform()} is blocking and we wait for the curl execution to take place. We want to change that! The tool for this is the ``multi handle'' - this is a structure that lets us have more than one curl easy handle. And rather than waiting, we can start them and then check on their progress. 
-
-There are still the global initialization and cleanup functions. The structure for the new multi-handle type is \texttt{CURLM} (instead of \texttt{CURL}) and it is initialized with the \texttt{curl\_multi\_init()} function. 
-
-Once we have a multi handle, we can add easy handles -- however many we need -- to the multi handle. Creation of the easy handle is the same as it is when being used alone - use \texttt{curl\_easy\_init()} to create it and then we can set however many options on this we need. Then, we add the easy handle to the multi handle with \texttt{curl\_multi\_add\_handle( CURLM* cm, CURL* eh )}.
-
-Once we have finished putting all the easy handles into the multi handle, we can dispatch them all at once with \texttt{curl\_multi\_perform( CURLM* cm, int* still\_running )}. The second parameter is a pointer to an integer that is updated with the number of the easy handles in that multi handle that are still running. If it's down to 0, then we know that they are all done. If it's nonzero it means that some of them are still in progress.
-
-This does mean that we're going to call\texttt{curl\_multi\_perform()} more than once. Doing so doesn't restart or interfere with anything that was already in progress -- it just gives us an update on the status of what's going on. We can check as often as we'd like, but the intention is of course to do something useful while the asynchronous I/O request(s) are going on. Otherwise, why not make it synchronous?
-
-Suppose we've run out of things to do though. What then? Well, we can wait, if we want, using \texttt{curl\_multi\_wait( CURLM *multi\_handle, struct curl\_waitfd extra\_fds[], unsigned int extra\_nfds, int timeout\_ms, int *numfds )} . This function will block the current thread until something happens (some event occurs).
-
-The first parameter is the multi handle, which makes sense. The second parameter is a structure of extra file descriptors you can wait on (but we will always want this to be NULL in this course) and the third parameter is the count (the size of the provided array) which would also be zero here. Then the second-last parameter is a maximum time to wait. The last parameter is a pointer that will be updated with the actual number of ``interesting'' events that occurred (interesting is the word used in the specifications, and what it means is mysterious). For a simple use case you can ignore most of the parameters and just wait for something to happen and go from there.
-
-In the meantime though, the perform operations are happening, and so are whatever callbacks we have set up (if any). And as the I/O operation moves through its life cycle, the state of the easy handle is updated appropriately. Each easy handle has an associated status message as well as a return code.
-
-Why both? Well - one is about what the status of the request is. The message could be, for example ``done'', but does that mean finished with success or finished with an error? For the second one tells us about that. We can ask about the status of the request using \texttt{curl\_multi\_info\_read( CURLM* cm, int* msgs\_left )}. This returns a pointer to information ``next'' easy handle, if there is one. The return value is a pointer to a struct of type \texttt{CURLMsg}. Along side this, the parameter \texttt{msgs\_left} is updated to say how many messages remain (so you don't have to remember or know in advance, really). 
-
-We will therefore check the \texttt{CURLMsg} message to see what happened and make sure all is well. If our message that we got back with the info read is called \texttt{m}, What we are looking for is that the \texttt{m->msg} is equal to \texttt{CURLMSG\_DONE} -- request completed. If not, this request is still in progress and we aren't ready to evaluate whether it was successful or not. If there are more handles to look at, we should go on to the next. If it is done, we should look at the return code in and the result, in \texttt{m->data.result}. If it is \texttt{CURLE\_OK} then everything succeeded. If it's anything else, it indicates an error.
-
-When a handle has finished, you need to remove it from the multi handle. A pointer to it is inside the \texttt{CURLMsg} under \texttt{m->easy\_handle}. It is removed with \texttt{curl\_multi\_remove\_handle( CURLM* cm, CURL eh )}. Once removed, it should be cleaned up like normal with \texttt{curl\_easy\_cleanup( CURL* eh )}.
-
-There is of course the corresponding cleanup function \texttt{curl\_multi\_cleanup( CURLM * cm ) } for the multi handle when we are done with all the easy handles inside. The last step, as before, is to use the global cleanup function. After that we are done. 
-
-Let's consider the following code example by Clemens Gruber~\cite{curlmulti}, with slight modifications for compactness, formatting, and to remember the cleanup. This example puts together all the things we talked about in one compact code segment. Here, the callback does nothing, but that's okay -- it's just to show what you could do with it.
-
-\begin{lstlisting}[language=C]
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <curl/multi.h>
-
-#define MAX_WAIT_MSECS 30*1000 /* Wait max. 30 seconds */
-
-const char *urls[] = {
-  "http://www.microsoft.com",
-  "http://www.yahoo.com",
-  "http://www.wikipedia.org",
-  "http://slashdot.org"
-};
-#define CNT 4
-
-size_t cb(char *d, size_t n, size_t l, void *p) {
-  /* take care of the data here, ignored in this example */
-  return n*l;
-}
-
-void init( CURLM *cm, int i ) {
-  CURL *eh = curl_easy_init();
-  curl_easy_setopt( eh, CURLOPT_WRITEFUNCTION, cb );
-  curl_easy_setopt( eh, CURLOPT_HEADER, 0L );
-  curl_easy_setopt( eh, CURLOPT_URL, urls[i] );
-  curl_easy_setopt( eh, CURLOPT_PRIVATE, urls[i]) ;
-  curl_easy_setopt( eh, CURLOPT_VERBOSE, 0L );
-  curl_multi_add_handle( cm, eh );
-}
-
-int main( int argc, char** argv ) {
-    CURLM *cm = NULL;
-    CURL *eh = NULL;
-    CURLMsg *msg = NULL;
-    CURLcode return_code = 0;
-    int still_running = 0; 
-    int msgs_left = 0;
-    int http_status_code;
-    const char *szUrl;
-
-    curl_global_init( CURL_GLOBAL_ALL );
-    cm = curl_multi_init( );
-
-    for ( int i = 0; i < CNT; ++i ) {
-        init( cm, i );
-    }
-
-    curl_multi_perform( cm, &still_running );
-
-    do {
-        int numfds = 0;
-        int res = curl_multi_wait( cm, NULL, 0, MAX_WAIT_MSECS, &numfds );
-        if( res != CURLM_OK ) {
-            fprintf( stderr, "error: curl_multi_wait() returned %d\n", res );
-            return EXIT_FAILURE;
-        }
-        curl_multi_perform( cm, &still_running );
-
-    } while( still_running );
-
-    while ( ( msg = curl_multi_info_read( cm, &msgs_left ) ) ) {
-        if ( msg->msg == CURLMSG_DONE ) {
-            eh = msg->easy_handle;
-
-            return_code = msg->data.result;
-            if ( return_code != CURLE_OK ) {
-                fprintf( stderr, "CURL error code: %d\n", msg->data.result );
-                continue;
-            }
-
-            // Get HTTP status code
-            http_status_code = 0;
-            szUrl = NULL;
-
-            curl_easy_getinfo( eh, CURLINFO_RESPONSE_CODE, &http_status_code );
-            curl_easy_getinfo( eh, CURLINFO_PRIVATE, &szUrl );
-
-            if( http_status_code == 200 ) {
-                printf( "200 OK for %s\n", szUrl ) ;
-            } else {
-                fprintf( stderr, "GET of %s returned http status code %d\n", szUrl, http_status_code );
-            }
-
-            curl_multi_remove_handle( cm, eh );
-            curl_easy_cleanup( eh );
-        } else {
-            fprintf( stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg );
-        }
-    }
-    curl_multi_cleanup( cm );
-    curl_global_cleanup();
-    return 0;
-}
-\end{lstlisting}
-
-You may wonder about re-using an easy handle rather than removing and destroying it and making a new one. The official docs say that you can re-use one, but you have to remove it from the multi handle and then re-add it, presumably after having changed anything that you want to change about that handle. 
-
-Because a handle could be replaced with another one (or the same one), you could have a situation where there are constantly handles in progress and you might never be at a situation where there are no messages left. And that is okay.
-
-In this example all requests had the same (useless) callback, but of course you could have different callbacks for different easy handles if you wanted them to do different things.
-
-How well does this scale? The developer claims that you can have multiple thousands of connections in a single multi handle\footnote{See this post from the mailing list: \url{https://curl.haxx.se/mail/lib-2011-11/0078.html}}. And 60k ought to be enough for anyone!
-
-\paragraph{I enjoy pain!} You can use cURL with \texttt{select()} if you wish, although it comes with an anti-recommendation: I think you shouldn't do it. But you can if you want. In some ways, cURL does make things less painful because it does some of the grunt work for you. Don't do it. Please no.
-
-\section*{Building Servers: Concurrent Socket I/O}
-
-\paragraph{Your Choices.} The first two both use blocking I/O, while the second two use
-non-blocking I/O~~\cite{gplus:concurrent}:
-    \begin{itemize}
-      \item Blocking I/O; 1 process per request.
-      \item Blocking I/O; 1 thread per request.
-      \item Asynchronous I/O, pool of threads, callbacks, each thread handles multiple connections.
-      \item Nonblocking I/O, pool of threads, multiplexed with select/poll,
-        event-driven, each thread handles multiple connections.
-    \end{itemize}
-
-\paragraph{Blocking I/O; 1 process per request.}
-This is the old Apache model.
+Cache coherency means that:
   \begin{itemize}
-    \item The main thread waits for connections.
-    \item Upon connect, the main thread forks off a new process, which completely
-      handles the connection.
-    \item Each I/O request is blocking, e.g., reads wait until more data arrives.
+    \item the values in all caches are consistent; and
+    \item to some extent, the system behaves as if all CPUs are using shared memory.
   \end{itemize}
+  
+In modern CPUs with three or four levels of cache, we frequently find that the level 3 cache isn't much faster than going to main memory. But this level is where the cache coherency communication can take place. This can be by making the cache shared between the different CPUs. And the L4 cache is frequently used for sharing data with the integrated graphics hardware on CPUs that have this feature. But for the most part we will imagine that caches are not shared, and we have to figure out how to get coherency between them. This is the case with a L1/L2 cache in a typical modern CPU as they are unique to the given core (i.e., not shared).
+  
+\paragraph{Cache Coherence Example.} We will use this example to illustrate
+different cache coherence algorithms and how they handle the same situation.
 
-Advantage: 
+Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x, puts the value in its cache.
+    \item {\tt CPU3} reads x, puts the value in its cache.
+    \item {\tt CPU3} modifies {\tt x := 42}
+    \item {\tt CPU1} reads x \ldots ~from its cache?
+    \item {\tt CPU2} reads x. Which value does it get?
+  \end{enumerate}
+
+Unless we do something, {\tt CPU1} is going to read invalid data.
+  
+Outside of a computing context, imagine you and several co-workers have some shared information, such as a meeting (in a specific room) in a shared online calendar (the one for the room). You (or anyone else) could make changes to this event. As mind-reading does not work, there are two ways that another invitee can know that something has changed: (1) they can check to see if anything has changed, or (2) they can be notified that a change has occurred. 
+
+The notification may contain the updated information in its entirety, such as ``Event title changed to 'Discuss User Permissions and Roles''', or it may just tell you ``something has changed; please check''. In transportation, you can experience both... in the same day. I [JZ] was flying to Frankfurt and going to catch a train. Air Canada sent me an e-mail that said ``Departure time revised to 22:00'' (20 minute delay); when I landed the Deutsche Bahn (German railways) sent me an e-mail that said ``Something on your trip has changed; please check and see what it is in the app''... it was my train being cancelled. I don't know why they couldn't have e-mailed me that in the first place! It's not like I was any less annoyed by finding out after taking a second step of opening an app.
+
+Regardless of which method is chosen, we have to pick one. We can't pick none of those and expect to get the right answers.
+
+
+\paragraph{Snoopy Caches.} The simplest way to ``do something''
+is to use Snoopy caches~\cite{snoopycache}. No, not this kind of Snoopy (sadly):
+
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/peanuts-snoopy1.jpg}
+\end{center}
+
+It's called Snoopy because the caches are, in a way, spying on each other: they are observing what the other ones are doing. This way, they are kept up to date on what's happening and they know whether they need to do anything. They do not rely on being notified explicitly. This is a bit different from the transportation analogy, of course, but workable in a computer with a shared bus.
+
+This is a distributed approach; no centralized state is maintained. Each cache with a copy of data from a block of main memory knows whether it is shared or not. All the CPUs are connected to a shared bus, and each CPU has its own cache controller. Whenever a CPU issues a memory write, the other CPUs are watching (colloquially, ``snooping around'') to observe if that memory location is in their cache. If so, the CPU will need to take action.
+
+What does action mean? In the flight plus train example, both kinds of action occurred. The Air Canada action was \textit{update} -- the information about the flight departure time was changed from 21:40 to 22:00 and at the time of becoming aware of the change, I got the new value immediately. The Deutsche Bahn action was \textit{invalidate} -- the information about the train was changed, but I didn't know what had changed. All that I really knew is that the old information I had was out of date. When I needed that information again, I had to go get it myself from the source (their app). Either action (noting down the new, or knowing that what I have is out of date) is adequate for ensuring that I have the most up to date information. You may have a preference on which one you think is better, but unfortunately this is not your decision, neither as a user of the hardware of the computer nor as  a person who wants to travel by plane or train.
+
+\subsection*{Write-Through Caches}
+Let's put that into practice using write-through caches, the simplest type of
+cache coherence.
   \begin{itemize}
-    \item ``Simple to undertand and easy to program.''
+    \item All cache writes are done to main memory.
+    \item All cache writes also appear on the bus.
+    \item If another CPU snoops and sees it has the same location in
+      its cache, it will either invalidate or update the
+      data.
   \end{itemize}
+  
+Invalidation is the most common protocol. It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). This kind of thing happens if you're just doing \texttt{x = 42;} -- it doesn't matter what value of \texttt{x} was there before; you're just overwriting it.
 
-Disadvantage:
-  \begin{itemize}
-    \item High overhead from starting 1000s of processes.
-      (We can somewhat mitigate this using process pools).
-  \end{itemize}
-This method can handle $\sim$10 000 processes, but doesn't generally scale beyond that, and
-uses many more resources than the alternatives.
+If we want to do a read and there's a miss, we can ask around the other caches to see who has the most recent cached version. This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. Regardless, the most recent value appears in memory, always, so if nobody else has it in cache (or they don't feel like sharing) you can get it from there.
 
-\paragraph{Blocking I/O; 1 thread per request.}
-    We know that threads are more lightweight than processes. So let's use threads instead
-of processes. Otherwise, this is the same as 1 process per request, but with less overhead.
-I/O is the same---it is still blocking.
+There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. But it uses lots of bandwidth and is not necessarily a good idea. It does, however prevent the costly cache miss that follows an invalidate. Sadly, as we are mere users and not hardware architects, we don't get to decide which is better; we just have to live with whichever one is on the hardware we get to use. Bummer.
 
-    Advantage:
-    \begin{itemize}
-      \item Still simple to understand and easy to program.
-    \end{itemize}
+\paragraph{Write-Through Protocol.}
+The protocol for implementing such caches looks like this.
+There are two possible states, {\bf valid} and {\bf invalid}, for each cached memory location.
+Events are either from a processor ({\bf Pr}) or the {\bf Bus}. Actions will be either a \textbf{Rd} (read) or \textbf{Wr} (write).
+We then implement the following state machine.
 
-    Disadvantages:
-    \begin{itemize}
-      \item Overhead still piles up, although less than processes.
-      \item New complication: race conditions on shared data.
-    \end{itemize}
-
-\paragraph{Asynchronous I/O.} The other two choices don't assign one thread or process per connection,
-but instead multiplex the threads to connections. We'll first talk
-about using asynchronous I/O with select or poll.  
-
-Here are (from 2006) some performance benefits of using asynchronous
-I/O on lighttpd~\cite{lttpd}.
-
-    \begin{tabular}{llrrr}
-    version & & fetches/sec & bytes/sec & CPU idle \\
-    1.4.13 & sendfile & 36.45 & 3.73e+06 & 16.43\% \\
-    1.5.0 & sendfile & 40.51 & 4.14e+06 & 12.77\% \\
-    1.5.0 & linux-aio-sendfile & 72.70 & 7.44e+06 & 46.11\% \\
+  \begin{center}
+    \begin{tabular}{l|l|l|l}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\ \hline
+      Valid   & PrRd  &       & Valid\\
+      Valid   & PrWr  & BusWr & Valid\\
+      Valid   & BusWr &       & Invalid\\
+      Invalid & PrWr  & BusWr & Valid\\
+      Invalid & PrRd  & BusRd & Valid\\
     \end{tabular}
+  \end{center}
 
-(Workload: $2\times 7200$ RPM in RAID1, 1GB RAM, transferring 10GBytes on a 100MBit network).
+\paragraph{Example.} For simplicity (this isn't an architecture course), assume all cache
+      reads/writes are atomic. \footnote{If you're a hardware person, this line probably makes you cry. There's a whole lot that goes into making this work. There are potential write races, which have to be dealt with by contending for the bus and then completing the transaction, possibly restarting a command if necessary. If we have a split transaction bus it's really ugly, because we can have multiple interleaved misses. And down the rabbit hole we go.} Using the same example as before:
 
-The basic workflow is as follows: 
-   \begin{enumerate}
-     \item enqueue a request;
-     \item \ldots ~do something else;
-     \item (if needed) periodically check whether request is done; and
-     \item read the return value.
-   \end{enumerate}
+Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x, puts the value in its cache. {(valid)}
+    \item {\tt CPU3} reads x, puts the value in its cache. {(valid)}
+    \item {\tt CPU3} modifies {\tt x := 42}. {(write to memory)}
+      \begin{itemize}
+        \item {{\tt CPU1} snoops and marks data as invalid.}
+      \end{itemize}
+    \item {\tt CPU1} reads x, {from main memory. (valid)}
+    \item {\tt CPU2} reads x, {from main memory. (valid)}
+  \end{enumerate}
+
+\subsection*{Write-Back Caches}
+Let's try to improve performance. What if, in our example, {\tt CPU3} writes to {\tt x} 3 times in rapid succession? It's unpleasant to have to flush that to memory three times when we could do it only once. Let's try to delay the write to memory as long as possible. At minimum, we need support in hardware for a ``dirty'' bit, which indicates the our data has been changed but not yet been written to memory.
+
+\paragraph{Write-Back Implementation.}
+     The simplest type of write-back protocol (MSI) uses 3 states instead of 2:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; 
+          main memory is {\bf out-of-date}.
+        \item {\bf Shared}---location is unmodified, 
+           up-to-date with main
+          memory; 
+          \quad may be present in other caches (also up-to-date).
+        \item {\bf Invalid}---same as before.
+      \end{itemize}
+      
+The initial state for a memory location, upon its first read, is ``shared''.
+The implementation will only write the data to memory if another
+processor requests it.
+During write-back, a processor may read the data from the bus.
+
+\paragraph{MSI Protocol.} Here, bus write-back (or flush) is {\bf BusWB}.
+Exclusive read on the bus is {\bf BusRdX}.
+
+\begin{center}
+    \begin{tabular}{l|l|l|l}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\ \hline
+      Modified   & PrRd   &        & Modified\\
+      Modified   & PrWr   &        & Modified\\
+      Modified   & BusRd  & BusWB  & Shared\\
+      Modified   & BusRdX & BusWB  & Invalid\\
+      Shared     & PrRd   &        & Shared\\
+      Shared     & BusRd  &        & Shared\\
+      Shared     & BusRdX &        & Invalid\\
+      Shared     & PrWr   & BusRdX & Modified\\
+      Invalid    & PrRd   & BusRd  & Shared\\
+      Invalid    & PrWr   & BusRdX & Modified\\
+    \end{tabular}
+\end{center}
+
+\paragraph{MSI Example.} Using the same example as before:
+
+Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x from memory. {(BusRd, shared)}
+    \item {\tt CPU3} reads x from memory. {(BusRd, shared)}
+    \item {\tt CPU3} modifies {\tt x = 42}:
+      \begin{itemize}
+        \item {Generates a BusRdX.}
+        \item {{\tt CPU1} snoops and invalidates x.}
+      \end{itemize}
+    \item {\tt CPU1} reads x:
+      \begin{itemize}
+        \item {Generates a BusRd.}
+        \item {{\tt CPU3} writes back the data and sets x to shared.}
+        \item {{\tt CPU1} reads the new value from the bus as shared.}
+      \end{itemize}
+    \item {\tt CPU2} reads x from memory. {(BusRd, shared)}
+  \end{enumerate}
+
+\subsection*{An Extension to MSI: MESI}
+    The most common protocol for cache coherence is MESI.
+    This protocol adds yet another state:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; 
+ main memory is {\bf out-of-date}.
+        \item {\bf Exclusive}---only this cache has a valid copy; 
+ main memory is {\bf up-to-date}.
+        \item {\bf Shared}---same as before.
+        \item {\bf Invalid}---same as before.
+      \end{itemize}
+
+    MESI allows a processor to modify data exclusive to it, without
+    having to communicate with the bus.  MESI is safe. The key is that
+    if memory is in the E state, no other processor has the data. The transition from E to M does not have to be reported over the bus, which potentially saves some work and reduces bus usage. 
+
+\subsection*{MESIF: Even More States!}
+
+    MESIF (used in latest i7 processors):
+      \begin{itemize}
+        \item {\bf Forward}---basically a shared state; but, current
+          cache is the only one that will respond to a request to
+          transfer the data.
+      \end{itemize}
+
+    Hence: a processor requesting data that is already shared or exclusive will
+      only get one response transferring the data. Under a more simple MESI scheme you could get multiple caches trying to answer, with leads to bus arbitration or contention. The existence of a F state permits more efficient usage of the bus.
+      
+      
+\subsection*{False Sharing}
+False sharing is something that happens when our program has two unrelated data elements that are mapped to the same cache line/location. Let's consider an example from~\cite{falsesharing}:
+
+\begin{lstlisting}[language=C]
+char a[10];
+char b[10];
+\end{lstlisting}
+These don't overlap but are almost certainly allocated next to each other in memory. If a thread is writing to \texttt{a} and they share a cache line, then \texttt{b} will be invalidated and the CPU working on \texttt{b} will be forced to fetch the newest value from memory. This can be avoided by seeing to it that there is some separation between these two arrays.
+
+One way would be to heap allocate both arrays. You can find where things are located, if you are curious, by printing the pointer (or the address of a regular variable). Usually if you do this you will find that they are not both located at the same location. But you are provided no guarantee of that. So the other alternative is to make both arrays bigger than they need to be such that we're sure they don't overlap.
+
+Consider the graph below that shows what happens in a sample program reading and writing these two arrays, as you increase the size of arrays \texttt{a} and \texttt{b} (noting that byte separation of 11 means they are adjacent; anything less than that and they overlap). This does waste space, but is it worth it?
+
+\begin{center}
+\includegraphics[width=0.6\textwidth]{images/falsesharing.png}\\
+Execution time graph showing 5x speedup by ``wasting'' some space~\cite{falsesharing}.
+\end{center}
+
+At separation size 51 there is a huge drop in execution time because now we are certainly putting the two arrays in two locations that do not have the false sharing problem. Is wasting a little space worth it? Yes!
+
+P.S. putting these arrays in a struct and padding the struct can also help with enabling future updates to the struct.
+
+\subsection*{Volatile}
+
+\begin{quote}
+``Well, I read that {\tt volatile} variables aren't stored in registers,
+    so then am I okay?''
+\end{quote}
+
+Again, sadly, no. Recall that {\tt volatile} in C was only designed to~\cite{pr:volatile}:
+      \begin{itemize}
+        \item Allow access to memory mapped devices.
+        \item Allow uses of variables between {\tt setjmp} and {\tt longjmp}.
+        \item Allow uses of {\tt sig\_atomic\_t} variables in signal handlers.
+      \end{itemize}
+
+All of these things apply to single-threaded situations or cases where the compiler has re-ordered some steps. Remember, things can also be reordered by the compiler, and {\tt
+  volatile} doesn't prevent reordering. Also, it's likely your
+variables could be in registers the majority of the time, except in
+critical areas. All that volatile does is tell the compiler that an access of that variable should go to memory, not a register.
 
 \input{bibliography.tex}
 

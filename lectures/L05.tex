@@ -2,467 +2,420 @@
 
 \begin{document}
 
-\lecture{5 --- Concurrency and Parallelism}{\term}{Jeff Zarnett, based on original by Patrick Lam}
+\lecture{5 --- Asynchronous I/O}{\term}{Patrick Lam}
 
-\section*{Concurrency and Parallelism}
-Concurrency and parallelism both give up the
-total ordering between instructions in a sequential program, for
-different purposes. We're going to focus on threads, but if you need a review of the details and differences of processes vs threads, you might like to read   \url{https://www.purplealienplanet.com/node/50}. 
+\section*{Asynchronous/non-blocking I/O}
 
-\paragraph{Concurrency.} We'll refer to the use of threads for
-structuring programs as concurrency. Here, we're not aiming
-for increased performance. Instead, we're trying to write the program
-in a natural way. Concurrency makes sense as a model for distributed
-systems, or systems where multiple components interact, with no ordering
-between these components, like graphical user interfaces.
-
-\paragraph{Parallelism.} We're studying parallelism in this class, where
-we try to do multiple things at the same time in an attempt to increase
-throughput. Concurrent programs may be easier to parallelize.
-
-\subsection*{Limits to parallelization}
-I mentioned briefly in Lecture 1 that programs often have a sequential
-part and a parallel part. We'll quantify this observation today
-and discuss its consequences.
-
-\paragraph{Scalable Algorithms.} 
-Remember from ECE~250/CS~138 that we often care about the worst case run-time performance of the algorithm. A bad algorithm has terrible runtime characteristics for a large data set. Trying to do an insertion sort on a small array is fine (actually... recommended); doing it on a huge array is madness. Choosing a good algorithm is very important if we want it to scale.  But you know that already; you're not in a 4$^{th}$ year engineering course to have me tell you that you can use quicksort rather than bubble sort.
+Let's start with some juicy quotes.
 
 \begin{center}
-	\includegraphics[width=0.75\textwidth]{images/big-o-complexity}\\
-	Big-O Complexity comparison from ~\cite{bigocheatsheet}
+  \fbox{\includegraphics[width=.7\textwidth]{images/aio-linux.png}}\\
+{\scriptsize (mirrored at \url{compgeom.com/~piyush/teach/4531_06/project/hell.html})}
+   \\[2em]
+
+   ``Asynchronous I/O, for example, is often infuriating.''\\
+\hfill --- Robert Love. {\em Linux System Programming, 2nd ed, } page 215.
+
 \end{center}
 
+To motivate the need for non-blocking I/O, consider some standard I/O code:
 
-\paragraph{Amdahl's Law.} One classic model of parallel execution
-is Amdahl's Law. In 1967, Gene Amdahl argued that improvements in
-processor design for single processors would be more effective than
-designing multi-processor systems. Here's the argument. Let's say that
-you are trying to run a task which has a serial part, taking fraction 
-$S$, and a parallelizable part, taking fraction $P = 1-S$. Define $T_s$
-to be the total 
-amount of time needed on a single-processor system.
-Now, moving to a parallel system with $N$ processors, the parallel
-time $T_p$ is instead:
-\[ T_p = T_s \cdot (S + \frac{P}{N}). \]
-{\bf As $N$ increases, $T_p$ is dominated by $S$, limiting potential
-speedup.}
+\begin{lstlisting}[language=C]
+    fd = open(...);
+    read(...);
+    close(fd);
+\end{lstlisting}
 
-We can restate this law in terms of speedup, which is the 
-original time $T_s$ divided by the sped-up time $T_p$:
-\[ \mbox{speedup} = \frac{T_s}{T_p} = \frac{1}{S+P/N}. \]
-Replacing $S$ with $(1-P)$, we get:
-\[ \mbox{speedup} = \frac{1}{(1-P)+P/N}, \]
-and
-\[ \mbox{max speedup} = \frac{1}{(1-P)}, \]
-since $\frac{P}{N} \rightarrow 0$.
+This isn't very performant. The problem is that the {\tt read} call will
+{\em block}. So, your program doesn't get to use the zillions of CPU cycles that
+are happening while the I/O operation is occurring.
 
-\paragraph{Plugging in numbers.} If $P = 1$, then we can indeed get good
-scaling; running on an $N$-processor machine will give you a speedup
-of $N$. Unfortunately, usually $P < 1$.  Let's see what happens.
-
-\begin{center}
-\begin{tabular}{r|r}
-$P$ & speedup ($N=18$) \\ \hline
-1 & 18 \\
-0.99 & $\sim$ 15 \\
-0.95 & $\sim$ 10 \\
-0.5 & $\sim$ 2
-\end{tabular}
-\end{center}
-Graphically, we have something like this:
-\begin{center}
-  \includegraphics[width=0.5\textwidth]{images/parallel-scaling}
-\end{center}
-
-
-Amdahl's Law tells you how many cores you can hope to leverage in an
-execution given a fixed problem size, if you can estimate $P$.
-
-Let us consider an example from~\cite{mte241}: Suppose we have a task that can be executed in 5~s and this task contains a loop that can be parallelized. Let us also say initialization and recombination code in this routine requires 400~ms. So with one processor executing, it would take about 4.6~s to execute the loop. If we split it up and execute on two processors it will take about 2.3~s to execute the loop. Add to that the setup and cleanup time of 0.4~s and we get a total time of 2.7~s. Completing the task in 2.7~s rather than 5~s represents a speedup of about~46\%. Applying the formula, we get the following run times:
-
-\begin{center}
-	\begin{tabular}{l|l}
-	\textbf{Processors} & \textbf{Run Time (s)} \\ \hline
-	1 & 5\\
-	2 & 2.7\\
-	4 & 1.55\\
-	8 & 0.975\\
-	16 & 0.6875 \\
-	32 & 0.54375 \\
-	64 & 0.471875 \\
-	128 & 0.4359375\\
-	\end{tabular}
-\end{center}
-
-   \paragraph{Empirically estimating parallel speedup $P$.}
-Assuming that you know things that are actually really hard to know, here's a formula for estimating speedup. You don't have to commit it to memory:
-  \[P_{\mbox{\scriptsize estimated}} = \frac{\frac{1}{\mbox{\em speedup}}-1}{\frac{1}{N}-1}.\]
-
-It's just an estimation, but you can use it to guess the fraction of parallel code, given $N$ and the speedup. You can then use $P_{\mbox{\scriptsize estimated}}$ to predict speedup for a different number of processors.
-
-\paragraph{Consequences of Amdahl's Law.}
-For over 30 years, most performance gains did indeed come from
-increasing single-processor performance. The main reason that we're
-here today is that, as we saw last time,
-single-processor performance gains have hit the wall.
-
-By the way, note that we didn't talk about the cost of synchronization
-between threads here. That can drag the performance down even more.
-
-\paragraph{Amdahl's Assumptions.}
-Despite Amdahl's pessimism, we still all have multicore computers today.
-Why is that? Amdahl's Law assumes that:
-\begin{itemize}[noitemsep]
-    \item problem size is fixed (read on);
-    \item the program, or the underlying implementation, behaves the same on 1 processor as on $N$ processors; and
-    \item that we can accurately measure runtimes---i.e. that overheads don't matter.
-\end{itemize}
-
-% replace Amdahl's law with how branch predictors work
-\paragraph{Generalizing Amdahl's Law.} We made a simplification,
-which was that programs only have one parallel part and one serial part.
-Of course, this is not true. The program may have many parts,
- each of which we can tune to a different degree.
-
-Let's generalize Amdahl's Law:
+\paragraph{As seen previously: threads.} That can be fine if
+you have some other code running to do work---for instance, other threads
+do a good job mitigating the I/O latency, perhaps doing I/O themselves.
+But maybe you would rather not use threads. Why not?
 
 \begin{itemize}
-\item  $f_1, f_2, \ldots, f_n$: fraction of time in part $n$
-\item  $S_{f_1}, S_{f_n}, \ldots, S_{f_n}$: speedup for part $n$
+\item potential race conditions;
+\item overhead due to per-thread stacks; or
+\item limitations due to maximum numbers of threads.
 \end{itemize}
 
-Then,
-\[\mbox{\em speedup} = \frac{1}{\frac{f_1}{S_{f_1}} + \frac{f_2}{S_{f_2}} + \ldots +
-     \frac{f_n}{S_{f_n}}}.\]
+\paragraph{Non-blocking I/O.} The main point of this lecture, though,
+is non-blocking/asynchronous I/O. The simplest example:
 
-\paragraph{Example.} Consider a program with 4 parts in the following scenario:
+\begin{lstlisting}[language=C]
+    fd = open(..., O_NONBLOCK);
+    read(...); // returns instantly!
+    close(fd);
+\end{lstlisting}
 
-\begin{center}
-     \begin{tabular}{r|r|r|r}
-     \multicolumn{2}{l}{} & \multicolumn{2}{|c}{Speedup} \\
-     Part & Fraction of Runtime & Option 1 & Option 2\\
-     \hline
-     1 & 0.55 & 1  & 2\\
-     2 & 0.25 & 5  & 1\\
-     3 & 0.15 & 3  & 1\\
-     4 & 0.05  & 10 & 1\\
-     \end{tabular}
- \end{center}
+In principle, the {\tt read} call is supposed to return instantly,
+whether or not results are ready. That was easy!
 
-     (Note: these speedups don't have to be speedups from parallelization.)
-    
-   We can implement either Option 1 or Option 2. 
-   Which option is better?
+Well, not so much. The {\tt O\_NONBLOCK} flag actually only has the
+desired behaviour on sockets. The semantics of {\tt O\_NONBLOCK} is
+for I/O calls to not block, in the sense that they should never wait
+for data while there is no data available.
 
-   ``Plug and chug'' the numbers:
- \begin{itemize}
- \item  {\bf Option 1.}
+Unfortunately, files always have data available. Under Linux, you'd have
+to use {\tt aio} calls to be able to send requests to the I/O subsystem
+asynchronously and not, for instance, wait for the disk to spin up.
+We won't talk about them, but they operate along the same lines as what
+we will see. They just have a different API.
 
-   \[ \mbox{\em speedup} = \frac{1}{0.55 + \frac{0.25}{5} + \frac{0.15}{3} + \frac{0.05}{5}}
-     = 1.53  \]
-
- \item  {\bf Option 2.}
-
-   \[\mbox{\em speedup} = \frac{1}{\frac{0.55}{2} + 0.45} = 1.38 \hspace*{5.5em}\]
-\end{itemize}
-
-\subsection*{A more optimistic point of view}
-In 1988, John Gustafson pointed
-out\footnote{\url{http://www.scl.ameslab.gov/Publications/Gus/AmdahlsLaw/Amdahls.html}}
-that Amdahl's Law only applies to fixed-size problems, but that the
-point of computers is to deal with bigger and bigger problems.
-
-In particular, you might vary the input size, or the grid resolution,
-number of timesteps, etc. When running the software, then, you might
-need to hold the running time constant, not the problem size: you're
-willing to wait, say, 10 hours for your task to finish, but not 500
-hours. So you can change the question to: how big a problem can you
-run in 10 hours?
-
-According to Gustafson, scaling up the problem tends to increase the
-amount of work in the parallel part of the code, while leaving the
-serial part alone. As long as the algorithm is linear, it is possible
-to handle linearly larger problems with a linearly larger number of
-processors.
-
-Of course, Gustafson's Law works when there is some ``problem-size''
-knob you can crank up.  As a practical example, observe Google, which
-deals with huge datasets.
+\paragraph{Conceptual view: non-blocking I/O.} Fundamentally,
+there are two ways to find out whether I/O is ready to be queried:
+polling (under UNIX, implemented via {\tt select}, {\tt poll},
+and {\tt epoll}) and interrupts (under UNIX, signals).
 
 
-\section*{Software Design Issues: Will it Parallelize?}
+We will describe {\tt epoll}. It is the most modern and
+flexible interface. If you want to learn about \texttt{select} and \texttt{poll} at a lower level: \url{https://github.com/jzarnett/ece252/blob/master/lectures/L29-Asynchronous_I_O_with_select_poll.pdf }
+
+The key idea is to give {\tt epoll} a bunch of file descriptors and
+wait for events to happen. In particular:
+     \begin{itemize}
+       \item create an epoll instance ({\tt epoll\_create1});
+       \item populate it with file descriptors ({\tt epoll\_ctl}); and
+       \item wait for events ({\tt epoll\_wait}).
+     \end{itemize}
+Let's run through these steps in order.
+
+\paragraph{Creating an {\tt epoll} instance.} Just use the API:
+    \begin{lstlisting}[language=C]
+   int epfd = epoll_create1(0);
+    \end{lstlisting}
+
+The return value {\tt epfd} is typed like a UNIX file
+descriptor---{\tt int}---but doesn't represent any files; instead, use
+it as an identifier, to talk to {\tt epoll}.
+
+The parameter ``{\tt 0}'' represents the flags, but the only available flag
+is {\tt EPOLL\_CLOEXEC}. Not interesting to you.
+
+\paragraph{Populating the {\tt epoll} instance.} Next, you'll want
+{\tt epfd} to do something. The obvious thing is to add some {\tt fd}
+to the set of descriptors watched by {\tt epfd}:
+    \begin{lstlisting}[language=C]
+   struct epoll_event event;
+   int ret;
+   event.data.fd = fd;
+   event.events = EPOLLIN | EPOLLOUT;
+   ret = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &event);
+    \end{lstlisting}
+
+You can also use {\tt epoll\_ctl} to modify and delete descriptors from {\tt epfd}; read the manpage to find out how.
+
+\paragraph{Waiting on an {\tt epoll} instance.} Having completed
+the setup, we're ready to wait for events on any file descriptor in {\tt epfd}.
+    \begin{lstlisting}[language=C]
+  #define MAX_EVENTS 64
+
+  struct epoll_event events[MAX_EVENTS];
+  int nr_events;
+
+  nr_events = epoll_wait(epfd, events, MAX_EVENTS, -1);
+    \end{lstlisting}
+
+The given {\tt -1} parameter means to wait potentially forever;
+otherwise, the parameter indicates the number of milliseconds to wait.
+(It is therefore ``easy'' to sleep for some number of milliseconds by
+starting an {\tt epfd} and using {\tt epoll\_wait}; takes two function
+calls instead of one, but allows sub-second latency.)
+
+Upon return from {\tt epoll\_wait}, we know that we have {\tt
+  nr\_events} events ready.
 
 
-\paragraph{Locking and Synchronization Points.}
-Think back to a concurrency course and the discussion of locking. We'll be coming back to this subject before too long. But for now, suffice it to say, that the more locks and locking we need, the less scalable the code is going to be. You may think of the lock as a resource and the more threads or processes that are looking to acquire that lock, the more ``resource contention'' we have, and the more waiting and coordination are going to be necessary. We're going to revisit the subject of wise use locks in more detail soon.
+Here's a super quick example from the man page for epoll (\url{http://man7.org/linux/man-pages/man7/epoll.7.html}:
 
-The previous paragraph applies as well to other concurrency constructs like semaphores, condition variables, etc. Any time a thread is forced to wait is going to be a limitation on the ability to parallelize the problem.
+\begin{lstlisting}[language=C]
+#define MAX_EVENTS 10
+struct epoll_event ev, events[MAX_EVENTS];
+int listen_sock, conn_sock, nfds, epollfd;
 
-\paragraph{Memory Allocators.}
-Assuming we're not working with an embedded system where all memory is statically allocated in advance, there will be dynamic memory allocation. The memory allocator is often centralized and may support only one thread allocating or deallocating at a time. This means it does not necessarily scale very well. There are, however, some techniques for dynamic memory allocation that allow these things to work in parallel.
+/* Code to set up listening socket, 'listen_sock',
+   (socket(), bind(), listen()) omitted */
 
-\paragraph{Overhead.}
-A first implementation might involve starting a thread for a task, then destroying it when it is complete. If there are many tasks and tasks are short-lived, then the fraction of time creating and destroying the threads may be significant.
+epollfd = epoll_create1(0);
+if (epollfd == -1) {
+    perror("epoll_create1");
+    exit(EXIT_FAILURE);
+}
 
- But that's not the only way. We can have a pool of workers. The workers are created once and only once. Then the application just submits units of work, and then on the other side these units of work are allocated to workers. The number of workers will scale based on the available hardware. This is neat as a programming practice: as the application developer we don't care quite so much about the underlying hardware. Let the operating system decide how many workers there should be, to figure out the optimal way to process the units of work.
+ev.events = EPOLLIN;
+ev.data.fd = listen_sock;
+if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listen_sock, &ev) == -1) {
+    perror("epoll_ctl: listen_sock");
+    exit(EXIT_FAILURE);
+}
+
+for (;;) {
+    nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
+    if (nfds == -1) {
+        perror("epoll_wait");
+        exit(EXIT_FAILURE);
+    }
+
+    for (n = 0; n < nfds; ++n) {
+        if (events[n].data.fd == listen_sock) {
+            conn_sock = accept(listen_sock, (struct sockaddr *) &addr, &addrlen);
+            if (conn_sock == -1) {
+                perror("accept");
+                exit(EXIT_FAILURE);
+            }
+            setnonblocking(conn_sock);
+            ev.events = EPOLLIN | EPOLLET;
+            ev.data.fd = conn_sock;
+            if (epoll_ctl(epollfd, EPOLL_CTL_ADD, conn_sock,
+                        &ev) == -1) {
+                perror("epoll_ctl: conn_sock");
+                exit(EXIT_FAILURE);
+            }
+        } else {
+            do_use_fd(events[n].data.fd);
+        }
+    }
+}
+\end{lstlisting}
+
+\section*{Using cURL Asynchronously}
+We've already seen that network communication is a great example of a way that you could use asynchronous  I/O. You can start a network request and move on to creating more without waiting for the results of the first one. For requests to different recipients, it certainly makes sense to do this.
+
+The cURL multi interface has a lot of similarities with the regular cURL interface. Here's a simple example from \url{https://curl.haxx.se/libcurl/c/https.html} (i.e., the official docs):
+
+\begin{lstlisting}[language=C]
+#include <stdio.h>
+#include <curl/curl.h>
  
-Suppose you have to decide, though, how many threads should you create.
-This depends
-on which resources your threads use; if you are writing
-computationally-intensive threads, then you probably want to have
-fewer threads than the number of virtual CPUs. You can also use
-Amdahl's Law to estimate the maximum useful number of threads, as
-discussed previously.
+int main( int argc, char** argv ) {
+  CURL *curl;
+  CURLcode res;
+ 
+  curl_global_init(CURL_GLOBAL_DEFAULT);
+ 
+  curl = curl_easy_init();
+  if( curl ) {
+    curl_easy_setopt(curl, CURLOPT_URL, "https://example.com/" );
+    res = curl_easy_perform( curl );
+    
+  if( res != CURLE_OK ) {
+      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+    }
+    curl_easy_cleanup(curl);
+  }
+ 
+  curl_global_cleanup();
+  return 0;
+}
+\end{lstlisting}
 
-Here's a longer discussion of thread pools:
+In the previous example, the call to \texttt{curl\_easy\_perform()} is blocking and we wait for the curl execution to take place. We want to change that! The tool for this is the ``multi handle'' - this is a structure that lets us have more than one curl easy handle. And rather than waiting, we can start them and then check on their progress. 
 
-\begin{center}
-\url{http://www.ibm.com/developerworks/library/j-jtp0730.html}
-\end{center}
+There are still the global initialization and cleanup functions. The structure for the new multi-handle type is \texttt{CURLM} (instead of \texttt{CURL}) and it is initialized with the \texttt{curl\_multi\_init()} function. 
 
-Modern languages provide thread pools; Java's
-\url{java.util.concurrent.ThreadPoolExecutor}~\cite{java:threadpoolexecutor}, C\#'s
-\url{System.Threading.ThreadPool}~\cite{csharp:threadpool}, and GLib's {\tt GThreadPool}~\cite{gnome:threadpool} all implement thread pools. 
+Once we have a multi handle, we can add easy handles -- however many we need -- to the multi handle. Creation of the easy handle is the same as it is when being used alone - use \texttt{curl\_easy\_init()} to create it and then we can set however many options on this we need. Then, we add the easy handle to the multi handle with \texttt{curl\_multi\_add\_handle( CURLM* cm, CURL* eh )}.
 
-\paragraph{Threads and CPUs.} In your operating systems class,
-you've seen implementations of threads (``lightweight processes'').
-We'll call these threads \emph{software threads}, and we'll program
-with them throughout the class. Each software thread corresponds to a
-stream of instructions that the processor executes. On a old-school
-single-core, single-processor machine, the operating system
-multiplexes the CPU resources to execute multiple threads
-concurrently; however, only one thread runs at a time on the single
-CPU.
+Once we have finished putting all the easy handles into the multi handle, we can dispatch them all at once with \texttt{curl\_multi\_perform( CURLM* cm, int* still\_running )}. The second parameter is a pointer to an integer that is updated with the number of the easy handles in that multi handle that are still running. If it's down to 0, then we know that they are all done. If it's nonzero it means that some of them are still in progress.
 
-On the other hand, a modern chip contains a number of \emph{hardware
-threads}, which correspond to the virtual CPUs. These are sometimes
-known as \emph{strands}. The operating system still needs to 
-multiplex the software threads onto the hardware threads, but now has
-more than one hardware thread to schedule work onto.
+This does mean that we're going to call\texttt{curl\_multi\_perform()} more than once. Doing so doesn't restart or interfere with anything that was already in progress -- it just gives us an update on the status of what's going on. We can check as often as we'd like, but the intention is of course to do something useful while the asynchronous I/O request(s) are going on. Otherwise, why not make it synchronous?
 
+Suppose we've run out of things to do though. What then? Well, we can wait, if we want, using \texttt{curl\_multi\_wait( CURLM *multi\_handle, struct curl\_waitfd extra\_fds[], unsigned int extra\_nfds, int timeout\_ms, int *numfds )} . This function will block the current thread until something happens (some event occurs).
 
+The first parameter is the multi handle, which makes sense. The second parameter is a structure of extra file descriptors you can wait on (but we will always want this to be NULL in this course) and the third parameter is the count (the size of the provided array) which would also be zero here. Then the second-last parameter is a maximum time to wait. The last parameter is a pointer that will be updated with the actual number of ``interesting'' events that occurred (interesting is the word used in the specifications, and what it means is mysterious). For a simple use case you can ignore most of the parameters and just wait for something to happen and go from there.
 
-\paragraph{Implementing (or Simulating) Hardware Threads.} 
-There are a number of ways to implement multiple software threads; for
-instance, the simplest possible implementation, {\bf kernel-level
-threading} (or 1:1 model) dedicates one core to each thread. The kernel schedules threads
-on different processors. (Note that kernel involvement will always be required to
-take advantage of a multicore system). This model is used by Win32, as well as
-POSIX threads for Windows and Linux. The 1:1 model allows concurrency and parallelism.
+In the meantime though, the perform operations are happening, and so are whatever callbacks we have set up (if any). And as the I/O operation moves through its life cycle, the state of the easy handle is updated appropriately. Each easy handle has an associated status message as well as a return code.
 
-Alternately, we could make one core execute multiple threads. In the
-{\bf user-level threading}, or N:1, model, the single core would keep
-multiple contexts and could 1) switch every 100 cycles; 2) switch
-every cycle; 3) fetch one instruction from each thread each cycle; or
-4) switch every time the current thread hits a long-latency event
-(cache miss, etc.) This model allows for quick context switches, but
-does not leverage multiple processors. (Why would you use these?) The N:1 model is used by
-GNU Portable Threads.
+Why both? Well - one is about what the status of the request is. The message could be, for example ``done'', but does that mean finished with success or finished with an error? For the second one tells us about that. We can ask about the status of the request using \texttt{curl\_multi\_info\_read( CURLM* cm, int* msgs\_left )}. This returns a pointer to information ``next'' easy handle, if there is one. The return value is a pointer to a struct of type \texttt{CURLMsg}. Along side this, the parameter \texttt{msgs\_left} is updated to say how many messages remain (so you don't have to remember or know in advance, really). 
 
-Finally, it's possible to both use multiple cores and put multiple
-threads onto one core, in a {\bf hybrid threading}, or M:N, model. Here, we map $M$ application threads to $N$ kernel threads. This
-is a compromise between the previous two models, which both allows
-quick context switches and the use of multiple processors. However, it
-requires increased complexity; the library provides scheduling
-services, which may not coordinate well with kernel, and increases
-likelihood of priority inversion (which you've seen in Operating
-Systems).  This method is used by modern Windows threads.
+We will therefore check the \texttt{CURLMsg} message to see what happened and make sure all is well. If our message that we got back with the info read is called \texttt{m}, What we are looking for is that the \texttt{m->msg} is equal to \texttt{CURLMSG\_DONE} -- request completed. If not, this request is still in progress and we aren't ready to evaluate whether it was successful or not. If there are more handles to look at, we should go on to the next. If it is done, we should look at the return code in and the result, in \texttt{m->data.result}. If it is \texttt{CURLE\_OK} then everything succeeded. If it's anything else, it indicates an error.
 
+When a handle has finished, you need to remove it from the multi handle. A pointer to it is inside the \texttt{CURLMsg} under \texttt{m->easy\_handle}. It is removed with \texttt{curl\_multi\_remove\_handle( CURLM* cm, CURL eh )}. Once removed, it should be cleaned up like normal with \texttt{curl\_easy\_cleanup( CURL* eh )}.
 
-\section*{Choose Your Pain}
-The first design decision that you need to solve when parallelizing programs
-is whether you should use threads or processes. Threads are basically light-weight processes which piggy-back on
-          processes' address space.
+There is of course the corresponding cleanup function \texttt{curl\_multi\_cleanup( CURLM * cm ) } for the multi handle when we are done with all the easy handles inside. The last step, as before, is to use the global cleanup function. After that we are done. 
 
-Traditionally (pre-Linux 2.6) you had to use {\tt
-  fork}~(for~processes) and {\tt clone} (for threads). But {\tt clone}
-is not POSIX compliant, and its man page says that it's
-Linux-specific---FreeBSD uses {\tt rfork()}. (POSIX is the standard
-for Unix-like operating systems).
+Let's consider the following code example by Clemens Gruber~\cite{curlmulti}, with slight modifications for compactness, formatting, and to remember the cleanup. This example puts together all the things we talked about in one compact code segment. Here, the callback does nothing, but that's okay -- it's just to show what you could do with it.
 
-\paragraph{When processes are better.} {\tt fork} is safer and more secure than threads.
+\begin{lstlisting}[language=C]
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <curl/multi.h>
 
-  \begin{enumerate}
-    \item Each process has its own virtual address space:
-      \begin{itemize}
-        \item Memory pages are not copied, they are copy-on-write. Therefore, processes use less memory than you would expect.
-      \end{itemize}
-    \item Buffer overruns or other security holes do not expose other~processes.
-    \item If a process crashes, the others can continue.
-  \end{enumerate}
+#define MAX_WAIT_MSECS 30*1000 /* Wait max. 30 seconds */
 
-{\bf Example:} In the Chrome browser, each tab is a separate
-process. Scott McCloud explained this:
-\url{http://www.scottmccloud.com/googlechrome/}.
+const char *urls[] = {
+  "http://www.microsoft.com",
+  "http://www.yahoo.com",
+  "http://www.wikipedia.org",
+  "http://slashdot.org"
+};
+#define CNT 4
 
-\paragraph{When threads are better.} Threads are easier and faster.
+size_t cb(char *d, size_t n, size_t l, void *p) {
+  /* take care of the data here, ignored in this example */
+  return n*l;
+}
 
-  \begin{enumerate}
-    \item Interprocess communication (IPC) is more complicated and slower than interthread
-          communication; must use operating system utilities (pipes, semaphores, shared
-              memory, etc) instead of thread library (or just memory reads and writes).
-    \item Processes have much higher startup, shutdown, and synchronization costs than threads.
-    \item pthreads fix the issues of {\tt clone} and provide a
-          uniform interface for most systems. (You'll work with them in Assignment 1.)
-  \end{enumerate}
+void init( CURLM *cm, int i ) {
+  CURL *eh = curl_easy_init();
+  curl_easy_setopt( eh, CURLOPT_WRITEFUNCTION, cb );
+  curl_easy_setopt( eh, CURLOPT_HEADER, 0L );
+  curl_easy_setopt( eh, CURLOPT_URL, urls[i] );
+  curl_easy_setopt( eh, CURLOPT_PRIVATE, urls[i]) ;
+  curl_easy_setopt( eh, CURLOPT_VERBOSE, 0L );
+  curl_multi_add_handle( cm, eh );
+}
 
-\paragraph{How to choose?}
-  If your application is like this:
+int main( int argc, char** argv ) {
+    CURLM *cm = NULL;
+    CURL *eh = NULL;
+    CURLMsg *msg = NULL;
+    CURLcode return_code = 0;
+    int still_running = 0; 
+    int msgs_left = 0;
+    int http_status_code;
+    const char *szUrl;
+
+    curl_global_init( CURL_GLOBAL_ALL );
+    cm = curl_multi_init( );
+
+    for ( int i = 0; i < CNT; ++i ) {
+        init( cm, i );
+    }
+
+    curl_multi_perform( cm, &still_running );
+
+    do {
+        int numfds = 0;
+        int res = curl_multi_wait( cm, NULL, 0, MAX_WAIT_MSECS, &numfds );
+        if( res != CURLM_OK ) {
+            fprintf( stderr, "error: curl_multi_wait() returned %d\n", res );
+            return EXIT_FAILURE;
+        }
+        curl_multi_perform( cm, &still_running );
+
+    } while( still_running );
+
+    while ( ( msg = curl_multi_info_read( cm, &msgs_left ) ) ) {
+        if ( msg->msg == CURLMSG_DONE ) {
+            eh = msg->easy_handle;
+
+            return_code = msg->data.result;
+            if ( return_code != CURLE_OK ) {
+                fprintf( stderr, "CURL error code: %d\n", msg->data.result );
+                continue;
+            }
+
+            // Get HTTP status code
+            http_status_code = 0;
+            szUrl = NULL;
+
+            curl_easy_getinfo( eh, CURLINFO_RESPONSE_CODE, &http_status_code );
+            curl_easy_getinfo( eh, CURLINFO_PRIVATE, &szUrl );
+
+            if( http_status_code == 200 ) {
+                printf( "200 OK for %s\n", szUrl ) ;
+            } else {
+                fprintf( stderr, "GET of %s returned http status code %d\n", szUrl, http_status_code );
+            }
+
+            curl_multi_remove_handle( cm, eh );
+            curl_easy_cleanup( eh );
+        } else {
+            fprintf( stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg );
+        }
+    }
+    curl_multi_cleanup( cm );
+    curl_global_cleanup();
+    return 0;
+}
+\end{lstlisting}
+
+You may wonder about re-using an easy handle rather than removing and destroying it and making a new one. The official docs say that you can re-use one, but you have to remove it from the multi handle and then re-add it, presumably after having changed anything that you want to change about that handle. 
+
+Because a handle could be replaced with another one (or the same one), you could have a situation where there are constantly handles in progress and you might never be at a situation where there are no messages left. And that is okay.
+
+In this example all requests had the same (useless) callback, but of course you could have different callbacks for different easy handles if you wanted them to do different things.
+
+How well does this scale? The developer claims that you can have multiple thousands of connections in a single multi handle\footnote{See this post from the mailing list: \url{https://curl.haxx.se/mail/lib-2011-11/0078.html}}. And 60k ought to be enough for anyone!
+
+\paragraph{I enjoy pain!} You can use cURL with \texttt{select()} if you wish, although it comes with an anti-recommendation: I think you shouldn't do it. But you can if you want. In some ways, cURL does make things less painful because it does some of the grunt work for you. Don't do it. Please no.
+
+\section*{Building Servers: Concurrent Socket I/O}
+
+\paragraph{Your Choices.} The first two both use blocking I/O, while the second two use
+non-blocking I/O~~\cite{gplus:concurrent}:
+    \begin{itemize}
+      \item Blocking I/O; 1 process per request.
+      \item Blocking I/O; 1 thread per request.
+      \item Asynchronous I/O, pool of threads, callbacks, each thread handles multiple connections.
+      \item Nonblocking I/O, pool of threads, multiplexed with select/poll,
+        event-driven, each thread handles multiple connections.
+    \end{itemize}
+
+\paragraph{Blocking I/O; 1 process per request.}
+This is the old Apache model.
   \begin{itemize}
-    \item mostly independent tasks, with little or no communication;
-    \item task startup and shutdown costs are negligible compared to overall runtime; and
-    \item want to be safer against bugs and security holes,
+    \item The main thread waits for connections.
+    \item Upon connect, the main thread forks off a new process, which completely
+      handles the connection.
+    \item Each I/O request is blocking, e.g., reads wait until more data arrives.
   \end{itemize}
-then processes are the way to go. If it's the opposite of this, then use threads.
 
-For performance reasons, along with ease and consistency across systems, we'll use threads. We will describe both pthreads and C++ 11 threads, in particular.
+Advantage: 
+  \begin{itemize}
+    \item ``Simple to undertand and easy to program.''
+  \end{itemize}
 
-\paragraph{Overhead.} The common wisdom is that processes are
-expensive, threads are cheap. Let's verify this with a benchmark on a
-laptop (included in the live-coding directory on GitHub) which creates and destroys 50,000 threads:
-  \begin{lstlisting}[basicstyle=\scriptsize]
-jon@riker examples master % time ./create_fork 
-0.18s user 4.14s system 34% cpu 12.484 total
-jon@riker examples master % time ./create_pthread 
-0.73s user 1.29s system 107% cpu 1.887 total
-  \end{lstlisting}
+Disadvantage:
+  \begin{itemize}
+    \item High overhead from starting 1000s of processes.
+      (We can somewhat mitigate this using process pools).
+  \end{itemize}
+This method can handle $\sim$10 000 processes, but doesn't generally scale beyond that, and
+uses many more resources than the alternatives.
 
-Clearly pthreads incur much lower overhead than {\tt fork}. pthreads
-offer a speedup of 6.5 over processes in terms of startup and teardown costs.
+\paragraph{Blocking I/O; 1 thread per request.}
+    We know that threads are more lightweight than processes. So let's use threads instead
+of processes. Otherwise, this is the same as 1 process per request, but with less overhead.
+I/O is the same---it is still blocking.
 
-\subsection*{Parallelization using Threads or Processes}
-We'll be looking at thread-based or process-based parallelization for the
-next bit. We don't care about the distinction between threads and processes
-for the moment. In fact, we could even distribute work over multiple systems. But the idea is, if you are looking to parallelize your program, you should think about which of the following patterns makes the most sense.
+    Advantage:
+    \begin{itemize}
+      \item Still simple to understand and easy to program.
+    \end{itemize}
 
-\paragraph{Pattern 1: Multiple Independent Tasks.} If you're just trying to maximize
-system utilization, you can use one system to run a number of independent
-tasks; for instance, you can put both a web server and database on
-one machine. If the web server happens to be memory-bound while the
-database is I/O-bound, then both can use system resources. If the web
-server isn't talking to the database (rare these days!), then the tasks
-would not get in each others' way.
+    Disadvantages:
+    \begin{itemize}
+      \item Overhead still piles up, although less than processes.
+      \item New complication: race conditions on shared data.
+    \end{itemize}
 
-Most services probably ought to be run under virtualization these
-days, unless they're trivial or not mission-critical.
+\paragraph{Asynchronous I/O.} The other two choices don't assign one thread or process per connection,
+but instead multiplex the threads to connections. We'll first talk
+about using asynchronous I/O with select or poll.  
 
-A more relevant example of multiple independent tasks occurs in
-cluster/grid/cloud computing: the cloud might run a number of
-independent tasks, and each node would run some of the tasks. The
-cloud can retry a task (on a different node, perhaps) if it fails on
-some node. Note that the performance ought to increase linearly with
-the number of threads, since there shouldn't be communication between
-the tasks.
+Here are (from 2006) some performance benefits of using asynchronous
+I/O on lighttpd~\cite{lttpd}.
 
-\paragraph{Pattern 2: Multiple Loosely-Coupled Tasks.} Some applications contain
-tasks which aren't quite independent (so there is some inter-task
-communication), but not much.  In this case, the tasks may be
-different from each other. The communication might be from the tasks
-to a controller or status monitor; it would usually be asynchronous or
-be limited to exceptional situations.
+    \begin{tabular}{llrrr}
+    version & & fetches/sec & bytes/sec & CPU idle \\
+    1.4.13 & sendfile & 36.45 & 3.73e+06 & 16.43\% \\
+    1.5.0 & sendfile & 40.51 & 4.14e+06 & 12.77\% \\
+    1.5.0 & linux-aio-sendfile & 72.70 & 7.44e+06 & 46.11\% \\
+    \end{tabular}
 
-Refactoring an application this way can help with latency: if you 
-split off the CPU-intensive computations into a sub-thread, then
-the main thread can respond to user input more quickly.
+(Workload: $2\times 7200$ RPM in RAID1, 1GB RAM, transferring 10GBytes on a 100MBit network).
 
-Here's an example. Assume that an application needs to receive and
-forward network packets, and also must log packet activity to disk.
-Then the two tasks are clear: receive/forward, and log. Since logging
-to disk is a high-latency event, a single-threaded application might
-incur latency while writing to disk. Splitting into subtasks allows
-the receive/forward to run without waiting for previous packets to be
-logged, thus increasing the throughput of the system.
-
-\paragraph{Pattern 3: Multiple Copies of the Same Task.} A common variant of
-multiple independent tasks is multiple copies of the same task
-(presumably on different data). In this case, we'd require there to be
-no communication between the different copies, which would enable
-linear speedup. An example is a rendering application running on
-multiple distinct animations. We gain throughput, but need to wait
-just as long for each task to complete.
-
-\paragraph{Pattern 4: Single Task, Multiple Threads.} This is the classic
-vision of ``parallelization'': for instance, distribute array
-processing over multiple threads, and let each thread compute the
-results for a subset of the array.
-
-This pattern, unlike many of the others before it, can actually
-decrease the time needed to complete a unit of work, since it gets
-multiple threads involved in doing the single unit simultaneously.
-The result is improved latency and therefore increased throughput.
-Communication can be a problem, if the data is not nicely
-array-structured, or has dependencies between different array parts.
-
-Other names and variations for this pattern include ``fork-join'',
-where the main process forks its execution and gives work to all of
-the threads, with the join synchronizing threads and combining the
-results; and ``divide-and-conquer'', where a thread spawns subthreads
-to compute smaller and smaller parts of the solution.
-
-\paragraph{Pattern 5: Pipeline of Tasks.} We've seen pipelining in the context of
-computer architecture. It can also work for software. For instance,
-you can use pipelining for packet-handling software, where multiple
-threads, as above, might confound the order. If you use a three-stage
-pipeline, then you can have three packets in-flight at the same time,
-and you can improve throughput by a factor of 3 (given appropriate
-hardware).  Latency would tend to remain the same or be worse (due to
-communication overhead).
-
-Some notes and variations on the pipeline: 1) if a stage is
-particularly slow, then it can limit the performance of the entire
-pipeline, if all of the work has to go through that stage; and 2) you
-can duplicate pipeline stages, if you know that a particular stage is
-going to be the bottleneck.
-
-\paragraph{Pattern 6: Client-Server.} Botnets work this way (as does \verb+SETI@Home+,
-etc). To execute some large computation, a server is ready to tell
-clients what to do.  Clients ask the server for some work, and the
-server gives work to the clients, who report back the results. Note
-that the server doesn't need to know the identity of the clients for
-this to work.
-
-A single-machine example is a GUI application where the server part
-does the backend, while the client part contains the user interface.
-One could imagine symbolic algebra software being designed that way.
-Window redraws are an obvious candidate for tasks to run on clients.
-
-Note that the single server can arbitrate access to shared resources.
-For instance, the clients might all need to perform network access.
-The server can store all of the requests and send them out in an
-orderly fashion.
-
-The client-server pattern enables different threads to share work
-which can somehow be parcelled up, potentially improving
-throughput. Typically, the parallelism is somewhere between single
-task, multiple threads and multiple loosely-coupled tasks. It's also a
-design pattern that's easy to reason about.
-
-\paragraph{Pattern 7: Producer-Consumer.} The producer-consumer is 
-a variant on the pipeline and client-server models. In this case, the
-producer generates work, and the consumer performs work. An example is
-a producer which generates rendered frames, and a consumer which
-orders these frames and writes them to disk. There can be any number
-of producers and consumers. This approach can improve throughput
-and also reduces design complexity.
-
-\paragraph{Combining Strategies.} If one of the patterns suffices,
-then you're done. Otherwise, you may need to combine strategies.
-For instance, you might often start with a pipeline, and then 
-use multiple threads in a particular pipeline stage to handle one
-piece of data. Or, as I alluded to earlier, you can replicate
-pipeline stages to handle different data items simultaneously.
-
-Note also that you can get synergies between different patterns.
-For instance, consider a task which takes 100 seconds. First, you
-take 80 seconds and parallelize it 4 ways (so, 20 seconds). This
-reduces the runtime to 40 seconds. Then, you can take the serial 
-20 seconds and split it into two threads. This further reduces 
-runtime to 30 seconds. You get a $2.5\times$ speedup from the
-first transformation and $1.3\times$ from the second, if you do it
-after the first. But, if you only did the second parallelization,
-you'd only get a $1.1\times$ speedup.
-
+The basic workflow is as follows: 
+   \begin{enumerate}
+     \item enqueue a request;
+     \item \ldots ~do something else;
+     \item (if needed) periodically check whether request is done; and
+     \item read the return value.
+   \end{enumerate}
 
 \input{bibliography.tex}
 
