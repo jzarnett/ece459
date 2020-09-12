@@ -1,8 +1,9 @@
 \input{configuration}
+\usepackage{multirow}
 
-\title{Lecture 11 --- Lock Convoys, Atomics, Lock-Freedom}
+\title{Lecture 11 --- Use of Locks, Reentrancy}
 
-\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\author{Jeff Zarnett \& Patrick Lam \\ \small \texttt{\{jzarnett, patrick.lam\}@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -14,640 +15,1097 @@
   \titlepage
 
  \end{frame}
- 
+
+
+\part{Use of Locks}
+\frame{\partpage}
+
 
 \begin{frame}
-\frametitle{Question of the Day}
-\Large
+\frametitle{Use of Locks}
+
 \vspace*{-3em}
-Why does it take a long time for a line of cars \\
-to start at a green light?
+In previous courses: learned about locking and how it works.
 
-\end{frame}
+Before: was enough to avoid bad stuff.
 
-\begin{frame}
-\frametitle{Convoys}
-\begin{center}
-\includegraphics[width=0.9\textwidth]{images/L08-DOT-111-convoy.jpg}\\
-By Roy Luck [CC BY 2.0 (http://creativecommons.org/licenses/by/2.0)], \\
-via Wikimedia Commons
-\end{center}
-\end{frame}
-
-\begin{frame}
-\frametitle{Lock Convoys}
-\begin{center}
-\scalebox{0.4}{
-\input{images/L08-convoy-full}}
-\end{center}
-\end{frame}
-
-\begin{frame}
-\frametitle{Problem}
-\begin{center}
-\Large
-\vspace*{-2em}
-Too much CPU time handling context switches!
-\end{center}
-\end{frame}
-
-\begin{frame}
-\frametitle{Weird Side Effects of Lock Convoys}
-
-Threads acquire the lock frequently and they are running for very short periods of time before blocking. 
-
-Other, unrelated threads of the same priority get to run for an unusually large percentage of the (wall-clock) time. 
-
-You might think another process is the real offender.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Unfairness is Fair?}
-
-In Windows Vista and later, the problem is solved because locks are unfair.
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/skepticalkid.jpg}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Unfairness is Fair?}
-
-Windows XP: if a lock $\ell$ is unlocked by $A$ and there is a thread $B$ waiting, then $B$ gets it.
-
-$B$ is no longer blocked, and $B$ already owns the lock when it wakes up.
-
-The lock can never be ``stolen''; hence ``fair''.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Fair is Unfair}
-
-
-But! There is a period of time where the lock is held by $B$, but $B$ is not running.
-
-If thread $C$ starts to run and requests $\ell$, it gets stuck, and we pay more context switch costs.
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{How Unfairness Mitigates Lock Convoys}
-
-
-Thread $A$ releases lock $\ell$. $B$ wants it.
-
-Let's be unfair. $B$ doesn't get it.
-
-Say $B$ runs next. Then it requests $\ell$ and gets it.
-
-What if $C$ runs next instead? Then it computes.
-\begin{itemize}
-\item If $C$ wants $\ell$, it gets it; maybe releases before switchout.
-\item If $C$ didn't need $\ell$, nothing to see here.
-\end{itemize}
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Diagnosing Lock Convoys}
-
-\begin{center}
-\input{images/L08-detecting-convoy}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Starvation?}
-
-Changing the locks to be unfair does risk starvation. 
-
-Windows does give a thread priority boost, temporarily, after it gets unblocked, to see to it that the unblocked thread does actually get a chance to run.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Do Your Own Dirty Work}
-
-Although it can be nice to be able to give away such a problem to the OS developers, we might have to solve it for ourselves. 
-
-
-\end{frame}
- 
-
-\begin{frame}
-\frametitle{I am le tired...}
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/pusheen-sleep.png}
-\end{center}
-
-We could make the threads that are NOT in the lock convoy call a sleep() system call fairly regularly to give other threads a chance to run. 
+Now: Still important, but not enough.
 
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Sleep, Data, Sleep}
+\frametitle{Critical Section Size}
 
-This solution is lame, though, because we're changing the threads that are not the offenders.
-
-It just band-aids the situation so the convoy does not totally trash performance. 
-
-Still, we are doing a lot of thread switches, which themselves are expensive as outlined above.
+  \begin{center}
+    \input{images/L07-critsec-size-1}
+  \end{center}
 
 \end{frame}
 
 \begin{frame}
-\frametitle{Sharing is Caring}
+\frametitle{Critical Section Size}
 
-\begin{center}
-Young toekans sharing food
+  \begin{center}
+    \input{images/L07-critsec-size-2}
+  \end{center}
 
-\includegraphics[width=\textwidth]{images/L08-sharing.jpg}
-
-Credit: Sander van der Wel via Flickr, Wikimedia Commons
-\end{center}
+Critical sections should be as large as they need to be but no larger. 
 
 \end{frame}
 
+
 \begin{frame}
-\frametitle{Sharing is Caring}
+\frametitle{Rewrite This Block}
 
-The next idea is sharing: can we use a reader-writer lock to allow much more concurrency than we would get if everything used exclusive locking? 
+  \begin{center}
+    \input{images/L07-critsec-size-3}
+  \end{center}
 
-If there will be a lot of writes then there's limited benefit to this speedup, but if reads are the majority of operations then it is worth doing. 
+Sometimes control flow or other very short statements might get swept into the critical section.
 
-We can also try to find a way to break a critical section up into two or more smaller ones, if that can be done correctly!
+Those should be the exception rather than the rule.
 
 \end{frame}
-
-\begin{frame}
-\frametitle{Nevermind, I wanted something else...}
-
-The next idea has to do with changing when (and how) you need the data. 
-
-Shrink the critical section to just pull a copy of the shared data and operate on the shared data. 
- 
- 
-But you saw the earlier discussion about critical section sizes, right? So you did that already...?
-
-
-\end{frame} 
 
 
 \begin{frame}[fragile]
-\frametitle{Try, Try Again}
+\frametitle{Remember the Producer-Consumer Problem?}
 
-The last solution suggested is to use try-lock primitives:
+Short code example from the producer-consumer problem:
 
 \begin{lstlisting}[language=C]
-int retries = 0;
-while(pthread_mutex_trylock( &lock ) != 0 ) { /* 0 indicates lock acquired */
-  if ( retries < SPIN_LIMIT ) {
-    retries++;
-    sleep(0);
-    continue;
+sem_t spaces;
+sem_t items;
+int counter;
+int* buffer;
+int pindex = 0;
+int cindex = 0;
+int ctotal = 0;
+pthread_mutex_t prod_mutex;
+pthread_mutex_t con_mutex;
+
+void consume( int to_consume );
+
+\end{lstlisting}
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Remember the Producer-Consumer Problem?}
+
+Single-threaded consumer code:
+
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( ctotal < MAX_ITEMS_CONSUMED ) {
+    sem_wait( &items );
+    consume( buffer[cindex] );
+    buffer[cindex] = -1;
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    sem_post( &spaces );
   }
-  pthread_mutex_lock( &lock );
-  break;
 }
 \end{lstlisting}
 
-If we reach the limit then we just give up and enter the queue!
 
 \end{frame}
 
 
+\begin{frame}[fragile]
+\frametitle{Multiple Consumers}
+Must add mutual exclusion to allow multiple simultaneous consumers.
 
-\begin{frame}
-\frametitle{Polling?!}
+Could allow exactly one consumer to run at a time. We can do better\ldots
 
-It looks like polling for the critical section. 
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( ctotal < MAX_ITEMS_CONSUMED ) {
+    pthread_mutex_lock( &con_mutex );
+    sem_wait( &items );
+    consume( buffer[cindex] );
+    buffer[cindex] = -1;
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    sem_post( &spaces );
+    pthread_mutex_unlock( &con_mutex );
+  }
+}
+\end{lstlisting}
 
-The limit on the number of tries helps in case the critical section belongs to a low priority thread and we need the current thread to be blocked.
-
-Under this scheme, if $A$ is going to release the critical section, $B$ does not immediately become the owner. 
-
-$A$ may keep running and $A$ might even get the critical section again before $B$ tries again to acquire the lock (and may succeed). 
-
-Even if the spin limit is as low as 2, this means two threads can recover from contention without creating a convoy
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{You've been... THUNDERSTRUCK!}
+\frametitle{Anything to Kick Out?}
 
 \begin{center}
-\includegraphics[width=.8\textwidth]{images/L08-thundering-herd.jpg}
+	\includegraphics[width=0.4\textwidth]{images/kickout.png}
+\end{center}
 
-Credit: public domain, Famous Players, 1925
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Anything to Kick Out?}
+
+At first glance it is probably not very obvious but the \texttt{consume} function takes a regular integer, any old integer, not a pointer of some sort. 
+
+So we could, inside the critical section, read the value of the buffer at the current index into a temp variable. 
+
+That temp variable then can be given to the \texttt{consume} function at any time\ldots outside of the critical section. 
+
+Everything else inside our lock and unlock statements seems to be shared data: operates on \texttt{cindex} or \texttt{ctotal}.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Updated Code}
+
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( ctotal < MAX_ITEMS_CONSUMED ) {
+    pthread_mutex_lock( &con_mutex );
+    sem_wait( &items );
+    int temp = buffer[cindex]; // store for now
+    buffer[cindex] = -1;
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    sem_post( &spaces );
+    pthread_mutex_unlock( &con_mutex );
+    consume( temp ); // consume outside mutex
+  }
+}
+\end{lstlisting}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Did We Get Everything?}
+
+The while condition checks the value of \texttt{ctotal} and that is a read of shared data. 
+
+Now we maybe have a problem. How do we get that inside the critical section?
+
+One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing\ldots
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Not Forgetting The Loop Condition}
+
+ Instead what I'd recommend is to make the loop a while true loop and then have a test of the value to determine when we should break out of the loop.
+ 
+ \begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( 1 ) { 
+    pthread_mutex_lock( &con_mutex );  
+    if ( ctotal == MAX_ITEMS_CONSUMED ) {
+      pthread_mutex_unlock( &con_mutex );
+      break;
+    }   
+    sem_wait( &items );
+    int temp = buffer[cindex];
+    buffer[cindex] = -1; 
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    pthread_mutex_unlock( &con_mutex );
+    sem_post( &spaces );
+    consume( temp );
+  }
+  pthread_exit( NULL );
+}
+\end{lstlisting}
+
+Are we done?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{``Do you think you got him?''}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/gothim.png}
 \end{center}
 
 \end{frame}
 
 
-\begin{frame}
-\frametitle{You've been... THUNDERSTRUCK!}
-
-The lock convoy has some similarities with a different problem called the \alert{thundering herd problem}. 
-
-In the thundering herd problem, some condition is fulfilled (e.g., broadcast on a condition variable) and it triggers a large number of threads to wake up. 
-
-It is likely they can't all proceed, so some will get blocked and then awoken again all at once in the future. 
-
-In this case it would be better to wake up one thread at a time instead of all of them.
-
-\end{frame}
 
 \begin{frame}
-\frametitle{Lost Wakeups}
+\frametitle{Locks Have Costs}
 
-\begin{center}
-\includegraphics[width=.8\textwidth]{images/L08-sleeping-beauty.jpg}
+Keeping the critical section as small as possible is important because it speeds up performance (reduces the serial portion of your program). 
 
-Credit: public domain, John Collier, \emph{Sleeping Beauty}, 1929
-\end{center}
-\end{frame}
+But that's not the only reason. 
 
-\begin{frame}
-\frametitle{Lost Wakeups}
+The lock is a resource, and contention for that resource is itself expensive.
 
-
-Beware! Waking up one thread at a time only works when threads are identical.
-
-Otherwise, you're better off waking all the threads just in case, to avoid correctness issues.
 
 \end{frame}
-
-\begin{frame}
-\frametitle{Locks and Atomics}
-
- Atomics are a lower-overhead alternative to
-locks as long as you're doing suitable operations. 
-
-Sometimes: just want that operations are indivisible.
-
-Key idea: an \alert{atomic operation} is indivisible.\\
-\quad Other threads see state before or after the operation; nothing in between.
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{About C++ atomics}
-
-\vspace*{-2em}
-
-\Large
-    Use the default {\tt std::memory\_order}.\\
-    (= sequential consistency)\\[1em]
-
-    \alert{Don't use relaxed atomics unless you're an expert!}\\[1em]
-    
-    
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 
 
 \begin{frame}
-\frametitle{Different Memory Options}
+\frametitle{Locking Granularity}
+Alright, we already know that locks prevent data races.
 
-\begin{itemize}
-		\item memory\_order\_acquire
-		\item memory\_order\_release
-		\item memory\_order\_acq\_rel
-		\item memory\_order\_consume
-		\item memory\_order\_relaxed
-		\item memory\_order\_seq\_cst
-\end{itemize}
+So we need to use them to prevent data races, but it's not as simple as it sounds. 
 
-\end{frame}
+We have choices about the granularity of locking, and it is a trade-off.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Really, don't use C++ relaxed atomics!}
+
   \begin{center}
-    \includegraphics[width=.8\textwidth]{images/disapproving-bird}\\
-    Photo Credit: Danielle Guerard
+    \includegraphics[scale=0.5]{images/lock-all-the-things}
   \end{center}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{C++ atomics: Key Idea}
-  
-    An \emph{atomic operation} is indivisible.\\[1em]
-    Other threads see state before or after the operation,
-    nothing in between.
-  
+\begin{frame}
+\frametitle{Coarse-Grained Lock}
+
+  \begin{center}
+    \input{images/L07-fine-grained-1}
+  \end{center}
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Simplest: {\tt atomic\_flag}}
-  
-    Represents a boolean flag.\\[1em]
-    \begin{lstlisting}[language=C]
-#include <atomic>
+\begin{frame}
+\frametitle{Fine-Grained Locks}
 
-atomic_flag f = ATOMIC_FLAG_INIT;
-    \end{lstlisting}
-  
+  \begin{center}
+    \input{images/L07-fine-grained-2}
+  \end{center}
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Operations on {\tt atomic\_flag}}
+\begin{frame}
+\frametitle{Coarse-Grained vs Fine-Grained Locking}
+
+\alert{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. 
+
+\alert{Fine-grained locking} requires more careful design,
+increases locking overhead and is more prone to bugs (deadlock etc).  
+
+
+Locks' extents constitute their granularity. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Lock Concerns}
+
+We'll discuss three major concerns when using locks:
+  \begin{itemize}
+    \item overhead;
+    \item contention; and
+    \item deadlocks.
+  \end{itemize}
   
-    Can clear, and can test-and-set:
-    \begin{lstlisting}[language=C]
-#include <atomic>
+  
+We aren't even talking about under-locking (i.e., remaining race conditions).
 
-atomic_flag f = ATOMIC_FLAG_INIT;
-int foo() {
-  f.clear();
-  if (f.test_and_set()) {
-    // was true
-  }
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock Overhead}
+
+  Using a lock isn't free. You pay:
+  \begin{itemize}
+    \item allocated memory for the locks;
+    \item initialization and destruction time; and
+    \item acquisition and release time.
+  \end{itemize}
+
+
+  These costs scale with the number of locks that you have.
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Lock Contention}
+
+\vspace*{-3em}
+ Most locking time is wasted waiting for the lock to become available.\\[1em]
+We can fix this by:
+\vspace*{-3em}
+      \begin{itemize}
+        \item making the locking regions smaller (more granular); or
+        \item making more locks for independent sections.
+      \end{itemize}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Deadlocks}
+
+Finally, the more locks you have, the more you have to worry about deadlocks.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/deadlock.jpg}
+\end{center}
+
+As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Deadlocks}
+
+
+
+Okay, in a formal sense, the four conditions for deadlock are:
+
+\begin{enumerate}
+	\item \textbf{Mutual Exclusion}
+	\item \textbf{Hold-and-Wait}
+	\item \textbf{No Preemption}
+	\item \textbf{Circular-Wait}
+\end{enumerate}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Simple Deadlock Example}
+
+Consider, for instance, two processors trying to get two locks.
+
+\begin{center}
+  \begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 1}
+
+      \verb+Get Lock 1+
+
+      \verb+Get Lock 2+
+
+      \verb+Release Lock 2+
+
+      \verb+Release Lock 1+
+\end{minipage} & 
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 2}
+
+      \verb+Get Lock 2+
+
+      \verb+Get Lock 1+
+
+      \verb+Release Lock 1+
+
+      \verb+Release Lock 2+
+\end{minipage}
+\end{tabular}
+\end{center}
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Avoiding Deadlocks}
+
+To avoid deadlocks, always be careful if your code {\bf acquires a lock while holding one}.  
+  
+You have two choices: (1) ensure consistent ordering in acquiring locks; or (2) use trylock.
+
+As an example of consistent ordering:
+\begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+void f1() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&l1);    
 }
-    \end{lstlisting}
-    ~\\
-    \begin{tabbing}
-      {\tt test\_and\_set}: \= atomically sets to true, \\
-      \> returns previous value.
-    \end{tabbing}
-    No assignment (=) operator.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Using more general C++ atomics}
-
-
-    Declaring them:
-  
+\end{lstlisting}
+\end{minipage}&
+\begin{minipage}{.4\textwidth}
 \begin{lstlisting}[language=C]
-#include <atomic>
-
-atomic<int> x;
-\end{lstlisting}
-
-Library's implementation: \\
-\hspace*{1em} on small types, lock-free operations;\\
-\hspace*{1em} on large types, mutexes.
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{What to do with Atomics}
-
-  
-
-    \Large
-    Kinds of operations:
-    \begin{itemize}
-    \item reads
-    \item writes
-    \item read-modify-write (RMW)
-    \end{itemize}
-    
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reads and Writes}
-
-  
-    C++ has syntax to make these all transparent:
-\begin{lstlisting}[language=C][language=C++]
-#include <atomic>
-#include <iostream>
-
-std::atomic<int> ai;
-int i;
-
-int main() {
-    ai = 4;
-    i = ai;
-    ai = i;
-    std::cout << i;
+void f2() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&l1);    
 }
-\end{lstlisting}
-Can also use {\tt i = ai.load()} and {\tt ai.store(i)}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Read-Modify-Write (RMW)}
-
-  
-    Consider {\tt ai++}.\\[1em]
-    This is equivalent to (under lock): \\
-    ~~~{\tt tmp = ai.read(); tmp++; ai.write(tmp); }\\[1em]
-    Hardware can do that atomically, and faster.\\[1em]
-    Other RMWs: {\tt +-, \&=, etc, compare-and-swap}\\[2em]
-
-    {\small
-      more info:\\ \url{http://preshing.com/20130618/atomic-vs-non-atomic-operations/}
-      }
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\begin{frame}
-\frametitle{Do Free Lunches Exist?}
-
-\begin{center}
-\includegraphics[width=0.6\textwidth]{images/freelunch.jpg}
+  \end{lstlisting}
+\end{minipage}
+\end{tabular}
 \end{center}
 
 \end{frame}
 
-
-\begin{frame}
-\frametitle{Lock Freedom}
-
-Suppose we'd like to operate in a world in which there are no locks. 
-
-Research has gone into the idea of lock-free data structures. 
-
-If you have a map and it will be shared between threads, the normal thing would be to protect access to the map with a mutex (lock). 
-
-But what if the data structure was written in such a way that we didn't have to do that? 
-
-That would be a lock-free data structure.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Use Locks Wisely!}
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/usebombswisely.png}
-\end{center}
-
-Often, normal locking and unlocking behaviour is sufficient.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Use Locks Wisely!}
-
-
-We likely want to use it when we need to guarantee that progress is made. 
-
-Or: when we really can't use locks (e.g., signal handler), or where a thread dying while holding a lock results in the whole system hanging.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Non-Blocking Data Structure}
-
-Non-blocking data struct: one where no operation can result in being blocked. 
-
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/noblocks.jpg}
-\end{center}
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Non-Blocking Data Structure}
-
-Java has concurrency-controlled data structures in which locking and unlocking is handled for you, but those can still be blocking. 
-
-Lock-free data structures are always inherently non-blocking. 
-
-A spin lock or busy-waiting approach is not lock free, because if the thread holding the lock is suspended then everyone else is stuck!
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Lock-Free Data Structure}
-A lock-free data structure doesn't use any locks (duh) but there's also some implication that this is also thread-safe.
-
-You can't make all your data structures lock-free ones by just deleting all the mutex code (sorry). 
-
-Lock free also doesn't mean it's a free-for-all; there can be restrictions. 
-
-For example, a queue that allows one thread to append to the end while another removes from the front, but not 2 removals at the same time.
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Lock-Free Data Structure}
-
-The actual definition of lock-free is more formal. 
-
-If any thread performing an operation gets suspended during the operation, other threads accessing the data structure are still able to complete their tasks.
-
-This is distinct from the idea of waiting, though; an operation might still have to wait its turn or might get restarted.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Wait-Free Data Structures}
-
-You might need wait-free data structures. 
-
-This does not mean that nothing ever has to wait! 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Wait-Free Data Structures}
-
-
-It does mean that each thread trying to perform some operation will complete it within a bounded number of steps regardless of what any other threads do. 
-
-This means that a compare-and-swap routine with infinite retries is not wait free, because a very unlucky thread could potentially take infinite tries...
-
-The wait free data structures tend to be very complicated...
-
-\end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{Example Lock-Free Algorithm}
+\frametitle{Trylock}
+
+Alternately, you can use trylock. 
+
+Recall that Pthreads' {\tt trylock} returns 0 if it gets the lock. 
+
+But if it doesn't, your thread doesn't get blocked. 
 
 \begin{lstlisting}[language=C]
-void stack_push(stack* s, node* n) {
-    node* head;
-    do
-    {
-        head = s->head;
-        n->next = head;
+void f1() {
+    lock(&l1);
+    while (trylock(&l2) != 0) {
+        unlock(&l1);
+        // wait
+        lock(&l1);
     }
-    while ( !atomic_compare_exchange(s->head, head, n) );
-} 
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
 \end{lstlisting}
+
+This prevents the hold and wait condition.
 
 \end{frame}
 
-\begin{frame}[fragile]
-\frametitle{Example Wait-Free Algorithm}
 
-\begin{lstlisting}[language=C]
-void increment_reference_counter(rc_base* obj) {
-    atomic_increment(obj->rc);
-}
 
-void decrement_reference_counter(rc_base* obj) {
-    if (0 == atomic_decrement(obj->rc))
-        delete obj;
-} 
-\end{lstlisting}
+\begin{frame}
+\frametitle{There Can Be Only One}
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/giantlock.jpg}\\
+	\hfill Photo Credit: Craig Middleton\footnote{\url{https://www.flickr.com/photos/craigmiddleton/3579668458}}
+\end{center}
+
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{To Lock Free, or Not to Lock Free}
+\frametitle{Coarse-Grained Locking}
 
-Are lock-free programming techniques somehow better for performance? Maybe!
+One way of avoiding problems due to locking is to use few locks
+(1?). 
 
-Lock free algorithms are about ensuring there is forward progress in the system and not really specifically about speed. 
+This is \emph{coarse-grained locking}; it does have a couple of advantages:
+  \begin{itemize}
+    \item it is easier to implement;
+    \item with one lock, there is no chance of deadlocking; and
+    \item it has the lowest memory usage and setup time possible.
+  \end{itemize}
 
-A particular algorithm implementation might be faster under lock-free algorithms.
+Your parallel program will quickly become sequential.
 
-But often they are not. In fact, the lock free algorithms could be slower, in which case you use them because you must, not because it is particularly speedy.
 
 \end{frame}
+
+\begin{frame}
+\frametitle{Python}
+
+Python puts a lock around the whole interpreter (known as the
+\emph{global interpreter lock}).  
+
+This is the main reason (most) scripting languages have poor parallel performance; Python's just an example.
+
+Two major implications:
+\begin{itemize}
+\item The only performance benefit you'll see from threading is if one of the threads is
+      waiting for I/O.
+\item But: any non-I/O-bound threaded program will be {\bf slower} than the sequential
+      version (plus, the interpreter will slow down your system).
+\end{itemize}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Fine-Grained Locking}
+
+On the other end of the spectrum is \emph{fine-grained locking}. 
+
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/tinylocks.jpeg}
+\end{center}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Fine-Grained Locking} 
+
+The big advantage: it maximizes parallelization in your program.
+
+However, it also comes with a number of disadvantages:
+  \begin{itemize}
+    \item if your program isn't very parallel, it'll be mostly wasted memory and setup time;
+    \item plus, you're now prone to deadlocks; and
+    \item fine-grained locking is generally more error-prone (be sure you grab the right lock!)
+  \end{itemize}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Lock Scope Examples}
+
+
+    Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
+
+    You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
+
+
+
+\end{frame}
+
+\part{Reentrancy}
+\frame{\partpage}
+
+
+\begin{frame}
+\frametitle{Out and In Again}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/revolvingdoor.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Non-Reentrant C Function}
+
+The trivial example of a non-reentrant C function:
+
+\begin{lstlisting}[language=C]
+int tmp;
+
+void swap( int x, int y ) {
+    tmp = y;
+    y = x;
+    x = tmp;
+}
+\end{lstlisting}
+
+Why is this non-reentrant?
+
+How can we make it reentrant?
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reentrancy}
+
+  
+    $\Rightarrow$ A function can be suspended in the middle and \\ {\bf re-entered}
+      (called again) before the previous execution returns.\\[1em]
+    
+     Does not always mean {\bf thread-safe} (although it usually is).
+      \begin{itemize}
+        \item Recall: {\bf thread-safe} is essentially ``no data races''.
+      \end{itemize}
+ ~\\[1em]
+  Moot point if the function only modifies local data, e.g. {\tt sin()}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example}
+
+  
+
+  Courtesy of Wikipedia (with modifications):
+  \begin{lstlisting}[language=C]
+int t;
+ 
+void swap(int *x, int *y) {
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example---Explained (a trace)}
+
+  
+  \begin{lstlisting}[language=C]
+call swap(&a, &b);
+ t = *x;                // t = 3 (a)
+ *x = *y;               // a = 4 (b)
+ call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    t = *x;             // t = 1 (x)
+    *x = *y;            // x = 2 (y)
+    *y = t;             // y = 1
+ *y = t;                // b = 1
+
+Final values:
+a = 4, b = 1
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed}
+
+  
+  \begin{lstlisting}[language=C][escapechar=@]
+int t;
+ 
+void swap(int *x, int *y) {
+    int s;
+ 
+    @\alert{s = t}@;  // save global variable
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+    @\alert{t = s}@;  // restore global variable
+}
+ 
+void isr() {
+    int x = 1, y = 2;
+    swap(&x, &y);
+}
+...
+int a = 3, b = 4;
+...
+    swap(&a, &b);
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy Example, Fixed---Explained (a trace)}
+
+  
+  \begin{lstlisting}[language=C]
+call swap(&a, &b);
+s = t;                 // s = UNDEFINED
+t = *x;                // t = 3 (a)
+*x = *y;               // a = 4 (b)
+call isr();
+    x = 1; y = 2;
+    call swap(&x, &y)
+    s = t;             // s = 3
+    t = *x;            // t = 1 (x)
+    *x = *y;           // x = 2 (y)
+    *y = t;            // y = 1
+    t = s;             // t = 3
+*y = t;                // b = 3
+t = s;                 // t = UNDEFINED
+
+Final values:
+a = 4, b = 3
+
+Expected values:
+a = 4, b = 3
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{Interrupt Handling}
+
+
+Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. 
+
+Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted, or we pause and resume.
+
+Either way, if the code is not reentrant we will run into problems.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Thread Safe vs. Reentrant}
+
+Let us also draw a distinction between thread safe code and reentrant code. 
+
+A thread safe operation is one that can be performed from more than one thread at the same time. 
+
+On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. 
+
+Or it can be re-started without affecting the outcome. 
+
+If a function is not reentrant, it may not be possible to make it thread safe. 
+
+And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Thread Safe Non-Reentrant Example}
+{\scriptsize
+\begin{lstlisting}[language=C]
+int length = 0;
+char *s = NULL;
+
+// Note: Since strings end with a 0, if we want to
+// add a 0, we encode it as "\0", and encode a
+// backslash as "\\".
+
+
+// WARNING! This code is buggy - do not use!
+void AddToString(int ch)
+{
+  EnterCriticalSection(&someCriticalSection);
+  // +1 for the character we're about to add
+  // +1 for the null terminator
+  char *newString = realloc(s, (length+1) * sizeof(char));
+  if (newString) {
+    if (ch == '\0' || ch == '\\') {
+      AddToString('\\'); // escape prefix
+    }
+    newString[length++] = ch;
+    newString[length] = '\0';
+    s = newString;
+  }
+  LeaveCriticalSection(&someCriticalSection);
+}
+\end{lstlisting}
+}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Analysis of This Example}
+
+Is it thread safe? Sure---there is a critical section protected by the mutex \texttt{someCriticalSection}. 
+
+But is is re-entrant? Nope. 
+
+The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s}.
+
+That is no longer valid because it got stomped by the earlier call to \texttt{realloc}.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Functional Programming}
+
+Interestingly, functional programming languages (NOT procedural like C) such as Scala and so on, lend themselves very nicely to being parallelized. 
+
+Why? 
+
+Because a purely functional program has no side effects and they are very easy to parallelize.
+
+Any impure function has to indicate that in its function signature.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Functional Programming}
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/functional.png}
+\end{center}
+{\small \url{https://www.fpcomplete.com/blog/2017/04/pure-functional-programming}}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Joel on Functional}
+
+\begin{quote}
+\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}
+\end{quote}
+\hfill --- Joel Spolsky
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{OOP: \texttt{getBrain().damage()}}
+
+Object oriented programming kind of gives us some bad habits in this regard. 
+
+We tend to make a lot of \texttt{void} methods. 
+
+In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. 
+
+If a function returns nothing, what does it do? 
+
+For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Functional Programming in Your C++}
+
+{\tt algorithms} has been part of C++ since C++11.\\
+
+C++17 (not well supported yet) introduces parallel and vectorized {\tt algorithms};\\
+\qquad you specify an execution policy, compiler does it:\\
+\qquad ({\tt sequenced}, {\tt parallel},
+or {\tt parallel\_unsequenced}).\\[1em]
+
+Some examples of algorithms:\\
+\qquad {\tt sort}, {\tt reverse}, {\tt is\_heap}\ldots\\[1em]
+
+Other examples of algorithms:\\
+\qquad {\tt for\_each\_n}, {\tt exclusive\_scan}, {\tt reduce}\\[1em]
+If you know functional programming (e.g. Haskell), these are:\\
+\qquad {\tt map}, {\tt scanl}, {\tt fold1/foldl1}.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Side Effects}
+
+Side effects are sort of undesirable (and definitely not functional), but not necessarily bad. 
+
+Printing to console is unavoidably making use of a side effect, but it's what we want. 
+
+We don't want to call print reentrantly, because two threads trying to write at the same time to the console would result in jumbled output. 
+
+Or alternatively, restarting the print routine might result in some doubled characters on the screen.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Purity}
+
+The notion of purity is related to side effects.
+
+A function is \emph{pure} if it has no side effects and if its outputs depend solely on its inputs.
+
+Pure functions should be implemented as thread-safe and reentrant.
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Previous Example: thread-safety}
+
+  
+  Is the previous reentrant code also thread-safe?\\
+
+  (This is more what we're concerned about in this course.)\\[1em]
+
+  Let's see:
+  \begin{lstlisting}[language=C]
+int t;
+
+void swap(int *x, int *y) {
+    int s;
+ 
+    s = t;  // save global variable
+    t = *x;
+    *x = *y;
+    // hardware interrupt might invoke isr() here!
+    *y = t;
+    t = s;  // restore global variable
+}
+  \end{lstlisting}
+  
+  Consider two calls: {\tt swap(a, b)}, {\tt swap(c, d)} with\\
+  \quad {\tt a = 1, b = 2, c = 3, d = 4}.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Previous Example: thread-safety trace}
+
+  
+  \begin{lstlisting}[language=C]
+global: t
+
+/* thread 1 */                       /* thread 2 */
+a = 1, b = 2;
+s = t;    // s = UNDEFINED
+t = a;    // t = 1
+                                     c = 3, d = 4;
+                                     s = t;    // s = 1
+                                     t = c;    // t = 3
+                                     c = d;    // c = 4
+                                     d = t;    // d = 3
+a = b;    // a = 2
+b = t;    // b = 3
+t = s;    // t = UNDEFINED
+                                     t = s;    // t = 1
+
+Final values:
+a = 2, b = 3, c = 4, d = 3, t = 1
+
+Expected values:
+a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
+  \end{lstlisting}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Reentrancy vs Thread-Safety (1)}
+
+  
+  \begin{itemize}
+    \item Re-entrant does not always mean thread-safe (as we saw)
+      \begin{itemize}
+        \item But, for most sane implementations, it is thread-safe
+      \end{itemize}
+  \end{itemize}~\\[1em]
+
+  Ok, but are {\bf thread-safe} functions reentrant?
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Reentrancy vs Thread-Safety (2)}
+
+  
+  Are {\bf thread-safe} functions reentrant? \alert{Nope.} Consider:
+
+  \begin{lstlisting}[language=C]
+int f() {
+    lock();
+    // protected code
+    unlock();
+}
+  \end{lstlisting}
+
+  Recall: {\bf Reentrant functions can be suspended in the middle of execution
+    and called again before the previous execution completes.}\\[1em]
+
+  {\tt f()} obviously isn't reentrant. Plus, it will deadlock.\\[1em]
+
+  Interrupt handling is more for systems programming, so the topic of reentrancy may or may not come
+  up again.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Summary of Reentrancy vs Thread-Safety}
+
+  
+  Difference between reentrant and thread-safe functions:\\[1em]
+
+  {\bf Reentrancy}
+  \begin{itemize}
+    \item Has nothing to do with threads---assumes a {\bf single thread}.
+    \item Reentrant means the execution can context switch at any point in
+      in a function, call the {\bf same function}, and {\bf complete} before
+      returning to the original function call.
+    \item Function's result does not depend on where the context switch happens.
+  \end{itemize}
+  \vfill
+  {\bf Thread-safety}
+  \begin{itemize}
+    \item Result does not depend on any interleaving of threads from
+      concurrency or parallelism.
+    \item No unexpected results from multiple concurrent executions of the function.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Another Definition of Thread-Safe Functions}
+
+  
+
+\begin{quote}
+  ``A function whose effect, when called by two or more threads, is guaranteed to
+  be as if the threads each executed the function one after another, in an
+  undefined order, even if the actual execution is interleaved.''
+\end{quote}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Past Example of an Exam Question}
+
+  
+
+  \begin{lstlisting}[language=C]
+void swap(int *x, int *y) {
+    int t;
+    t = *x;
+    *x = *y;
+    *y = t;
+}  
+  \end{lstlisting}
+  \vfill
+  \begin{itemize}
+    \item Is the above code thread-safe?
+    \vfill
+    \item Write some expected results for running two calls in parallel.
+    \vfill
+    \item Argue these expected results always hold, or show an example where
+      they do not.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+
+
 
 
 \end{document}

@@ -2,268 +2,389 @@
 
 \begin{document}
 
-\lecture{11 --- Lock Convoys, Atomics, Lock-Freedom}{\term}{Patrick Lam and Jeff Zarnett}
+\lecture{11 --- Use of Locks, Reentrancy}{\term}{Jeff Zarnett}
 
-\section*{Lock Convoys}
+\section*{Appropriate Use of Locking}
 
-We'd like to avoid, if at all possible, a situation called a \textit{lock convoy}. This happens when we have at least two threads that are contending for a lock of some sort. And it's sort of like a lock traffic jam. A more full and complex description from~\cite{lockconvoys}:
+In previous courses you learned about locking and how it all works, then we did a quick recap of what you need to know about it. And perhaps you were given some guidance in the use of locks, but probably in earlier scenarios it was sufficient to just avoid all the bad stuff (data races, deadlock, starvation). That's important but is no longer enough. Now we need to use locking and other synchronization techniques appropriately. 
 
-\begin{quote}
-A lock convoy is a situation which occurs when two or more threads at the same priority frequently (several times per quantum) acquire a synchronization object, even if they only hold that object for a very short amount of time.  It happens most often with critical sections, but can occur with mutexes, etc as well.  For a while the threads may go along happily without contending over the object.  But eventually some thread's quantum will expire while it holds the object, and then the problem begins.  The expired thread (let's call it Thread A) stops running, and the next thread at that priority level begins.  Soon that thread (let's call it Thread B) gets to a point where it needs to acquire the object.  It blocks on the object.  The kernel chooses the next thread in the priority-queue.  If there are more threads at that priority which end up trying to acquire the object, they block on the object too.  This continues until the kernel returns to Thread A which owns the object.  That thread begins running again, and soon releases the object.  Here are the two important points.  First, once Thread A releases the object, the kernel chooses a thread that's blocked waiting for the object (probably Thread B), makes that thread the next owner of the object, and marks it as ``runnable.''  Second, Thread A hasn't expired its quantum yet, so it continues running rather than switching to Thread B.  Since the threads in this scenario acquire the synchronization object frequently, Thread A soon comes back to a point where it needs to acquire the object again.  This time, however, Thread B owns it.  So Thread A blocks on the object, and the kernel again chooses the next thread in the priority-queue to run.  It eventually gets to Thread B, who does its work while owning the object, then releases the object.  The next thread blocked on the object receives ownership, and this cycle continues endlessly until eventually the threads stop acquiring so often.
-\end{quote}
+I like to say that critical sections should be as large as they need to be but no larger. That is to say, if we have some shared data that needs to be protected by some mutual exclusion constructs, we need to consider carefully where to place the statements. They should be placed such that the critical section contains all of the shared accesses, both reads \textit{and} writes, but also does contain any extraneous statements. The ones that don't need to be there are those that don't operate on shared data. 
 
-Why is it called a convoy? A convoy is when a grouping of vehicles, usually trucks or ships, travels all closely together. A freighter convoy, for example, might carry freight from one sea port to another. In this case, it means that the threads are all moving in a tight group. This is also sometimes called the ``boxcar'' problem: imagine that you have a train that is moving a bunch of boxcars along some railroad tracks. When the engine starts to pull, it moves the first car forward a tiny bit before it stops suddenly because of the car behind. Then the second car moves a bit, removing the slack between it and the next car. And so on and so on. The problem resembles this motion because each thread takes a small step forward before it stops and some other car then gets a turn during which it also moves forward a tiny bit before stopping. The same thing is happening to the threads and we spend all the CPU time on context switches rather than executing the actual code~\cite{boxcar}.
+This can mean that a block of code or contents of a function need to be re-arranged to move some statements up or down so they are no longer in the critical section. Sometimes control flow or other very short statements might get swept into the critical section being created to make sure all goes as planned but those should be the exception rather than the rule.
 
-This has a couple of side effects. Threads acquire the lock frequently and they are running for very short periods of time before blocking. But more than that, other, unrelated threads of the same priority get to run for an unusually large percentage of the (wall-clock) time. This can lead you to thinking that some other process is the real offender, taking up a large percentage of the CPU time. In reality, though, that's not the culprit. So it would not solve the problem if you terminate (or rewrite) what looks like offending process. 
-
-\paragraph{Unfair Locks.} With that in mind, in Windows Vista and later versions, the problem is solved because locks are unfair. Unfair sounds bad but it is actually better to be unfair. Why? The Windows XP and earlier implementation of locks, which is fair, is a good explanation of why can go wrong. In XP, if $A$ unlocks a lock $\ell$, and there is a thread $B$ waiting, then $B$ gets the lock, it is no longer blocked, and when it wakes up, $B$ already owns the lock. This is fair in the sense that there was no period during which the lock was available; therefore it could not be ``stolen'' by some other thread that happened to come along at the right (or perhaps wrong) time~\cite{anticonvoy}. (Specifically, if the OS chooses who gets the lock among all the waiting threads randomly, then that's fair.)
-
-Fairness is good, right? But this means there is a period of time where the lock is held by $B$, but $B$ is not running. In the best-case scenario, after $A$ releases the lock, then there is a thread switch (the scheduler runs) and the context switch time is (in Windows, anyway, according to~\cite{anticonvoy}) on the order of 4~000-10~000 cycles. That is a fairly long time but probably somewhat unavoidable. If, however, the system is busy and $B$ has to go to the back of the line it means that it might be a long time before $B$ gets to run. That whole time, it is holding onto the lock. No one else can acquire $\ell$. Worse yet, a thread $C$ might start processing, request $\ell$, and then we have to context switch again. That is a lock convoy.
-
-Unfair locks help with lock convoys by not giving the lock to $B$ when $A$ releases the lock. Instead, the lock is simply unowned. The scheduler chooses another thread to switch to after $A$. If it's $B$, then it gets the lock and continues. If it's instead some thread $C$ which didn't want the lock initially, then $C$ gets to run. If it doesn't request $\ell$, then it just computes as normal. If $C$ does request $\ell$, it gets it. Maybe it'll release it before $B$ gets its turn, thus enabling more throughput than the fair lock.
-
-One of the ways in which one can then diagnose a lock convoy is to see a lock that has some nonzero number of waiting threads but nobody appears to own it. It just so happens that we're in the middle of a handover; some thread has signalled but the other thread has not yet woken up to run yet.
-
-Changing the locks to be unfair does risk starvation, although one can imagine that it is fairly unlikely given that a particular thread would have to be very low priority and very unlucky. Windows does give a thread priority boost, temporarily, after it gets unblocked, to see to it that the unblocked thread does actually get a chance to run.
-
-\paragraph{Mitigating Lock Convoys Ourselves.} Although it can be nice to be able to give away such a problem to the OS developers and say ``please solve this, thanks'', that might not be realistic and we might have to find a way to work around it. We'll consider four solutions from~\cite{lockconvoys}:
-
-\begin{itemize}
-	\item Sleep
-	\item Share
-	\item Cache
-	\item Trylock
-\end{itemize}
-
-We could make the threads that are NOT in the lock convoy call a sleep() system call fairly regularly to give other threads a chance to run. This solution is lame, though, because we're changing the threads that are not the offenders and it just band-aids the situation so the convoy does not totally trash performance. Still, we are doing a lot of thread switches, which themselves are expensive as outlined above.
-
-The next idea is sharing: can we use a reader-writer lock to allow much more concurrency than we would get if everything used exclusive locking? If there will be a lot of writes then there's limited benefit to this speedup, but if reads are the majority of operations then it is worth doing. We can also try to find a way to break a critical section into two or more smaller ones, if that can be done without any undesirable side effects or race conditions.
-
-The next idea has to do with changing when (and how) you need the data. If you shrink the critical section to just pull a copy of the shared data and operate on the shared data, then it reduces the amount of time that the lock is held and therefore speeds up operations. But you saw the earlier discussion about critical section sizes, right? So you did that already...?
-
-The last solution suggested is to use try-lock primitives: try to acquire the lock, and if you fail, yield the CPU to some other thread and try again. See the code below:
+Let's consider a short code example from the producer-consumer problem. We have some global variables below that will be initialized as appropriate. There is also a definition of the function that will consume the data.
 
 \begin{lstlisting}[language=C]
-int retries = 0;
-while(pthread_mutex_trylock( &lock ) != 0 ) { /* 0 indicates lock acquired */
-  if ( retries < SPIN_LIMIT ) {
-    retries++;
-    sleep(0);
-    continue;
-  }
-  pthread_mutex_lock( &lock );
-  break;
-}
+sem_t spaces;
+sem_t items;
+int counter;
+int* buffer;
+int pindex = 0;
+int cindex = 0;
+int ctotal = 0;
+pthread_mutex_t prod_mutex;
+pthread_mutex_t con_mutex;
+
+void consume( int to_consume );
+
 \end{lstlisting}
 
-In short, we try to lock the mutex some number of times (up to a maximum of \texttt{SPIN\_LIMIT}), releasing the CPU each time if we don't get it, and if we do get it then we can continue. If we reach the limit then we just give up and enter the queue (regular lock statement) so we will wait at that point. You can perhaps think of this as being like waiting for the coffee machine at the office in the early morning. If you go to the coffee machine and find there is a line, you will maybe decide to do something else, and try again in a couple minutes. If you've already tried the come-back-later approach and there is still a line for the coffee machine you might as well get in line.
+And then here is our single-threaded code for the consumer. We want our consumer threads to consume exactly {\tt MAX\_ITEMS\_CONSUMED} items and then cleanly exit; we don't want anything to stay stuck at a mutex for instance.
 
-Why does this work? It looks like polling for the critical section. The limit on the number of tries helps in case the critical section belongs to a low priority thread and we need the current thread to be blocked so the low priority thread can run. Under this scheme, if $A$ is going to release the critical section, $B$ does not immediately become the owner and $A$ may keep running and $A$ might even get the critical section again before $B$ tries again to acquire the lock (and may succeed). Even if the spin limit is as low as 2, this means two threads can recover from contention without creating a convoy~\cite{lockconvoys}. 
-
-\paragraph{The Thundering Herd Problem.} The lock convoy has some similarities with a different problem called the \textit{thundering herd problem}. In the thundering herd problem, some condition is fulfilled (e.g., broadcast on a condition variable) and it triggers a large number of threads to wake up and try to take some action. It is likely they can't all proceed, so some will get blocked and then awoken again all at once in the future. In this case it would be better to wake up one thread at a time instead of all of them.
-
-\paragraph{The Lost Wakeup Problem.} However! Waking up only one thread at a time has its own problems~\footnote{\url{https://stackoverflow.com/questions/37026/java-notify-vs-notifyall-all-over-again}}. For instance, in the Java context, you can choose to wake up one waiting thread with either \texttt{notify()} or all waiting threads with \texttt{notifyAll()}. If you use \texttt{notify()}, then you can encounter the \texttt{lost wakeup} problem.
-
-If all of your threads are identical, then you can use \texttt{notify()}. Otherwise, use \texttt{notifyAll()}, and brave the thundering herds. Or, in Java, use a \texttt{java.util.concurrent.locks.Condition}.
-
-\section*{Atomics}
-What if we could find a way to get rid of locks and waiting altogether? That would avoid the lock convoy problem as well as any potential for deadlock, starvation, et cetera. In previous courses, you have learned about test-and-set operations and possibly compare-and-swap and those are atomic operations supported through hardware. They are uninterruptible and therefore will either completely succeed or not run at all. Is there a way that we could use those sorts of indivisible operations? Yes!
-
-Atomics are a lower-overhead alternative to
-locks as long as you're doing suitable operations. Remember that what we wanted sometimes with locks and mutexes and all that is that operations are indivisible: an update to a variable doesn't get interfered with by another update. Remember the key idea is: an \textit{atomic operation} is indivisible. Other threads see state before or after the operation; nothing in between.
-
-
-We are only going to talk about atomics with sequential consistency. If you use the default {\tt std::memory\_order}, that's what you get. What do I mean by that? Well, in the header file \texttt{atomic} (C++11 here) there is an enumeration of memory orders and I am suggesting that using the default is pretty nice, compared to the alternative which may or may not be a Lovecraftian Horror to understand (or prove correctness). If you'd like to know about all the options, take a look at~\cite{cppatomics}, but here's a quick summary from~\cite{bmref1} (which is much more concise than the C++ Atomics listing):
-
-\begin{center}
-	\begin{tabular}{l|p{12cm}}
-	\textbf{Value} & \textbf{Explanation} \\ \hline
-		\texttt{memory\_order\_acquire} &  Subsequent loads are not moved before the current load or any preceding loads.\\ \hline
-		\texttt{memory\_order\_release} &  Preceding stores are not moved past the current store or any subsequent stores. \\ \hline
-		\texttt{memory\_order\_acq\_rel} & Combine the acquire and release guarantees\\ \hline
-		\texttt{memory\_order\_consume} & A potentially weaker form of memory\_order\_acquire that enforces ordering of the current load before other operations that are data-dependent on it (for instance, when a load of a pointer is marked memory\_order\_consume, subsequent operations that dereference this pointer won't be moved before it (yes, even that is not guaranteed on all platforms!).\\ \hline
-	
-	\texttt{memory\_order\_relaxed} & All reordering are okay; only atomicity is required of this operation. \\ \hline
-\texttt{memory\_order\_seq\_cst} & Same as \texttt{memory\_order\_acq\_rel}, plus a single total order exists in which all threads observe all modifications in the same order.\\ 
-	\end{tabular}
-
-\end{center}
-
-
-
-The C++11 standard includes both strong and weak atomics. The weak ones are the ones where you get to specify the the memory ordering of load and store operating in a way that is not sequentially consistent. But we care about the standard, sequentially consistent kind of operation. \textit{Don't} use relaxed atomics unless you're an expert! Basically, a value that is seen from a memory load may come from the past or from the future (it's all relative, of course). If you want to dig into the details about an example, I recommend~\cite{bmref2}, which goes into the details of just how difficult it is to prove correctness. If that doesn't talk you out of it, I'm not sure what will.
-
-
-\paragraph{Atomic Flags.} The simplest form of C++11 atomic is the {\tt atomic\_flag}.
-Not surprisingly, this represents a boolean flag. You can clear the flag and test-and-set it.
-
-
-\begin{lstlisting}[language=C++]
-#include <atomic>
-
-atomic_flag f = ATOMIC_FLAG_INIT;
-int foo() {
-  f.clear();
-  if (f.test_and_set()) {
-    // was true
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( ctotal < MAX_ITEMS_CONSUMED ) {
+    sem_wait( &items );
+    consume( buffer[cindex] );
+    buffer[cindex] = -1;
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    sem_post( &spaces );
   }
 }
 \end{lstlisting}
 
-This returns the previous value. There is no assignment (=) operator for {\tt atomic\_flag}s. Although I guess in C++ you could define one if you wanted. 
+To this we need to add some mutual exclusion if we want to allow multiple consumers at the same time. I'll leave aside the case of only allowing one consumer by putting the lock and unlock statements outside the while loop since that defeats the purpose of having multiple threads altogether. One approach we could take is that which allows exactly one consumer to run at a time, as below. But what's wrong with this?
 
-\paragraph{More general C++ atomics.} Boolean flags are nice, but we want more.
-C++11 supports arbitrary types as atomic. Here'a an example declaration:
-
-\begin{lstlisting}[language=C++]
-#include <atomic>
-atomic<int> x;
-\end{lstlisting}
-
-The C++11 library implements atomics using lock-free operations for small types
-and using mutexes for large types. The general types of operations that you can do with atomics are three: reads, writes, and RMW (read-modify-write) operations. C++ has syntax to make these all transparent.
-
-\begin{lstlisting}[language=C++]
-// atomic reads and writes
-#include <atomic>
-#include <iostream>
-
-std::atomic<int> ai;
-int i;
-
-int main() {
-    ai = 4;
-    i = ai;
-    ai = i;
-    std::cout << i;
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( ctotal < MAX_ITEMS_CONSUMED ) {
+    pthread_mutex_lock( &con_mutex );
+    sem_wait( &items );
+    consume( buffer[cindex] );
+    buffer[cindex] = -1;
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    sem_post( &spaces );
+    pthread_mutex_unlock( &con_mutex );
+  }
 }
 \end{lstlisting}
-If you want, you can also use {\tt i = ai.load()} and {\tt ai.store(i)}.
 
-As for RMW operations, consider {\tt ai++}. This is equivalent to (but faster than):
+What I recommend is of course to analyze this function one statement at a time and look into which of these access global variables. We're not worried about statements like locking, wait, or post, but let's look at the rest and decide if they really belong. Can any statements be removed from the critical section?
 
-\begin{lstlisting}[language=C++]
-ai.lock();
-tmp = ai.read(); 
-tmp++; 
-ai.write(tmp);
-ai.unlock();
+We could think about moving {\tt sem\_wait} before the lock acquisition, but it doesn't solve any problem. If {\tt sem\_wait} comes first, then after the last item is consumed the next thread gets blocked on the semaphore and does not terminate. If we do not swap the order, then we could have threads that make it to the {\tt sem\_wait} and other threads get blocked but get stuck at the lock acquisition. Regardless of where they are stuck, stuck threads won't do anything bad, but they also never terminate. Such threads would be tricky to terminate: {\tt pthread\_join} would block the main thread, and thread cancellation is not only dangerous, but also difficult, because it's not clear which thread should be cancelled and which one has finished.
+
+We can move the {\tt sem\_post} after the unlock if we're trying to reduce critical sections.
+
+At first glance it is probably not very obvious but the \texttt{consume} function takes a regular integer, any old integer, not a pointer of some sort. So we could, inside the critical section, read the value of the buffer at the current index into a temp variable. That temp variable then can be given to the \texttt{consume} function at any time... outside of the critical section. Everything else inside our lock and unlock statements seems to be shared data: operates on \texttt{cindex} or \texttt{ctotal}.
+
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( ctotal < MAX_ITEMS_CONSUMED ) {
+    pthread_mutex_lock( &con_mutex );
+    sem_wait( &items );
+    int temp = buffer[cindex];
+    buffer[cindex] = -1;
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    pthread_mutex_unlock( &con_mutex );
+    sem_post( &spaces );
+    consume( temp );
+  }
+}
 \end{lstlisting}
-But, hardware can do that atomically. It can also do other RMWs: {\tt +-, \&=, etc, compare-and-swap}.
 
-\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86).
-Here's some pseudocode for it.
-  \begin{lstlisting}[language=C]
-int compare_and_swap (int* reg, int oldval, int newval) 
-{
-  int old_reg_val = *reg;
-  if (old_reg_val == oldval) 
-     *reg = newval;
-  return old_reg_val;
+Next question then. With nothing left to take away, is there something left to add? Yes! The condition of the while loop checks the value of \texttt{ctotal} and that is a read of shared data. Now we maybe have a problem. How do we get that inside the critical section? One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing (the end of the loop might be mispredicted...).  Instead what I'd recommend is to make the loop a while true loop and then have a test of the value to determine when we should break out of the loop. You then do have to move the lock before the sem\_wait. See the example below, remembering of course there is the potential pitfall of forgetting to unlock the mutex if we are going to the break statement:
+
+\begin{lstlisting}[language=C]
+void* consumer( void* arg ) { 
+  while( 1 ) { 
+    pthread_mutex_lock( &con_mutex );  
+    if ( ctotal == MAX_ITEMS_CONSUMED ) {
+      pthread_mutex_unlock( &con_mutex );
+      break;
+    }   
+    sem_wait( &items );
+    int temp = buffer[cindex];
+    buffer[cindex] = -1; 
+    cindex = (cindex + 1) % BUFFER_SIZE;
+    ++ctotal;
+    pthread_mutex_unlock( &con_mutex );
+    sem_post( &spaces );
+    consume( temp );
+  }
+  pthread_exit( NULL );
 }
-  \end{lstlisting}
+\end{lstlisting}
 
-Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it.
+At this stage we should (mostly) be happy with the conversion of the function to support multithreaded operation. This conversion isn't the only way, but there are others. Remember, though, that keeping the critical section as small as possible is important because it speeds up performance (reduces the serial portion of your program). But that's not the only reason. The lock is a resource, and contention for that resource is itself expensive.
 
+\section*{Locking Granularity}
 
-\paragraph{Implementing a Spinlock.}
-You can use compare-and-swap to implement spinlock:
-  \begin{lstlisting}[language=C]
-void spinlock_init(int* lock) { *lock = 0; }
+Alright, we already know that locks prevent data races. If this is news to you, how did you pass the operating systems course?! So we need to use them to prevent data races, but it's not as simple as it sounds. We have choices about the granularity of locking, and it is a trade-off (like always).
 
-void spinlock_lock(int* lock) {
-    while(compare_and_swap(lock, 0, 1) != 0) {}
-    __asm__ ("mfence");
-}
+\textit{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. \textit{
+Fine-grained locking} requires more careful design,
+increases locking overhead and is more prone to bugs (deadlock etc).  
+Locks' extents constitute their {\it granularity}. In coarse-grained locking, you
+lock large sections of your program with a big lock; in fine-grained
+locking, you divide the locks and protect smaller sections with multiple smaller locks.
 
-void spinlock_unlock(int* lock) {
-    __asm__ ("mfence");
-    *lock = 0;  
-}
-  \end{lstlisting}
-You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
+We'll discuss three major concerns when using locks:
+  \begin{itemize}
+    \item overhead;
+    \item contention; and
+    \item deadlocks.
+  \end{itemize}
+We aren't even talking about under-locking (i.e., remaining race conditions). We'll assume there are adequate locks and that data accesses are protected. 
 
-\paragraph{ABA Problem}
-Sometimes you'll read a location twice.
-If the value is the same both times, nothing has changed, right?\\[1em]
+\paragraph{Lock Overhead.}
+  Using a lock isn't free. You pay:
+  \begin{itemize}
+    \item allocated memory for the locks;
+    \item initialization and destruction time; and
+    \item acquisition and release time.
+  \end{itemize}
+  These costs scale with the number of locks that you have.
 
-\emph{No.} This is an {\bf ABA problem}.\\[1em]
+\paragraph{Lock Contention.}
+ Most locking time is wasted waiting for the lock to become available.
+We can fix this by:
+      \begin{itemize}
+        \item making the locking regions smaller (more granular); or
+        \item making more locks for independent sections.
+      \end{itemize}
 
-The ABA problem is not any sort of acronym nor a reference to this~\cite{abba}. It's a value that is A, then changed to B, then changed back to A. The ABA problem is a big mess for the designer of lock-free Compare-And-Swap routines. This sequence will give some example of how this might happen~\cite{abaproblem}:
+\paragraph{Deadlocks.} Finally, the more locks you have, the more you have to worry about deadlocks.
+
+As you know, the key condition for a deadlock is waiting for a lock held by process $X$ while holding a lock held by process $X'$. ($X = X'$ is allowed).
+
+Okay, in a formal sense, the four conditions for deadlock are:
 
 \begin{enumerate}
-	\item $P_{1}$ reads $A_{i}$ from location $L_{i}$.
-	\item $P_{k}$ interrupts $P_{1}$; $P_{k}$ stores the value $B$ into $L_{i}$.
-	\item $P_{j}$ stores the value $A_{i}$ into $L_{i}$.
-	\item $P_{1}$ resumes; it executes a false positive CAS.
-\end{enumerate} 
-
-It's a ``false positive'' because $P_{1}$'s compare-and-swap operation succeeds even though the value at $L_{i}$ has been modified in the meantime. If this doesn't seem like a bad thing, consider this. If you have a data structure that will be accessed by multiple threads, you might be controlling access to it by the compare-and-swap routine. What should happen is the algorithm should keep trying until the data structure in question has not been modified by any other thread in the meantime. But with a false positive we get the impression that things didn't change, even though they really did.
-
-You can combat this by ``tagging'': modify value with a nonce upon each
-write.  You can also keep the value separately from the nonce; double
-compare and swap atomically swaps both value and nonce.
+	\item \textbf{Mutual Exclusion}: A resource belongs to, at most, one process at a time.
+	\item \textbf{Hold-and-Wait}: A process that is currently holding some resources may request additional resources and may be forced to wait for them.
+	\item \textbf{No Preemption}: A resource cannot be ``taken'' from the process that holds it; only the process currently holding that resource may release it.
+	\item \textbf{Circular-Wait}: A cycle in the resource allocation graph.
+\end{enumerate}
 
 
-More info on C++11 atomics:\\
-\url{http://preshing.com/20130618/atomic-vs-non-atomic-operations/}
+Consider, for instance, two processors trying to get two locks.
 
-We talked about C++11 atomics. Is there a pthread equivalent? Nope, not really.
+\begin{center}
+  \begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 1}
 
-OS X has atomics via OS calls: \\
-\url{https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/Multithreading/ThreadSafety/ThreadSafety.html}
+      \verb+Get Lock 1+
 
-The Linux kernel provides a number of atomic operations (but that doesn't really make them portable). Reference:
-\url{http://stackoverflow.com/questions/1130018/unix-portable-atomic-operations}
+      \verb+Get Lock 2+
 
-\section*{Lock-Freedom}
+      \verb+Release Lock 2+
 
-Let's suppose that we want to take this sort of thing up a level: we'd like to operate in a world in which there are no locks. Research has gone into the idea of lock-free data structures. If you have a map, like a HashMap, and it will be shared between threads, the normal thing would be to protect access to the map with a mutex (lock). But what if the data structure was written in such a way that we didn't have to do that? That would be a lock-free data structure.
+      \verb+Release Lock 1+
+\end{minipage} & 
+\begin{minipage}{.4\textwidth}
+      {\bf Thread 2}
 
-It's unlikely that you want to use these sorts of things everywhere in your program. For a great many situations, the normal locking and unlocking behaviour is sufficient, provided one avoids the possibility of deadlock by, for example, enforcing lock ordering. We likely want to use it when we need to guarantee that progress is made, or when we really can't use locks (e.g., signal handler), or where a thread dying while holding a lock results in the whole system hanging.
+      \verb+Get Lock 2+
 
-Before we get too much farther though we should take a moment to review some definitions. I assume you know what blocking functions are (locking a mutex is one) and that you also have a pretty good idea by now of what is not (spinlock or trylock behaviour). 
+      \verb+Get Lock 1+
 
-The definition of a non-blocking data structure is one where none of the operations can result in being blocked. In a language like Java there might be some concurrency-controlled data structures in which locking and unlocking is handled for you, but those can still be blocking. Lock-free data structures are always inherently non-blocking, but that does not go the other way: a spin lock or busy-waiting approach is not lock free, because if the thread holding the lock is suspended then everyone else is stuck~\cite{nblfwf}.
+      \verb+Release Lock 1+
 
-A lock-free data structure doesn't use any locks (duh) but there's also some implication that this is also thread-safe; concurrent access must still result in the correct behaviour, so you can't make all your data structures lock-free ones by just deleting all the mutex code. Lock free also doesn't mean it's a free-for-all; there can be restrictions, like, for example, a queue that allows one thread to append to the end while another removes from the front, although two removals at the same time might cause a problem~\cite{nblfwf}.
+      \verb+Release Lock 2+
+\end{minipage}
+\end{tabular}
+\end{center}
 
-The actual definition of lock-free is that if any thread performing an operation gets suspended during the operation, then other threads accessing the data structure are still able to complete their tasks~\cite{nblfwf}. This is distinct from the idea of waiting, though; an operation might still have to wait its turn or might get restarted if it was suspended and when it resumes things have somehow changed. If you learned about compare-and-swap then you might have some idea about this already: you try to do the compare-and-swap operation and if you find that someone changed it out from under you, you have to go back and try again. Unfortunately, going back to try again might mean that threads are frequently interrupting each other...
+ Processor 1 gets Lock 1, then Processor 2 gets Lock 2. Oops! They
+ both wait for each other. (Deadlock!).
 
-For this you might need wait-free data structures. This does not mean that nothing ever has to wait, but it does mean that each thread trying to perform some operation will complete it within a bounded number of steps regardless of what any other threads do~\cite{nblfwf}. This means that a compare-and-swap routine as above with infinite retries is not wait free, because a very unlucky thread could potentially take infinite tries before it completes its operations. The wait free data structures tend to be very complicated...
+To avoid deadlocks, always be careful if your code {\bf acquires a
+  lock while holding one}.  You have two choices: (1) ensure
+consistent ordering in acquiring locks; or (2) use trylock.
 
-Let's consider some examples from~\cite{1024cores}. First, a lock-free algorithm:
-
-\begin{lstlisting}[language=C]
-void stack_push(stack* s, node* n) {
-    node* head;
-    do
-    {
-        head = s->head;
-        n->next = head;
-    }
-    while ( !atomic_compare_exchange(s->head, head, n) );
-} 
-\end{lstlisting}
-
-A particularly unlucky thread might spend literally forever spinning around the do-while loop as above, but that's okay because that thread's bad luck is someone else's good luck. At least some thread, somewhere, has succeeded in pushing to the stack, so the system is making progress (stuff is happening). 
-
-And here is a small wait-free algorithm:
-
-\begin{lstlisting}[language=C]
-void increment_reference_counter(rc_base* obj) {
-    atomic_increment(obj->rc);
+As an example of consistent ordering:
+\begin{center}
+\begin{tabular}{ll}
+\begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+void f1() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&l1);    
 }
+\end{lstlisting}
+\end{minipage}&
+\begin{minipage}{.4\textwidth}
+\begin{lstlisting}[language=C]
+void f2() {
+    lock(&l1);
+    lock(&l2);
+    // protected code
+    unlock(&l2);
+    unlock(&l1);    
+}
+  \end{lstlisting}
+\end{minipage}
+\end{tabular}
+\end{center}
+This code will not deadlock: you can only get {\bf l2} if you have
+{\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
+identity is not statically visible.
 
-void decrement_reference_counter(rc_base* obj) {
-    if (0 == atomic_decrement(obj->rc))
-        delete obj;
-} 
+Or another example, with threads $P$ and $Q$ attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
+
+To generalize and formalize this principle, if the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
+
+
+Alternately, you can use trylock. Recall that Pthreads' {\tt trylock}
+returns 0 if it gets the lock. But if it doesn't, your thread doesn't get blocked. Checking the return value is important, but at the very least, this code also won't deadlock: it will give up {\bf l1} if it can't get {\bf l2}.
+  \begin{lstlisting}[language=C]
+void f1() {
+    lock(&l1);
+    while (trylock(&l2) != 0) {
+        unlock(&l1);
+        // wait
+        lock(&l1);
+    }
+    // protected code
+    unlock(&l2);
+    unlock(&ll);    
+}
+  \end{lstlisting}
+  (Incidentaly, using trylocks can also help you measure lock contention.)
+  
+This prevents the hold and wait condition, which was one of the four conditions. A process attempts to lock a group of resources at once, and if it does not get everything it needs, it releases the locks it received and tries again. Thus a process does not wait while holding resources.
+
+\subsection*{Coarse-Grained Locking}
+One way of avoiding problems due to locking is to use few locks
+(perhaps just one!). This is \emph{coarse-grained locking}.
+It does have a couple of advantages:
+  \begin{itemize}
+    \item it is easier to implement;
+    \item with one lock, there is no chance of deadlocking; and
+    \item it has the lowest memory usage and setup time possible.
+  \end{itemize}
+
+It also, however, has one big disadvantage in terms of programming for performance: your parallel program will quickly become sequential.
+
+\paragraph{Example: Python (and other interpreters).}
+Python puts a lock around the whole interpreter (known as the
+\emph{global interpreter lock}).  This is the main reason (most)
+scripting languages have poor parallel performance; Python's just an
+example.
+
+Two major implications:
+\begin{itemize}
+\item The only performance benefit you'll see from threading is if one of the threads is
+      waiting for I/O.
+\item But: any non-I/O-bound threaded program will be {\bf slower} than the sequential
+      version (plus, the interpreter will slow down your system).
+\end{itemize}
+
+You might think ``this is stupid, who would ever do this?'' Yet a lot of OS kernels do in fact have (or at least had) a ``big kernel lock'', including Linux and the Mach Microkernel. This lasted in Linux for quite a while, from the advent of SMP support up until sometime in 2011. As much as this ruins performance, correctness is more important. We don't have a class ``programming for correctness'' (software testing? Hah!) because correctness is kind of assumed. What we want to do here is speed up our program as much as we can while maintaining correctness...
+
+\subsection*{Fine-Grained Locking}
+On the other end of the spectrum is \emph{fine-grained locking}. The big
+advantage: it maximizes parallelization in your program.
+
+However, it also comes with a number of disadvantages:
+  \begin{itemize}
+    \item if your program isn't very parallel, it'll be mostly wasted memory and setup time;
+    \item plus, you're now prone to deadlocks; and
+    \item fine-grained locking is generally more error-prone (be sure you grab the right lock!)
+  \end{itemize}
+
+\paragraph{Examples.}
+
+    Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
+
+    You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
+    
+\section*{Reentrancy}
+
+Recall from a bit earlier the idea of a side effect of a function call. 
+
+The trivial example of a non-reentrant C function:
+\begin{lstlisting}[language=C]
+int tmp;
+
+void swap( int x, int y ) {
+    tmp = y;
+    y = x;
+    x = tmp;
+}
 \end{lstlisting}
 
-Both operations will complete in a bounded number of steps and therefore there is no possibility that anything gets stuck or is forced to repeat itself forever. 
+Why is this non-reentrant? Because there is a global variable \texttt{tmp} and it is changed on every invocation of the function. We can make the code reentrant by moving the declaration of \texttt{tmp} inside the function, which would mean that every invocation is independent of every other. And thus it would be thread safe, too.
 
-The big question is: are lock-free programming techniques somehow better for performance? Well, they can be but they might not be either. Lock free algorithms are about ensuring there is forward progress in the system and not really specifically about speed. A particular algorithm implementation might be faster under lock-free algorithms. For example, if the compare and swap operation to replace a list head is faster than the mutex lock and unlock, you prefer the lock free algorithm. But often they are not. In fact, the lock free algorithms could be slower, in which case you use them because you must, not because it is particularly speedy.
+Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted (or we're going to break off handling what we're doing and call the same ISR in the middle of the current one). Either way, if the code is not reentrant we will run into problems.
+
+If a function is not reentrant, it may not be possible to make it thread safe. And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
+
+Let us also draw a distinction between thread safe code and reentrant code. A thread safe operation is one that can be performed from more than one thread at the same time. On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. Or it can be re-started without affecting the outcome. See this code example from~\cite{tont:threadsafe}:
+\begin{lstlisting}[language=C]
+int length = 0;
+char *s = NULL;
+
+// Note: Since strings end with a 0, if we want to
+// add a 0, we encode it as "\0", and encode a
+// backslash as "\\".
+
+
+// WARNING! This code is buggy - do not use!
+
+
+void AddToString(int ch)
+{
+  EnterCriticalSection(&someCriticalSection);
+  // +1 for the character we're about to add
+  // +1 for the null terminator
+  char *newString = realloc(s, (length+1) * sizeof(char));
+  if (newString) {
+    if (ch == '\0' || ch == '\\') {
+      AddToString('\\'); // escape prefix
+    }
+    newString[length++] = ch;
+    newString[length] = '\0';
+    s = newString;
+  }
+  LeaveCriticalSection(&someCriticalSection);
+}
+\end{lstlisting}
+
+Is it thread safe? Sure---there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
+
+The GNU C library attempts to document thread-safety of their code here:
+\url{https://www.gnu.org/software/libc/manual/html_node/POSIX-Safety-Concepts.html}.
+
+\subsection*{Functional Programming and Parallelization}
+Interestingly, functional programming languages (by which I do NOT mean procedural programming languages like C) such as Haskell and Scala and so on, lend themselves very nicely to being parallelized. Why? Because a purely functional program has no side effects and they are very easy to parallelize. If a function is impure, its functions signature will indicate so. Thus spake Joel\footnote{``Thus Spake Zarathustra'' is a book by Nietzsche, and this was not a spelling error.}:
+
+\begin{quote}
+\textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}~\cite{joel:functional}
+\end{quote}
+
+This assumes of course that there is no data dependency between functions. Obviously, if we need a computation result, then we have to wait. 
+
+Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
+
+\paragraph{C++: the functional version?} {\tt algorithms} has been part of C++ since C++11. It provides algorithm implementations as part of the standard library. Some of the algorithms are standard: {\tt sort}, {\tt reverse}, {\tt is\_heap}\ldots
+
+What's new in C++17, though, is parallel and vectorized {\tt
+algorithms}. You can specify an execution policy for these algorithms
+({\tt sequenced\_policy}, {\tt parallel\_policy}, or {\tt
+parallel\_unsequenced\_policy}). The compiler and runtime make it
+so. (Or, they don't. As of this writing in 2018, mainstream C++
+compilers don't support C++17 yet).
+
+As part of this process, C++17 also introduced some new algorithms, such as
+{\tt for\_each\_n}, {\tt exclusive\_scan}, and {\tt reduce}.
+If you know functional programming (e.g. Haskell), these are also known as
+{\tt map}, {\tt scanl}, and {\tt fold1/foldl1}.
+
+Rainer Grimm writes more about these in blogposts from February and May of 2017:
+\cite{grimm17:_paral_algor_stand_templ_librar} \cite{grimm17:_c}.
+
+Side effects are not functional and sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's what we want. We don't want to call print reentrantly; interleaved print calls would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
+
+The notion of purity is related to side effects. A function is pure if it has no side effects and if its outputs depend solely on its inputs. (The use of the word pure shouldn't imply any sort of moral judgement on the code). Pure functions should also be implemented to be thread-safe and reentrant.
+
 
 \input{bibliography.tex}
 

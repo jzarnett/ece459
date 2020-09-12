@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 8 --- Asynchronous I/O}
+\title{Lecture 8 --- Cache Coherency }
 
-\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca, jzarnett@uwaterloo.ca}}
+\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -17,677 +17,479 @@
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Juicy Quotes}
+  \frametitle{Introduction}
 
+  \begin{center}
+    \includegraphics[scale=0.7]{images/coherency}
 
-  \fbox{\includegraphics[width=.7\textwidth]{images/aio-linux.png}}\\
-{\scriptsize (mirrored at \url{compgeom.com/~piyush/teach/4531_06/project/hell.html})}
-   \\[3em]
+    Image courtesy of Wikipedia.
+  \end{center}
 
-   ``Asynchronous I/O, for example, is often infuriating.''\\
---- Robert Love. {\em Linux System Programming, 2nd ed, } page 215.
+Each CPU has its own cache: coordination is needed!
   
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Why non-blocking I/O?}
+  {\bf Coherency:}
+  \begin{itemize}
+    \item Values in all caches are consistent;
+    \item System behaves as if all CPUs are using shared memory.
+  \end{itemize}
   
-  Consider some I/O:
-
-
-\begin{minipage}{.5\textwidth}
-\begin{lstlisting}
-    fd = open(...);
-    read(...);
-    close(fd);
-  \end{lstlisting}
-\end{minipage}
-
-
-  Not very performant---under what conditions do we lose out?
-
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Mitigating I/O impact}
+\begin{frame}
+  \frametitle{Cache Coherence Example}
 
-    So far: can use threads to mitigate latency.\\
+  
+  Initially in main memory: {\tt x = 7}.
 
-    What are the disadvantages?
-    \only<2>{
-      \begin{itemize}
-        \item race conditions
-        \item overhead/max \# of thread limitations
-      \end{itemize}
-    }
+  \begin{enumerate}
+    \item {\tt CPU1} reads x, puts the value in its cache.
+    \item {\tt CPU3} reads x, puts the value in its cache.
+    \item {\tt CPU3} modifies {\tt x := 42}
+    \item {\tt CPU1} reads x \ldots ~from its cache?
+    \item {\tt CPU2} reads x. Which value does it get?
+  \end{enumerate}
+  ~\\
 
+  Unless we do something, {\tt CPU1} is going to read invalid data.
+  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{An Alternative to Threads}
 
-    Asynchronous/nonblocking I/O.\\[2em]
+\begin{frame}
+\frametitle{Planes and Trains}
+\begin{center}
+\includegraphics[width=0.5\textwidth]{images/aircanada.jpg}
+\includegraphics[width=0.5\textwidth]{images/deutschebahn.png}
+\end{center}
+\end{frame}
 
 
-\begin{minipage}{.6\textwidth}
-\begin{lstlisting}
-    fd = open(..., O_NONBLOCK);
-    read(...); // returns instantly!
-    close(fd);
-  \end{lstlisting}
-\end{minipage}
 
+\begin{frame}
+\frametitle{Snoopy Caches}
+
+The simplest way to ``do something''
+is to use Snoopy caches. 
+
+No, not this kind of Snoopy (sadly):
 
 \begin{center}
-~\\[1em]
-$\cdots$\\[2em]
-
-\includegraphics[width=.25\textwidth]{images/Easy_button.JPG}
-\end{center}
-\hfill {\scriptsize (credit: Yskyflyer, Wikimedia Commons)}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Not Quite So Easy}
-
-    Doesn't work on files---they're always ready. Only e.g. sockets.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Other Outstanding Problem with Nonblocking I/O}
-
-    How do you know when I/O is ready to be queried?
-
-    \only<2>{\begin{itemize} 
-      \item polling ({\tt select}, {\tt poll}, {\tt epoll})
-      \item interrupts (signals)
-      \end{itemize}
-    }
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Using {\tt epoll}}
-  
-    Key idea: give {\tt epoll} a bunch of file descriptors;\\
-     \hspace*{2em}wait for events to happen.\\[1em]
-
-\begin{center}
-	\includegraphics[width=0.2\textwidth]{images/waitforit.jpg}
+	\includegraphics[width=0.4\textwidth]{images/peanuts-snoopy1.jpg}
 \end{center}
 
-     Steps:
-     \begin{enumerate}
-       \item create an instance ({\tt epoll\_create1});
-       \item populate it with file descriptors ({\tt epoll\_ctl});
-       \item wait for events ({\tt epoll\_wait}).
-     \end{enumerate}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Creating an {\tt epoll} instance}
-  
-    \begin{minipage}{.5\textwidth}
-    \begin{lstlisting}
-   int epfd = epoll_create1(0);
-    \end{lstlisting}
-    \end{minipage}
-
-    {\tt efpd} doesn't represent any files; use it to talk to {\tt epoll}.\\[1em]
-
-    0 represents the flags (only flag: {\tt EPOLL\_CLOEXEC}).
-    
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Populating the {\tt epoll} instance}
-  
-    To add {\tt fd} to the set of descriptors watched by {\tt epfd}:
-    \begin{lstlisting}
-   struct epoll_event event;
-   int ret;
-   event.data.fd = fd;
-   event.events = EPOLLIN | EPOLLOUT;
-   ret = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &event);
-    \end{lstlisting}
-
-    Can also modify and delete descriptors from {\tt epfd}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Waiting on an {\tt epoll} instance}
-  
-    Now we're ready to wait for events on any file descriptor in {\tt epfd}.
-    \begin{lstlisting}
-  #define MAX_EVENTS 64
-
-  struct epoll_event events[MAX_EVENTS];
-  int nr_events;
-
-  nr_events = epoll_wait(epfd, events, MAX_EVENTS, -1);
-    \end{lstlisting}
-
--1: wait potentially forever; otherwise, milliseconds to wait.\\[1em]
-
-Upon return from {\tt epoll\_wait}, we have {\tt nr\_events} events ready.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}[fragile]
-\frametitle{epoll Example}
-
-\begin{lstlisting}[language=C]
-#define MAX_EVENTS 10
-struct epoll_event ev, events[MAX_EVENTS];
-int listen_sock, conn_sock, nfds, epollfd;
-
-/* Code to set up listening socket, 'listen_sock',
-   (socket(), bind(), listen()) omitted */
-
-epollfd = epoll_create1(0);
-if (epollfd == -1) {
-    perror("epoll_create1");
-    exit(EXIT_FAILURE);
-}
-
-ev.events = EPOLLIN;
-ev.data.fd = listen_sock;
-if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listen_sock, &ev) == -1) {
-    perror("epoll_ctl: listen_sock");
-    exit(EXIT_FAILURE);
-}
-\end{lstlisting}
 
 
 \end{frame}
 
-\begin{frame}[fragile]
-\frametitle{epoll Example}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{High-Level Explanation of Snoopy Caches}
 
-\begin{lstlisting}[language=C]
-for (;;) {
-    nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
-    if (nfds == -1) {
-        perror("epoll_wait");
-        exit(EXIT_FAILURE);
-    }
+  Snoopy: the caches are spying on each other.
+  
+  \begin{itemize}
+    \item Each CPU is connected to a simple bus.
+    \item Each CPU ``snoops'' to observe if a memory location is read or written
+      by another CPU.
+    \item We need a cache controller for every CPU.
+  \end{itemize}
+  ~\\
+  {\bf What happens?}
 
-    for (n = 0; n < nfds; ++n) {
-        if (events[n].data.fd == listen_sock) {
-            conn_sock = accept(listen_sock, (struct sockaddr *) &addr, &addrlen);
-            if (conn_sock == -1) {
-                perror("accept");
-                exit(EXIT_FAILURE);
-            }
-            setnonblocking(conn_sock);
-            ev.events = EPOLLIN | EPOLLET;
-            ev.data.fd = conn_sock;
-            if (epoll_ctl(epollfd, EPOLL_CTL_ADD, conn_sock,
-                        &ev) == -1) {
-                perror("epoll_ctl: conn_sock");
-                exit(EXIT_FAILURE);
-            }
-        } else {
-            do_use_fd(events[n].data.fd);
-        }
-    }
-}
-\end{lstlisting}
+  \begin{itemize}
+    \item Each CPU reads the bus to see if any memory operation is relevant. If
+      it is, the controller takes appropriate action.
+  \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+\begin{frame}
+\frametitle{A Distributed Approach}
+
+
+This is a distributed approach; no centralized state is maintained. 
+
+Each cache with a copy of data from a block of physical memory knows whether it is shared or not. 
+
+Whenever a CPU issues a memory write, the other CPUs are watching (snooping around) to observe if that memory location is in their cache. 
+
+If it is, then the CPU will need to take action.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{We Need Some Action!}
+
+What does action mean?
+
+The Air Canada action was \alert{update}.
+
+The Deutsche Bahn action was \alert{invalidate}.
 
 \end{frame}
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Nonblocking I/O with curl}
+  \frametitle{Write-Through Cache}
+
   
-    Similar idea to {\tt epoll}:
-\begin{itemize}
-\item build up a set of descriptors;
-\item invoke the transfers and wait for them to finish;
-\item see how things went.
+Simplest type of cache coherence:
+  \begin{itemize}
+    \item All cache writes are done to main memory.
+    \item All cache writes also appear on the bus.
+    \item If another CPU snoops and sees it has the same location in
+      its cache, it will either {\it invalidate} or {\it update} the
+      data.
 \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+~\\
 
-
-\begin{frame}[fragile]
-\frametitle{Classic, Blocking cURL Request}
-
-Here's a simple cURL program that we can look over:
-
-\begin{lstlisting}[language=C]
-#include <stdio.h>
-#include <curl/curl.h>
- 
-int main( int argc, char** argv ) {
-  CURL *curl;
-  CURLcode res;
- 
-  curl_global_init(CURL_GLOBAL_DEFAULT);
- 
-  curl = curl_easy_init();
-  if( curl ) {
-    curl_easy_setopt(curl, CURLOPT_URL, "https://example.com/" );
-    res = curl_easy_perform( curl );
-    
-  if( res != CURLE_OK ) {
-      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-    }
-    curl_easy_cleanup(curl);
-  }
- 
-  curl_global_cleanup();
-  return 0;
-}
-\end{lstlisting}
-
-
-\end{frame}
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{curl\_multi initialization}
+    For write-through caches: normally, when you write to an invalidated
+    location, you bypass the cache and go directly to memory (aka {\bf
+      write no-allocate}).
 
   
-    curl\_multi: work with multiple resources at once.\\[1em]
-    
-    1. To use {\tt curl\_multi}, first create the individual requests \\ \hspace{2em} ({\tt curl\_easy\_init}).\\
-    ~~~(Set options as needed on each handle).\\[1em]
-
-    2. Then, combine them with:
-    \begin{itemize}
-      \item {\tt curl\_multi\_init()};
-      \item {\tt curl\_multi\_add\_handle()}.
-    \end{itemize}
-
-  
-
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}
-\frametitle{Open Fire!}
+\frametitle{The Daaaaaaaaaleks!}
 
-Start reqs: \texttt{curl\_multi\_perform( CURLM* cm, int* still\_running )}
+Our chosen approach:
 
 \begin{center}
-\includegraphics[width=0.5\textwidth]{images/artillery.jpeg}
+\includegraphics[width=0.6\textwidth]{images/dalek-invalidate.jpg}
 \end{center}
 
-The second parameter is updated with the number of still-in-progress requests.
+\end{frame}
 
-Meantime, we can do other things!
+
+
+\begin{frame}
+\frametitle{In-val-i-daaaaaate!}
+
+Invalidation is the most common protocol. 
+
+It means the data in the cache of other CPUs is not updated, it's just noted as being out of date (invalid).  
+
+Normally, when you write to an invalidated location, you bypass the cache and go directly to memory (aka {\bf write no-allocate}). 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{In-val-i-daaaaaate!}
+If we want to do a read and there's a miss, we can poke around in other caches to see who has the most recent cached version. 
+
+This is a bit like going into a room and yelling ``Does anybody have block...?'', in some sort of multicast version of the card game ``Go Fish''. 
+
+
+Regardless, the most recent value appears in memory, always.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Let's Yell}
+
+There are also write broadcast protocols, in which case all versions in all caches get updated when there is a write to a shared block. 
+
+But it uses lots of bandwidth and is not necessarily a good idea. 
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/multicast.jpg}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Let's Yell}
+
+It does, however prevent the costly cache miss that follows an invalidate. 
+
+Sadly, as we are mere users and not hardware architects, we don't get to decide; we just have to live with whichever one is on the hardware we get. Bummer.
+
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Write-Through Protocol}
+
+  
+  \begin{itemize}
+    \item Two states, {\bf valid} and {\bf invalid}, for each memory location.
+    \item Events are either from a processor ({\bf Pr}) or the {\bf Bus}.
+  \end{itemize}
+  \vfill
+  \begin{center}
+    \begin{tabular}{llll}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
+      Valid   & PrRd  &       & Valid\\
+      Valid   & PrWr  & BusWr & Valid\\
+      Valid   & BusWr &       & Invalid\\
+      Invalid & PrWr  & BusWr & Valid\\
+      Invalid & PrRd  & BusRd & Valid\\
+    \end{tabular}
+  \end{center}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Write-Through Protocol Example}
+
+  
+
+  \begin{itemize}
+    \item For simplicity (this isn't an architecture course), assume all cache
+      reads/writes are atomic.
+  \end{itemize}
+  \vfill
+  {\bf Using the same example as before:}
+
+  Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x, puts the value in its cache. \structure{(valid)}
+    \item {\tt CPU3} reads x, puts the value in its cache. \structure{(valid)}
+    \item {\tt CPU3} modifies {\tt x := 42}. \structure{(write to memory)}
+      \begin{itemize}
+        \item \structure{{\tt CPU1} snoops and marks data as invalid.}
+      \end{itemize}
+    \item {\tt CPU1} reads x, \structure{from main memory. (valid)}
+    \item {\tt CPU2} reads x, \structure{from main memory. (valid)}
+  \end{enumerate}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Write-Back Cache}
+
+
+  \begin{itemize}
+    \item What if, in our example, {\tt CPU3} writes to {\tt x} 3 times?\\[1em]
+    \item Main goal: delay the write to memory as long as possible.\\[1em]
+    \item At minimum, we have to add a ``dirty'' bit:\\
+     \quad Indicates our data has not yet been written to memory.
+  \end{itemize}
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Write-Back Implementation}
+
+  
+     The simplest type of write-back protocol (MSI), with 3 states:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; \\
+          \quad main memory is {\bf out-of-date}.
+        \item {\bf Shared}---location is unmodified, \\
+          \quad up-to-date with main
+          memory; \\
+          \quad may be present in other caches (also up-to-date).
+        \item {\bf Invalid}---same as before.
+      \end{itemize}~\\
+      
+     Initial state, upon first read, is ``shared''.\\[1em]
+
+     Implementation will only write the data to memory if another
+        processor requests it.\\[1em]
+
+     During write-back, a processor may read the data from the bus.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{MSI Protocol}
+
+  
+  \begin{itemize}
+    \item Bus write-back (or flush) is {\bf BusWB}.
+    \item Exclusive read on the bus is {\bf BusRdX}.
+  \end{itemize}~\\
+
+  \begin{center}
+    \begin{tabular}{llll}
+      {\bf State} & {\bf Observed} & {\bf Generated} & {\bf Next State}\\
+      Modified   & PrRd   &        & Modified\\
+      Modified   & PrWr   &        & Modified\\
+      Modified   & BusRd  & BusWB  & Shared\\
+      Modified   & BusRdX & BusWB  & Invalid\\
+      Shared     & PrRd   &        & Shared\\
+      Shared     & BusRd  &        & Shared\\
+      Shared     & BusRdX &        & Invalid\\
+      Shared     & PrWr   & BusRdX & Modified\\
+      Invalid    & PrRd   & BusRd  & Shared\\
+      Invalid    & PrWr   & BusRdX & Modified\\
+    \end{tabular}
+  \end{center}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{MSI Example}
+
+  
+
+  {\bf Using the same example as before:}
+
+  Initially in main memory: {\tt x = 7}.
+
+  \begin{enumerate}
+    \item {\tt CPU1} reads x from memory. \structure{(BusRd, shared)}
+    \item {\tt CPU3} reads x from memory. \structure{(BusRd, shared)}
+    \item {\tt CPU3} modifies {\tt x := 42}
+      \begin{itemize}
+        \item \structure{Generates a BusRdX.}
+        \item \structure{{\tt CPU1} snoops and invalidates x.}
+        \item \structure{{\tt CPU3} changes {\tt x}'s state to modified.}
+      \end{itemize}
+    \item {\tt CPU1} reads x:
+      \begin{itemize}
+        \item \structure{Generates a BusRd.}
+        \item \structure{{\tt CPU3} writes back the data and sets x to shared.}
+        \item \structure{{\tt CPU1} reads the new value from the bus as shared.}
+      \end{itemize}
+    \item {\tt CPU2} reads x from memory. \structure{(BusRd, shared)}
+  \end{enumerate}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{An Extension to MSI: MESI}
+
+  
+    The most common protocol for cache coherence is MESI.\\[1em]
+    Adds another state:
+      \begin{itemize}
+        \item {\bf Modified}---only this cache has a valid copy; \\
+\qquad main memory is {\bf out-of-date}.
+        \item {\bf Exclusive}---only this cache has a valid copy; \\
+\qquad main memory is {\bf up-to-date}.
+        \item {\bf Shared}---same as before.
+        \item {\bf Invalid}---same as before.
+      \end{itemize}
+~\\
+
+    MESI allows a processor to modify data exclusive to it, \\without
+      having to communicate with the bus.\\
+    MESI is \structure{safe}: in E state, no other processor has the
+      data.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Even More States!}
+
+  
+    MESIF (used in latest i7 processors):
+      \begin{itemize}
+        \item {\bf Forward}---basically a shared state; but, current
+          cache is the only one that will respond to a request to
+          transfer the data.
+      \end{itemize}~\\[1em]
+
+    Hence: a processor requesting data that is already shared or exclusive will
+      only get one response transferring the data.\\[1em]
+    Permits more efficient usage of the bus.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{False Sharing}
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/joey-friends.jpg}
+\end{center}
+
+False sharing: program has two unrelated data elements that are mapped to the same cache line/location.
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{I'm bored... So take a nap?}
+\frametitle{False Sharing}
 
-Suppose we've run out of things to do and nothing is ready yet. Wait!
+
 
 \begin{lstlisting}[language=C]
-curl_multi_wait( CURLM *multi_handle, struct curl_waitfd extra_fds[], 
-unsigned int extra_nfds, int timeout_ms, int *numfds )
+char a[10];
+char b[10];
 \end{lstlisting}
 
-This function will block the current thread until something happens.
-
-Choose how long to wait and see how many events occurred.
+They don't overlap but are located next to each other in memory.
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{While You Were Sleeping}
+\frametitle{False Sharing}
 
-While we are asleep or doing other things, callbacks still happen.
+Solution: Heap allocation? Maybe... 
 
-The status of the cURL easy handle is updated.
-
-\end{frame}
-
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Knowing what happened after {\tt curl\_multi\_perform}}
-
-  
-    {\tt curl\_multi\_info\_read} will tell you.
-  
-\begin{lstlisting}
-  msg = curl_multi_info_read(multi_handle, &msgs_left);
-\end{lstlisting}
-  
-    and also how many messages are left.\\[1em]
-    {\tt msg->msg} can be {\tt CURLMSG\_DONE} or an error;\\
-    {\tt msg->easy\_handle} tells you who is done.\\[1em]
-  
-
-    Some gotchas (thanks Desiye Collier):
-    \begin{itemize}
-    \item Checking \verb+msg->msg == CURLMSG_DONE+ is not sufficient to ensure that a curl request actually happened. You also need to check {\tt data.result}.
-
-    \item (A1 hint:) To reset an individual handle in the {\tt multi\_handle}, you need to ``replace'' it. But you shouldn't use {\tt curl\_easy\_init()}.  In fact, you don't need a new handle at all.
-    \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{curl\_multi cleanup}
-
-  
-    Call {\tt curl\_multi\_cleanup} on the multi handle.\\[1em]
-    Then, call {\tt curl\_easy\_cleanup} on each easy handle.\\[2em]
-    If you replace {\tt curl\_easy\_init} by {\tt curl\_global\_init},\\
-    then call {\tt curl\_global\_cleanup} also.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
-
-	\begin{lstlisting}[language=C]
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <curl/multi.h>
-
-#define MAX_WAIT_MSECS 30*1000 /* Wait max. 30 seconds */
-
-const char *urls[] = {
-  "http://www.microsoft.com",
-  "http://www.yahoo.com",
-  "http://www.wikipedia.org",
-  "http://slashdot.org"
-};
-#define CNT 4
-
-size_t cb(char *d, size_t n, size_t l, void *p) {
-  /* take care of the data here, ignored in this example */
-  return n*l;
-\end{lstlisting}
-
-\end{frame}
-
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
-
-	\begin{lstlisting}[language=C]
-void init( CURLM *cm, int i ) {
-  CURL *eh = curl_easy_init();
-  curl_easy_setopt( eh, CURLOPT_WRITEFUNCTION, cb );
-  curl_easy_setopt( eh, CURLOPT_HEADER, 0L );
-  curl_easy_setopt( eh, CURLOPT_URL, urls[i] );
-  curl_easy_setopt( eh, CURLOPT_PRIVATE, urls[i]) ;
-  curl_easy_setopt( eh, CURLOPT_VERBOSE, 0L );
-  curl_multi_add_handle( cm, eh );
-}
-
-int main( int argc, char** argv ) {
-    CURLM *cm = NULL;
-    CURL *eh = NULL;
-    CURLMsg *msg = NULL;
-    CURLcode return_code = 0;
-    int still_running = 0; 
-    int msgs_left = 0;
-    int http_status_code;
-    const char *szUrl;
-
-    curl_global_init( CURL_GLOBAL_ALL );
-    cm = curl_multi_init( );
-    
-    for ( int i = 0; i < CNT; ++i ) {
-        init( cm, i );
-    }
-\end{lstlisting}
-
-\end{frame}
-
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
-
-	\begin{lstlisting}[language=C]
-    curl_multi_perform( cm, &still_running );
-
-    do {
-        int numfds = 0;
-        int res = curl_multi_wait( cm, NULL, 0, MAX_WAIT_MSECS, &numfds );
-        if( res != CURLM_OK ) {
-            fprintf( stderr, "error: curl_multi_wait() returned %d\n", res );
-            return EXIT_FAILURE;
-        }
-        curl_multi_perform( cm, &still_running );
-
-    } while( still_running );
-\end{lstlisting}
-
-\end{frame}
-
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
-
-	\begin{lstlisting}[language=C]
-    while ( ( msg = curl_multi_info_read( cm, &msgs_left ) ) ) {
-        if ( msg->msg == CURLMSG_DONE ) {
-            eh = msg->easy_handle;
-            return_code = msg->data.result;
-            if ( return_code != CURLE_OK ) {
-                fprintf( stderr, "CURL error code: %d\n", msg->data.result );
-                curl_multi_remove_handle( cm, eh );
-                curl_easy_cleanup( eh );
-                continue;
-            }
-            http_status_code = 0; szUrl = NULL;
-            curl_easy_getinfo( eh, CURLINFO_RESPONSE_CODE, &http_status_code );
-            curl_easy_getinfo( eh, CURLINFO_PRIVATE, &szUrl );
-
-            if( http_status_code == 200 ) {
-                printf( "200 OK for %s\n", szUrl ) ;
-            } else {
-                fprintf( stderr, "GET of %s returned http status code %d\n",
-                     szUrl, http_status_code );
-            }
-            curl_multi_remove_handle( cm, eh );
-            curl_easy_cleanup( eh );
-        } else {
-            fprintf( stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg );
-        }
-    }
-\end{lstlisting}
-
-\end{frame}
-
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
-
-	\begin{lstlisting}[language=C]
-    curl_multi_cleanup( cm );
-    curl_global_cleanup();
-    return 0;
-}
-\end{lstlisting}
+Make both arrays bigger, wasting some space...?
 
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{Scaling This}
+\frametitle{False Sharing}
 
-	The developer claims that you can have multiple thousands of connections in a single multi handle.
+\begin{center}
+\includegraphics[width=0.6\textwidth]{images/falsesharing.png}
+\end{center}
 
-	60k ought to be enough for anyone!
+Is wasting a little space worth it? Yes!
+
+(Plus, putting arrays in a struct
+and padding enables future updates to the struct.)
 \end{frame}
-
-
-\begin{frame}
-	\frametitle{cURL + select}
-	\begin{center}
-		\includegraphics[width=0.55\textwidth]{images/harold.jpg}
-	\end{center}
-
-
-\end{frame}
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Process, Threads, AIO?! Four Choices}
-
+  \frametitle{Cache Coherency Summary}
   
-    \begin{itemize}
-      \item Blocking I/O; 1 process per request.
-      \item Blocking I/O; 1 thread per request.
-      \item Asynchronous I/O, pool of threads, \\callbacks, \\ each thread handles multiple connections.
-      \item Nonblocking I/O, pool of threads, \\ multiplexed with select/poll,
-        event-driven, \\ each thread handles multiple connections.
-    \end{itemize}
-  
+We saw the basics of cache coherence (more of an architecture
+      thing).
+      
+Knowing this stuff allows us to make wise decisions (e.g., false sharing)!      
+      
+There are other protocols for cache coherence, each with their own
+      trade-offs.
 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Blocking I/O; 1 process per request}
-
-  
-  Old Apache model: \hfill \includegraphics[width=.2\textwidth]{images/httpd_logo_wide_new}
-
-  \begin{itemize}
-    \item Main thread waits for connections.
-    \item Upon connect, forks off a new process, \\which completely
-      handles the connection.
-    \item Each I/O request is blocking: \\ e.g. reads wait until more data arrives.
-  \end{itemize}
-
-  Advantage: 
-  \begin{itemize}
-    \item ``Simple to understand and easy to program.''
-  \end{itemize}
-
-  Disadvantage:
-  \begin{itemize}
-    \item High overhead from starting 1000s of processes.\\
-      (can somewhat mitigate with process pool).
-  \end{itemize}
-  Can handle $\sim$10 000 processes, but doesn't generally scale.
-
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Blocking I/O; 1 thread per request}
-
-  
-    We know that threads are more lightweight than processes.\\[1em]
-
-    Same as 1 process per request, but less overhead.\\[1em]
-
-    I/O is the same---still blocking.\\[1em]
-
-    Advantage:
-    \begin{itemize}
-      \item Still simple to understand and easy to program.
-    \end{itemize}
-
-    Disadvantages:
-    \begin{itemize}
-      \item Overhead still piles up, although less than processes.
-      \item New complication: race conditions on shared data.
-    \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Asynchronous I/O Benefits}
-
-  
-    In 2006, perf benefits of asynchronous I/O on lighttpd\footnote{\tiny \url{http://blog.lighttpd.net/articles/2006/11/12/lighty-1-5-0-and-linux-aio/}}:\\
-
-{\small
-    \begin{tabular}{llrrr}
-    version & & fetches/sec & bytes/sec & CPU idle \\
-    1.4.13 & sendfile & 36.45 & 3.73e+06 & 16.43\% \\
-    1.5.0 & sendfile & 40.51 & 4.14e+06 & 12.77\% \\
-    1.5.0 & linux-aio-sendfile & 72.70 & 7.44e+06 & 46.11\% \\
-    \end{tabular}
-}~\\[1em]
-
-    (Workload: $2\times 7200$ RPM in RAID1, 1GB RAM, \\
-     \qquad transferring 10GBytes on a 100MBit network).\\[1em]
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Using Asynchronous I/O in Linux (select/poll)}
-
-
-   Basic workflow: \\[1em]
-   \begin{enumerate}
-     \item enqueue a request;
-     \item \ldots ~do something else;
-     \item (if needed) periodically check whether request is done; and
-     \item read the return value.
-   \end{enumerate}
 
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 
 \end{document}
 
