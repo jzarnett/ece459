@@ -1,0 +1,113 @@
+\include{header}
+
+\begin{document}
+
+\lecture{ 4 --- Rust: Breaking the Rules for Fun and Performance }{\term}{Jeff Zarnett}
+
+\section*{Lifetimes}
+We've covered the idea that in Rust, the compiler can make a determination about how long a particular piece of data will live. How long it lives is sometimes referred to as the reference's lifetime. The good news is that the compiler is usually able to make a determination about how long things should live. This system is not perfect, and sometimes we have to help it a bit.
+
+Here's a simple program in the official docs that won't compile because the type system can't figure out what's correct~\cite{rustdocs}:
+
+\begin{lstlisting}[language=Rust]
+fn main() {
+    let string1 = String::from("abcd");
+    let string2 = "xyz";
+
+    let result = longest(string1.as_str(), string2);
+    println!("The longest string is {}", result);
+}
+
+fn longest(x: &str, y: &str) -> &str {
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+\end{lstlisting}
+
+The compiler says it can't figure out whether the return value is the borrowing of \texttt{x} or \texttt{y} and therefore it's not sure how long those strings live. It might look like it's obvious at this point, because the two strings are known at compile time. The compiler, however, makes decisions based on local information only (that is, what it finds in the current function it is evaluating). For that reason, it treats \texttt{longest} as if it could take any two string references. Alright, that's fine for now, because it was an example to show what happens when we can't know the answer at compile time anyway.
+
+To get this to compile, we have to specify lifetimes using annotations. Annotations don't change how long references live, really. They just describe the relationships between the lifetimes of references. This is used on functions to specify what they can accept and what they can return.
+
+If you'd like an analogy, think of it as saying something like ``I will only buy eggs that have an expiration date that is at least two weeks in the future.''. This rule does not change the eggs that are in the store. It does not mean that eggs that have an expiration date of next week are poison and nobody should eat them. I'll happily buy eggs that expire in a month. So we are just being clear about what we want here.
+
+Lifetime annotations are written with an apostrophe \texttt{'} followed by a name, and names are usually short like \texttt{'a} or \texttt{'b}. Let's correct the \texttt{longest} function:
+
+\begin{lstlisting}[language=Rust]
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+\end{lstlisting}
+
+This does what we need! The first appearance, after the name of the function, of our lifetime annotation says that all parameters and return value must have the same lifetime. Then we say we will accept strings that live at least as long as our designated \texttt{'a} lifetime. That is, it's got to live at least as long as the smallest of \texttt{x} and \texttt{y}. The actual lifetime isn't as important, all that matters is that it follows the rule of being at least that long.
+
+In early versions of Rust, lifetime annotations had to be specified everywhere. That was somewhat annoying, but fortunately the compiler can identify a lot of common scenarios, so the borrow checker can add them where they're needed most of the time.
+
+
+\section*{Holodeck Safeties are Offline}
+There's one last thing that we need, and it is dark and terrible magic. It is \textit{unsafe}. Unsafe exists because it has to. The compiler would rather err on the side of caution and say no to a program that is correct, than say yes to one that isn't. You might also need to interact with some other library or do some very low-level stuff. For this reason, we can override this and tell the compiler that you promise you know this is okay. You do so at your own risk, though, because you can get it wrong and if you do you get all the same problems Rust tries to avoid, like segmentation faults and memory leaks.
+
+To do anything that qualifies as unsafe, it has to happen in one of two ways. Either you declare a block as \texttt{unsafe}, or you specify that a given function is \texttt{unsafe} by putting that in the function signature. Inside an unsafe block or function, you can do the following things that you are not normally allowed to do~\cite{rustdocs}:
+
+\begin{enumerate}
+	\item Call an unsafe function/method
+	\item Access or modify a mutable static variable
+	\item Implement an unsafe trait
+	\item Access the fields of a \texttt{union}
+	\item Dereference a raw pointer
+\end{enumerate}
+
+That list is probably less extensive than you were expecting. Declaring a block as unsafe does not grant you unlimited power, sadly. The borrow checker still does its thing and there are still rules. 
+
+The design intentions for unsafe blocks are that they are supposed to be small (this reduces the chance of an error and makes it easier to find) and ideally are abstracted away a bit behind some interface...
+
+\paragraph{Danger Zone.} The easiest example to show is what happens when you want to call a function that is unsafe. Suppose we have a function \texttt{do\_unsafe\_thing()}; its function signature will be something like \texttt{unsafe fn do\_unsafe\_thing()} and to call it, we must wrap it in an unsafe block:
+
+\begin{lstlisting}[language=Rust]
+unsafe {
+  do_unsafe_thing();
+}
+\end{lstlisting}
+Unsafe things are clearly designated in both ways: when you write a function that is unsafe, you declare to the world that this function is unsafe. Then, anyone who wants to use it also has to acknowledge that they know the function in question is unsafe. 
+
+If you try to use an unsafe function without it being in an unsafe block, the compiler will, naturally, forbid such a thing. Just smashing the unsafe block around it is enough to make the compiler quiet, but not a thorough code reviewer. They would ask about whether you've read carefully the documentation of the function in question and if you are sure you're calling it with the right arguments... You did read the documentation, right? Right?
+
+\paragraph{Mutable static variables.} Rust tries pretty hard to discourage you from using global variables, and they are right to do so. It's a quick shortcut and we do it a lot in course assignments, exercises, labs, and even exam questions. On an exam question, the thing I want to test is something like how you use the mutex and queue constructs to solve the problem, not how well you pass the mutex and queue pointers from the main thread to the newly created threads. In production code, though, global variables are really not recommended because of how harmful it is to good software engineering principles. 
+
+But anyway, you can make global variables mutable in Rust, if you must, and do so you have to mark this as unsafe. But if you find yourself doing such a thing, please stop and think very carefully about why.
+
+\paragraph{Implement an unsafe trait.} Appropriately, if the trait (interface) you want to implement has unsafe in the function signature, the compiler forces you to admit that your code is unsafe. If you do, it mostly means that you have to guarantee that what you're doing does in fact meet the requirements the interface specifies (like \texttt{Send}).
+
+\paragraph{Unions.}
+In C, there exists the concept of the \texttt{union}\footnote{\url{https://en.wikipedia.org/wiki/Union_type}}. You might not have heard of it because a lot of people don't like it (and I'm one of them). You might have to contend with it in a particular API.  It's like a \texttt{struct}, except where a \texttt{struct} is all of the contents (e.g., an integer and a floating point number and a pointer), a \texttt{union} is only one of those at a time (an integer or a floating point number or a pointer). Because there's no way to be totally sure that the \texttt{union} you're looking at is in fact the type you expect it to contain, you can only access the members in an unsafe block. 
+
+
+\paragraph{Raw pointers.}
+You can create raw pointers anywhere you like, but to dereference them, that has to be in an unsafe block. Creating the raw pointers can't cause a program crash; only using them does that. Of course, creating them incorrectly guarantees that when you try to use them they blow up in your face. I guess blame is a tricky subject.
+
+Here's an example from the official docs~\cite{rustdocs}:
+\begin{lstlisting}[language=Rust]
+let mut num = 5;
+
+let r1 = &num as *const i32;
+let r2 = &mut num as *mut i32;
+
+unsafe {
+    println!("r1 is: {}", *r1);
+    println!("r2 is: {}", *r2);
+}
+\end{lstlisting}
+
+You can also use raw pointers when you need to write to a particular memory address, which sometimes happens for memory-mapped I/O. You just assign your value to an integer (i.e., \texttt{let add = 0xDEADBEEF}) and then cast it to a raw pointer (which is of type \texttt{*const}). When you want to write some data to that address, use the unsafe block and write it.
+
+You might need this if you are calling into a C library or function. The Rust universe of packages (``crates'') is getting larger all the time, but sometimes you'll have to interact with a library in C... or write a part of your application in Rust that is called from C. There is a crate for cURL, but it might be interesting to learn what one would have to do to use the C library for it...
+
+\input{bibliography.tex}
+
+\end{document}
