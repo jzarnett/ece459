@@ -4,6 +4,48 @@
 
 \lecture{ 4 --- Rust: Breaking the Rules for Fun and Performance }{\term}{Jeff Zarnett}
 
+\section*{Mutual Exclusion and Multiple Ownership}
+
+\paragraph{Mutex and Reference Counting}
+
+Where we left off previously, we've identified that a mutex is not super amenable to our model of single ownership because we need multiple threads to have access to this mutex. There is a way to do it, but we have to break the single ownership rule, and that requires a little more background on smart pointers and reference counting.
+
+We know what pointers are from C and \CPP, and if you have sufficient experience with \CPP you will know that smart pointers exist in that language too! We'll talk about two kinds of smart pointer right now, the Box and the Reference-Counting type.
+
+The \texttt{Box<T>}is an easy way to put some data on the heap rather than the stack. This is good for a situation where you, for example, take input from a user and you don't know in advance how big it's going to be, or when you have some data that you want to transfer ownership of rather than copy (for performance reasons, obviously). You create a Box with \texttt{Box::new(...)} as expected, and it's heap allocated with all the usual things that come with it in rust, like ownership and that it gets dropped if the owner goes out of scope.
+
+The reference counted smart pointer, however, is the thing that allows for shared ownership. There are some reasons why we might want this, even in a single-threaded program, such as a graph data structure. But the main idea is that you can share ownership as much as you like, and the value only goes away when the last reference to it is dropped (reference count goes to zero). 
+
+To make a reference-counted object, it's of type \texttt{Rc<T>}and that creates the type; if you want to make another reference, use \texttt{clone()} and that increases the reference count. When references are dropped, the count decreases.
+
+It is important to note that reference types can leak memory! If you've chosen this route for managing data in your program, there is a possibility of forming a cycle in the reference types. If such a cycle is formed, the memory will never be dropped. This is undesirable, of course.
+
+Right, so we have everything we need now to pass the mutex around, right? Well, almost. \texttt{Rc<T>} won't work when we try to pass it between threads, because the compiler says it cannot be sent between threads safely. This is because the management of its internal counter is not done in a thread-safe way, and if we want that, we need the \textit{atomic} reference counted type, which is \texttt{Arc<T>}. It is perhaps slightly slower than the regular reference counted type, so you won't want to choose it in every scenario, but it's exactly what we need here.
+
+Here's an example of using an atomic reference counted type for setting up a handler for the Ctrl-C (SIGINT); this is modified from a program I wrote that listens for connections and spawns threads if a client connects: 
+
+\begin{lstlisting}[language=Rust]
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+fn main() {
+   let quit = Arc::new(Mutex::new(false));
+    let handler_quit = Arc::clone(&quit);
+    ctrlc::set_handler(move|| {
+        let mut b = handler_quit.lock().unwrap();
+        *b = true;
+    }).expect("Error setting Ctrl-C handler");
+ 
+    while !(*quit.lock().unwrap()) {
+    	// Do things
+    }
+}
+\end{lstlisting}
+
+In this example, I use a mutex to protect a boolean that's used concurrently (even if it's not in two threads): once in main and once in the handler. 
+
+We should also still remember that there exists the possibility of a deadlock in Rust, even if the mutex is automatically unlocked for us. Nothing prevents thread 1 from acquiring mutex A then B and thread 2 from concurrently acquiring B then A. The language cannot solve all concurrency problems, unfortunately.
+
 \section*{Lifetimes}
 We've covered the idea that in Rust, the compiler can make a determination about how long a particular piece of data will live. How long it lives is sometimes referred to as the reference's lifetime. The good news is that the compiler is usually able to make a determination about how long things should live. This system is not perfect, and sometimes we have to help it a bit.
 
@@ -49,6 +91,14 @@ This does what we need! The first appearance, after the name of the function, of
 
 In early versions of Rust, lifetime annotations had to be specified everywhere. That was somewhat annoying, but fortunately the compiler can identify a lot of common scenarios, so the borrow checker can add them where they're needed most of the time.
 
+
+But we're not breaking rules here, we're applying more rules. What gives? The rule-breaking thing is the ability to grant a particular piece of memory immortality. If you specify as a lifetime the special one \texttt{'static}, you grant the ability for this memory to live the entire duration of the program. Just because it can doesn't mean it necessarily lives forever; just that it could. 
+
+This can be used correctly to tell the compiler that a particular reference will always be valid, such as string literals that are always going to hang around. It's also used in the interface for spawning a thread, incidentally, which happens because you can pass \textit{anything} to a thread, and the compiler wants to be sure that whatever you are providing is definitely going to live long enough for the thread which can live an arbitrarily-long life (threads are kind of immortal too). 
+
+For the record, the kind of immortality we are talking about here is the Tolkien-Elf kind, where they won't die of old age, but can die in violence or grief. Threads can exit and be cancelled and such in Rust, and static variables can get dropped if the compiler is sure it's safe to do. But they \textit{could} hang around indefinitely.
+
+You can use the static lifetime to bandaid a couple of compiler errors, and the compiler might even suggest it. You shouldn't, though, you should really apply the correct lifetime annotations or fix the would-be dangling reference. Memory that's kept around forever that is no longer useful is fundamentally very much like a memory leak, even if it is still possible to deallocate it in a hypothetical sense.
 
 \section*{Holodeck Safeties are Offline}
 There's one last thing that we need, and it is dark and terrible magic. It is \textit{unsafe}. Unsafe exists because it has to. The compiler would rather err on the side of caution and say no to a program that is correct, than say yes to one that isn't. You might also need to interact with some other library or do some very low-level stuff. For this reason, we can override this and tell the compiler that you promise you know this is okay. You do so at your own risk, though, because you can get it wrong and if you do you get all the same problems Rust tries to avoid, like segmentation faults and memory leaks.
