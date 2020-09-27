@@ -22,7 +22,7 @@ do
                 '(\\title.*\s?---\s?)\K([A-Za-z0-9\-\\\&,;:\/ ]*[A-Za-z0-9])' $slideNumber-slides.tex \
                 | sed -e 's@/@ @g' -e 's/[^a-zA-Z0-9 -]//g' -e 's/  / /g' -e 's/ /_/g')" )
         echo "$slide.pdf: $slideNumber-slides.tex
-	rm -f \$@
+	rm -rf \$@
 	pdflatex -jobname=$slide \$<
 	pdflatex -jobname=$slide \$<" > ./makefileDependencies/$slide.d
 done
