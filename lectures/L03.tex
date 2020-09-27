@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{ 3 --- Rust: Borrowing, Slices, Concurrency }{\term}{Jeff Zarnett}
+\lecture{ 3 --- Rust: Borrowing, Slices, Threads, Traits }{\term}{Jeff Zarnett}
 
 \section*{Borrowing and References}
 We've already seen that ownership is a concept in Rust that can come with a couple of unintended consequences, like accidentally giving an argument to a function that we still need later. Rust allows us the idea of ``borrowing'' -- you need to use the data for something but you also promise you'll give it back. It allows data to be shared, but the sharing has to be done in a controlled and safe way to prevent the possibility of race conditions.
@@ -114,9 +114,7 @@ It's recommended to use \texttt{Result} types for functions you write too. Make 
 \section*{Fearless Concurrency}
 More than just trying to prevent memory problems by making them compiler errors, Rust is also intended to make concurrency errors compile-time problems too! That's actually difficult, of course, but the good news is that the ideas of ownership and borrowing and such are at the heart of how concurrency problems are avoided.
 
-Let's actually take a minute to talk about concurrency and how it helps. The basic idea is that by making our program concurrent, we can get work done faster or accomplish more work in the same amount of time. We'll be revisiting the details of this later and considering the limits of it, but for now you can just imagine it is a good thing at least some of the time.
-
-The problem with concurrency is that it brings new problems with it: race conditions, deadlock, that sort of thing. Making your program faster is great, but not if it's at the cost of the answers being incorrect (or your program failing to produce an answer some of the time).
+The drawback to concurrency is that it brings new problems with it: race conditions, deadlock, that sort of thing. Making your program faster is great, but not if it's at the cost of the answers being incorrect (or your program failing to produce an answer some of the time).
 
 If the compiler can help with making sure your concurrent program is correct, it doesn't make your program faster directly, but it helps indirectly. If you can be (more) sure of the correctness of your code, you don't have to spend as much time testing it before you can deploy it and move on to the next thing. Also, if the bug is prevented from being introduced in the first place, you don't have to spend time debugging it and fixing it, which lets you spend more time on speeding up other things. And honestly, if you are looking at a piece of code that is super business critical, anything that adds to your confidence that no issue has been introduced makes it that much easier to make that change you want to make.
 
@@ -202,7 +200,33 @@ If you want to have multiple transmitting ends, you need only use \texttt{clone}
 
 As a small technical note, the type you want to send via a channel has to implement the \texttt{Send} trait (think of traits like interfaces). Almost all basic types in Rust have this trait, and any programmer-defined type that is composed entirely of types that have it will also have that trait.  
 
-\paragraph{Mutex and Reference Counting}
+
+\subsection*{Traits}
+Okay, we have to take a detour here onto the subject of Traits. As the previous paragraph said, traits are a lot like interfaces. You specify a trait as a set of function signatures that you expect that the type in question to implement. A very simple trait and its usage are shown below:
+
+\begin{lstlisting}[language=Rust]
+pub trait FinalGrade {
+	fun final_grade(&self) -> f32;
+}
+
+impl FinalGrade for Enrolled_Student {
+    fn final_grade(&self) -> f32 {
+        // Calculation of average according to syllabus rules goes here
+    }	
+}  
+\end{lstlisting}
+
+A couple of other notes about traits are worth mentioning. One, you can only define traits on types of your own, not external (from other packages/crates) types so you don't break someone else's code. Two, you can add a default implementation to the trait if you want (something Java lacked for a long time). And third, as in other languages with interfaces, a trait can be used as a return type or method parameter, so it is a kind of generics. Finally, you can use \texttt{+} to combine multiple traits (which is nice when you need a parameter to be two things)
+
+With the preamble out of the way, there are three traits that are really important to us right now. They are \texttt{Iterator}, \texttt{Send}, and \texttt{Sync}. 
+
+Iterator is the easiest one to explain. You put it on a collection and it allows you to iterate over the collection. Moreover, this is often more efficient than a typical for loop construction, because it lets the compiler skip over bounds checking and other such issues. Nice.
+
+Send was already introduced: it's necessary to transfer ownership between threads. There are some Rust built-in or standard-library types that very specifically choose not to implement this interface to give you a hint that they are not intended for this purpose. If the compiler tells you no, it's a hint that you want to use a different type. As previously mentioned, if your programmer-defined type is made entirely of types that have the Send trait, then it too has the trait. If you really must use something that is inherently not safe to send, though, you can implement this trait on your type manually and guarantee the thread-safe transfer of ownership yourself, but it's not a good idea if you can avoid it.
+
+Sync is the last one, and it means that a particular type is thread-safe. That means it can be referenced from multiple threads without issue. The primitive types have this trait, as do any programmer-defined types that are composed entirely of Sync types. It's important to just mention here that this does not mean all operations on a Sync type are safe and that no race conditions are possible; it just means that \textit{references} to the type can be in different threads concurrently, and we can't have multiple mutable references. No, if we want more than one thread to be able to modify the value, we need mutual exclusion...
+
+\subsection*{Back to the Mutex...}
 If you don't want to use message passing for some reason (and performance is a reason, if it's borne out by your testing/data) then there is fortunately the ability to use a mutex for mutual exclusion. We know how these work, so let's skip the part where I make some analogy about them. 
 
 What's different about the mutex in Rust is that the Mutex wraps a particular type. So it is defined as \texttt{Mutex<T>} and if you want an integer counter, you create it as \texttt{Mutex::new(0);}. This way, the mutex goes with the value it is protecting, making it much more obvious what mutex goes with what data, and making it so you have to have the mutex to access the data. And sample from the docs\cite{rustdocs}:
@@ -226,46 +250,8 @@ In addition to forcing you to acquire the mutex before you can make any use of t
 
 The use of the mutex in the above program is obviously unnecessary, since there's only the one thread. If we want to use it in multiple threads, we need multiple threads to access it. But we can't, unfortunately, just say that references will do! The mutex type has to outlive the other threads and such and the compiler will suggest moving it... But we can't move it into more than one thread, because that violates our rule about having only one owner. What now?
 
-It looks like we have to break a rule: we need the ability to share ownership of some memory. 
+It looks like we have to break a rule: we need the ability to share ownership of some memory. We don't know how to do that, but when we start with breaking rules, we might find that we like it and might break more than one...
 
-\paragraph{Smart Pointers and Reference Counting}
-This takes us down a slight digression, to the subject of smart pointers and reference counting. We know what pointers are from C and \CPP, and if you have sufficient experience with \CPP you will know that smart pointers exist in that language too! We'll talk about two kinds of smart pointer right now, the Box and the Reference-Counting type.
-
-The \texttt{Box<T>}is an easy way to put some data on the heap rather than the stack. This is good for a situation where you, for example, take input from a user and you don't know in advance how big it's going to be, or when you have some data that you want to transfer ownership of rather than copy (for performance reasons, obviously). You create a Box with \texttt{Box::new(...)} as expected, and it's heap allocated with all the usual things that come with it in rust, like ownership and that it gets dropped if the owner goes out of scope.
-
-The reference counted smart pointer, however, is the thing that allows for shared ownership. There are some reasons why we might want this, even in a single-threaded program, such as a graph data structure. But the main idea is that you can share ownership as much as you like, and the value only goes away when the last reference to it is dropped (reference count goes to zero). 
-
-To make a reference-counted object, it's of type \texttt{Rc<T>}and that creates the type; if you want to make another reference, use \texttt{clone()} and that increases the reference count. When references are dropped, the count decreases.
-
-It is important to note that reference types can leak memory! If you've chosen this route for managing data in your program, there is a possibility of forming a cycle in the reference types. If such a cycle is formed, the memory will never be dropped. This is undesirable, of course.
-
-Right, so we have everything we need now to pass the mutex around, right? Well, almost. \texttt{Rc<T>} won't work when we try to pass it between threads, because the compiler says it cannot be sent between threads safely. This is because the management of its internal counter is not done in a thread-safe way, and if we want that, we need the \textit{atomic} reference counted type, which is \texttt{Arc<T>}. It is perhaps slightly slower than the regular reference counted type, so you won't want to choose it in every scenario, but it's exactly what we need here.
-
-Here's an example of using an atomic reference counted type for setting up a handler for the Ctrl-C (SIGINT); this is modified from a program I wrote that listens for connections and spawns threads if a client connects: 
-
-\begin{lstlisting}[language=Rust]
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-fn main() {
-   let quit = Arc::new(Mutex::new(false));
-    let handler_quit = Arc::clone(&quit);
-    ctrlc::set_handler(move|| {
-        let mut b = handler_quit.lock().unwrap();
-        *b = true;
-    }).expect("Error setting Ctrl-C handler");
- 
-    while !(*quit.lock().unwrap()) {
-    	// Do things
-    }
-}
-\end{lstlisting}
-
-In this example, I use a mutex to protect a boolean that's used concurrently (even if it's not in two threads): once in main and once in the handler. 
-
-We should also still remember that there exists the possibility of a deadlock in Rust, even if the mutex is automatically unlocked for us. Nothing prevents thread 1 from acquiring mutex A then B and thread 2 from concurrently acquiring B then A. The language cannot solve all concurrency problems, unfortunately.
-
-We just learned how to break a rule (single ownership) and... we liked it. Maybe we can break some more? Maybe we \textit{have} to break some more?
 
 \input{bibliography.tex}
 
