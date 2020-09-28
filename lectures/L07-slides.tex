@@ -258,9 +258,8 @@ If we guess wrong, we flush the pipeline and take the performance penalty.
 The compiler and CPU's branch prediction routines are pretty smart.\\
 \quad Trying to outsmart them isn't necessarily a good idea. 
 
-But we can give the compiler (\texttt{gcc} at least) some hints about what we think is likely to happen. 
+But we can give the compiler some hints about what we think is likely to happen. 
 
-Our tool for this is the \texttt{\_\_builtin\_expect()} function, which takes two arguments, the value to be tested and the expected result.
 
 \end{frame}
 
@@ -273,66 +272,43 @@ Our tool for this is the \texttt{\_\_builtin\_expect()} function, which takes tw
 	\includegraphics[width=0.4\textwidth]{images/hint.jpeg}
 \end{center}
   
-  {\tt gcc} allows you to give branch
-  prediction hints by calling this builtin function:
+We can either say that something is likely or unlikely.  
 
-  \begin{center}
-    \verb+long __builtin_expect (long exp, long c)+
-  \end{center}
-
-  The expected result is that {\tt exp} equals {\tt c}.\\[1em]
-  Compiler reorders code \& tells CPU the prediction.
-  
+This is an experimental feature in Rust only available in nightly builds.
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 
-\begin{frame}[fragile]
-\frametitle{Check the Header}
-
-In the linux \texttt{compiler.h} header there are two neat little shortcuts defined:
-
-\begin{verbatim}
-# define likely(x)      __builtin_expect(!!(x), 1)
-# define unlikely(x)    __builtin_expect(!!(x), 0)
-\end{verbatim}
-
-Compile with at least optimization level 2 (\texttt{-O2}) to get the compiler to take these hints at all.
-
-\end{frame}
-
-
 
 \begin{frame}[fragile]
-\frametitle{Force a Mispredict}
-{\scriptsize
-\begin{verbatim}
-        #include <stdlib.h>
-        #include <stdio.h>
-
-        static __attribute__ ((noinline)) int f(int a) { return a; }
-
-        #define BSIZE 1000000
-        int main(int argc, char* argv[]) 
-        {
-          int *p = calloc(BSIZE, sizeof(int));
-          int j, k, m1 = 0, m2 = 0;
-          for (j = 0; j < 1000; j++) {
-            for (k = 0; k < BSIZE; k++) {
-              if (__builtin_expect(p[k], EXPECT_RESULT)) {
-                m1 = f(++m1);
-              } else {
-                m2 = f(++m2);
-              }
-            }
-          }
-
-          printf("%d, %d\n", m1, m2);
-        }
-\end{verbatim}
+\frametitle{What is the effect of hints?}
+\begin{lstlisting}[language=Rust]
+fn f(a: i32) -> i32 {
+    a
 }
+
+fn main() {
+    let size = 100000;
+    let large_vector = vec![0; size];
+    let mut m1 = 0;
+    let mut m2 = 0;
+
+    for _j in 0..1000 {
+        for k in 0..size {
+            if *large_vector.get(k).unwrap() == 0 {
+                m1 = f(m1 + 1)
+            } else {
+                m2 = f(m2 + 1)
+            }
+        }
+    }
+    println!("m1 = {}; m2 = {}", m1, m2);
+}
+\end{lstlisting}
+
+I'll first test it with no hint, then putting \texttt{likely()} around the if condition, and then \texttt{unlikely()}.
 
 \end{frame}
 
@@ -344,20 +320,17 @@ Compile with at least optimization level 2 (\texttt{-O2}) to get the compiler to
 Running it yielded:
 {\scriptsize
 \begin{verbatim}
-plam@plym:~/459$ gcc -O2 likely-simplified.c -DEXPECT_RESULT=0 -o likely-simplified
-plam@plym:~/459$ time ./likely-simplified
-0, 1000000000
+No hint at all:
+  Time (mean +/- ?):      6.657 s +/-  0.144 s    [User: 6.614 s, System: 0.029 s]
+  Range (min ... max):    6.413 s ...  6.905 s    10 runs
+  
+Likely:
+  Time (mean +/- ?):      6.762 s +/-  0.175 s    [User: 6.729 s, System: 0.028 s]
+  Range (min ... max):    6.590 s ...  7.200 s    10 runs
 
-real	0m2.521s
-user	0m2.496s
-sys	0m0.000s
-plam@plym:~/459$ gcc -O2 likely-simplified.c -DEXPECT_RESULT=1 -o likely-simplified
-plam@plym:~/459$ time ./likely-simplified
-0, 1000000000
-
-real	0m3.938s
-user	0m3.868ss
-sys	0m0.000s
+Unlikely:
+  Time (mean +/- ?):      6.943 s +/-  0.200 s    [User: 6.893 s, System: 0.033 s]
+  Range (min ... max):    6.732 s ...  7.309 s    10 runs
 \end{verbatim}
 }
 \end{frame}
@@ -367,17 +340,9 @@ sys	0m0.000s
 \begin{frame}
 \frametitle{Hint Results}
 
-In the original source the author reports the following results.
+Hints don't help the compiler in this program!
 
-Scanning a one million element array, with all elements initially zero, the results are:
-
-\begin{itemize}
-	\item No use of hints: \texttt{0:02.68 real,  2.67 user, 0.00 sys}
-	\item Good prediction: \texttt{0:02.28 real,  2.28 user, 0.00 sys}
-	\item Bad prediction: \texttt{0:04.19 real,  4.18 user, 0.00 sys}
-\end{itemize}
-
-When about one in ten thousand values in the array is nonzero, then it's roughly the ``break-even'' point for the setup as described.
+We proved they aren't always a benefit, even if we know they are correct.
 
 Conclusion: it's hard to outsmart the compiler. Maybe it's better not to try.
 
