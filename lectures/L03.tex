@@ -5,11 +5,11 @@
 \lecture{ 3 --- Rust: Borrowing, Slices, Threads, Traits }{\term}{Jeff Zarnett}
 
 \section*{Borrowing and References}
-We've already seen that ownership is a concept in Rust that can come with a couple of unintended consequences, like accidentally giving an argument to a function that we still need later. Rust allows us the idea of ``borrowing'' -- you need to use the data for something but you also promise you'll give it back. It allows data to be shared, but the sharing has to be done in a controlled and safe way to prevent the possibility of race conditions.
+We've already seen that ownership is a concept in Rust that can come with a couple of unintended consequences, e.g. from accidentally giving an argument to a function that we still need later. Rust supports ``borrowing''---you need to use the data for something but you also promise you'll give it back (and the compiler forces you to live up to your promises). Borrowing allows data to be shared, but the sharing has to be done in a controlled and safe way to prevent leaks and race conditions.
 
 Rust's compiler analyzes all the borrowing that takes place in the program using the \textit{borrow checker}. If the borrow checker is not certain that your code is perfectly safe, it will say no (and produce a compile time error). This can be a little bit frustrating, because the analysis is not perfect and errs on the side of caution. Eventually we will introduce some ways that you can tell the borrow checker that you guarantee the code is safe, but you have to be sure, otherwise all the usual bad things can happen!
 
-The feature that we need for the concept of borrowing is the \textit{reference}. To indicate that you want to use a reference, use the \texttt{\&} operator. The reference operator is appears both on the function definition and the invocation, to make sure there's no possibility of confusion as to whether a reference is being expected/provided or ownership is to be transferred.  Consider this example from the official docs~\cite{rustdocs}:
+The feature that we need for the concept of borrowing is the \textit{reference}. To indicate that you want to use a reference, use the \texttt{\&} operator. The reference operator appears both on the function definition and the invocation, to make sure there's no possibility of confusion as to whether a reference is being expected/provided or ownership is to be transferred.  Consider this example from the official docs~\cite{rustdocs}:
 
 \begin{lstlisting}[language=Rust]
 fn main() {
@@ -23,15 +23,15 @@ fn calculate_length(s: &String) -> usize {
 }
 \end{lstlisting}
 
-So when we invoke the \texttt{calculate\_length} function, ownership of the string is not transferred, but instead a reference to it is provided. The reference goes out of scope at the end of the function where it was used, removing it from consideration. A reference is not the same as ownership and the reference cannot exist without the original owner continuing to exist. That is represented in the official docs by this diagram:
+When we invoke the \texttt{calculate\_length} function, ownership of the string is not transferred, but instead a reference to it is provided. The reference goes out of scope at the end of the function where it was used, removing it from consideration. A reference is not the same as ownership and the reference cannot exist without the original owner continuing to exist. That is represented in the official docs by this diagram:
 
 \begin{center}
 \includegraphics[width=0.5\textwidth]{images/string-with-ref.png}
 \end{center}
 
-And if you borrow something, it's not yours to do with as you wish -- you cannot assign ownership of it (move it), which makes sense because you can't give someone ownership of something you do not own.
+And if you borrow something, it's not yours to do with as you wish---you cannot assign ownership of it (move it), which makes sense because you can't give someone ownership of something you do not own.
 
-By default, references are immutable: if you borrow something, you cannot change it, even if the underlying data is mutable. Attempting to do so will result in -- you guessed it -- a compile time error, where the compiler tells you that you are trying to change something that's immutable. 
+By default, references are immutable: if you borrow something, you cannot change it, even if the underlying data is mutable. Attempting to do so will result in---you guessed it---a compile time error, where the compiler tells you that you are trying to change something that's immutable. 
 
 Of course, in real life, you would be much more agreeable to letting people borrow your things if there were strong guarantees that it would (1) always be returned and (2) would be returned in the same condition. That would be nice! But until such time as that magical technology is invented, no, you can't borrow my car. Sorry.
 
@@ -49,11 +49,11 @@ fn calculate_length(s: &mut String) -> usize {
 }
 \end{lstlisting}
 
-Mutable references come with  some big restrictions: (1) while a mutable reference exists, the owner can't change the data, and (2) there can be only one mutable reference at a time, and when there is, there can be no immutable references. This is, once again, to prevent the possibility of a race condition. These two restrictions ensure that there aren't concurrent accesses to the data when writes are possible. There's also a potential performance increase where values can be cached (including in CPU registers; we'll come to that later) without worry that they will get out of date.
+Mutable references come with  some big restrictions: (1) while a mutable reference exists, the owner can't change the data, and (2) there can be only one mutable reference at a time, and while there is, there can be no immutable references. This is, once again, to prevent the possibility of a race condition. These two restrictions ensure that there aren't concurrent accesses to the data when writes are possible. There's also a potential performance increase where values can be cached (including in CPU registers; we'll come to that later) without worry that they will get out of date.
 
 As long as there are no mutable references, there can be arbitrarily many immutable references at the same time, because reads don't interfere with reads and a race condition does not occur if there are only reads. 
 
-References cannot outlive their underlying objects. Below is an example from the official docs that will be rejected by the borrow checker, because the reference returned in \texttt{dangle} refers to memory whose owner \texttt{s} goes out of scope at the end of the function:
+References cannot outlive their underlying objects. Below is an example from the official docs that will be rejected by the borrow checker, because the reference returned by \texttt{dangle} refers to memory whose owner \texttt{s} goes out of scope at the end of the function:
 
 \begin{lstlisting}[language=Rust]
 fn main() {
@@ -70,7 +70,7 @@ In C this would be a ``dangling pointer'' (a pointer that's pointing to a locati
 
 If we actually try to compile the previous code example, the compiler says something about giving the value a lifetime. We'll come back to the idea of lifetimes soon.
 
-\paragraph{Non-Lexical Lifetimes.} A more recent improvement to Rust's borrow checking is called non-Lexical lifetimes. Consider the small block of code below:
+\paragraph{Non-Lexical Lifetimes.} A more recent improvement to Rust's borrow checking is called non-lexical lifetimes. Consider the small block of code below:
 \begin{lstlisting}[language=Rust]
 fn main() {
     let mut x = 5;
@@ -82,7 +82,7 @@ fn main() {
 }
 \end{lstlisting}
 
-Under the old rules, the compiler would not allow creation of the mutable reference \texttt{z} because \texttt{y} has not gone out of scope. It would consider \texttt{y} to be valid until the end of the function. The improvement of NLL is that the compiler can see that \texttt{y} is no longer used after the \texttt{println!} macro and the \texttt{z} reference is okay to create. The compiler will then make it so that \texttt{y} is removed as soon as it's no longer needed so the \texttt{z} reference will not exist at the same time and all is fine.
+Under the old rules, the compiler would not allow creation of the mutable reference \texttt{z} because \texttt{y} has not gone out of scope. It would consider \texttt{y} to be valid until the end of the function. The improvement of NLL is that the compiler can see that \texttt{y} is no longer used after the \texttt{println!} macro and hence the \texttt{z} reference is okay to create. \texttt{y} can be dropped as soon as it's no longer needed; the \texttt{z} reference will not exist at the same time; and all is fine.
 
 \subsection*{Slices}
 The \textit{slice} concept exists in a few other programming languages, and if you have experience with them this will certainly help. A slice is a reference (yes, a reference in the sense of the previous section) to a contiguous subset of the elements of a collection. This is what you do if you need a part of an array (the typical example for that being a substring of an existing string). If our code looks like this:
@@ -100,19 +100,19 @@ The representation of the slice looks like~\cite{rustdocs}:
 	\includegraphics[width=0.3\textwidth]{images/string-slice.png}
 \end{center}
 
-Slices can also apply to vectors and other collections; not just strings. As with the other kinds of references we've learned about, the existence of a slice prevents modification of the underlying data. Just as with references, slices prevent race conditions on collections but also avoid (as much as possible) the need to copy data (slow).
+Slices can also apply to vectors and other collections, not just strings. As with the other kinds of references we've learned about, the existence of a slice prevents modification of the underlying data. Just as with references, slices prevent race conditions on collections but also avoid (as much as possible) the need to copy data (slow).
 
 \subsection*{Unwrap the Panic}
 A quick digression: a lot of functions we use return \texttt{Result} types. These return either \texttt{Ok} with the type we expected, or \texttt{Err} with an error description. To get the type you want, you need to unpack the result.
 
 If we try to open a file but the file doesn't exist, that's an error but one that's foreseeable and we can handle it. There's three ways to handle it: a \texttt{match} expression (this is like the \texttt{switch} statement), \texttt{unwrap()}, and \texttt{expect()}. 
 
-You may be tempted to jus always use \texttt{unwrap()} because it gives you the result and calls the \texttt{panic!} macro if there's an error. This, however, just shows you the lower level error that is the problem and you are denying yourself the opportunity to add information that will help you debug. For that reason, it's better to use \texttt{expect()}, which lets you add your own error message that will make it easier to find out where exactly things went wrong.
+You may be tempted to just always use \texttt{unwrap()} because it gives you the result and calls the \texttt{panic!} macro if there's an error. This, however, just shows you the lower level error that is the problem and you are denying yourself the opportunity to add information that will help you debug. For that reason, it's better to use \texttt{expect()}, which lets you add your own error message that will make it easier to find out where exactly things went wrong.
 
 It's recommended to use \texttt{Result} types for functions you write too. Make your future self happy by giving yourself the information you need to debug what's gone wrong!
 
 \section*{Fearless Concurrency}
-More than just trying to prevent memory problems by making them compiler errors, Rust is also intended to make concurrency errors compile-time problems too! That's actually difficult, of course, but the good news is that the ideas of ownership and borrowing and such are at the heart of how concurrency problems are avoided.
+More than just trying to prevent memory problems by making them compiler errors, Rust is also intended to make concurrency errors compile-time problems too! That's actually difficult, of course, but the good news is that the key ideas of ownership and borrowing and such will enable you to avoid concurrency problems.
 
 The drawback to concurrency is that it brings new problems with it: race conditions, deadlock, that sort of thing. Making your program faster is great, but not if it's at the cost of the answers being incorrect (or your program failing to produce an answer some of the time).
 
@@ -143,12 +143,12 @@ fn main() {
 }
 \end{lstlisting}
 
-A few things make this significantly different from the pthread model that we are used to. First of all, the thread being created takes as its argument a \textit{closure} -- this is an anonymous function that can capture some bits of its environment. The spawn call creates a \texttt{JoinHandle} type and that's what we use to call \texttt{join}, which is to say, wait for that thread to be finished. As we expect from pthreads, if calling join on a thread that is not finished, the caller waits until the thread is finished.
+A few things make this significantly different from the pthread model that we are used to. First of all, the thread being created takes as its argument a \textit{closure}---an anonymous function that can capture some bits of its environment. The spawn call creates a \texttt{JoinHandle} type and that's what we use to call \texttt{join}, which is to say, wait for that thread to be finished. As we expect from pthreads, if calling join on a thread that is not finished, the caller waits until the thread is finished.
 
-This is a simple example that works, but fails to capture the complexity of actually working with threads, because there's no data being moved between threads. That sometimes happens, but you can't count on it. There are three ways that we can get data from one thread to another: capturing, message passing, and shared state.
+This is a simple example that works, but fails to capture the complexity of actually working with threads, because there's no data moved between threads. Most interesting uses of threads need some data communication. There are three ways that we can get data from one thread to another: capturing, message passing, and shared state.
 
 \paragraph{Capturing.} 
-Capturing calls back to the earlier mention that a closure captures some of its environment. That is, the body of the function can reference variables that were declared outside of that function and in the context where \texttt{thread::spawn} was called. The compiler will analyze the request and try to figure out what needs to happen to make it work, such as borrowing the value, as in this example (also from the docs):
+The notion of ``capturing'' calls back to the earlier mention that a closure captures some of its environment. That is, the body of the function can reference variables that were declared outside of that function and in the context where \texttt{thread::spawn} was called. The compiler will analyze the request and try to figure out what needs to happen to make it work, such as borrowing the value, as in this example (also from the docs):
 
 \begin{lstlisting}[language=Rust]
 use std::thread;
@@ -168,13 +168,13 @@ The only problem is: this example does not work. The compiler is not sure how lo
 
 Well, I had the idea that if I put something after the \texttt{join()} call that uses \texttt{v}, then the compiler should know that \texttt{v} has to remain in existence until after the thread in question. Yet, it still reports the error E0373 that says the thread might outlive the borrowed value. This actually got me thinking about why this didn't work and I decided to ask some of the compiler devs. It has to do with the fact that a thread isn't really a first-class construct in Rust, and the ``lifetime'' of arguments that you pass has to be sufficiently long. We'll learn about lifetimes soon.
 
-Anyway, the error message suggests what you actually want in this scenario: to move the variables into the thread. To do so, specify \texttt{move} before the closure: \texttt{let handle = thread::spawn(move || \{}... That results in the transfer of ownership to the thread being created. You can also copy if you need.
+Anyway, the error message suggests what you actually want in this scenario: to move the variables into the thread. To do so, specify \texttt{move} before the closure: \texttt{let handle = thread::spawn(move || \{}\ldots This addition results in the transfer of ownership to the thread being created. You can also copy if you need.
 
-\paragraph{Message Passing.} Sometimes threads want to communicate in a way that isn't one-way communication at the time that the thread is being created. For that, a possibility is message-passing. This mechanism of communication may seem familiar from previous experience with various UNIX mechanisms like pipes and message queues. This strategy is very structured and generally safer than shared memory. 
+\paragraph{Message Passing.} Sometimes threads want to communicate in a way that isn't one-way communication at the time that the thread is being created. For that, a possibility is message-passing. This mechanism of communication may seem familiar from previous experience with various UNIX mechanisms like pipes and message queues. This strategy is very structured and generally safer than shared memory, i.e. it is harder to race or to access inappropriate locations.
 
 The ownership mechanic of message passing is like that of postal mail. When you write a physical letter and mail it to someone, you relinquish your ownership of the letter when it goes in the mailbox, and when it is delivered to the recipient, the recipient takes ownership of that letter and can then do with it as they wish.
 
-So you want to have two threads communicate: the Rust metaphor for this is called a \textit{channel}. It has a transmit end (where messages are submitted) and a receive end (where messages arrive). The standard model is multiple-producer, single-consumer; that is, lots of threads can send data via the sending end, but in the end it all gets delivered to one place. Think of that like postal mail as well; I can drop a letter to you in any postbox or post office, but they will all be delivered to your mailbox where you collect them in the end.
+So you want to have two threads communicate. The Rust metaphor for this is called a \textit{channel}. It has a transmit end (where messages are submitted) and a receive end (where messages arrive). The standard model is multiple-producer, single-consumer: that is, lots of threads can send data via the sending end, but in the end it all gets delivered to one place. Think of that like postal mail as well: I can drop a letter to you in any postbox or post office, but they will all be delivered to your mailbox where you collect them in the end.
 
 Okay, enough talk, let's make one~\cite{rustdocs}:
 \begin{lstlisting}[language=Rust]
@@ -194,11 +194,11 @@ fn main() {
 }
 \end{lstlisting}
 
-The channel constructor returns a tuple with the transmitting end \texttt{tx} and receiving end \texttt{rx}. We'll then send the transmitting end into the thread and have it send a message to the main thread. The main thread will wait until the message is there and then get it. This does mean that \texttt{recv()} is blocking and there is a corresponding \texttt{try\_recv()} which is nonblocking. You may have already covered nonblocking I/O in a previous course; if not we will return to that subject soon.
+The channel constructor returns a tuple with the transmitting end \texttt{tx} and receiving end \texttt{rx}. We'll then send the transmitting end into the thread and have it send a message to the main thread. The main thread will wait until the message is there and then get it. This does mean that \texttt{recv()} is blocking and there is a corresponding \texttt{try\_recv()} which is nonblocking. You may have already covered nonblocking I/O in a previous course; if not, we will return to that subject soon.
 
 If you want to have multiple transmitting ends, you need only use \texttt{clone} on the transmitter and hand those out as needed. 
 
-As a small technical note, the type you want to send via a channel has to implement the \texttt{Send} trait (think of traits like interfaces). Almost all basic types in Rust have this trait, and any programmer-defined type that is composed entirely of types that have it will also have that trait.  
+As a small technical note, the type you want to send via a channel has to implement the \texttt{Send} trait (think of traits being like interfaces). Almost all basic types in Rust have this trait, and any programmer-defined type that is composed entirely of types that have it will also have that trait.  
 
 
 \subsection*{Traits}
@@ -216,20 +216,20 @@ impl FinalGrade for Enrolled_Student {
 }  
 \end{lstlisting}
 
-A couple of other notes about traits are worth mentioning. One, you can only define traits on types of your own, not external (from other packages/crates) types so you don't break someone else's code. Two, you can add a default implementation to the trait if you want (something Java lacked for a long time). And third, as in other languages with interfaces, a trait can be used as a return type or method parameter, so it is a kind of generics. Finally, you can use \texttt{+} to combine multiple traits (which is nice when you need a parameter to be two things)
+A couple of other notes about traits are worth mentioning. One, you can only define traits on types of your own, not on external (from other packages/crates) types, so that you don't break someone else's code. Two, you can add a default implementation to the trait if you want (something Java lacked for a long time). Third, as in other languages with interfaces, a trait can be used as a return type or method parameter, so it is a kind of generic. Finally, you can use \texttt{+} to combine multiple traits (which is nice when you need a parameter to be two things)
 
 With the preamble out of the way, there are three traits that are really important to us right now. They are \texttt{Iterator}, \texttt{Send}, and \texttt{Sync}. 
 
 Iterator is the easiest one to explain. You put it on a collection and it allows you to iterate over the collection. Moreover, this is often more efficient than a typical for loop construction, because it lets the compiler skip over bounds checking and other such issues. Nice.
 
-Send was already introduced: it's necessary to transfer ownership between threads. There are some Rust built-in or standard-library types that very specifically choose not to implement this interface to give you a hint that they are not intended for this purpose. If the compiler tells you no, it's a hint that you want to use a different type. As previously mentioned, if your programmer-defined type is made entirely of types that have the Send trait, then it too has the trait. If you really must use something that is inherently not safe to send, though, you can implement this trait on your type manually and guarantee the thread-safe transfer of ownership yourself, but it's not a good idea if you can avoid it.
+Send was already introduced. It's necessary to transfer ownership between threads. There are some Rust built-in or standard-library types that very specifically choose not to implement this interface to give you a hint that they are not intended for this purpose. If the compiler tells you no, it's a hint that you want to use a different type. As previously mentioned, if your programmer-defined type is made entirely of types that have the Send trait, then it too has the trait. If you really must use something that is inherently not safe to send, though, you can implement this trait on your type manually and guarantee the thread-safe transfer of ownership yourself, but it's not a good idea if you can avoid it.
 
 Sync is the last one, and it means that a particular type is thread-safe. That means it can be referenced from multiple threads without issue. The primitive types have this trait, as do any programmer-defined types that are composed entirely of Sync types. It's important to just mention here that this does not mean all operations on a Sync type are safe and that no race conditions are possible; it just means that \textit{references} to the type can be in different threads concurrently, and we can't have multiple mutable references. No, if we want more than one thread to be able to modify the value, we need mutual exclusion...
 
 \subsection*{Back to the Mutex...}
 If you don't want to use message passing for some reason (and performance is a reason, if it's borne out by your testing/data) then there is fortunately the ability to use a mutex for mutual exclusion. We know how these work, so let's skip the part where I make some analogy about them. 
 
-What's different about the mutex in Rust is that the Mutex wraps a particular type. So it is defined as \texttt{Mutex<T>} and if you want an integer counter, you create it as \texttt{Mutex::new(0);}. This way, the mutex goes with the value it is protecting, making it much more obvious what mutex goes with what data, and making it so you have to have the mutex to access the data. And sample from the docs\cite{rustdocs}:
+What's different about the mutex in Rust is that the Mutex wraps a particular type. So it is defined as \texttt{Mutex<T>} and if you want an integer counter, you create it as \texttt{Mutex::new(0);}. This way, the mutex goes with the value it is protecting, making it much more obvious what mutex goes with what data, and making it so you have to have the mutex to access the data. And sample from the docs~\cite{rustdocs}:
 
 \begin{lstlisting}[language=Rust]
 use std::sync::Mutex;
@@ -250,7 +250,7 @@ In addition to forcing you to acquire the mutex before you can make any use of t
 
 The use of the mutex in the above program is obviously unnecessary, since there's only the one thread. If we want to use it in multiple threads, we need multiple threads to access it. But we can't, unfortunately, just say that references will do! The mutex type has to outlive the other threads and such and the compiler will suggest moving it... But we can't move it into more than one thread, because that violates our rule about having only one owner. What now?
 
-It looks like we have to break a rule: we need the ability to share ownership of some memory. We don't know how to do that, but when we start with breaking rules, we might find that we like it and might break more than one...
+It looks like we have to break a rule: we need the ability to share ownership of some memory. We don't know how to do that, but when we start with breaking rules, we might find that we like it and might break more than one\ldots
 
 
 \input{bibliography.tex}
