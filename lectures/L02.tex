@@ -14,17 +14,17 @@ What's \textit{not} here? This isn't intended to cover how to declare a function
 This material is mostly based off the official Rust documentation~\cite{rustdocs} combined with some personal experiences (both the good and bad kind). 
 
 \paragraph{Change is painful.}
-Variables in Rust are by default, immutable (maybe it's strange to call them ``variables'' if they don't change?). That is, when a value has been assigned to this name, you cannot change the value anymore.
+Variables in Rust are, by default, immutable (maybe it's strange to call them ``variables'' if they don't change?). That is, when a value has been assigned to this name, you cannot change the value anymore.
 \begin{lstlisting}[language=Rust]
   fn main() {
     let x = 42; // NB: Rust infers type "s32" for x.
-    x = 17; // compile-time error!
+    x = 17;     // compile-time error!
   }
 \end{lstlisting}
 
-Immutability by default is a good thing because it helps the compiler to reason about whether or not a race condition may exist. You should recall from previous courses that a data race occurs when you have multiple concurrent accesses to the same data, where at least one of those accesses is a write. No writes means no races! 
+For performance, immutability by default is a good thing because it helps the compiler to reason about whether or not a race condition may exist. Recall from previous courses that a data race occurs when you have multiple concurrent accesses to the same data, where at least one of those accesses is a write. No writes means no races! 
 
-If you don't believe me, Here's an example in C of where this could go wrong:
+If you don't believe me, here's an example in C of where this could go wrong:
 \begin{lstlisting}[language=C]
 if ( my_pointer != NULL ) {
     int size = my_pointer->length; // Segmentation fault occurs!
@@ -32,16 +32,16 @@ if ( my_pointer != NULL ) {
 }
 \end{lstlisting}
 
-What happened? We checked if \texttt{my\_pointer} was null? And most of the time we would be fine. But if something (another thread, an interrupt/signal, etc) changed \texttt{my\_pointer} out from under us we would have a segmentation fault at this line. And it would be difficult to guard against, because the usual mechanism of checking if it is \texttt{NULL}... does not work. This kind of thing has really happened to me in production Java code. Put all the if-not-null blocks you want, but if the thing you're looking at can change out from under you, this is a risk.
+What happened? We checked if \texttt{my\_pointer} was null? And most of the time we would be fine. But if something (another thread, an interrupt/signal, etc) changed global variable \texttt{my\_pointer} out from under us we would have a segmentation fault at this line. And it would be difficult to guard against, because the usual mechanism of checking if it is \texttt{NULL}... does not work. This kind of thing has really happened to me in production Java code. Put all the if-not-null blocks you want, but if the thing you're looking at can change out from under you, this is a risk.
 
-Immutable in Rust is forever. The compiler will not let you make changes to something via trickery. You can ignore a \texttt{const} declaration in C by taking a pointer to the thing and changing it through the pointer. Rust does not permit such dark magicks. It kinda defeats the point of Rust.
+Immutable in Rust is forever. The compiler will not let you make changes to something via trickery. You can ignore a \texttt{const} declaration in C by taking a pointer to the thing, casting the pointer, and changing through the pointer. Rust does not permit such dark magicks. It kinda defeats the point of Rust.
 
-Of course, if you want for a variable's value to be changeable you certainly can, but you have to explicitly declare it as \textit{mutable} by adding \texttt{mut} to the definition, like \texttt{let mut x = 42;}. Then later you can change it with \texttt{x = 0;}. My general advice is that you want to minimize the number of times you use this. There are some good scenarios for it. One is that it might be a lot clearer to write your code such that a variable is mutated; another is that for a sufficiently large/complicated object, it's faster to change the one you have than make an altered copy and have the copy replace the original.
+Of course, if you want for a variable's value to be changeable you certainly can, but you have to explicitly declare it as \textit{mutable} by adding \texttt{mut} to the definition, like \texttt{let mut x = 42;}. Then later you can change it with \texttt{x = 0;}. My general advice is that you want to minimize the number of times you use this. Still, there are some valid scenarios for using mutation. One is that it might be a lot clearer to write your code such that a variable is mutated; another is that for a sufficiently large/complicated object, it's faster to change the one you have than make an altered copy and have the copy replace the original.
 
 Then there are constants. Constants are both immutable and immortal: they can never change and they are valid for the whole scope they are declared in. This is how you set program-wide constants that are always available and never change, like \texttt{const SPEED\_OF\_LIGHT\_M\_S: u32 = 299\_792\_458;}. This is how you would declare a truly global constant, but of course, things like that is somewhat discouraged since global variables are easily abused.
 
 \paragraph{Shadowing.}
-Something that isn't really ``changing'' the variable but looks a lot like it is \textit{shadowing}, which is intended to address the problem of what do I name this? Where in another language you might have a variable \texttt{transcript} which you then parse and the returned value is stored in another variable \texttt{transcript\_parsed}. You can skip that with shadowing, which lets you reuse the original name. An alternative example from the docs:
+Something that isn't really ``changing'' the variable but looks a lot like it is, is \textit{shadowing}, which is intended to address the problem of ``What do I name this?'' In another language you might have a variable \texttt{transcript} which you then parse and the returned value is stored in another variable \texttt{transcript\_parsed}. You can skip that with shadowing, which lets you reuse the original name. An alternative example from the docs:
 
 \begin{lstlisting}[language=Rust]
 let mut guess = String::new();
@@ -53,17 +53,19 @@ let guess: u32 = guess.trim().parse()
      .expect("Please type a number!");
 \end{lstlisting}
 
-In this example, the data is read in as a string and then turned into an unsigned integer.
+In this example, the data is read in as a string and then turned into an unsigned integer. Conceptually, there are two variables, one of type \texttt{String} and the other of type \texttt{u32}. They just happen to have the same name.
 
-\subsection*{0wn3d} The most important thing to tell you about Rust is the concept of \textit{ownership}. This strongly distinguishes Rust from other programming languages. This is the strategy for memory management. 
+\subsection*{0wn3d} The most important thing to tell you about Rust is the concept of \textit{ownership}. This strongly distinguishes Rust from other programming languages. Ownership is Rust's strategy for memory management. 
 
-In languages like C, memory management is manual: you allocate and deallocate memory using explicit calls. In other languages like Java, it's partly manual -- you explicitly allocate memory but deallocation takes place through garbage collection. Rust opts for neither of those, and uses ownership where the compiler determines, at compile-time, of course, when allocated memory can be cleaned up. This imposes certain restrictions on how you write your code and will inevitably cause at least one moment where you angrily curse at the compiler for its refusal to let you do what you want. The compiler is only trying to help. Promise.
+In languages like C, memory management is manual: you allocate and deallocate memory using explicit calls. In other languages like Java, it's partly manual---you explicitly allocate memory but deallocation takes place through garbage collection. Rust opts for neither of those, and uses ownership. That is, the compiler determines (at compile-time, of course) when allocated memory can be cleaned up. This imposes certain restrictions on how you write your code and will inevitably cause at least one moment where you angrily curse at the compiler for its refusal to let you do what you want. The compiler is only trying to help. Promise.
 
 You might be thinking: what's wrong with garbage collection for this purpose? It is well-understood and lots of languages use it. Actually, the real answer is the magic word: performance. A language that is garbage-collected has to deal with two things: a runtime, and the actual costs of collecting the garbage.
 
 The runtime thing will seem familiar to you if you've programmed in Java or similar; it is the system that, at run-time, must keep track of what memory has been allocated and when to run the garbage collector and such. There's much more to what the Java runtime (JRE) does, but whatever it does comes with some performance penalty (no matter how small) because its functionality does not come for free. 
 
 The other part is that the garbage collection process can be expensive. In Java there are two kinds: the first is a simple cleanup of some trash which does not have much impact; the second is the stop-the-world behaviour where all execution is paused and the garbage collector decides what to keep and what to dispose of, and maybe reorganize memory.  Also, the Garbage Collector can do this (1) whenever it wants, and (2) take as long as it feels like taking. Neither of which is great for performance, or for predictable performance.
+
+Think you're macho and can avoid garbage collection by using C/\CPP? As we discussed last time, your C/\CPP~code is probably wrong. Well, mine is anyway, I don't know about yours. Aside from that, heap allocation and particularly deallocation is still not free even in C/\CPP. You don't pay garbage collection costs, but you do pay to manage memory-related data structures. Rust makes it easier to allocate some things on the stack rather than the heap, which can in principle improve performance. But, sure, in general \CPP~and Rust's memory management overhead should be comparable. It's just that Rust is safe.
 
 \paragraph{Real-World Example: Discord.} If you want a real-world example of this, consider this graph from an article about a service at Discord~\cite{discord}:
 
@@ -81,7 +83,7 @@ See the following graphs that compare Rust (blue) to Go (purple):
 I do recommend reading the article because it goes into some more details and may answer some questions that you have. 
 
 \paragraph{The Rules.}
-That long introduction to the concept of ownership didn't explain very much about how it actually works; it just went into the \textit{why} and how it relates to the objectives of this course. But the rules are pretty simple -- deceptively so -- and they are as follows:
+That long introduction to the concept of ownership didn't explain very much about how it actually works; it just went into the \textit{why} and how it relates to the objectives of this course. But the rules are pretty simple---deceptively so---and they are as follows:
 
 \begin{enumerate}
 	\item Every value has a variable that is its owner.
@@ -117,10 +119,10 @@ A string has a stack part (left) and a heap part (right) that look like~\cite{ru
 
 This makes it a bit clearer about what is meant when the rules say that when the owner (the stack part) goes out of scope, the value (the heap part) is deallocated.
 
-That covers rules one and three... But that second rule is interesting, because of the ``at a time'' at the end: it means that there exists the concept of transfer of ownership. 
+That covers rules one and three\ldots But that second rule is interesting, because of the ``at a time'' at the end: it means that there exists the concept of transfer of ownership. 
 
 \paragraph{What's yours is mine.}
-Move semantics have to do with assigning ownership from one variable to another. Ownership is really about heap memory, so stack allocated simple types (see the docs for a list - stuff like integers and booleans and floating point types). don't follow move semantics; they follow copy semantics. So the following code creates two integers and they both have the same value (5).
+Move semantics have to do with assigning ownership from one variable to another. Ownership is really about heap memory, so stack allocated simple types (see the docs for a list---stuff like integers and booleans and floating point types) don't follow move semantics; they follow copy semantics. So the following code creates two integers and they both have the same value (5).
 
 \begin{lstlisting}[language=Rust]
   fn main() {
@@ -200,19 +202,19 @@ fn use_string(s: String) {
 }
 \end{lstlisting}
 
-This example is easy to fix because we can just add a return type to the function and then return the value so it goes back to the calling function. Great, but what if the function takes multiple arguments that we want back? We can \texttt{clone()} them all... Which kind of sucks. We can put them together in a package (structure/class/tuple) and return that. Or, we can let the function borrow it rather than take it... But that's for next time!
+This example is easy to fix because we can just add a return type to the function and then return the value so it goes back to the calling function. Great, but what if the function takes multiple arguments that we want back? We can \texttt{clone()} them all\ldots which kind of sucks. We can put them together in a package (structure/class/tuple) and return that. Or, we can let the function borrow it rather than take it\ldots But that's for next time!
 
 \paragraph{Do the Rules Work?}
 With a stronger understanding of the rules and their practicalities, the obvious question is: do they work?! There's no point in having the rules if they don't accomplish the goal. We'll assume for the moment that there are no bugs in the compiler that violate the expected behaviour. And then let's consider this from the perspective of some things that can go wrong in a C program.
 
-(Okay, alright, before we get there -- we'll eventually learn to break rules and to use reference counted objects where if we get it wrong we can leak.)
+(Okay, alright, before we get there---we'll eventually learn to break rules and to use reference counted objects where if we get it wrong we can leak.)
 
 \begin{itemize}
-	\item Memory leak (fail to deallocate memory) -- does not happen in Rust because the memory will always be deallocated when its owner goes out of scope.
-	\item Double-free -- does not happen in Rust because deallocation happens when the owner goes out of scope and there can only be one owner.
-	\item Use-after-free -- does not happen in Rust because a reference that is no longer valid results in a compile time error.
-	\item Accessing uninitialized memory -- caught by the compiler.
-	\item Stack values going out of scope when a function ends -- the compiler will require this be moved or copied before it goes out of scope if it is still needed.
+	\item Memory leak (fail to deallocate memory)---does not happen in Rust because the memory will always be deallocated when its owner goes out of scope.
+	\item Double-free---does not happen in Rust because deallocation happens when the owner goes out of scope and there can only be one owner.
+	\item Use-after-free---does not happen in Rust because a reference that is no longer valid results in a compile time error.
+	\item Accessing uninitialized memory---caught by the compiler.
+	\item Stack values going out of scope when a function ends---the compiler will require this be moved or copied before it goes out of scope if it is still needed.
 \end{itemize}
 
 \input{bibliography.tex}
