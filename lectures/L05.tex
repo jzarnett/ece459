@@ -20,11 +20,16 @@ Let's start with some juicy quotes.
 
 To motivate the need for non-blocking I/O, consider some standard I/O code:
 
-\begin{lstlisting}[language=C]
-    fd = open(...);
-    read(...);
-    close(fd);
+\begin{lstlisting}[language=Rust]
+fn main() -> io::Result<()> {
+  let mut file = File::open("hello.txt")?;
+  let mut s = String::new();
+  file.read_to_string(&mut s)?;
+  Ok(()) 
+}
 \end{lstlisting}
+(The ? operator ``for easier error handling'' is an alternative to
+\texttt{try!} and \texttt{unwrap}.)
 
 This isn't very performant. The problem is that the {\tt read} call will
 {\em block}. So, your program doesn't get to use the zillions of CPU cycles that
@@ -34,151 +39,109 @@ are happening while the I/O operation is occurring.
 you have some other code running to do work---for instance, other threads
 do a good job mitigating the I/O latency, perhaps doing I/O themselves.
 But maybe you would rather not use threads. Why not?
-
-\begin{itemize}
+\begin{itemize}[noitemsep]
 \item potential race conditions;
 \item overhead due to per-thread stacks; or
 \item limitations due to maximum numbers of threads.
 \end{itemize}
 
-\paragraph{Non-blocking I/O.} The main point of this lecture, though,
-is non-blocking/asynchronous I/O. The simplest example:
-
-\begin{lstlisting}[language=C]
-    fd = open(..., O_NONBLOCK);
-    read(...); // returns instantly!
-    close(fd);
-\end{lstlisting}
-
-In principle, the {\tt read} call is supposed to return instantly,
-whether or not results are ready. That was easy!
-
-Well, not so much. The {\tt O\_NONBLOCK} flag actually only has the
-desired behaviour on sockets. The semantics of {\tt O\_NONBLOCK} is
-for I/O calls to not block, in the sense that they should never wait
-for data while there is no data available.
-
-Unfortunately, files always have data available. Under Linux, you'd have
-to use {\tt aio} calls to be able to send requests to the I/O subsystem
-asynchronously and not, for instance, wait for the disk to spin up.
-We won't talk about them, but they operate along the same lines as what
-we will see. They just have a different API.
+We're going to focus on low-level I/O from sockets in this lecture
+using the \texttt{mio}\footnote{\url{https://tokio-rs.github.io/mio/doc/mio/}} library from \texttt{tokio}. Async file I/O is
+also possible via \texttt{tokio::fs} and the ideas will carry over.
+One might often want to wrap the low-level I/O using higher-level
+abstractions, and the larger project \texttt{tokio.rs} is one way of
+doing that.
 
 \paragraph{Conceptual view: non-blocking I/O.} Fundamentally,
 there are two ways to find out whether I/O is ready to be queried:
-polling (under UNIX, implemented via {\tt select}, {\tt poll},
-and {\tt epoll}) and interrupts (under UNIX, signals).
+polling (under UNIX, implemented via {\tt select}, {\tt poll}, and
+{\tt epoll}) and interrupts (under UNIX, signals). \texttt{mio}
+supports polling-based approaches and abstracts across Linux (via
+epoll), Windows (via IOCP), and BSDs including MacOS (via kqueue).
 
-
-We will describe {\tt epoll}. It is the most modern and
-flexible interface. If you want to learn about \texttt{select} and \texttt{poll} at a lower level: \url{https://github.com/jzarnett/ece252/blob/master/lectures/L29-Asynchronous_I_O_with_select_poll.pdf }
-
-The key idea is to give {\tt epoll} a bunch of file descriptors and
+The key idea is to give {\tt mio} a bunch of event sources and
 wait for events to happen. In particular:
-     \begin{itemize}
-       \item create an epoll instance ({\tt epoll\_create1});
-       \item populate it with file descriptors ({\tt epoll\_ctl}); and
-       \item wait for events ({\tt epoll\_wait}).
+     \begin{itemize}[noitemsep]
+       \item create a \texttt{Poll} instance;
+       \item populate it with event sources e.g. \texttt{TCPListener}s; and,
+       \item wait for events in an event loop ({\tt Poll::poll()}).
      \end{itemize}
-Let's run through these steps in order.
+Let's run through these steps in order, following \url{https://docs.rs/mio/0.7.0/mio/guide/index.html}:
 
-\paragraph{Creating an {\tt epoll} instance.} Just use the API:
-    \begin{lstlisting}[language=C]
-   int epfd = epoll_create1(0);
+\paragraph{Creating a {\tt Poll} instance.} Just use the API:
+    \begin{lstlisting}[language=Rust]
+let poll = Poll::new()?;
+let events = Events::with_capacity(128);
     \end{lstlisting}
+We're going to create \texttt{events} right now; it is used by
+\texttt{Poll::poll} to stash the relevant \texttt{Event} objects.
 
-The return value {\tt epfd} is typed like a UNIX file
-descriptor---{\tt int}---but doesn't represent any files; instead, use
-it as an identifier, to talk to {\tt epoll}.
+The \texttt{poll} object keeps track of event sources and,
+on request, pulls the events from the sources and puts them
+into the argument to \texttt{Poll::poll()}.
 
-The parameter ``{\tt 0}'' represents the flags, but the only available flag
-is {\tt EPOLL\_CLOEXEC}. Not interesting to you.
+\paragraph{Populating the {\tt Poll} instance.} The docs refer
+to this as ``registering event source''. On all platforms this can be
+a socket (or lower-level networking source); on UNIX it can be also be
+a file descriptor.
 
-\paragraph{Populating the {\tt epoll} instance.} Next, you'll want
-{\tt epfd} to do something. The obvious thing is to add some {\tt fd}
-to the set of descriptors watched by {\tt epfd}:
-    \begin{lstlisting}[language=C]
-   struct epoll_event event;
-   int ret;
-   event.data.fd = fd;
-   event.events = EPOLLIN | EPOLLOUT;
-   ret = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &event);
-    \end{lstlisting}
+\begin{lstlisting}[language=Rust]
+let mut listener = TcpListener::bind(address)?;
+const SERVER: Token = Token(0);
+poll.registry().register(&mut listener, SERVER, Interest::READABLE)?;
+\end{lstlisting}
 
-You can also use {\tt epoll\_ctl} to modify and delete descriptors from {\tt epfd}; read the manpage to find out how.
+The payload is the \texttt{register} call. Parameters, going right-to-left:
+\begin{itemize}[noitemsep]
+\item You're telling it to check for when 
+when the \texttt{listener} indicates that something is available to read,
+indicated with \texttt{READABLE}.
+\item The \texttt{SERVER} parameter
+is a note to itself saying that events indicated with this particular
+\texttt{listener} should be flagged with the \texttt{SERVER} token.
+(Otherwise, if you register multiple listeners, you will have a bunch
+of events and not know which listener they came from.)
+\item Finally, the provided
+\texttt{listener} watches for connections on \texttt{address} (not provided here,
+but can be a \texttt{host:port} string).
+\end{itemize}
 
-\paragraph{Waiting on an {\tt epoll} instance.} Having completed
-the setup, we're ready to wait for events on any file descriptor in {\tt epfd}.
-    \begin{lstlisting}[language=C]
-  #define MAX_EVENTS 64
+\paragraph{Waiting on an {\tt Poll} instance.} Having completed
+the setup, we're ready to wait for events on any registered listener.
+    \begin{lstlisting}[language=Rust]
+loop {
+    poll.poll(&mut events, Some(Duration::from_millis(100)))?;
 
-  struct epoll_event events[MAX_EVENTS];
-  int nr_events;
-
-  nr_events = epoll_wait(epfd, events, MAX_EVENTS, -1);
-    \end{lstlisting}
-
-The given {\tt -1} parameter means to wait potentially forever;
-otherwise, the parameter indicates the number of milliseconds to wait.
-(It is therefore ``easy'' to sleep for some number of milliseconds by
-starting an {\tt epfd} and using {\tt epoll\_wait}; takes two function
-calls instead of one, but allows sub-second latency.)
-
-Upon return from {\tt epoll\_wait}, we know that we have {\tt
-  nr\_events} events ready.
-
-
-Here's a super quick example from the man page for epoll (\url{http://man7.org/linux/man-pages/man7/epoll.7.html}:
-
-\begin{lstlisting}[language=C]
-#define MAX_EVENTS 10
-struct epoll_event ev, events[MAX_EVENTS];
-int listen_sock, conn_sock, nfds, epollfd;
-
-/* Code to set up listening socket, 'listen_sock',
-   (socket(), bind(), listen()) omitted */
-
-epollfd = epoll_create1(0);
-if (epollfd == -1) {
-    perror("epoll_create1");
-    exit(EXIT_FAILURE);
-}
-
-ev.events = EPOLLIN;
-ev.data.fd = listen_sock;
-if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listen_sock, &ev) == -1) {
-    perror("epoll_ctl: listen_sock");
-    exit(EXIT_FAILURE);
-}
-
-for (;;) {
-    nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
-    if (nfds == -1) {
-        perror("epoll_wait");
-        exit(EXIT_FAILURE);
-    }
-
-    for (n = 0; n < nfds; ++n) {
-        if (events[n].data.fd == listen_sock) {
-            conn_sock = accept(listen_sock, (struct sockaddr *) &addr, &addrlen);
-            if (conn_sock == -1) {
-                perror("accept");
-                exit(EXIT_FAILURE);
+    for event in events.iter() {
+        match event.token() {
+            SERVER => loop {
+                match listener.accept() {
+                    Ok((connection, address)) => {
+                        println!("Got a connection from: {}", address);
+                    },
+                    Err(ref err) if would_block(err) => break,
+                    Err(err) => return Err(err),
+                }
             }
-            setnonblocking(conn_sock);
-            ev.events = EPOLLIN | EPOLLET;
-            ev.data.fd = conn_sock;
-            if (epoll_ctl(epollfd, EPOLL_CTL_ADD, conn_sock,
-                        &ev) == -1) {
-                perror("epoll_ctl: conn_sock");
-                exit(EXIT_FAILURE);
-            }
-        } else {
-            do_use_fd(events[n].data.fd);
         }
     }
 }
-\end{lstlisting}
+
+fn would_block(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::WouldBlock
+}    \end{lstlisting}
+As foreshadowed, \texttt{poll.poll} is to populate \texttt{events}, and
+waits for at most 100 milliseconds. A timeout of \texttt{None} will block
+until an event occurs.
+
+Note the use of the \texttt{SERVER} token when processing the event.
+If there were multiple listeners, you would give them each a different
+token. Each event may correspond to one or more connections.
+
+You can find the complete example here:
+\begin{center}
+\url{https://docs.rs/mio/0.7.0/mio/struct.Poll.html}
+\end{center}
 
 \section*{Using cURL Asynchronously}
 We've already seen that network communication is a great example of a way that you could use asynchronous  I/O. You can start a network request and move on to creating more without waiting for the results of the first one. For requests to different recipients, it certainly makes sense to do this.
