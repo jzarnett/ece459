@@ -175,76 +175,54 @@ In the beginning the CPUs and compilers didn't really think about this sort of t
 
 So then we got to the subject of branch prediction. The compiler and CPU look at instructions on their way to be executed and analyze whether it thinks it's likely the branch is taken. This can be based on several things, including the recent execution history. If we guess correctly, this is great, because it minimizes the cost of the branch. If we guess wrong, we have to flush the pipeline and take the performance penalty.
 
-The compiler and CPU's branch prediction routines are pretty smart. Trying to outsmart them isn't necessarily a good idea. But we can give the compiler (\texttt{gcc} at least) some hints about what we think is likely to happen. Our tool for this is the \texttt{\_\_builtin\_expect()} function, which takes two arguments, the value to be tested and the expected result.
+The compiler and CPU's branch prediction routines are pretty smart. Trying to outsmart them isn't necessarily a good idea. It's possible to give \texttt{gcc} some hints: we say either something is likely or unlikely. 
 
-In the linux \texttt{compiler.h} header there are two neat little shortcuts defined:
+ These hints tell the compiler some information about how it should predict. It will then arrange the instructions in such a way that, if the prediction is right, the instructions in the pipeline will be executed. But if we're wrong, then the instructions will have to be flushed.
 
-\begin{lstlisting}[language=C]
-# define likely(x)      __builtin_expect(!!(x), 1)
-# define unlikely(x)    __builtin_expect(!!(x), 0)
-\end{lstlisting}
+From what I can tell, the core Rust team isn't super comfortable with the idea of exposing these kinds of internal-compiler things, but there is an implementation of the likely/unlikely concept. You can sort of use it, but it could break in the future, as an experimental feature. If you want the experimental features enabled, you have to be using nightly build of Rust and to specify the feature at the top of your source file (e.g., \texttt{\#![feature(core\_intrinsics)]})
 
-These are nice ways of saying that we expect \texttt{x} to be true (likely) or false (unlikely). These hints tell the compiler some information about how it should predict. It will then arrange the instructions in such a way that, if the prediction is right, the instructions in the pipeline will be executed. But if we're wrong, then the instructions will have to be flushed.
+Do they work? Here's a sample program to find out. I'll first test it with no hint, then putting \texttt{likely()} around the if condition, and then \texttt{unlikely()}, and show you the results.
 
-Compile with at least optimization level 2 (\texttt{-O2}) for the compiler to take these hints. Otherwise they won't do anything. 
+\begin{lstlisting}[language=Rust]
+fn f(a: i32) -> i32 {
+    a
+}
 
-It takes a bit of trickery to force branch mispredicts. {\tt gcc} extensions allow hinting, but usually {\tt gcc} or the processor is smart enough to ignore bad hints. This code from~\cite{mispredict} worked in 2013, though:
+fn main() {
+    let size = 100000;
+    let large_vector = vec![0; size];
+    let mut m1 = 0;
+    let mut m2 = 0;
 
-
-\begin{lstlisting}[language=C]
-        #include <stdlib.h>
-        #include <stdio.h>
-
-        static __attribute__ ((noinline)) int f(int a) { return a; }
-
-        #define BSIZE 1000000
-        int main(int argc, char* argv[]) 
-        {
-          int *p = calloc(BSIZE, sizeof(int));
-          int j, k, m1 = 0, m2 = 0;
-          for (j = 0; j < 1000; j++) {
-            for (k = 0; k < BSIZE; k++) {
-              if (__builtin_expect(p[k], EXPECT_RESULT)) {
-                m1 = f(++m1);
-              } else {
-                m2 = f(++m2);
-              }
+    for _j in 0..1000 {
+        for k in 0..size {
+            if *large_vector.get(k).unwrap() == 0 {
+                m1 = f(m1 + 1)
+            } else {
+                m2 = f(m2 + 1)
             }
-          }
-          printf("%d, %d\n", m1, m2);
         }
+    }
+    println!("m1 = {}; m2 = {}", m1, m2);
+}
 \end{lstlisting}
 
-Running it yielded:
-\begin{lstlisting}[language=C]
-plam@plym:~/459$ gcc -O2 likely-simplified.c -DEXPECT_RESULT=0 -o likely-simplified
-plam@plym:~/459$ time ./likely-simplified
-0, 1000000000
+And the results:
+\begin{verbatim}
+No hint at all:
+  Time (mean +/- ?):      6.657 s +/-  0.144 s    [User: 6.614 s, System: 0.029 s]
+  Range (min ... max):    6.413 s ...  6.905 s    10 runs
+  
+Likely:
+  Time (mean +/- ?):      6.762 s +/-  0.175 s    [User: 6.729 s, System: 0.028 s]
+  Range (min ... max):    6.590 s ...  7.200 s    10 runs
 
-real	0m2.521s
-user	0m2.496s
-sys	0m0.000s
-plam@plym:~/459$ gcc -O2 likely-simplified.c -DEXPECT_RESULT=1 -o likely-simplified
-plam@plym:~/459$ time ./likely-simplified
-0, 1000000000
+Unlikely:
+  Time (mean +/- ?):      6.943 s +/-  0.200 s    [User: 6.893 s, System: 0.033 s]
+  Range (min ... max):    6.732 s ...  7.309 s    10 runs
+\end{verbatim}
 
-real	0m3.938s
-user	0m3.868ss
-sys	0m0.000s
-\end{lstlisting}
-Some versions of {\tt gcc} and {\tt clang} seem to have gotten smart enough to reject bogus hints since then. In 2018, gcc 7.2.0 shows the same time on Linux 4.14.12 (post-mitigation) running on a Pentium G645, while clang 6.0.0 shows a difference of 2.46s vs 2.81s.
-
-In the original source~\cite{mispredict} the author reports the following results: scanning a one million element array, with all elements initially zero, the results are:
-\vspace*{-1em}
-\begin{itemize}[noitemsep]
-	\item No use of hints: \texttt{0:02.68 real,  2.67 user, 0.00 sys}
-	\item Good prediction: \texttt{0:02.28 real,  2.28 user, 0.00 sys}
-	\item Bad prediction: \texttt{0:04.19 real,  4.18 user, 0.00 sys}
-\end{itemize}
-
-\paragraph{Using the hints.} From these results we can see pretty clearly that if we're wrong, the penalty can be pretty large (assuming the compiler does not look at your hint and think ``stupid human, I know better''). Under a lot of circumstances then, it's probably best just to leave it alone, unless we're really, really, really sure. 
-
-How sure do we have to be? The answer depends dramatically on the code, the CPU you're using, the compiler, and all those little details. But~\cite{mispredict} to the rescue here again, because there are some tests here. To cut to the chase, when about one in ten thousand values in the array is nonzero, then it's roughly the ``break-even'' point for the setup as described.
+Looks like hints don't help very much in this program at all. They made it marginally worse, not better. And getting it wrong comes with a penalty, too. This program might not be the ideal test case for hints, in that there might be a different scenario where the hints have a positive impact. However, we have at least established that hints aren't always a benefit, even if we know we're right. Under a lot of circumstances then, it's probably best just to leave it alone, unless we're really, really, really sure. 
 
 Conclusion: it's hard to outsmart the compiler. Maybe it's better not to try.
 
