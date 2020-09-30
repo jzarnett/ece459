@@ -223,7 +223,68 @@ Here's a longer discussion of thread pools:
 
 Modern languages provide thread pools; Java's
 \url{java.util.concurrent.ThreadPoolExecutor}~\cite{java:threadpoolexecutor}, C\#'s
-\url{System.Threading.ThreadPool}~\cite{csharp:threadpool}, and GLib's {\tt GThreadPool}~\cite{gnome:threadpool} all implement thread pools. 
+\url{System.Threading.ThreadPool}~\cite{csharp:threadpool}, and GLib's {\tt GThreadPool}~\cite{gnome:threadpool} all implement thread pools. There's a Rust crate called \texttt{thread pool}. You can obviously write your own.
+
+Here's a quick Rust program in which we use the threadpool crate to take away some of the complexity.
+\begin{lstlisting}[language=Rust]
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use threadpool::ThreadPool;
+use std::thread;
+
+fn main() {
+    let pool = ThreadPool::new(8);
+    let queue = Arc::new(Mutex::new(VecDeque::new()));
+    println!("main thread has id {}", thread_id::get());
+
+    for j in 0 .. 4000 {
+        queue.lock().unwrap().push_back(j);
+    }
+    queue.lock().unwrap().push_back(-1);
+
+    for i in 0 .. 4 {
+        let queue_in_thread = queue.clone();
+        pool.execute(move || {
+            loop {
+                let mut q = queue_in_thread.lock().unwrap();
+                if !q.is_empty() {
+                    let val = q.pop_front().unwrap();
+                    if val == -1 {
+                        q.push_back(-1);
+                        println!("Thread {} got the signal to exit.", thread_id::get());
+                        return;
+                    }
+                    println!("Thread {} got: {}!", thread_id::get(), val);
+                }
+            }
+        });
+    }
+    pool.join();
+}
+\end{lstlisting}
+
+It's important to note that when we call the \texttt{execute} function, that is a job to be run, so if our thread pool has four workers we want to push the consume ``job'' on it four times. They will then run and each will try to consume numbers until they get to the -1 answer which is the termination signal.
+
+If we wrote our own implementation where we spawned the threads using the spawn mechanism, joining each thread individually might be a bit of a pain. 
+
+This produces output that looks like:
+
+\begin{verbatim}
+main thread has id 4455538112
+Thread 123145474433024 got: 0!
+Thread 123145474433024 got: 1!
+Thread 123145474433024 got: 2!
+
+...
+
+Thread 123145478651904 got: 3997!
+Thread 123145478651904 got: 3998!
+Thread 123145478651904 got: 3999!
+Thread 123145476542464 got the signal to exit.
+Thread 123145484980224 got the signal to exit.
+Thread 123145474433024 got the signal to exit.
+Thread 123145478651904 got the signal to exit.
+\end{verbatim}
 
 \paragraph{Threads and CPUs.} In your operating systems class,
 you've seen implementations of threads (``lightweight processes'').
@@ -243,31 +304,6 @@ more than one hardware thread to schedule work onto.
 
 
 
-\paragraph{Implementing (or Simulating) Hardware Threads.} 
-There are a number of ways to implement multiple software threads; for
-instance, the simplest possible implementation, {\bf kernel-level
-threading} (or 1:1 model) dedicates one core to each thread. The kernel schedules threads
-on different processors. (Note that kernel involvement will always be required to
-take advantage of a multicore system). This model is used by Win32, as well as
-POSIX threads for Windows and Linux. The 1:1 model allows concurrency and parallelism.
-
-Alternately, we could make one core execute multiple threads. In the
-{\bf user-level threading}, or N:1, model, the single core would keep
-multiple contexts and could 1) switch every 100 cycles; 2) switch
-every cycle; 3) fetch one instruction from each thread each cycle; or
-4) switch every time the current thread hits a long-latency event
-(cache miss, etc.) This model allows for quick context switches, but
-does not leverage multiple processors. (Why would you use these?) The N:1 model is used by
-GNU Portable Threads.
-
-Finally, it's possible to both use multiple cores and put multiple
-threads onto one core, in a {\bf hybrid threading}, or M:N, model. Here, we map $M$ application threads to $N$ kernel threads. This
-is a compromise between the previous two models, which both allows
-quick context switches and the use of multiple processors. However, it
-requires increased complexity; the library provides scheduling
-services, which may not coordinate well with kernel, and increases
-likelihood of priority inversion (which you've seen in Operating
-Systems).  This method is used by modern Windows threads.
 
 
 \section*{Choose Your Pain}
@@ -275,18 +311,12 @@ The first design decision that you need to solve when parallelizing programs
 is whether you should use threads or processes. Threads are basically light-weight processes which piggy-back on
           processes' address space.
 
-Traditionally (pre-Linux 2.6) you had to use {\tt
-  fork}~(for~processes) and {\tt clone} (for threads). But {\tt clone}
-is not POSIX compliant, and its man page says that it's
-Linux-specific---FreeBSD uses {\tt rfork()}. (POSIX is the standard
-for Unix-like operating systems).
-
-\paragraph{When processes are better.} {\tt fork} is safer and more secure than threads.
+\paragraph{When processes are better.} Processes are safer and more secure than threads.
 
   \begin{enumerate}
     \item Each process has its own virtual address space:
       \begin{itemize}
-        \item Memory pages are not copied, they are copy-on-write. Therefore, processes use less memory than you would expect.
+        \item Memory pages are not copied, they are copy-on-write (usually in UNIX, anyway). Therefore, processes use less memory than you would expect.
       \end{itemize}
     \item Buffer overruns or other security holes do not expose other~processes.
     \item If a process crashes, the others can continue.
@@ -301,10 +331,8 @@ process. Scott McCloud explained this:
   \begin{enumerate}
     \item Interprocess communication (IPC) is more complicated and slower than interthread
           communication; must use operating system utilities (pipes, semaphores, shared
-              memory, etc) instead of thread library (or just memory reads and writes).
-    \item Processes have much higher startup, shutdown, and synchronization costs than threads.
-    \item pthreads fix the issues of {\tt clone} and provide a
-          uniform interface for most systems. (You'll work with them in Assignment 1.)
+              memory, etc) which have system call overhead, instead of Rust communication's mechanisms (shared memory or message passing)
+	\item Processes have much higher startup, shutdown, and synchronization costs than threads.
   \end{enumerate}
 
 \paragraph{How to choose?}
@@ -316,20 +344,42 @@ process. Scott McCloud explained this:
   \end{itemize}
 then processes are the way to go. If it's the opposite of this, then use threads.
 
-For performance reasons, along with ease and consistency across systems, we'll use threads. We will describe both pthreads and C++ 11 threads, in particular.
+For performance reasons, along with ease and consistency across systems, we'll use threads.
 
 \paragraph{Overhead.} The common wisdom is that processes are
-expensive, threads are cheap. Let's verify this with a benchmark on a
-laptop (included in the live-coding directory on GitHub) which creates and destroys 50,000 threads:
-  \begin{lstlisting}[basicstyle=\scriptsize]
-jon@riker examples master % time ./create_fork 
-0.18s user 4.14s system 34% cpu 12.484 total
-jon@riker examples master % time ./create_pthread 
-0.73s user 1.29s system 107% cpu 1.887 total
-  \end{lstlisting}
+expensive, threads are cheap. Let's try it.
 
-Clearly pthreads incur much lower overhead than {\tt fork}. pthreads
-offer a speedup of 6.5 over processes in terms of startup and teardown costs.
+\begin{multicols}{2}
+
+\begin{lstlisting}[language=Rust]
+use std::process::Command;
+
+fn main() {
+    for j in 0 .. 50000 {
+       Command::new("/bin/false").spawn();
+    }
+}
+\end{lstlisting}
+\begin{verbatim}
+1.530 s +/-  0.134 s
+\end{verbatim}
+\columnbreak
+\begin{lstlisting}[language=Rust]
+use std::thread;
+
+fn main() {
+    for j in 0 .. 50000 {
+        thread::spawn(|| {
+            false
+        });
+    }
+}
+\end{lstlisting}
+\begin{verbatim}
+630.5 ms +/-  21.5 ms 
+\end{verbatim}
+
+\end{multicols}
 
 \subsection*{Parallelization using Threads or Processes}
 We'll be looking at thread-based or process-based parallelization for the
