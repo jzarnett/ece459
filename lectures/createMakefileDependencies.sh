@@ -10,10 +10,10 @@ do
                       | sed -e 's@/@ @g' -e 's/[^a-zA-Z0-9 -]//g' -e 's/  / /g' -e 's/ /_/g')" )
         echo "$lectureNote.pdf: $lectureNumber.tex
 	rm -f \$@
-	pdflatex -jobname=$lectureNote > /dev/null \$<
+	pdflatex -file-line-error -halt-on-error -interaction batchmode -jobname=$lectureNote \$<
 	bibtex $lectureNote
-	pdflatex -jobname=$lectureNote > /dev/null \$<
-	pdflatex -jobname=$lectureNote > /dev/null \$<" > ./makefileDependencies/$lectureNote.d
+	pdflatex -file-line-error -halt-on-error -interaction batchmode -jobname=$lectureNote \$<
+	pdflatex -file-line-error -halt-on-error -interaction batchmode -jobname=$lectureNote \$<" > ./makefileDependencies/$lectureNote.d
 done
 
 for slideNumber in $(ls *-slides.tex | sed -e 's/-.*//')
@@ -23,6 +23,6 @@ do
                 | sed -e 's@/@ @g' -e 's/[^a-zA-Z0-9 -]//g' -e 's/  / /g' -e 's/ /_/g')" )
         echo "$slide.pdf: $slideNumber-slides.tex
 	rm -rf \$@
-	pdflatex -jobname=$slide \$<
-	pdflatex -jobname=$slide \$<" > ./makefileDependencies/$slide.d
+	pdflatex -file-line-error -halt-on-error -interaction batchmode -jobname=$slide \$<
+	pdflatex -file-line-error -halt-on-error -interaction batchmode -jobname=$slide \$<" > ./makefileDependencies/$slide.d
 done
