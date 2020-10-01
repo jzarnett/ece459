@@ -6,16 +6,8 @@
 
 \section*{Asynchronous/non-blocking I/O}
 
-Let's start with some juicy quotes.
-
 \begin{center}
-  \fbox{\includegraphics[width=.7\textwidth]{images/aio-linux.png}}\\
-{\scriptsize (mirrored at \url{compgeom.com/~piyush/teach/4531_06/project/hell.html})}
-   \\[2em]
-
-   ``Asynchronous I/O, for example, is often infuriating.''\\
-\hfill --- Robert Love. {\em Linux System Programming, 2nd ed, } page 215.
-
+  \fbox{\includegraphics[width=.7\textwidth]{images/L05-tokio.png}}
 \end{center}
 
 To motivate the need for non-blocking I/O, consider some standard I/O code:
@@ -268,121 +260,74 @@ You can start a network request and move on to creating more without waiting for
 
 The main tool here is the ``multi handle''---this is a structure that lets us have more than one curl easy handle. And rather than waiting, we can start them and then check on their progress. 
 
-There are still the global initialization and cleanup functions. The structure for the new multi-handle type is \texttt{curl::multi::Multi} (instead of \texttt{curl::easy::Easy}) and it is initialized with the \texttt{new()} function. 
+The structure for the new multi-handle type is \texttt{curl::multi::Multi} (instead of \texttt{curl::easy::Easy}) and it is initialized with the \texttt{new()} function. The multi functions may return a \texttt{MultiError} rather than the easy \texttt{Error}, and I don't know how to unify the error handling with ? here.
 
-Once we have a multi handle, we can add easy handles---however many we need---to the multi handle. Creation of the easy handle is the same as it is when being used alone---use \texttt{Easy::new()} to create it and set options on that handle. The documentation suggests that an \texttt{Easy2} might be better for use with multi handles. We'll want to set a token on this easy handle so that we can look it up later. Then, we add the easy (or easy2) handle to the multi handle with \texttt{add()} (or \texttt{add2()}).
+Once we have a multi handle, we can add easy objects---however many we need---to the multi handle. Creation of the easy object is the same as it is when being used alone---use \texttt{Easy::new()} to create it and set options on that handle. The documentation suggests that an \texttt{Easy2} might be better for use with multi handles. Then, we add the easy (or easy2) object to the multi handle with \texttt{add()} (or \texttt{add2()}). The \texttt{add()} or \texttt{add2()} functions return an actual easy handle.
 
 Once we have finished putting all the easy handles into the multi handle, we can dispatch them all at once with \texttt{perform()}. This function returns, on success, the number of easy handles in that multi handle that are still running. If it's down to 0, then we know that they are all done. If it's nonzero it means that some of them are still in progress.
 
-This does mean that we're going to call \texttt{perform()} more than once. Doing so doesn't restart or interfere with anything that was already in progress---it just gives us an update on the status of what's going on. We can check as often as we'd like, but the intention is of course to do something useful while the asynchronous I/O request(s) are going on. Otherwise, why not make it synchronous?
+This does mean that we're going to call \texttt{perform()} more than once. Doing so doesn't restart or interfere with anything that was already in progress---it just gives us an update on the status of what's going on. We can check as often as we'd like, but the intention is of course to do something useful while the asynchronous I/O request(s) are going on. Otherwise, why not make it synchronous? 
 
 Suppose we've run out of things to do though. What then? Well, we can wait, if we want, using \texttt{wait()}. This function will block the current thread until something happens (some event occurs).
 
-The first parameter is an array of extra file descriptors you can wait on (but we will always want this to be \texttt{\&mut []} in this course). The second parameter is a maximum time to wait. The return value is the actual number of ``interesting'' events that occurred (interesting is the word used in the specifications, and what it means is mysterious). For a simple use case you can ignore most of the parameters and just wait for something to happen and go from there.
+The first parameter to \texttt{wait()} is an array of extra file descriptors you can wait on (but we will always want this to be \texttt{\&mut []} in this course). The second parameter is a maximum time to wait. The return value is the actual number of ``interesting'' events that occurred (interesting is the word used in the specifications, and what it means is mysterious). For a simple use case you can ignore most of the parameters and just wait for something to happen and go from there.
 
 In the meantime though, the perform operations are happening, and so are whatever callbacks we have set up (if any). And as the I/O operation moves through its life cycle, the state of the easy handle is updated appropriately. Each easy handle has an associated status message as well as a return code.
 
-Why both? Well---one is about what the status of the request is. The message could be, for example, ``done'', but does that mean finished with success or finished with an error? For the second one tells us about that. We can ask about the status of the request using \texttt{messages()}.
+Why both? Well---one is about what the status of the request is. The message could be, for example, ``done'', but does that mean finished with success or finished with an error? The second one tells us about that. We can allegedly ask about the status of the request using \texttt{messages()}, and we're really supposed to do that if we use \texttt{action()} (which we don't talk about) rather than \texttt{perform()} (which we do).
 
 We pass \texttt{messages()} a callback which finds out what happened and makes sure all is well. This callback is an \texttt{FnMut} and hence allowed to mutate state. What we are looking for is that the callback's parameter \texttt{msg} has \texttt{result\_for} including \texttt{Some}---request completed. If not, this request is still in progress and we aren't ready to evaluate whether it was successful or not. If there are more handles to look at, we should go on to the next. If it is done, we should look at the result. If it is \texttt{Error} then there is an error. Else, everything succeeded.
 
-When a handle has finished, you need to remove it from the multi handle. You can look it up using the \texttt{token} that you associated with the easy handle when you created it. Remove it with \texttt{remove} or \texttt{remove2}. You don't have to cleanup the easy handle because Rust.
+When a handle has finished, you need to remove it from the multi handle. Remove the handle you got back from \texttt{add/2} with \texttt{remove/2}. You don't have to cleanup the easy handle because Rust.
 
-Let's consider the following code example by Clemens Gruber~\cite{curlmulti}, with slight modifications for compactness and formatting. This example puts together all the things we talked about in one compact code segment. Here, the callback does nothing, but that's okay---it's just to show what you could do with it.
+Let's consider the following code example by Clemens Gruber~\cite{curlmulti}, which I've translated to Rust (mostly). This example puts together all the things we talked about in one compact code segment. Here, the callback prints the data to \texttt{stdout}.
 
-\begin{lstlisting}[language=C]
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <curl/multi.h>
+\begin{lstlisting}[language=Rust]
+const URLS:[&str; 4] = [
+  "https://www.microsoft.com",
+  "https://www.yahoo.com",
+  "https://www.wikipedia.org",
+  "https://slashdot.org" ];
 
-#define MAX_WAIT_MSECS 30*1000 /* Wait max. 30 seconds */
+use curl::Error;
+use curl::easy::{Easy2, Handler, WriteError};
+use curl::multi::{Easy2Handle, Multi};
+use std::time::Duration;
+use std::io::{stdout, Write};
 
-const char *urls[] = {
-  "http://www.microsoft.com",
-  "http://www.yahoo.com",
-  "http://www.wikipedia.org",
-  "http://slashdot.org"
-};
-#define CNT 4
-
-size_t cb(char *d, size_t n, size_t l, void *p) {
-  /* take care of the data here, ignored in this example */
-  return n*l;
+struct Collector(Vec<u8>);
+impl Handler for Collector {
+    fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
+        self.0.extend_from_slice(data);
+	stdout().write_all(data).unwrap();
+        Ok(data.len())
+    }
 }
 
-void init( CURLM *cm, int i ) {
-  CURL *eh = curl_easy_init();
-  curl_easy_setopt( eh, CURLOPT_WRITEFUNCTION, cb );
-  curl_easy_setopt( eh, CURLOPT_HEADER, 0L );
-  curl_easy_setopt( eh, CURLOPT_URL, urls[i] );
-  curl_easy_setopt( eh, CURLOPT_PRIVATE, urls[i]) ;
-  curl_easy_setopt( eh, CURLOPT_VERBOSE, 0L );
-  curl_multi_add_handle( cm, eh );
+fn init(multi:&Multi, url:&str) -> Result<Easy2Handle<Collector>, Error> {
+    let mut easy = Easy2::new(Collector(Vec::new()));
+    easy.url(url)?;
+    easy.verbose(false)?;
+    Ok(multi.add2(easy).unwrap())
 }
 
-int main( int argc, char** argv ) {
-    CURLM *cm = NULL;
-    CURL *eh = NULL;
-    CURLMsg *msg = NULL;
-    CURLcode return_code = 0;
-    int still_running = 0; 
-    int msgs_left = 0;
-    int http_status_code;
-    const char *szUrl;
-
-    curl_global_init( CURL_GLOBAL_ALL );
-    cm = curl_multi_init( );
-
-    for ( int i = 0; i < CNT; ++i ) {
-        init( cm, i );
+fn main() {
+    let mut easys : Vec<Easy2Handle<Collector>> = Vec::new();
+    let mut multi = Multi::new();
+    
+    multi.pipelining(true, true).unwrap();
+    for u in URLS.iter() {
+	easys.push(init(&multi, u).unwrap());
+    }
+    while multi.perform().unwrap() > 0 {
+	// .messages() may have info for us here...
+        multi.wait(&mut [], Duration::from_secs(30)).unwrap();
     }
 
-    curl_multi_perform( cm, &still_running );
-
-    do {
-        int numfds = 0;
-        int res = curl_multi_wait( cm, NULL, 0, MAX_WAIT_MSECS, &numfds );
-        if( res != CURLM_OK ) {
-            fprintf( stderr, "error: curl_multi_wait() returned %d\n", res );
-            return EXIT_FAILURE;
-        }
-        curl_multi_perform( cm, &still_running );
-
-    } while( still_running );
-
-    while ( ( msg = curl_multi_info_read( cm, &msgs_left ) ) ) {
-        if ( msg->msg == CURLMSG_DONE ) {
-            eh = msg->easy_handle;
-
-            return_code = msg->data.result;
-            if ( return_code != CURLE_OK ) {
-                fprintf( stderr, "CURL error code: %d\n", msg->data.result );
-                continue;
-            }
-
-            // Get HTTP status code
-            http_status_code = 0;
-            szUrl = NULL;
-
-            curl_easy_getinfo( eh, CURLINFO_RESPONSE_CODE, &http_status_code );
-            curl_easy_getinfo( eh, CURLINFO_PRIVATE, &szUrl );
-
-            if( http_status_code == 200 ) {
-                printf( "200 OK for %s\n", szUrl ) ;
-            } else {
-                fprintf( stderr, "GET of %s returned http status code %d\n", szUrl, http_status_code );
-            }
-
-            curl_multi_remove_handle( cm, eh );
-            curl_easy_cleanup( eh );
-        } else {
-            fprintf( stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg );
-        }
+    for eh in easys.drain(..) {
+    	let mut handler_after:Easy2<Collector> = multi.remove2(eh).unwrap();
+        println!("got response code {}", handler_after.response_code().unwrap());
     }
-    curl_multi_cleanup( cm );
-    curl_global_cleanup();
-    return 0;
 }
 \end{lstlisting}
 
@@ -390,7 +335,7 @@ You may wonder about re-using an easy handle rather than removing and destroying
 
 Because a handle could be replaced with another one (or the same one), you could have a situation where there are constantly handles in progress and you might never be at a situation where there are no messages left. And that is okay.
 
-In this example all requests had the same (useless) callback, but of course you could have different callbacks for different easy handles if you wanted them to do different things.
+In this example all requests had the same callback, but of course you could have different callbacks for different easy handles if you wanted them to do different things.
 
 How well does this scale? The developer claims that you can have multiple thousands of connections in a single multi handle\footnote{See this post from the mailing list: \url{https://curl.haxx.se/mail/lib-2011-11/0078.html}}. And 60k ought to be enough for anyone!
 
