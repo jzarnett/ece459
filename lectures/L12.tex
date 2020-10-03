@@ -26,14 +26,7 @@ One of the ways in which one can then diagnose a lock convoy is to see a lock th
 
 Changing the locks to be unfair does risk starvation, although one can imagine that it is fairly unlikely given that a particular thread would have to be very low priority and very unlucky. Windows does give a thread priority boost, temporarily, after it gets unblocked, to see to it that the unblocked thread does actually get a chance to run.
 
-\paragraph{Mitigating Lock Convoys Ourselves.} Although it can be nice to be able to give away such a problem to the OS developers and say ``please solve this, thanks'', that might not be realistic and we might have to find a way to work around it. We'll consider four solutions from~\cite{lockconvoys}:
-
-\begin{itemize}
-	\item Sleep
-	\item Share
-	\item Cache
-	\item Trylock
-\end{itemize}
+\paragraph{Mitigating Lock Convoys Ourselves.} Although it can be nice to be able to give away such a problem to the OS developers and say ``please solve this, thanks'', that might not be realistic and we might have to find a way to work around it. We'll consider four solutions from~\cite{lockconvoys}: Sleep, Share, Cache, and Trylock.
 
 We could make the threads that are NOT in the lock convoy call a sleep() system call fairly regularly to give other threads a chance to run. This solution is lame, though, because we're changing the threads that are not the offenders and it just band-aids the situation so the convoy does not totally trash performance. Still, we are doing a lot of thread switches, which themselves are expensive as outlined above.
 
@@ -41,30 +34,42 @@ The next idea is sharing: can we use a reader-writer lock to allow much more con
 
 The next idea has to do with changing when (and how) you need the data. If you shrink the critical section to just pull a copy of the shared data and operate on the shared data, then it reduces the amount of time that the lock is held and therefore speeds up operations. But you saw the earlier discussion about critical section sizes, right? So you did that already...?
 
-The last solution suggested is to use try-lock primitives: try to acquire the lock, and if you fail, yield the CPU to some other thread and try again. See the code below:
+The last solution suggested is to use try-lock primitives: try to acquire the lock, and if you fail, yield the CPU to some other thread and try again. It requires a concept of yielding, of course, and it is fairly straightforward. The \texttt{yield\_now} function just tells the OS scheduler that we are not able to do anything useful right now and we'd prefer to let another thread run instead. The Rust documentation points out that channels do this in the implementation of sending and receiving to and from channels. But, see the code below for a quick example.
 
-\begin{lstlisting}[language=C]
-int retries = 0;
-while(pthread_mutex_trylock( &lock ) != 0 ) { /* 0 indicates lock acquired */
-  if ( retries < SPIN_LIMIT ) {
-    retries++;
-    sleep(0);
-    continue;
-  }
-  pthread_mutex_lock( &lock );
-  break;
+\begin{lstlisting}[language=Rust]
+    let mut retries = 0;
+    let retries_limit = 10;
+    let counter = Mutex::new(0);
+
+    loop {
+        if retries < retries_limit {
+            let mut l = counter.try_lock();
+            if l.is_ok() {
+                *l.unwrap() = 1;
+                break;
+            } else {
+                retries = retries + 1;
+                thread::yield_now();
+            }
+        } else {
+            *counter.lock().unwrap() = 1;
+            break;
+        }
+    }
 }
 \end{lstlisting}
 
-In short, we try to lock the mutex some number of times (up to a maximum of \texttt{SPIN\_LIMIT}), releasing the CPU each time if we don't get it, and if we do get it then we can continue. If we reach the limit then we just give up and enter the queue (regular lock statement) so we will wait at that point. You can perhaps think of this as being like waiting for the coffee machine at the office in the early morning. If you go to the coffee machine and find there is a line, you will maybe decide to do something else, and try again in a couple minutes. If you've already tried the come-back-later approach and there is still a line for the coffee machine you might as well get in line.
+In short, we try to lock the mutex some number of times (up to a maximum of \texttt{retries\_limit}), releasing the CPU each time if we don't get it, and if we do get it then we can continue. If we reach the limit then we just give up and enter the queue (regular lock statement) so we will wait at that point. You can perhaps think of this as being like waiting for the coffee machine at the office in the early morning. If you go to the coffee machine and find there is a line, you will maybe decide to do something else, and try again in a couple minutes. If you've already tried the come-back-later approach and there is still a line for the coffee machine you might as well get in line.
 
 Why does this work? It looks like polling for the critical section. The limit on the number of tries helps in case the critical section belongs to a low priority thread and we need the current thread to be blocked so the low priority thread can run. Under this scheme, if $A$ is going to release the critical section, $B$ does not immediately become the owner and $A$ may keep running and $A$ might even get the critical section again before $B$ tries again to acquire the lock (and may succeed). Even if the spin limit is as low as 2, this means two threads can recover from contention without creating a convoy~\cite{lockconvoys}. 
 
 \paragraph{The Thundering Herd Problem.} The lock convoy has some similarities with a different problem called the \textit{thundering herd problem}. In the thundering herd problem, some condition is fulfilled (e.g., broadcast on a condition variable) and it triggers a large number of threads to wake up and try to take some action. It is likely they can't all proceed, so some will get blocked and then awoken again all at once in the future. In this case it would be better to wake up one thread at a time instead of all of them.
 
-\paragraph{The Lost Wakeup Problem.} However! Waking up only one thread at a time has its own problems~\footnote{\url{https://stackoverflow.com/questions/37026/java-notify-vs-notifyall-all-over-again}}. For instance, in the Java context, you can choose to wake up one waiting thread with either \texttt{notify()} or all waiting threads with \texttt{notifyAll()}. If you use \texttt{notify()}, then you can encounter the \texttt{lost wakeup} problem.
+You may have learned about condition variables earlier. Rust has them as well, the \texttt{std::sync::Condvar} type.
 
-If all of your threads are identical, then you can use \texttt{notify()}. Otherwise, use \texttt{notifyAll()}, and brave the thundering herds. Or, in Java, use a \texttt{java.util.concurrent.locks.Condition}.
+\paragraph{The Lost Wakeup Problem.} However! Waking up only one thread at a time has its own problems~\footnote{\url{https://stackoverflow.com/questions/37026/java-notify-vs-notifyall-all-over-again}}. For instance, on a condition variable you can choose to wake up one waiting thread with either \texttt{notify\_one()} or all waiting threads with \texttt{notify\_all()}. If you use \texttt{notify\_one()}, then you can encounter the \textit{lost wakeup} problem.
+
+The general recommendation of the internet is to use \texttt{notify\_all} in all situations. Counting on each thread to aways unconditionally wake up the next when it runs is sightly dangerous...
 
 \section*{Atomics}
 What if we could find a way to get rid of locks and waiting altogether? That would avoid the lock convoy problem as well as any potential for deadlock, starvation, et cetera. In previous courses, you have learned about test-and-set operations and possibly compare-and-swap and those are atomic operations supported through hardware. They are uninterruptible and therefore will either completely succeed or not run at all. Is there a way that we could use those sorts of indivisible operations? Yes!
@@ -72,90 +77,31 @@ What if we could find a way to get rid of locks and waiting altogether? That wou
 Atomics are a lower-overhead alternative to
 locks as long as you're doing suitable operations. Remember that what we wanted sometimes with locks and mutexes and all that is that operations are indivisible: an update to a variable doesn't get interfered with by another update. Remember the key idea is: an \textit{atomic operation} is indivisible. Other threads see state before or after the operation; nothing in between.
 
+We are only going to talk about atomics with sequential consistency. That means when you are asked about ordering in a method on an atomic type, it means \texttt{Ordering::SeqCst}. Later in the course we will revisit the idea of memory consistency and the different possible reorderings, but for now, just use sequential consistency and you won't get surprises.
 
-We are only going to talk about atomics with sequential consistency. If you use the default {\tt std::memory\_order}, that's what you get. What do I mean by that? Well, in the header file \texttt{atomic} (C++11 here) there is an enumeration of memory orders and I am suggesting that using the default is pretty nice, compared to the alternative which may or may not be a Lovecraftian Horror to understand (or prove correctness). If you'd like to know about all the options, take a look at~\cite{cppatomics}, but here's a quick summary from~\cite{bmref1} (which is much more concise than the C++ Atomics listing):
+So there are atomic types for integer types (signed and unsigned), boolean, size (signed and unsigned), and pointers. It's important to note that when interacting with the type, you cannot just assign or read the value; you're forced to use the \texttt{load} and \texttt{store} methods to be sure there's no confusion. Such types are safe to be passed between threads as well as being shared between them. 
 
-\begin{center}
-	\begin{tabular}{l|p{12cm}}
-	\textbf{Value} & \textbf{Explanation} \\ \hline
-		\texttt{memory\_order\_acquire} &  Subsequent loads are not moved before the current load or any preceding loads.\\ \hline
-		\texttt{memory\_order\_release} &  Preceding stores are not moved past the current store or any subsequent stores. \\ \hline
-		\texttt{memory\_order\_acq\_rel} & Combine the acquire and release guarantees\\ \hline
-		\texttt{memory\_order\_consume} & A potentially weaker form of memory\_order\_acquire that enforces ordering of the current load before other operations that are data-dependent on it (for instance, when a load of a pointer is marked memory\_order\_consume, subsequent operations that dereference this pointer won't be moved before it (yes, even that is not guaranteed on all platforms!).\\ \hline
-	
-	\texttt{memory\_order\_relaxed} & All reordering are okay; only atomicity is required of this operation. \\ \hline
-\texttt{memory\_order\_seq\_cst} & Same as \texttt{memory\_order\_acq\_rel}, plus a single total order exists in which all threads observe all modifications in the same order.\\ 
-	\end{tabular}
+\begin{lstlisting}[language=Rust]
+use std::sync::atomic::{AtomicBool, Ordering};
 
-\end{center}
-
-
-
-The C++11 standard includes both strong and weak atomics. The weak ones are the ones where you get to specify the the memory ordering of load and store operating in a way that is not sequentially consistent. But we care about the standard, sequentially consistent kind of operation. \textit{Don't} use relaxed atomics unless you're an expert! Basically, a value that is seen from a memory load may come from the past or from the future (it's all relative, of course). If you want to dig into the details about an example, I recommend~\cite{bmref2}, which goes into the details of just how difficult it is to prove correctness. If that doesn't talk you out of it, I'm not sure what will.
-
-
-\paragraph{Atomic Flags.} The simplest form of C++11 atomic is the {\tt atomic\_flag}.
-Not surprisingly, this represents a boolean flag. You can clear the flag and test-and-set it.
-
-
-\begin{lstlisting}[language=C++]
-#include <atomic>
-
-atomic_flag f = ATOMIC_FLAG_INIT;
-int foo() {
-  f.clear();
-  if (f.test_and_set()) {
-    // was true
-  }
+fn main() {
+   let b = AtomicBool::new(false);
+    b.store(true, Ordering::SeqCst);
+    println!("{}", b.load(Ordering::SeqCst));
 }
 \end{lstlisting}
 
-This returns the previous value. There is no assignment (=) operator for {\tt atomic\_flag}s. Although I guess in C++ you could define one if you wanted. 
+In addition, there are a few other methods to allow you to atomically complete the operations you normally need. For example, \texttt{fetch\_add} is what you would use to atomically increase the variable's value. In C \texttt{count++} is not atomic; in Rust we would use \texttt{count.fetch\_add(1, Ordering::SeqCst)}.
 
-\paragraph{More general C++ atomics.} Boolean flags are nice, but we want more.
-C++11 supports arbitrary types as atomic. Here'a an example declaration:
+The other atomic operations that we can breeze past are \texttt{fetch\_sub} (fetch and subtract), \texttt{fetch\_max} (fetch and return the max of the stored value and the provided argument), \texttt{fetch\_min} (same as max but minimum), and the bitwise operations \texttt{and, nand, or, xor}.
 
-\begin{lstlisting}[language=C++]
-#include <atomic>
-atomic<int> x;
-\end{lstlisting}
 
-The C++11 library implements atomics using lock-free operations for small types
-and using mutexes for large types. The general types of operations that you can do with atomics are three: reads, writes, and RMW (read-modify-write) operations. C++ has syntax to make these all transparent.
+\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86). This is one of the more important atomic operations, because it combines the read, comparison, and write into a single operation. You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
 
-\begin{lstlisting}[language=C++]
-// atomic reads and writes
-#include <atomic>
-#include <iostream>
+Here's a description of how a compare-and-swap operation works using C. This is obviously not how it is implemented, but explaining it using program code is more precise (and compact) than a lengthy English-language explanation. It is really implemented as an atomic hardware instruction and this all takes place uninterruptibly. 
 
-std::atomic<int> ai;
-int i;
-
-int main() {
-    ai = 4;
-    i = ai;
-    ai = i;
-    std::cout << i;
-}
-\end{lstlisting}
-If you want, you can also use {\tt i = ai.load()} and {\tt ai.store(i)}.
-
-As for RMW operations, consider {\tt ai++}. This is equivalent to (but faster than):
-
-\begin{lstlisting}[language=C++]
-ai.lock();
-tmp = ai.read(); 
-tmp++; 
-ai.write(tmp);
-ai.unlock();
-\end{lstlisting}
-But, hardware can do that atomically. It can also do other RMWs: {\tt +-, \&=, etc, compare-and-swap}.
-
-\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86).
-Here's some pseudocode for it.
   \begin{lstlisting}[language=C]
-int compare_and_swap (int* reg, int oldval, int newval) 
-{
+int compare_and_swap (int* reg, int oldval, int newval) {
   int old_reg_val = *reg;
   if (old_reg_val == oldval) 
      *reg = newval;
@@ -163,31 +109,32 @@ int compare_and_swap (int* reg, int oldval, int newval)
 }
   \end{lstlisting}
 
-Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it.
+Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it. If not, you should try again (maybe with some delay). If multiple threads are trying to do the compare-and-swap operation at the same time, only one will succeed. 
 
+The Rust equivalent for this is called \texttt{compare\_and\_swap} and it takes as parameters the expected old value, the desired new value, and the ordering. We'll see an example in just a moment. Rust does offer a simple \texttt{swap} on atomic types that doesn't do the comparison and just returns the old value, as well as two more advanced versions called \texttt{compare\_exchange} and \texttt{compare\_exchange\_weak} that we won't talk about today.
 
 \paragraph{Implementing a Spinlock.}
-You can use compare-and-swap to implement spinlock:
-  \begin{lstlisting}[language=C]
-void spinlock_init(int* lock) { *lock = 0; }
+You can use compare-and-swap to implement a spinlock. Remember that a spinlock is constantly trying to acquire the lock (here, represented by an atomic boolean) and only makes sense if the expected waiting time to acquire the lock is less than the time it would take for two thread switches.
 
-void spinlock_lock(int* lock) {
-    while(compare_and_swap(lock, 0, 1) != 0) {}
-    __asm__ ("mfence");
-}
+\begin{lstlisting}[language=Rust]
+use std::sync::atomic::{AtomicBool, Ordering, spin_loop_hint};
 
-void spinlock_unlock(int* lock) {
-    __asm__ ("mfence");
-    *lock = 0;  
+fn main() {
+    let my_lock = AtomicBool::new(false);
+    // ... Other stuff happens
+
+    while my_lock.compare_and_swap(false, true, Ordering::SeqCst) == false {
+        spin_loop_hint();
+    }
+    // Inside critical section
+    my_lock.store(false, Ordering::SeqCst);
 }
   \end{lstlisting}
-You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
+
+The call inside the loop to \texttt{spin\_loop\_hint} is just a nicety we can use to tell the CPU that it's okay to either switch to another thread in hyperthreading or to run in a lower-power mode if we are spinning\footnote{\url{https://doc.rust-lang.org/std/sync/atomic/fn.spin_loop_hint.html}}. Full CPU effort isn't needed for this, and it's nice if we can let the CPU know that. 
 
 \paragraph{ABA Problem}
-Sometimes you'll read a location twice.
-If the value is the same both times, nothing has changed, right?\\[1em]
-
-\emph{No.} This is an {\bf ABA problem}.\\[1em]
+Sometimes you'll read a location twice. If the value is the same both times, nothing has changed, right? \emph{No.} This is an {\bf ABA problem}.
 
 The ABA problem is not any sort of acronym nor a reference to this~\cite{abba}. It's a value that is A, then changed to B, then changed back to A. The ABA problem is a big mess for the designer of lock-free Compare-And-Swap routines. This sequence will give some example of how this might happen~\cite{abaproblem}:
 
@@ -202,19 +149,14 @@ It's a ``false positive'' because $P_{1}$'s compare-and-swap operation succeeds 
 
 You can combat this by ``tagging'': modify value with a nonce upon each
 write.  You can also keep the value separately from the nonce; double
-compare and swap atomically swaps both value and nonce.
+compare and swap atomically swaps both value and nonce. Java collections do something resembling this. A collection has a modification count and every time the collection is modified in some way (element added, for example) the counter is increased. When an iterator is created to iterate over this collection, the iterator notes down the current value of the modification count. As it iterates over the collection, if the iterator sees that the collection's modification count is no longer the same as the value it has remembered, it will throw a \texttt{ConcurrentModificationException}. 
 
 
-More info on C++11 atomics:\\
-\url{http://preshing.com/20130618/atomic-vs-non-atomic-operations/}
+\paragraph{Caveats.}
+Obviously, the use of atomic types just ensures that a write or read (or read-modify-write operation) happens atomically; race conditions can still happen if threads are not properly coordinated.
 
-We talked about C++11 atomics. Is there a pthread equivalent? Nope, not really.
 
-OS X has atomics via OS calls: \\
-\url{https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/Multithreading/ThreadSafety/ThreadSafety.html}
-
-The Linux kernel provides a number of atomic operations (but that doesn't really make them portable). Reference:
-\url{http://stackoverflow.com/questions/1130018/unix-portable-atomic-operations}
+Unfortunately, though, not every atomic operation is portable. Rust will try its best to give you the atomic types that you ask for. Sometimes emulation is required to make it happen, and an atomic type might be implemented with a larger type (e.g.,, \texttt{AtomicI8} will be implemented using a 4-byte type). Some platforms don't have it at all. So code that is focused on portability might have to be a bit careful.
 
 \section*{Lock-Freedom}
 
@@ -228,40 +170,73 @@ The definition of a non-blocking data structure is one where none of the operati
 
 A lock-free data structure doesn't use any locks (duh) but there's also some implication that this is also thread-safe; concurrent access must still result in the correct behaviour, so you can't make all your data structures lock-free ones by just deleting all the mutex code. Lock free also doesn't mean it's a free-for-all; there can be restrictions, like, for example, a queue that allows one thread to append to the end while another removes from the front, although two removals at the same time might cause a problem~\cite{nblfwf}.
 
-The actual definition of lock-free is that if any thread performing an operation gets suspended during the operation, then other threads accessing the data structure are still able to complete their tasks~\cite{nblfwf}. This is distinct from the idea of waiting, though; an operation might still have to wait its turn or might get restarted if it was suspended and when it resumes things have somehow changed. If you learned about compare-and-swap then you might have some idea about this already: you try to do the compare-and-swap operation and if you find that someone changed it out from under you, you have to go back and try again. Unfortunately, going back to try again might mean that threads are frequently interrupting each other...
+The actual definition of lock-free is that if any thread performing an operation gets suspended during the operation, then other threads accessing the data structure are still able to complete their tasks~\cite{nblfwf}. This is distinct from the idea of waiting, though; an operation might still have to wait its turn or might get restarted if it was suspended and when it resumes things have somehow changed. Since we just talked about compare-and-swap, you might have some idea about this already: you try to do the compare-and-swap operation and if you find that someone changed it out from under you, you have to go back and try again. Unfortunately, going back to try again might mean that threads are frequently interrupting each other...
 
 For this you might need wait-free data structures. This does not mean that nothing ever has to wait, but it does mean that each thread trying to perform some operation will complete it within a bounded number of steps regardless of what any other threads do~\cite{nblfwf}. This means that a compare-and-swap routine as above with infinite retries is not wait free, because a very unlucky thread could potentially take infinite tries before it completes its operations. The wait free data structures tend to be very complicated...
 
-Let's consider some examples from~\cite{1024cores}. First, a lock-free algorithm:
+Let's consider some example from~\cite{lockfreedom}, with some modifications. We'll start with a lock-free stack.
+\begin{lstlisting}[language=Rust]
+use std::ptr::{self, null_mut};
+use std::sync::atomic::{AtomicPtr, Ordering};
 
-\begin{lstlisting}[language=C]
-void stack_push(stack* s, node* n) {
-    node* head;
-    do
-    {
-        head = s->head;
-        n->next = head;
+pub struct Stack<T> {
+    head: AtomicPtr<Node<T>>,
+}
+
+struct Node<T> {
+    data: T,
+    next: *mut Node<T>,
+}
+
+impl<T> Stack<T> {
+    pub fn new() -> Stack<T> {
+        Stack {
+            head: AtomicPtr::new(null_mut()),
+        }
     }
-    while ( !atomic_compare_exchange(s->head, head, n) );
-} 
+}
+
+impl<T> Stack<T> {
+    pub fn push(&self, t: T) {
+        // allocate the node, and immediately turn it into a *mut pointer
+        let n = Box::into_raw(Box::new(Node {
+            data: t,
+            next: null_mut(),
+        }));
+        loop {
+            // snapshot current head
+            let head = self.head.load(Ordering::SeqCst);
+
+            // update `next` pointer with snapshot
+            unsafe { (*n).next = head; }
+
+            // if snapshot is still good, link in new node
+            if self.head.compare_and_swap(head, n, Ordering::SeqCst) == head {
+                break
+            }
+        }
+    }
+}
 \end{lstlisting}
 
-A particularly unlucky thread might spend literally forever spinning around the do-while loop as above, but that's okay because that thread's bad luck is someone else's good luck. At least some thread, somewhere, has succeeded in pushing to the stack, so the system is making progress (stuff is happening). 
+A particularly unlucky thread might spend literally forever spinning around the loop as above, but that's okay because that thread's bad luck is someone else's good luck. At least some thread, somewhere, has succeeded in pushing to the stack, so the system is making progress (stuff is happening). 
 
 And here is a small wait-free algorithm:
 
-\begin{lstlisting}[language=C]
-void increment_reference_counter(rc_base* obj) {
-    atomic_increment(obj->rc);
+\begin{lstlisting}[language=Rust]
+fn increment_counter(ctr: &AtomicI32) {
+    ctr.fetch_add(1, Ordering::SeqCst);
 }
 
-void decrement_reference_counter(rc_base* obj) {
-    if (0 == atomic_decrement(obj->rc))
-        delete obj;
-} 
+fn decrement_counter(ctr: &AtomicI32) {
+    let old = ctr.fetch_sub(1, Ordering::SeqCst);
+    if old == 1 { // We just decremented from 1 to 0
+        println!{ "All done." }
+    }
+}
 \end{lstlisting}
 
-Both operations will complete in a bounded number of steps and therefore there is no possibility that anything gets stuck or is forced to repeat itself forever. 
+Obviously, the print statement in the decrement counter is just a placeholder for something more useful. Both operations will complete in a bounded number of steps and therefore there is no possibility that anything gets stuck or is forced to repeat itself forever. 
 
 The big question is: are lock-free programming techniques somehow better for performance? Well, they can be but they might not be either. Lock free algorithms are about ensuring there is forward progress in the system and not really specifically about speed. A particular algorithm implementation might be faster under lock-free algorithms. For example, if the compare and swap operation to replace a list head is faster than the mutex lock and unlock, you prefer the lock free algorithm. But often they are not. In fact, the lock free algorithms could be slower, in which case you use them because you must, not because it is particularly speedy.
 
