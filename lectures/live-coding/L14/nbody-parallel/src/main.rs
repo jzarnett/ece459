@@ -1,5 +1,6 @@
 use rand::Rng;
 use std::fmt::{Display, Formatter};
+use rayon::prelude::*;
 
 /* A Rustification by Jeff Zarnett of a past ECE 459 N-Body assignment that was
 originally from GPU Gems, Chapter 31 and modified by Patrick Lam. */
@@ -57,14 +58,13 @@ fn body_body_interaction(
 
 fn calculate_forces(initial_positions: Vec<Point>) -> Vec<Acceleration> {
     let mut accelerations: Vec<Acceleration> = initialize_accelerations();
-    for i in 0 .. NUM_POINTS {
+    accelerations.par_iter_mut().enumerate().for_each(|(i, current_accel)| {
         let current_point: &Point = initial_positions.get(i as usize).unwrap();
-        let current_accel: &mut Acceleration = accelerations.get_mut(i as usize).unwrap();
         for j in 0 .. NUM_POINTS {
             let other_point: &Point = initial_positions.get(j as usize).unwrap();
             body_body_interaction(current_point, other_point, current_accel);
         }
-    }
+    });
 
     return accelerations;
 }
