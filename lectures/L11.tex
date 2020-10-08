@@ -6,113 +6,85 @@
 
 \section*{Appropriate Use of Locking}
 
-In previous courses you learned about locking and how it all works, then we did a quick recap of what you need to know about it. And perhaps you were given some guidance in the use of locks, but probably in earlier scenarios it was sufficient to just avoid all the bad stuff (data races, deadlock, starvation). That's important but is no longer enough. Now we need to use locking and other synchronization techniques appropriately. 
+In previous courses you learned about locking and how it all works, then we did a quick recap of what you need to know about it. And perhaps you were given some guidance in the use of locks, but probably in earlier scenarios it was sufficient to just avoid all the bad stuff (data races, deadlock, starvation). That's important, but is no longer enough. Now we need to use locking and other synchronization techniques in a way that reduces their impact on performance. 
 
-I like to say that critical sections should be as large as they need to be but no larger. That is to say, if we have some shared data that needs to be protected by some mutual exclusion constructs, we need to consider carefully where to place the statements. They should be placed such that the critical section contains all of the shared accesses, both reads \textit{and} writes, but also does contain any extraneous statements. The ones that don't need to be there are those that don't operate on shared data. 
+I like to say that critical sections should be as large as they need to be but no larger. That is to say, if we have some shared data that needs to be protected by some mutual exclusion constructs, we need to consider carefully where to place the statements. They should be placed such that the critical section contains all of the shared accesses, both reads \textit{and} writes, but also does not contain any extraneous statements. The ones that don't need to be there are those that don't operate on shared data. 
 
-This can mean that a block of code or contents of a function need to be re-arranged to move some statements up or down so they are no longer in the critical section. Sometimes control flow or other very short statements might get swept into the critical section being created to make sure all goes as planned but those should be the exception rather than the rule.
+If you are rewriting code from sequential to parallel, this can mean that a block of code or contents of a function need to be re-arranged to move some statements up or down so they are no longer in the critical section. Sometimes control flow or other very short statements might get swept into the critical section being created to make sure all goes as planned, so the rule is not absolute. However, such statements should be there rarely and only if the alternatives are worse.
 
-Let's consider a short code example from the producer-consumer problem. We have some global variables below that will be initialized as appropriate. There is also a definition of the function that will consume the data.
+Let's consider a short code example from the producer-consumer problem. In the course repository's code directory, the full code is available the original and modified forms. It makes sense to look over the original before we discuss how to improve it. We'll look at the consumer code:
 
-\begin{lstlisting}[language=C]
-sem_t spaces;
-sem_t items;
-int counter;
-int* buffer;
-int pindex = 0;
-int cindex = 0;
-int ctotal = 0;
-pthread_mutex_t prod_mutex;
-pthread_mutex_t con_mutex;
-
-void consume( int to_consume );
+\begin{lstlisting}[language=Rust]
+    for _j in 0 .. NUM_THREADS {
+        // create consumers
+        let spaces = spaces.clone();
+        let items = items.clone();
+        let buffer = buffer.clone();
+        threads.push(
+            thread::spawn(move || {
+                for _k in 0 .. ITEMS_PER_THREAD {
+                    let permit = block_on(items.acquire());
+                    let mut buf = buffer.lock().unwrap();
+                    let current_consume_space = buf.consumer_count;
+                    let next_consume_space = (current_consume_space + 1) % buf.buffer.len();
+                    let to_consume = *buf.buffer.get(current_consume_space).unwrap();
+                    buf.consumer_count = next_consume_space;
+                    spaces.add_permits(1);
+                    permit.forget();
+                    consume_item(to_consume);
+                }
+            })
+        );
+    }
 
 \end{lstlisting}
 
-And then here is our single-threaded code for the consumer. We want our consumer threads to consume exactly {\tt MAX\_ITEMS\_CONSUMED} items and then cleanly exit; we don't want anything to stay stuck at a mutex for instance.
+When we used locks in C (or similar), it was easier to identify what's in the critical section, because we had explicit lock and unlock statements. The explicit unlock statement, especially, made it much clearer where it ends. Now, we don't consider the critical section over until the \texttt{MutexGuard} (returned by \texttt{lock()}) goes out of scope. And that happens here at the end of the iteration of the loop.
 
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( ctotal < MAX_ITEMS_CONSUMED ) {
-    sem_wait( &items );
-    consume( buffer[cindex] );
-    buffer[cindex] = -1;
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    sem_post( &spaces );
-  }
-}
+What I always say is to analyze this closure one statement at a time and look into which of these access shared variables. We're not worried about statements like locking or manipulating the semaphore, but let's look at the rest and decide if they really belong. Can any statements be removed from the critical section?
+
+In a practical sense, the critical section needs to enclose anything that references \texttt{buf} and that's most of the statements, save those three at the end: adding permits to spaces, forgetting our current permit, and consuming the item. Rust is good about not letting you access shared data in an uncontrolled way, so we can feel more certain that there's nothing left out of the critical section that should be in there.
+
+How do we end the critical section? We need to make our acquisition of the mutex go out of scope. The easiest way to do that is to use manual scoping:
+
+\begin{lstlisting}[language=Rust]
+    for _j in 0 .. NUM_THREADS {
+        // create consumers
+        let spaces = spaces.clone();
+        let items = items.clone();
+        let buffer = buffer.clone();
+        threads.push(
+            thread::spawn(move || {
+                for _k in 0 .. ITEMS_PER_THREAD {
+                    let permit = block_on(items.acquire());
+                    let to_consume = {
+                        let mut buf = buffer.lock().unwrap();
+                        let current_consume_space = buf.consumer_count;
+                        let next_consume_space = (current_consume_space + 1) % buf.buffer.len();
+                        let to_consume = *buf.buffer.get(current_consume_space).unwrap();
+                        buf.consumer_count = next_consume_space;
+                        to_consume
+                    };
+                    spaces.add_permits(1);
+                    permit.forget();
+                    consume_item(to_consume);
+                }
+            })
+        );
+    }
 \end{lstlisting}
 
-To this we need to add some mutual exclusion if we want to allow multiple consumers at the same time. I'll leave aside the case of only allowing one consumer by putting the lock and unlock statements outside the while loop since that defeats the purpose of having multiple threads altogether. One approach we could take is that which allows exactly one consumer to run at a time, as below. But what's wrong with this?
+You'll notice that we return the value \texttt{to\_consume} out of the block, because it's needed outside the block and would otherwise not be in scope when passed to the function that consumes it. The whole purpose of this is to get the value outside of the block. Because it's a simple type, we'll copy it, but a more complex type would just have ownership transferred, so there isn't a large performance penalty here. 
 
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( ctotal < MAX_ITEMS_CONSUMED ) {
-    pthread_mutex_lock( &con_mutex );
-    sem_wait( &items );
-    consume( buffer[cindex] );
-    buffer[cindex] = -1;
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    sem_post( &spaces );
-    pthread_mutex_unlock( &con_mutex );
-  }
-}
-\end{lstlisting}
+The other approach to making the \texttt{MutexGuard} go out of scope is to actually call \texttt{drop()} on it, which is effective in telling the compiler that it is time for this value to die. Calling \texttt{drop()} moves ownership of the MutexGuard to the \texttt{drop} function where it will go out of scope and be removed. Convenient! But manual scoping is nice too. 
 
-What I recommend is of course to analyze this function one statement at a time and look into which of these access global variables. We're not worried about statements like locking, wait, or post, but let's look at the rest and decide if they really belong. Can any statements be removed from the critical section?
+Let's see if it works! I applied a similar change the producer code as we just discussed about the consumer. And for the purposes of the test, I added some thread sleeps to the original and modified program so it appears that consuming or producing an item actually takes meaningful work. As usual, benchmarks are created with \texttt{hyperfine --warmup 1 -m 5 "cargo run --release"}. The un-optimized program takes about 2.8 seconds to run and the optimized program takes about 1.1 seconds. Certainly worth doing. 
 
-We could think about moving {\tt sem\_wait} before the lock acquisition, but it doesn't solve any problem. If {\tt sem\_wait} comes first, then after the last item is consumed the next thread gets blocked on the semaphore and does not terminate. If we do not swap the order, then we could have threads that make it to the {\tt sem\_wait} and other threads get blocked but get stuck at the lock acquisition. Regardless of where they are stuck, stuck threads won't do anything bad, but they also never terminate. Such threads would be tricky to terminate: {\tt pthread\_join} would block the main thread, and thread cancellation is not only dangerous, but also difficult, because it's not clear which thread should be cancelled and which one has finished.
+Remember, though, that keeping the critical section as small as possible is important because it speeds up performance (reduces the serial portion of your program). But that's not the only reason. The lock is a resource, and contention for that resource is itself expensive.
 
-We can move the {\tt sem\_post} after the unlock if we're trying to reduce critical sections.
+\subsection*{Locking Granularity}
 
-At first glance it is probably not very obvious but the \texttt{consume} function takes a regular integer, any old integer, not a pointer of some sort. So we could, inside the critical section, read the value of the buffer at the current index into a temp variable. That temp variable then can be given to the \texttt{consume} function at any time... outside of the critical section. Everything else inside our lock and unlock statements seems to be shared data: operates on \texttt{cindex} or \texttt{ctotal}.
-
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( ctotal < MAX_ITEMS_CONSUMED ) {
-    pthread_mutex_lock( &con_mutex );
-    sem_wait( &items );
-    int temp = buffer[cindex];
-    buffer[cindex] = -1;
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    pthread_mutex_unlock( &con_mutex );
-    sem_post( &spaces );
-    consume( temp );
-  }
-}
-\end{lstlisting}
-
-Next question then. With nothing left to take away, is there something left to add? Yes! The condition of the while loop checks the value of \texttt{ctotal} and that is a read of shared data. Now we maybe have a problem. How do we get that inside the critical section? One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing (the end of the loop might be mispredicted...).  Instead what I'd recommend is to make the loop a while true loop and then have a test of the value to determine when we should break out of the loop. You then do have to move the lock before the sem\_wait. See the example below, remembering of course there is the potential pitfall of forgetting to unlock the mutex if we are going to the break statement:
-
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( 1 ) { 
-    pthread_mutex_lock( &con_mutex );  
-    if ( ctotal == MAX_ITEMS_CONSUMED ) {
-      pthread_mutex_unlock( &con_mutex );
-      break;
-    }   
-    sem_wait( &items );
-    int temp = buffer[cindex];
-    buffer[cindex] = -1; 
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    pthread_mutex_unlock( &con_mutex );
-    sem_post( &spaces );
-    consume( temp );
-  }
-  pthread_exit( NULL );
-}
-\end{lstlisting}
-
-At this stage we should (mostly) be happy with the conversion of the function to support multithreaded operation. This conversion isn't the only way, but there are others. Remember, though, that keeping the critical section as small as possible is important because it speeds up performance (reduces the serial portion of your program). But that's not the only reason. The lock is a resource, and contention for that resource is itself expensive.
-
-\section*{Locking Granularity}
-
-Alright, we already know that locks prevent data races. If this is news to you, how did you pass the operating systems course?! So we need to use them to prevent data races, but it's not as simple as it sounds. We have choices about the granularity of locking, and it is a trade-off (like always).
+The producer-consumer example was a very specific instance of \textit{lock granularity}: how much data is locked by a given lock. We have choices about the granularity of locking, and it is a trade-off (like always).
 
 \textit{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. \textit{
 Fine-grained locking} requires more careful design,
@@ -200,52 +172,50 @@ As an example of consistent ordering:
 \begin{center}
 \begin{tabular}{ll}
 \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
-void f1() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&l1);    
-}
+  \begin{lstlisting}[language=Rust]
+let mut thing1 = l1.lock().unwrap()
+let mut thing2 = l2.lock().unwrap()
+// protected code
+// locks dropped when going out of scope
 \end{lstlisting}
 \end{minipage}&
 \begin{minipage}{.4\textwidth}
-\begin{lstlisting}[language=C]
-void f2() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&l1);    
-}
+\begin{lstlisting}[language=Rust]
+let mut thing1 = l1.lock().unwrap()
+let mut thing2 = l2.lock().unwrap()
+// protected code
+// locks dropped when going out of scope
   \end{lstlisting}
 \end{minipage}
 \end{tabular}
 \end{center}
 This code will not deadlock: you can only get {\bf l2} if you have
 {\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
-identity is not statically visible.
+identity is not statically visible. That is, if they don't always have the same names everywhere.
 
-Or another example, with threads $P$ and $Q$ attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
+If we give a standard example from a textbook, we call the threads $P$ and $Q$ and they are attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
 
-To generalize and formalize this principle, if the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
+We can certainly prove that consistent ordering does work and it's a proof by contradiction. If the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
 
+But I mentioned they might not have the same names everywhere. When locks travel with the data, this problem can arise. Consider the idea of a bank account and you want to transfer money from one to another. This will involve locking the sender account and locking the receiver account. And regardless of whether you say receiver first or sender first, there is the possibility of two concurrent transfers that mean we end up with a deadlock.
+
+One thing that might work is making your structure somewhat different. Something like the account number is something that never changes, so you could leave that outside of the mutex and use that to determine an ordering, such as alphabetical ordering. That just means your struct is composed of the account number and the mutex surrounding another struct with the account data. Maybe a little weird, but it works.
 
 Alternately, you can use trylock. Recall that Pthreads' {\tt trylock}
 returns 0 if it gets the lock. But if it doesn't, your thread doesn't get blocked. Checking the return value is important, but at the very least, this code also won't deadlock: it will give up {\bf l1} if it can't get {\bf l2}.
-  \begin{lstlisting}[language=C]
-void f1() {
-    lock(&l1);
-    while (trylock(&l2) != 0) {
-        unlock(&l1);
-        // wait
-        lock(&l1);
+  \begin{lstlisting}[language=Rust]
+    loop {
+        let mut m1 = l1.lock().unwrap();
+        let m2 = l2.try_lock();
+        if m2.is_ok() {
+            *m1 += amount;
+            *m2.unwrap() -= amount;
+            break;
+        } else {
+            println!("try_lock failed");
+            // Go around the loop again and try again
+        }
     }
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
   \end{lstlisting}
   (Incidentaly, using trylocks can also help you measure lock contention.)
   
@@ -313,45 +283,14 @@ void swap( int x, int y ) {
 
 Why is this non-reentrant? Because there is a global variable \texttt{tmp} and it is changed on every invocation of the function. We can make the code reentrant by moving the declaration of \texttt{tmp} inside the function, which would mean that every invocation is independent of every other. And thus it would be thread safe, too.
 
-Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted (or we're going to break off handling what we're doing and call the same ISR in the middle of the current one). Either way, if the code is not reentrant we will run into problems.
+Doing it wrong is highly discouraged by Rust as a language, because it doesn't want you to use global state (if it can help it) and it makes potential side effects pretty clear by requiring references to be annotated as mutable.
 
-If a function is not reentrant, it may not be possible to make it thread safe. And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
+Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted (or we're going to break off handling what we're doing and call the same ISR in the middle of the current one). Either way, if the code is not reentrant we will run into problems. Rust's ownership capabilities make it difficult for you to modify something that you should not modify with signal handlers, like calling some function that is not reentrant.
 
-Let us also draw a distinction between thread safe code and reentrant code. A thread safe operation is one that can be performed from more than one thread at the same time. On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. Or it can be re-started without affecting the outcome. See this code example from~\cite{tont:threadsafe}:
-\begin{lstlisting}[language=C]
-int length = 0;
-char *s = NULL;
+Side effects are and sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's what we want. We don't want to call print reentrantly; interleaved print calls would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
 
-// Note: Since strings end with a 0, if we want to
-// add a 0, we encode it as "\0", and encode a
-// backslash as "\\".
+The notion of purity is related to side effects. A function is pure if it has no side effects and if its outputs depend solely on its inputs. (The use of the word pure shouldn't imply any sort of moral judgement on the code). Pure functions should also be implemented to be thread-safe and reentrant.
 
-
-// WARNING! This code is buggy - do not use!
-
-
-void AddToString(int ch)
-{
-  EnterCriticalSection(&someCriticalSection);
-  // +1 for the character we're about to add
-  // +1 for the null terminator
-  char *newString = realloc(s, (length+1) * sizeof(char));
-  if (newString) {
-    if (ch == '\0' || ch == '\\') {
-      AddToString('\\'); // escape prefix
-    }
-    newString[length++] = ch;
-    newString[length] = '\0';
-    s = newString;
-  }
-  LeaveCriticalSection(&someCriticalSection);
-}
-\end{lstlisting}
-
-Is it thread safe? Sure---there is a critical section protected by the mutex \texttt{someCriticalSection}. But is is re-entrant? Nope. The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s} that is no longer valid (because it got stomped by the earlier call to \texttt{realloc}).
-
-The GNU C library attempts to document thread-safety of their code here:
-\url{https://www.gnu.org/software/libc/manual/html_node/POSIX-Safety-Concepts.html}.
 
 \subsection*{Functional Programming and Parallelization}
 Interestingly, functional programming languages (by which I do NOT mean procedural programming languages like C) such as Haskell and Scala and so on, lend themselves very nicely to being parallelized. Why? Because a purely functional program has no side effects and they are very easy to parallelize. If a function is impure, its functions signature will indicate so. Thus spake Joel\footnote{``Thus Spake Zarathustra'' is a book by Nietzsche, and this was not a spelling error.}:
@@ -360,31 +299,11 @@ Interestingly, functional programming languages (by which I do NOT mean procedur
 \textit{Without understanding functional programming, you can't invent MapReduce, the algorithm that makes Google so massively scalable. The terms Map and Reduce come from Lisp and functional programming. MapReduce is, in retrospect, obvious to anyone who remembers from their 6.001-equivalent programming class that purely functional programs have no side effects and are thus trivially parallelizable.}~\cite{joel:functional}
 \end{quote}
 
-This assumes of course that there is no data dependency between functions. Obviously, if we need a computation result, then we have to wait. 
+This assumes of course that there is no data dependency between functions. Obviously, if we need a computation result, then we have to wait.  But the key is to write your code like mathematical functions: $f(x, y, z) \rightarrow (a, b, c)$
 
-Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
+Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods or those with no return type. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
 
-\paragraph{C++: the functional version?} {\tt algorithms} has been part of C++ since C++11. It provides algorithm implementations as part of the standard library. Some of the algorithms are standard: {\tt sort}, {\tt reverse}, {\tt is\_heap}\ldots
-
-What's new in C++17, though, is parallel and vectorized {\tt
-algorithms}. You can specify an execution policy for these algorithms
-({\tt sequenced\_policy}, {\tt parallel\_policy}, or {\tt
-parallel\_unsequenced\_policy}). The compiler and runtime make it
-so. (Or, they don't. As of this writing in 2018, mainstream C++
-compilers don't support C++17 yet).
-
-As part of this process, C++17 also introduced some new algorithms, such as
-{\tt for\_each\_n}, {\tt exclusive\_scan}, and {\tt reduce}.
-If you know functional programming (e.g. Haskell), these are also known as
-{\tt map}, {\tt scanl}, and {\tt fold1/foldl1}.
-
-Rainer Grimm writes more about these in blogposts from February and May of 2017:
-\cite{grimm17:_paral_algor_stand_templ_librar} \cite{grimm17:_c}.
-
-Side effects are not functional and sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's what we want. We don't want to call print reentrantly; interleaved print calls would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
-
-The notion of purity is related to side effects. A function is pure if it has no side effects and if its outputs depend solely on its inputs. (The use of the word pure shouldn't imply any sort of moral judgement on the code). Pure functions should also be implemented to be thread-safe and reentrant.
-
+Rust does encourage the some things that help point you towards functional-style programming. For one thing, it discourages mutability of data, which points you more towards making the arguments to functions be either immutable references (and therefore not changed by the function they are passed to) or ownership transfer (meaning no concurrency). Internal mutability is a thing, but is somewhat discouraged.
 
 \input{bibliography.tex}
 
