@@ -28,8 +28,9 @@ prereqs:
 	@pdflatex -interaction=batchmode synchronization.tex > /dev/null;
 
 clean:
-	rm -f *.aux *.log *.bbl *.blg *.brf *.cb *.ind *.idx *.ilg *.pdfsync   \
-	*.inx *.ps *.dvi *.toc *.out *.nav *.snm *.d *.bak _region* *.vrb *.fls *.fdb_latexmk
+	rm -f *~ *.aux *.log *.bbl *.blg *.brf *.cb *.ind *.idx *.ilg *.pdfsync   \
+		*.inx *.ps *.dvi *.toc *.out *.nav *.snm *.d *.bak _region* *.vrb *.fls *.fdb_latexmk \
+		makefileDependencies/*
 	rm -f $(LECTURE_NOTES) $(SLIDES)
 	rm -rf auto
 
