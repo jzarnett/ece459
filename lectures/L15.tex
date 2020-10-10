@@ -4,205 +4,64 @@
 
 \lecture{15 --- Memory Consistency}{\term}{Patrick Lam and Jeff Zarnett}
 
-\section*{OpenMP Memory Model, Its Pitfalls, and How to Mitigate Them}
-OpenMP uses a {\bf relaxed-consistency, shared-memory} model. This almost certainly doesn't 
-do what you want. Here are its properties:
-
-\begin{itemize}
-    \item All threads share a single store called
-      \emph{memory}---this store may not actually represent RAM.
-    \item Each thread can have its own {\it temporary} view of memory.
-    \item A thread's {\it temporary} view of memory is not required to be
-      consistent with memory.
-\end{itemize}
-
-We'll talk more about memory models later. Now we're going to talk about 
-the OpenMP model and why it's a problem.
-
-\paragraph{Memory Model Pitfall.} Consider this code.
-
-  \begin{lstlisting}[language=C]
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1) // [1]                atomic(a = 1) // [3]
-atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{lstlisting}
-
-Does this code actually prevent simultaneous execution?
-Let's reason about possible states.
-
-  \begin{center}
-  \begin{tabular}{r r r r | r r}
-    \multicolumn{4}{c|}{Order} & t1 tmp & t2 tmp\\
-    \hline
-    1 & 2 & 3 & 4 & 0 & 1\\
-    1 & 3 & 2 & 4 & 1 & 1\\
-    1 & 3 & 4 & 2 & 1 & 1\\
-    3 & 4 & 1 & 2 & 1 & 0\\
-    3 & 1 & 2 & 4 & 1 & 1\\
-    3 & 1 & 4 & 2 & 1 & 1\\
-  \end{tabular}
-  \end{center}
-
-Looks like it (at least intuitively).
-
-Sorry! With OpenMP's memory model, no guarantees:
-the update from one thread may not be seen by the other.
-
-\paragraph{Restoring Sanity with Flush.} We do rely on 
-shared memory working ``properly'', but that's expensive.
-So OpenMP provides the {\bf flush} directive.
-
-  \begin{center}
-    {\tt \#pragma omp }{\bf flush} {\it[(list)]}
-  \end{center}
-
-This directive makes the thread's temporary view of memory consistent with main
-      memory; it:
-\begin{itemize}
-    \item enforces an order on the memory operations of the variables.
-\end{itemize}
-
-The variables in the list are called the {\it flush-set}. 
-If you give no variables, the compiler will determine them for you.
-
-Enforcing an order on the memory operations means:
-\begin{itemize}
-    \item All read/write operations on the {\it flush-set} which happen
-      before the {\bf flush} complete before the flush executes.
-    \item All read/write operations on the {\it flush-set} which happen
-      after the {\bf flush} complete after the flush executes.
-    \item Flushes with overlapping {\it flush-sets} can not be reordered.
-\end{itemize}
-
-To show a consistent value for a variable between two threads, OpenMP
-must run statements in this order:
-
-  \begin{enumerate}
-    \item $t_1$ writes the value to $v$;
-    \item $t_1$ flushes $v$; 
-    \item $t_2$ flushes $v$ also;
-    \item $t_2$ reads the consistent value from $v$.
-  \end{enumerate}
-
-Let's revise the example again.
-  \begin{lstlisting}[language=C]
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1)                       atomic(a = 1)
-flush(b)                            flush(a)
-flush(a)                            flush(b)
-atomic(tmp = a)                     atomic(tmp = b)
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{lstlisting}
-
-OK. Will this now prevent simultaneous access?
-
-Well, no.
-
-The compiler can reorder the {\tt flush(b)} in thread 1 or {\tt
-  flush(a)} in thread 2. If {\tt flush(b)} gets reordered to after the
-protected section, we will not get our intended operation.
-
-\paragraph{Correct Example.} We have to provide a list of variables
-to {\tt flush} to prevent re-ordering:
-  \begin{lstlisting}[language=C]
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1)                       atomic(a = 1)
-flush(a, b)                         flush(a, b)
-atomic(tmp = a)                     atomic(tmp = b)
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{lstlisting}
-
-\paragraph{Where There Is Implicit Flush:}
-  \begin{itemize}[noitemsep]
-    \item {\tt omp barrier}
-    \item at entry to, and exit from, {\bf omp critical};
-    \item at exit from {\bf omp parallel}; 
-    \item at exit from {\bf omp for};
-    \item at exit from {\bf omp sections};
-    \item at exit from {\bf omp single}.
-  \end{itemize}
-
-\paragraph{Where There's No Implicit Flush:}
-  \begin{itemize}[noitemsep]
-    \item at entry to {\bf for};
-    \item at entry to, or exit from, {\bf master};
-    \item at entry to {\bf sections};
-    \item at entry to {\bf single};
-    \item at exit from {\bf for}, {\bf single} or {\bf sections} with a {\bf nowait}
-      \begin{itemize}
-        \item {\bf nowait} removes implicit flush along with the implicit barrier
-      \end{itemize}
-  \end{itemize}
-
-This is not true for OpenMP versions before 2.5, so be careful.
-
-\paragraph{Final thoughts on flush.} We've seen that it's very difficult to use flush properly. Really, you should be using mutexes or other synchronization instead of flush~\cite{flush}, because you'll probably just get it wrong. But now you know what flush means.
-
-
-\section*{Why Your Code is Slow}
-OpenMP code too slow? Avoid these pitfalls:
-  \begin{enumerate}
-    \item Unnecessary flush directives.
-    \item Using critical sections or locks instead of atomic.
-    \item Unnecessary concurrent-memory-writing protection:
-      \begin{itemize}
-        \item No need to protect local thread variables.
-        \item No need to protect if only accessed in {\bf single} or
-          {\bf master}.
-      \end{itemize}
-    \item Too much work in a critical section.
-    \item Too many entries into critical sections.
-  \end{enumerate}
-
-\paragraph{Example: Too Many Entries into Critical Sections.}~
-
-  \begin{lstlisting}[language=C]
-#pragma omp parallel for
-for (i = 0; i < N; ++i) { 
-    #pragma omp critical
-    {
-        if (arr[i] > max) max = arr[i];
-    } 
-}
-  \end{lstlisting}
-
-would be better as:
-
-  \begin{lstlisting}[language=C]
-#pragma omp parallel for
-for (i = 0 ; i < N; ++i) { 
-    #pragma omp flush(max)
-    if (arr[i] > max) {
-          #pragma omp critical
-          {
-                if (arr[i] > max) max = arr[i];
-          }
-    }
-}
-\end{lstlisting}
-
-
-
 \section*{Memory Consistency, Memory Barriers, and Reordering}
-Now we'll talk a bit more about memory consistency, memory barriers
-and reordering in general. We'll start with instruction reordering by
-the CPU and move on to reordering initiated by the compiler.  I'll
-also touch on some CPU instructions for atomic operations.
+Previously, when atomics were introduced, we said to use sequential consistency without much detail and without discussing the other options. Now it's time to learn about it. We'll cover both instruction reordering by
+the CPU and reordering initiated by the compiler.  
 
-\paragraph{Memory Consistency.} In a sequential program, you expect
+\paragraph{Compiler Reordering.} When asked to compile code, the compiler does not take every statement that you provide and translate it into a (set of) machine language instruction(s). The compiler can change the order of certain events. The compiler will be aware of things like load-delay slots and can swap the order of instructions to make use of those slots more effectively. In the (silly) example on the left there might be a stall while we wait for \texttt{x} to be available before we can send it in to the \texttt{println!} macro; on the right we moved two unrelated instructions into the delay slots. So that feels like free performance! 
+
+\begin{multicols}{2}
+\begin{lstlisting}[language=Rust]
+let x = thing.y;
+println!("x = {}", x);
+z = z + 1;
+a = b + c;
+\end{lstlisting}
+\columnbreak
+\begin{lstlisting}[language=Rust]
+let x = thing.y;
+z = z + 1;
+a = b + c;
+println!("x = {}", x);
+\end{lstlisting}
+\end{multicols}
+
+We'll talk about other compiler optimizations soon, but we don't want to get away from the topic of reordering. 
+
+\paragraph{Hardware Reordering.} In addition to the compiler reordering, the hardware can do some reordering of its own. A sequence of instructions is provided to the CPU, and it can decide it would rather do them in an order it finds more convenient. That is fairly straightforward.
+
+There is another possibility we have to consider, and it is updates from other threads. When a thread is doing a check on a variable, such as a quit condition (exit the loop if \texttt{quit} is now true), how do we know if we have the most up-to-date value for \texttt{quit}? We know from the discussion of cache coherence that the cache will be updated via snooping, but we need a bit more reassurance that the value we're seeing is the latest one. How could we get the wrong order? If the read by thread $A$ is reordered by the hardware so that it's after the write by thread $B$, then we'll see the ``wrong'' answer. 
+
+Different hardware provides different guarantees about what reorderings it won't do. Old 386 CPUs didn't do any; x86 usually won't (except where there are some specific violations of that; but ARM has weak ordering except where there are data dependencies~\cite{weakvsstrong}. ARM is getting pretty popular, so we do have to care about hardware reorderings, unfortunately.
+
+\paragraph{I have a plan, but it's a bad one.}
+
+There are some reorderings where we are easily able to conclude that it is okay and safe to do, but not every reordering is. In an obvious case, if the lines of code are \texttt{ z *= 2 } and \texttt {z += 1} then neither the compiler nor hardware will reorder those because it knows that it would change the outcome and produce the wrong answer. There's a clear data dependency there, so the reordering won't happen. There are a couple of hardware architectures where that isn't respected, but we'll ignore them for now.
+
+But what if there's no such clear dependency? Consider something like this pseudocode:
+
+\begin{multicols}{2}
+\begin{verbatim}
+lock mutex for point
+point.x = 42;
+point.y = -42;
+point.z = 0;
+unlock mutex for point
+\end{verbatim}
+\columnbreak
+\begin{verbatim}
+lock mutex for point
+point.x = 42;
+point.y = -42;
+unlock mutex for point
+point.z = 0;
+\end{verbatim}
+\end{multicols}
+
+Wait a minute --- that's not an okay reordering, because now an element of the point is being accessed outside of the critical section and we don't want that. It's a reordering, alright, in that the store of \texttt{point.z} has been moved to after the store of state of the mutex (unlock does, after all, change its state). What we need is a way to tell the compiler (and hardware) that this is not okay.
+
+
+\paragraph{Sequential Consistency.} In a sequential program, you expect
 things to happen in the order that you wrote them. So, consider this code,
 where variables are initialized to 0:
 
@@ -214,81 +73,28 @@ where variables are initialized to 0:
 \end{center}
 We would expect that we would always query the memory and get a state
 where some subset of these partially-ordered statements would have executed.
-This is the \emph{sequentially consistent} memory model.
+This is the \emph{sequentially consistent} memory model. A simple description: (1) each thread induces an \emph{execution trace}; and (2) always, the program has executed some prefix of each thread's trace. Or, alternatively:
 
 \begin{quote}
 ``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
 \end{quote}
 
-{\sf What are the possible values for the variables?}\\[3em]
 
-Another view of sequential consistency:
-\begin{itemize}
-      \item each thread induces an \emph{execution trace}.
-      \item always, the program has executed some prefix of each thread's
-        trace.
-\end{itemize}
+It turns out that sequential consistency is expensive to implement.
+Think how much coordination is needed to get a few people to agree on where to go for lunch; now try to get a group of people to agree on what order things happened in. Right. Now imagine it's a disagreement between threads so they don't have the ability to negotiate. So most systems actually implement weaker memory models, such that both {\tt r1} and {\tt r2} might end up unchanged.
 
-
-It turns out that sequential consistency is too expensive to implement.
-(Think how much coordination is needed to get a few people to agree on where to go for lunch; now try to get a group of people to agree on what order things happened in. Right. Now imagine it's a disagreement between threads so they don't have the ability to negotiate.) So most systems actually implement weaker memory models,
-such that both {\tt r1} and {\tt r2} might end up unchanged. Recall the 
-{\bf flush} example from last time.
-
-\paragraph{Reordering.} Compilers and processors may reorder 
-non-interfering memory operations within a thread. For instance, the
-two statements in {\tt T1} appear to be independent, so it's OK to
-execute them---or, equivalently, to publish their results to other
-threads---in either order. Reordering is one of the major tools that
-compilers use to speed up code.
-
-When is reordering a problem? Spin locks, as we'll see below.
+Allowing some reorderings could potentially significantly speed up the program! If left to its own devices, the compiler could reorder anything, but we need to tell it what is allowed and what is disallowed. 
 
 \subsection*{Memory Consistency Models}
 
-Here are some flavours of memory consistency models:
+Rust uses the same memory consistency models as \CPP. The Rustonomicon (book of names of Rust\footnote{Not to be confused with the Necronomicon...}) says pretty directly that this is not because the model is easy to understand, but because it's the best attempt we have at modelling atomics because it is a very difficult subject. The idea behind the memory model is to have a good way of talking about the \textit{causality} of the program. While causality definitely sounds like something Commander Data would talk about on the \textit{Enterprise}, in this case it means establishing relationships between events such as ``event A happens before event B''. 
 
-\begin{itemize}
-\item Sequential consistency: no reordering of loads/stores.
-\item Sequential consistency for datarace-free programs: if your program
-  has no data races, then sequential consistency.
-\item Relaxed consistency (only some types of reorderings):
-\begin{itemize}
-        \item Loads can be reordered after loads/stores; and
-        \item Stores can be reordered after loads/stores.
-\end{itemize}
-\item     Weak consistency: any reordering is possible.
-\end{itemize}
+You will recall from the introduction to the subject of concurrency that we frequently sought the same thing in our program at a higher level, when we'd say that we can use a semaphore to ensure that one thing happens before another. The idea is the same, but our toolkit is a little bit different: it's the \emph{memory barrier} or
+\emph{fence}. 
 
-In any case, {\bf reorderings} only allowed if they look safe in
-current context (i.e. they reorder independent memory addresses).
-That can still be problematic, though.
-
-\paragraph{Compilers and reordering.}
-When it can prove that a reordering is safe with respect to the
-programming language semantics, the {\bf compiler} may reorder instructions (so it's not just the hardware).
-
-\paragraph{Reordering example.} Say we want thread 1 to print a value set in thread 2.
-  \begin{lstlisting}[language=C]
-                            f = 0
-
-/* thread 1 */                          /* thread 2 */
-while (f == 0) /* spin */;              x = 42;
-printf("%d", x);                        f = 1;
-  \end{lstlisting}
-
-If thread 2 reorders its instructions, will we get our intended
-result? \emph{No!}
-
-\subsection*{Memory Barriers} We previously talked about OpenMP barriers: 
-at a {\tt \#pragma omp barrier}, all threads pause, until all of the
-threads reach the barrier. Lots of OpenMP directives come with implicit barriers
-unless you add {\tt nowait}.
-
-A rather different type of barrier is a \emph{memory barrier} or
-\emph{fence}. This type of barrier prevents reordering, or,
+This type of barrier prevents reordering, or,
 equivalently, ensures that memory operations become visible in the
-right order. A memory barrier ensures that no access occuring after
+right order. A memory barrier ensures that no access occurring after
 the barrier becomes visible to the system, or takes effect, until
 after all accesses before the barrier become visible.
 
@@ -309,7 +115,6 @@ Note, however, that while an {\tt sfence} makes the stores visible,
 another CPU will have to execute an {\tt lfence} or {\tt mfence} to
 read the stores in the right order.
 
-\pagebreak
 Consider the example again:
   \begin{lstlisting}[language=C]
                          f = 0
@@ -321,139 +126,48 @@ printf("%d", x);                   f = 1;
   \end{lstlisting}
 This now prevents reordering, and we get the expected result.
 
-You can use the {\tt mfence} instruction to implement \emph{acquire
-  barriers} and \emph{release barriers}.  An acquire barrier ensures
-that memory operations after a thread obtains the mutex doesn't become
-visible until after the thread actually obtains the mutex.
-The release barrier similarly ensures that accesses before the mutex
-release don't get reordered to after the mutex release. Note that
-it is safe to reorder accesses after the mutex release and put them
-before the release.
+Memory fences are costly in performance. It makes sense when we think about it, since it (1) prevents re-orderings that would otherwise speed up the program; and (2) can force a thread to wait for another one. Sequential consistency will necessarily result in memory fences being generated to produce the correct results. 
 
-\paragraph{Preventing Memory Reordering in Programs: Compiler Barriers.}
-First: Don't use volatile in C/C++ on variables~\cite{so:volatile}. Remember that the volatile keyword is supposed to tell the compiler not to put the value in a register. That does NOT make it a synchronization construct. If you use the correct synchronization primitives, you will get the behaviour you want. However, you can prevent reordering using compiler-specific calls.
+\subsection*{Other Orderings}
+The \CPP~standard includes a few other orderings that don't appear in this section because they aren't in Rust. But we'll cover Acquire-Release and Relaxed briefly. Neither comes with a recommendation to use it, but if you can prove that your use of it is correct, then you can do it. It may give a slight performance edge 
 
-\begin{itemize}
-  \item Microsoft Visual Studio C++ Compiler:
-  \begin{lstlisting}[language=C]
-_ReadWriteBarrier()
-  \end{lstlisting}
-  \item Intel Compiler:
-  \begin{lstlisting}[language=C]
-    __memory_barrier()
-  \end{lstlisting}
-  \item GNU Compiler:
-  \begin{lstlisting}[language=C]
-__asm__ __volatile__ ("" ::: "memory");
-  \end{lstlisting}
-\end{itemize}
+Acquire means that accesses (reads or writes) after the acquire operation can't move to be before the acquire. Release means accesses before the release operation can't move to be after the release. They make a good team: by placing acquire at the start of a section and release after, anything in there is ``trapped'' and can't get out.
 
-The compiler also shouldn't reorder across e.g. Pthreads mutex calls.
+That makes them the perfect combination for a critical section: acquire prevents things from moving from inside the critical section to before the critical section; release prevents things from inside from moving to after the critical section. Nice! 
 
-\paragraph{Aside: {\tt gcc} Inline Assembly.}
-Just as an aside, here's {\tt gcc}'s inline assembly format
+Here's an example of acquire and release, as taken from the Rustonomicon's page about atomics ( \url{https://doc.rust-lang.org/nomicon/atomics.html}. It's implementing a spinlock: 
 
-  \begin{lstlisting}[language=C]
-__asm__ ( assembler template 
-       : output operands                  /* optional */
-       : input operands                   /* optional */
-       : list of clobbered registers      /* optional */
-       );
-  \end{lstlisting}
+\begin{lstlisting}[language=Rust]
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 
-Note that we've just seen {\bf \_\_volatile\_\_} with  \_\_asm\_\_. This isn't the same as the normal C volatile. It means:
-\begin{itemize}
-    \item The compiler may not reorder this assembly code and put it somewhere
-      else in the program.
-\end{itemize}
+fn main() {
+    let lock = Arc::new(AtomicBool::new(false)); // value answers "am I locked?"
 
-\paragraph{Back to Memory Reordering in Programs.}
-    Fortunately, an OpenMP {\bf flush} (or, better yet, mutexes) also preserve the order of variable accesses.
-    That is, it prevents reordering from both the compiler and hardware.
-    For GNU, flush is available as
-      {\tt \_\_sync\_synchronize();}
+    // ... distribute lock to threads somehow ...
 
-\paragraph{{\tt volatile}.} This qualifier ensures that the
-code does an actual read from a variable every time it asks for one
-(i.e. the compiler can't optimize away the read). It does not prevent
-re-ordering nor does it protect against races.
+    // Try to acquire the lock by setting it to true
+    while lock.compare_and_swap(false, true, Ordering::Acquire) { }
+    // broke out of the loop, so we successfully acquired the lock!
 
-{\bf Note:} proper use of memory fences makes {\tt volatile} not very
-useful (again, {\tt volatile} is not meant to help with threading, and
-will have a different behaviour for threading on different
-compilers/hardware).
+    // ... scary data accesses ...
 
+    // ok we're done, release the lock
+    lock.store(false, Ordering::Release);
+}
+\end{lstlisting}
 
-\section*{C/C++11 Memory Model}
+The acquire and release semantics keep all the things that should be in the critical section inside it.
 
-We have talked about memory models in the context of OpenMP. Let's
-talk about the core languages now---that is, C and C++~\cite{quora:cppthr, cppconcurrency}---when
-not using OpenMP.
+And then there is relaxed. Relaxed really does mean the compiler will take it easy, and all reorderings are possible. Even ones that you might not want! The Rustonomicon suggests one possible valid use for that scenario is a counter that simply adds and you aren't using the counter to synchronize any action. Something like atomically counting the requests to each resource might be suitable. You can report the counters as metrics and it's not super important that request 9591's increment of the counter occurs before that of request 9598. It's all the same in the end...
 
-What outputs are possible from this example?
+\subsection*{Matters, Order Does}
+There have been a few reminders to use sequential consistency because atomics are hard to reason about and it's easy to get it wrong. But does this happen in reality? Yes, and here's an example of it in Rust~\cite{weakbug}.
 
-\begin{tabular}{ll}
-      \begin{minipage}{.2\textwidth}
-        Thread 1:
-        \begin{lstlisting}[language=C]
-  foo = 7;
-  bar = 42;
-        \end{lstlisting}
-      \end{minipage} &
-      \begin{minipage}{.4\textwidth}
-        Thread 2:
-        \begin{lstlisting}[language=C]
-  printf("%d\n", foo);
-  printf("%d\n", bar);
-        \end{lstlisting}
-      \end{minipage}
-\end{tabular}
+The observed behaviour was an inconsistent state being reported by an assertion; when looking at the registers the registers contained garbage even though it was just after a read that should have loaded it in. That's hard to notice and difficult to debug as well, because running in debug mode might prevent the reordering in the first place 
 
-You might think ``undefined'', but actually it's worse than that. The 
-C11 and C++11 language definitions don't even say what a thread is.
-Of course, there is Pthreads, but that is a library, not the language itself.
-So you can't even ask this question when talking about pre-C11/C++11 versions
-of C and C++. Well. Okay. You can ask, but the question makes no sense. Sort of like
-putting your hand up in class and saying ``Where did you bury your oranges?''.
-It's a syntactically valid question and it describes something that's possible,
-but it still makes no sense.
-
-The older standards made no reference to any kind of CPU, memory architecture, cache
-strategy, or anything like that. Which on the one hand is nice and general, but on the other hand, leads to problems. The ``abstract machine'' that the C and C++ standards refer to is inherently single threaded, making it actually impossible to write a portable multithreaded C or C++ program~\cite{quora:cppthr}. The part that's impossible is that word ``portable'' -- people write multithreaded C and C++ programs all the time (in this class, even) but they have system specific code and implementation-defined behaviour. Open up a pthreads library or some equivalent and sure enough, you will find something architecture specific in there.
-
-C++11 (and C11) have improved the situation, though. There is actually
-a memory model (based on an abstract machine) and threading primitives
-such as mutexes, atomics, and memory barriers---the concepts that we
-have seen in this course. Now there are rules! Yes. We like rules. Okay. I [JZ], at least, like rules. C++11 defines how a compiler can generate code that accesses memory even when there is concurrency. There are also standard mutex operations and atomics and barriers and all those lovely things.
-
-Now, we can ask the question about the behaviour of the above example.
-It does have undefined behaviour, since there is contended access to
-the variables {\tt foo} and {\tt bar}. How can we fix that?
-
-\paragraph{Atomics.}
-A good exam question: if {\tt foo} is atomic, what are the possible outputs? 
-    
-    \begin{tabular}{ll}
-      \begin{minipage}{.25\textwidth}
-        Thread 1:
-        \begin{lstlisting}[language=C]
-  foo.store(7);
-  bar.store(42);
-        \end{lstlisting}
-      \end{minipage} &
-      \begin{minipage}{.45\textwidth}
-        Thread 2:
-        \begin{lstlisting}[language=C]
-  printf("%d\n", foo.load());
-  printf("%d\n", bar.load());
-        \end{lstlisting}
-      \end{minipage}
-    \end{tabular}
-
-Alright, we have some defined behaviour now.  Honestly, it depends how these things are scheduled, but the answer is one of the following set: \{0/0, 7/42, 7/0,  0/42\}. The answer depends on how they are interleaved. But at least we get some certainty that the output will be one of those four things and there's no chance of garbage because the print takes place during an assignment operation. 
-
-We probably still don't like this because we don't have mutual exclusion here and we can get several different answers, some of which are probably ``wrong'' (for whatever definition of a correct answer is), but at least our set of potential wrong answers is smaller. So that's a start. Compilers have to follow the new rules in generating code, so their output will behave as if the architecture followed the standard memory model. That's something. 
-
+You can actually look at the fix applied to the lock-free queue at \url{https://github.com/crossbeam-rs/crossbeam/pull/98/files}. But the short summary is that the load of the \texttt{ready} property needs to have at least Acquire semantics and the store of it should have release.  If we don't do that, we might attempt to park the thread early 
 
 \input{bibliography.tex}
 
