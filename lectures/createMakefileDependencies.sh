@@ -10,7 +10,7 @@ do
                       | sed -e 's@/@ @g' -e 's/[^a-zA-Z0-9 -]//g' -e 's/  / /g' -e 's/ /_/g')" )
         echo "$lectureNote.pdf: $lectureNumber.tex
 	rm -f \$@
-	latexmk -xelatex -jobname=$lectureNote \$<" > ./makefileDependencies/$lectureNote.d
+	latexmk -lualatex -jobname=$lectureNote \$<" > ./makefileDependencies/$lectureNote.d
 done
 
 for slideNumber in $(ls *-slides.tex | sed -e 's/-.*//')
