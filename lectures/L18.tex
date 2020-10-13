@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{18 --- Data \& Task Parallelism}{\term}{Patrick Lam}
+\lecture{18 --- Mostly Data Parallelism}{\term}{Patrick Lam}
 
 
 \section*{Data and Task Parallelism}
@@ -27,17 +27,17 @@ We'll continue by looking at a number of parallelization patterns,
 examples of how to apply them, and situations where they might apply.
 
 \subsection*{You're not using those bytes, are you?}
-So as a first idea we might think of saving some space by considering the range of, for example, an integer. An \texttt{int} is likely to be 4 bytes, although you have to remember that this is system-specific and the C standard requires only ``at least two''. But let us assume for the sake of an example that an integer is 4 bytes. If we have an integer array of capacity $N$ that uses $N \times 4$ bytes and if we want to do something like increment each element, we iterate over the array and increment it, which is a read of 4 and write of 4. Now, if we could live with limiting our maximum value from 2,147,483,647 (signed, or 4,294,967,295 unsigned) to 32,767  (signed, or 65,535 unsigned), we could reduce in half the amount of space needed for this array and make operations like incrementing take half as much time!
+So as a first idea we might think of saving some space by considering the range of, for example, an integer. An \texttt{i32} is 4 bytes. (In C, \texttt{int} is usually 4, though only guaranteed to be at least 2). If we have an integer array of capacity $N$ that uses $N \times 4$ bytes and if we want to do something like increment each element, we iterate over the array and increment it, which is a read of 4 and write of 4. Now, if we could live with limiting our maximum value from 2,147,483,647 (signed, or 4,294,967,295 unsigned) to 32,767  (signed, or 65,535 unsigned), we could reduce in half the amount of space needed for this array and make operations like incrementing take half as much time!
 
-Aside from the obvious tradeoff of limiting the maximum value, the other hidden cost is that of course things that were simple like \texttt{array[i]++} is more complicated. What do we do now?
+Aside from the obvious tradeoff of limiting the maximum value, the other hidden cost is that of course things that were simple like \texttt{array[i] += 1} is more complicated. What do we do now?
 
-Instead of just \texttt{++} which is \texttt{+=1} we need to calculate the new number to add. The interesting part is about how to represent the upper portion of the number. For just adding 1 it might be simple, and we can manually break out our calculators or draw a bit vector or think in hexadecimal about how to convert a number if it's more difficult. But you wouldn't -- you would probably just use bit shift to calculate it. But one must be careful with that as well: the bit shift does sign extension which sometimes you don't want (or does unexpected things), and if we have to bit shift on every iteration of the loop, it's not clear that this is better than two assignment statements...
+Instead of \texttt{+=1} we need to calculate the new number to add. The interesting part is about how to represent the upper portion of the number. For just adding 1 it might be simple, and we can manually break out our calculators or draw a bit vector or think in hexadecimal about how to convert a number if it's more difficult. But you wouldn't---you would probably just use bit shift to calculate it. But one must be careful with that as well: the bit shift does sign extension which sometimes you don't want (or does unexpected things), and if we have to bit shift on every iteration of the loop, it's not clear that this is better than two assignment statements\ldots
 
-Maybe you think this example is silly because of the existence of the \texttt{short} type in C. Which you could certainly use to reduce the size of the array, but then modifying each \texttt{short} in a different instruction defeats the purpose.
+Maybe you think this example is silly because of Rust's \texttt{i8}/C's \texttt{short} types. Which you could certainly use to reduce the size of the array. But then modifying each \texttt{short} in a different instruction defeats the purpose.
 
-But then you know we can also take it a step farther: if it's a 64-bit processor there's no reason why you couldn't modify 8 bytes in a single instruction. The principle is the same, even if the math is a little more complex.
+Aha! We can also take it a step farther: if it's a 64-bit processor there's no reason why you couldn't modify 8 bytes in a single instruction. The principle is the same, even if the math is a little more complex.
 
-What we've got here is a poor-person version of Single Instruction Multiple Data (SIMD), because we have to do our own math in advance and/or do a lot of bit shifting every time we want to use a value... This is a pain. Fortunately, we don't have to...
+What we've got here is a poor person's version of Single Instruction Multiple Data (SIMD) (in NZ-speak, using No. 8 wire to implement SIMD), because we have to do our own math in advance and/or do a lot of bit shifting every time we want to use a value\ldots This is a pain. Fortunately, we don't have to\ldots
 
 \subsection*{Data Parallelism with SIMD}
 The ``typical'' boring standard uniprocessor is Single Instruction Single Data (SISD) but since the mid-1980s we've had more options than that. We'll talk about single-instruction multiple-data (SIMD) later on in
@@ -47,55 +47,57 @@ originated with supercomputers in the 70s. More recently, GPUs; the
 x86 SSE instructions; the SPARC VIS instructions; and the
 Power/PowerPC AltiVec instructions all implement SIMD.
 
-SIMD provides an advantage by using a single control unit to command multiple processing units and therefore the amount of overhead in the instruction stream. This is something that we do quite frequently in the everyday: if I asked someone to erase the board, it's more efficient if I say ``erase these segments of the board'' (and clearly indicate which segments) than if I say ``erase this one'' and when that's done, then say ``erase the that one''... and so on. So we can probably get some performance benefit out of this!
+SIMD provides an advantage by using a single control unit to command multiple processing units and therefore the amount of overhead in the instruction stream. This is something that we do quite frequently in the everyday: if I asked someone to erase the board\footnote{Classrooms. How 2019.}, it's more efficient if I say ``erase these segments of the board'' (and clearly indicate which segments) than if I say ``erase this one'' and when that's done, then say ``erase the that one''\ldots and so on. So we can probably get some performance benefit out of this!
 
 There is the downside, though, that because there's only the one control unit, all the processing units are told to do the same thing. That might not be what you want, so SIMD is not something we can use in every situation. There are also diminishing returns: the more processing units you have, the less likely it is that you can use all of that power effectively (because it will be less likely to have enough identical operations)~\cite{sse}.
 
 \paragraph{Compilation.} Let's look at an example of SIMD instructions when they are compiled.
 
-By default your compiler will assume a particular architecture; which one exactly is dependent on how the compiler was configured. This can be overridden in your compile-time options with the \texttt{march} parameter. Default options are usually pretty generic, since your CPU will reject an instruction it doesn't know. The lowest possible baseline is likely the 386 instruction set (this CPU came out in 1985!). But we can clearly see a difference in the code compiled for an architecture without SSE and then with:
+By default your compiler will assume a particular target architecture; which one exactly is dependent on what the Rust team decided some time in the past. Choosing a too-new architecture will cause your code to fail on older machines. The choice of architecture can be overridden in your compile-time options with the \texttt{target} parameter. Let's look at some SSE code to add two slides and put the result in a third slice:
 
-\begin{lstlisting}[language=C]
-void vadd(double * restrict a, double * restrict b, int count) {
-  for (int i = 0; i < count; i++)
-    a[i] += b[i];
-}
-\end{lstlisting}
+\begin{lstlisting}[language=Rust]
+pub fn foo(a: &[f64], b: &[f64], c: &mut [f64]) {
+    for ((a, b), c) in a.iter().zip(b).zip(c) {
+        *c = *a + *b;
+    }
+}\end{lstlisting}
 
-Compiling this without SIMD on a 32-bit x86 ({\tt gcc -m32 -march=i386 -S}) might give this:
+%% Compiling this without SIMD on a 32-bit x86 ({\tt --target=i586-unknown-linux-gnu}, decidedly not the default) might give this core loop contents:
+%% \begin{verbatim}
+%%   fld     qword ptr [ecx]
+%%   fld     qword ptr [edx]
+%%   faddp   st(1), st
+%%   fstp    qword ptr [eax]
+%% \end{verbatim}
+
+We can compile with \texttt{rustc} defaults
+and get something like this as core loop contents:
 \begin{verbatim}
-loop:
-  fldl  (%edx)
-  faddl (%ecx)
-  fstpl (%edx)
-  addl  8, %edx
-  addl  8, %ecx
-  addl  1, %esi
-  cmp   %eax, %esi
-  jle   loop
+  movsd   xmm0, qword ptr [rcx]
+  addsd   xmm0, qword ptr [rdx]
+  movsd   qword ptr [rax], xmm0
 \end{verbatim}
-
-We can instead compile to SIMD instructions ({\tt gcc -m32 -march=prescott -mfpmath=sse})
-and get something like this:
+This uses the SSE\footnote{You can also compile without SIMD using \texttt{--target=i586-unknown-linux-gnu} and see the stack-based x87 instructions.} register \texttt{xmm0} and SSE2 instructions \texttt{movsd} and
+\texttt{addsd}; the \texttt{sd} suffix denotes scalar double instructions, applying
+only to the first 64 bits of the 128-bit \texttt{xmm0} register---this is a literal
+translation of the code. If you additionally specify \texttt{-O}, the compiler generates a number of variants, including this middle one:
 \begin{verbatim}
-loop:
-  movupd (%edx),%xmm0
-  movupd (%ecx),%xmm1
-  addpd  %xmm1,%xmm0
-  movpd  %xmm0,(%edx)
-  addl   16,%edx
-  addl   16,%ecx
-  addl   2,%esi
-  cmp    %eax,%esi
-  jle    loop
+  movupd  xmm0, xmmword ptr [rdi + 8*rcx]
+  movupd  xmm1, xmmword ptr [rdi + 8*rcx + 16]
+  movupd  xmm2, xmmword ptr [rdx + 8*rcx]
+  addpd   xmm2, xmm0
+  movupd  xmm0, xmmword ptr [rdx + 8*rcx + 16]
+  addpd   xmm0, xmm1
+  movupd  xmmword ptr [r8 + 8*rcx], xmm2
+  movupd  xmmword ptr [r8 + 8*rcx + 16], xmm0
 \end{verbatim}
 The \emph{packed} operations ({\tt p}) operate on multiple data
-elements at a time (what kind of parallelism is this?)
-The implication is that the loop only needs to loop half as many times.
-Also, the instructions themselves are more efficient, because they're
-not stack-based x87 instructions.
+elements at a time (what kind of parallelism is this?)  The
+implication is that the loop only needs to loop half as many times.
+The compiler includes more variants, not shown, to handle cases where
+there are odd numbers of elements in the slices.
 
-So this is a piece of good news, for once: there's automatic use of the SSE instructions if your compiler knows the target machine architecture supports them. However, we can also explicitly invoke these instructions, although we won't do a lot of that. Instead, we'll learn more about how they work and then do some measures as to whether they really do. 
+So this is a piece of good news, for once: there's automatic use of the SSE instructions if your compiler knows the target machine architecture supports them. However, we can also explicitly invoke these instructions, or use libraries (\texttt{faster}, \texttt{simdeez}), although we won't do that much. Instead, we'll learn more about how they work and then do some measures as to whether they really do. 
 
 SIMD is different from the other types of parallelization we're
 looking at, since there aren't multiple threads working at once.
@@ -105,21 +107,28 @@ parallelized; multicore chips can do both, achieving high throughput.
 SIMD instructions also work well on small data sets, where thread startup
 cost is too high, while registers are just there to use.
 
-Data alignment, however, is an issue. According to~\cite{sse}: ``Data must be 16-byte aligned when loading to and storing from the 128-bit XMM registers used by SSE/SSE2/SSE3/SSSE3. This must be done to avoid severe performance penalties.''. That's a pretty harsh restriction. If you've heard me talk about the dangers of unaligned data before, I usually give you something that looks like this as an example:
+Data alignment, however, can be an issue. According to~\cite{sse}: ``Data must be 16-byte aligned when loading to and storing from the 128-bit XMM registers used by SSE/SSE2/SSE3/SSSE3. This must be done to avoid severe performance penalties.''. That's a pretty harsh restriction. SSE4.2 lifts it, if you know your machine is new enough.
 
-\begin{lstlisting}[language=C]
-typedef struct {
-  bool marked;
-  int w;
-  int x;
-  int y;
-  int z;
-} position;
-\end{lstlisting}
+But in any case, Rust will generally align primitives to their sizes. Under the default representation, Rust promises nothing else about alignment. You can use the \texttt{repr(packed(N)} or \texttt{repr(align(N)} directives to express constraints on alignment, and you can specify the C representation, which allows you more control over data layout.
 
-This potentially results in the integer values being unaligned if the boolean type is of size 1. But now you might be in trouble even if you deleted that boolean type out of the structure because your \texttt{w} parameter might not be 16-byte aligned even if it's 4-byte aligned. 
+%% This is not all quite true for Rust.
+%% If you've heard me talk about the dangers of unaligned data before, I usually give you something that looks like this as an example.
+%% \begin{lstlisting}[language=Rust]
+%% #[repr(C)]
+%% struct Position {
+%%   marked: bool,
+%%   w: i32,
+%%   x: i32,
+%%   y: i32,
+%%   z: i32
+%% }
+%% \end{lstlisting}
+%% First of all, if you use the default representation (i.e. omit \texttt{repr}), then Rust makes no guarantees about the representation except for meeting any \texttt{align} or \texttt{packed} modifiers.
 
-Alignment headaches can be reduced by using the SSE specific types (and there are some) as the compiler will automatically see to it that the memory is allocated in accordance with this requirement. But then we're sort of back to packing our larger types ourselves, or at least writing them as a smaller type array and telling the compiler to pretend it's now a 128-bit type.
+%% Now, if you use the \texttt{C} representation, Rust publishes an algorithm for determining the layout, again respecting modifiers. This algorithm potentially results in the integer values being unaligned if the boolean type is of size 1. You might be in trouble even if you deleted that boolean type out of the structure because your \texttt{w} parameter might not be 16-byte aligned even if it's 4-byte aligned.
+%% %% Rust aligns primitives to their sizes, except for \texttt{u64} and \texttt{f64} on x86, which are only aligned to 4 bytes. However, you can also specify a \texttt{repr} of \texttt{C, packed(N)} or \texttt{C, align(N)} to align to N bytes.
+
+%% Alignment headaches can be reduced by using the SSE specific types (and there are some) as the compiler will automatically see to it that the memory is allocated in accordance with this requirement. But then we're sort of back to packing our larger types ourselves, or at least writing them as a smaller type array and telling the compiler to pretend it's now a 128-bit type.
 
 In~\cite{lemire18:_multic_simd}, Daniel Lemire argues that vector
 instructions are, in general, a more efficient way to parallelize code
@@ -161,7 +170,7 @@ complexity for insertion from $O(n^2)$ to $O(n \log n)$.
 \url{https://bugzilla.mozilla.org/show_bug.cgi?id=1350770}
 \end{center}
 
-We'll also look at a more involved example of decreasing latency today, Stream VByte~\cite{LEMIRE20181}.
+We'll also look at a more involved example of decreasing latency today, Stream VByte~\cite{LEMIRE20181}, and briefly at parts of its \CPP~implementation.
 Even this example leverages parallelism---it uses vector instructions. But there
 are some sequential improvements, e.g. Stream VByte takes care to be predictable
 for the branch predictor.
@@ -252,7 +261,7 @@ the next 1-byte integer with 3 bytes, etc. Let's say that the input is
 between outputs. The shuffle mask is precomputed and, at
 execution time, read from an array.
 
-The core of the implementation uses three SIMD instructions:
+The core of the (\CPP) implementation uses three SIMD instructions:
 \begin{lstlisting}[language=C]
   uint8_t C = lengthTable[control];
   __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
@@ -277,6 +286,13 @@ We're exploiting SIMD, so this isn't quite strictly single-threaded performance.
 Considering branch prediction and caching issues, though,
 certainly improves single-threaded performance.
 
+\section*{SIMD and Planetary Motion}
+
+At the moment, I'm not planning to cover this, but you can read more about SIMD
+in Rust here:
+\begin{center}
+\url{https://medium.com/@Razican/learning-simd-with-rust-by-finding-planets-b85ccfb724c3}
+\end{center}
 
 \input{bibliography.tex}
 
