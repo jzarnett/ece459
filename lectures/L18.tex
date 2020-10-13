@@ -23,8 +23,8 @@ operations on separate data items. So you might have a thread that
 renders frames and a thread that compresses frames and combines them
 into a single movie file.
 
-We'll continue by looking at a number of parallelization patterns,
-examples of how to apply them, and situations where they might apply.
+%We'll continue by looking at a number of parallelization patterns,
+%examples of how to apply them, and situations where they might apply.
 
 \subsection*{You're not using those bytes, are you?}
 So as a first idea we might think of saving some space by considering the range of, for example, an integer. An \texttt{i32} is 4 bytes. (In C, \texttt{int} is usually 4, though only guaranteed to be at least 2). If we have an integer array of capacity $N$ that uses $N \times 4$ bytes and if we want to do something like increment each element, we iterate over the array and increment it, which is a read of 4 and write of 4. Now, if we could live with limiting our maximum value from 2,147,483,647 (signed, or 4,294,967,295 unsigned) to 32,767  (signed, or 65,535 unsigned), we could reduce in half the amount of space needed for this array and make operations like incrementing take half as much time!
@@ -47,7 +47,8 @@ originated with supercomputers in the 70s. More recently, GPUs; the
 x86 SSE instructions; the SPARC VIS instructions; and the
 Power/PowerPC AltiVec instructions all implement SIMD.
 
-SIMD provides an advantage by using a single control unit to command multiple processing units and therefore the amount of overhead in the instruction stream. This is something that we do quite frequently in the everyday: if I asked someone to erase the board\footnote{Classrooms. How 2019.}, it's more efficient if I say ``erase these segments of the board'' (and clearly indicate which segments) than if I say ``erase this one'' and when that's done, then say ``erase the that one''\ldots and so on. So we can probably get some performance benefit out of this!
+% #updateAfterCOVID
+SIMD provides an advantage by using a single control unit to command multiple processing units and therefore the amount of overhead in the instruction stream. This is something that we do quite frequently in the everyday: if I asked someone to erase the board\footnote{Classrooms. How 2019.}, it's more efficient if I say ``erase these segments of the board'' (and clearly indicate which segments) than if I say ``erase this one'' and when that's done, then say ``erase that one''\ldots and so on. So we can probably get some performance benefit out of this!
 
 There is the downside, though, that because there's only the one control unit, all the processing units are told to do the same thing. That might not be what you want, so SIMD is not something we can use in every situation. There are also diminishing returns: the more processing units you have, the less likely it is that you can use all of that power effectively (because it will be less likely to have enough identical operations)~\cite{sse}.
 
@@ -97,7 +98,7 @@ implication is that the loop only needs to loop half as many times.
 The compiler includes more variants, not shown, to handle cases where
 there are odd numbers of elements in the slices.
 
-So this is a piece of good news, for once: there's automatic use of the SSE instructions if your compiler knows the target machine architecture supports them. However, we can also explicitly invoke these instructions, or use libraries (\texttt{faster}, \texttt{simdeez}), although we won't do that much. Instead, we'll learn more about how they work and then do some measures as to whether they really do. 
+So this is a piece of good news, for once: there's automatic use of the SSE instructions if your compiler knows the target machine architecture supports them. However, we can also explicitly invoke these instructions, or use libraries\footnote{A discussion of libraries available as of May 2020: \url{https://www.mdeditor.tw/pl/pdnr}; your choices are \texttt{packed\_simd} (nightly Rust only), \texttt{faster} (unmaintained), or \texttt{simdeez} (must use unsafe Rust).}, although we won't do that much. Instead, we'll learn more about how they work and then do some measures as to whether they really do. 
 
 SIMD is different from the other types of parallelization we're
 looking at, since there aren't multiple threads working at once.
@@ -105,9 +106,14 @@ It is complementary to using threads, and good for cases
 where loops operate over vectors of data. These loops could also be
 parallelized; multicore chips can do both, achieving high throughput.
 SIMD instructions also work well on small data sets, where thread startup
-cost is too high, while registers are just there to use.
+cost is too high, while registers are just there.
 
-Data alignment, however, can be an issue. According to~\cite{sse}: ``Data must be 16-byte aligned when loading to and storing from the 128-bit XMM registers used by SSE/SSE2/SSE3/SSSE3. This must be done to avoid severe performance penalties.''. That's a pretty harsh restriction. SSE4.2 lifts it, if you know your machine is new enough.
+In~\cite{lemire18:_multic_simd}, Daniel Lemire argues that vector
+instructions are, in general, a more efficient way to parallelize code
+than threads. That is, when applicable, they use less overall CPU
+resources (cores and power) and run faster.
+
+Data alignment, however, can be an issue with SIMD. According to~\cite{sse}: ``Data must be 16-byte aligned when loading to and storing from the 128-bit XMM registers used by SSE/SSE2/SSE3/SSSE3. This must be done to avoid severe performance penalties.''. That's a pretty harsh restriction. SSE4.2 lifts it, if your machine is new enough.
 
 But in any case, Rust will generally align primitives to their sizes. Under the default representation, Rust promises nothing else about alignment. You can use the \texttt{repr(packed(N)} or \texttt{repr(align(N)} directives to express constraints on alignment, and you can specify the C representation, which allows you more control over data layout.
 
@@ -130,29 +136,47 @@ But in any case, Rust will generally align primitives to their sizes. Under the 
 
 %% Alignment headaches can be reduced by using the SSE specific types (and there are some) as the compiler will automatically see to it that the memory is allocated in accordance with this requirement. But then we're sort of back to packing our larger types ourselves, or at least writing them as a smaller type array and telling the compiler to pretend it's now a 128-bit type.
 
-In~\cite{lemire18:_multic_simd}, Daniel Lemire argues that vector
-instructions are, in general, a more efficient way to parallelize code
-than threads. That is, when applicable, they use less overall CPU
-resources (cores and power) and can even run faster.
-
-\paragraph{Worked Example.} So let's say that you actually wanted to try it out. Let's consider an example from~\cite{simd}. In this example, as well as a lot of others, a \texttt{union} type is defined that allows you to choose your view of the type: either one large vector type or its components (e.g., 4 floats or 4 ints or 8 shorts or whatever you like). This example also uses gcc vector support, which is another layer of indirection: it will try to use SSE if it can but will use something else if not.
+\paragraph{Worked Example.} So let's say that you actually wanted to try it out. Let's consider a \texttt{simdeez} example, which I've put in the repo's live coding subdir under \texttt{lectures/live-coding/L18}.
 
 \begin{lstlisting}[language=C]
-typedef int v4sf __attribute__ ((mode(V4SF))); // vector of four single floats
-union f4vector {
-  v4sf v;
-  float f[4];
-};
+use simdeez::*;
+use simdeez::scalar::*;
+use simdeez::sse2::*;
+use simdeez::sse41::*;
+use simdeez::avx2::*;
 
-union f4vector add( f4vector a, f4vector b ) {
-  union c;
-  a.f[0] = 1; a.f[1] = 2; a.f[2] = 3; a.f[3] = 4;
-  b.f[0] = 5; b.f[1] = 6; b.f[2] = 7; b.f[3] = 8;
-  c.v = a.v + b.v;
-  return c;
+simd_runtime_generate!(
+// assumes that the input sizes are evenly divisible by VF32_WIDTH
+pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
+  let len = a.len();
+  let mut result: Vec<f32> = Vec::with_capacity(len);
+  result.set_len(len);
+  for i in (0..len).step_by(S::VF32_WIDTH) {
+    let a0 = S::loadu_ps(&a[i]);
+    let b0 = S::loadu_ps(&b[i]);
+    S::storeu_ps(&mut result[0], S::add_ps(a0, b0));
+  }
+  result
+});
+
+fn main() {
+  let a : [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+  let b : [f32; 4] = [5.0, 6.0, 7.0, 8.0];
+
+  unsafe {
+    println!("{:?}", add_sse2(&a, &b))
+  }
 }
 \end{lstlisting}
+What this does is generate an \texttt{add\_*} function for each of \texttt{scalar},
+\texttt{sse2}, \texttt{sse41}, and \texttt{avx}. Then \texttt{main}
+unsafely calls \texttt{add\_sse2} with two length-4 arrays of \texttt{f32}s and
+gets a \texttt{Vec<f32>} back.
 
+\texttt{simdeez} is a fairly lightweight wrapper around SIMD instructions and just
+calls the \texttt{loadu\_ps} and \texttt{storeu\_ps} calls to load and store
+packed single-precision numbers, and \texttt{add\_ps} to add them. Operator overloading
+works too.
 
 \section*{Case Study on SIMD: Stream VByte }
 
@@ -261,7 +285,7 @@ the next 1-byte integer with 3 bytes, etc. Let's say that the input is
 between outputs. The shuffle mask is precomputed and, at
 execution time, read from an array.
 
-The core of the (\CPP) implementation uses three SIMD instructions:
+The core of the (\CPP) implementation uses three SIMD instructions (also available in \texttt{simdeez}):
 \begin{lstlisting}[language=C]
   uint8_t C = lengthTable[control];
   __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);

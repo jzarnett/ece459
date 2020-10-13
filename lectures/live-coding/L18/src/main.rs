@@ -7,7 +7,7 @@ use simdeez::sse41::*;
 use simdeez::avx2::*;
 
 simd_runtime_generate!(
-
+// assumes that the input sizes are evenly divisible by VF32_WIDTH
 pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
   let len = a.len();
   let mut result: Vec<f32> = Vec::with_capacity(len);
