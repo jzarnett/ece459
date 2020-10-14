@@ -2,321 +2,537 @@
 
 \begin{document}
 
-\lecture{18 --- Mostly Data Parallelism}{\term}{Patrick Lam}
+\lecture{18 --- Compiler Optimizations}{\term}{Patrick Lam}
+
+\section*{Compiler Optimizations}
+
+\hfill ``Is there any such thing as a free lunch?''
+
+Compiler optimizations really do feel like a free lunch.
+But what does it really mean when you say {\tt -O2}?
+We'll see some representative compiler optimizations and discuss how
+they can improve program performance. Because we're talking about
+Programming for Performance, I'll point out cases that stop compilers
+from being able to optimize your code. In general, it's better if the
+compiler automatically does a performance-improving transformation
+rather than you doing it manually; it's probably a waste of time for
+you and it also makes your code less readable.
+
+Many pages on the Internet describe
+optimizations. Here's one that contains good examples:
+
+$\qquad \qquad$ \url{http://www.digitalmars.com/ctg/ctgOptimizer.html}
+
+You can find a full list of {\tt gcc} options here:
+
+$\qquad \qquad$ \url{http://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html}
+
+\paragraph{About Compiler Optimizations.} First of all, ``optimization'' is
+a bit of a misnomer, since compilers generally do not generate ``optimal'' code.
+They just generate \emph{better} code.
+
+Often, what happens is that the program you literally wrote is too slow. The
+contract of the compiler (working with the architecture) is to actually execute
+a program with the same behaviour as yours, but which runs faster.
+
+\paragraph{{\tt gcc} optimization levels.} Here's what {\tt -On} means for
+{\tt gcc}. Other compilers have similar (but not identical) optimization flags.
+
+\begin{itemize}[noitemsep]
+\item {\tt -O0} (default): Fastest compilation time. Debugging works as expected.
+\item {\tt -O1} ({\tt -O}): Reduce code size and execution time.
+ No optimizations that increase compiliation time.
+\item {\tt -O2}: All optimizations except space vs. speed tradeoffs.
+\item {\tt -O3}: All optimizations.
+\item {\tt -Ofast}: All {\tt -O3} optimizations, plus non-standards compliant optimizations,
+      particularly {\tt -ffast-math}. (Like {\tt -fast} on the Solaris compiler.)\\[1em]
+  This flag turns off exact implementations of IEEE or ISO rules/specifications for math
+  functions. Generally, if you don't care about the exact result, you can use this for
+  a speedup.
+\end{itemize}
+
+\subsection*{Scalar Optimizations}
+By scalar optimizations, I mean optimizations
+which affect scalar (non-array) operations. Here are some examples of scalar
+optimizations.
+
+\paragraph{Constant folding.} Probably the simplest optimization one can think of.
+Tag line: ``Why do later something you can do now?'' We simply translate:
+
+\begin{center}
+\vspace*{-1em}
+\begin{tabular}{lll}
+i = 1024 * 1024 &
+$\Longrightarrow$ &
+i = 1048576
+\end{tabular}
+\end{center}
+
+\noindent \emph{Enabled at all optimization levels.} The compiler will not emit
+code that does the multiplication at runtime. It will simply use the
+computed value.
+
+\paragraph{Common subexpression elimination.} We can do common subexpression elimination
+when the same expression {\tt x op y} is computed more than once, and
+neither {\tt x} nor {\tt y} change between the two computations. In the
+below example, we need to compute {\tt c + d} only once.
 
 
-\section*{Data and Task Parallelism}
-There are two broad categories of paralellism: data parallelism and
-task parallelism. An analogy to data parallelism is hiring a call
-center to (incompetently) handle large volumes of support calls,
-\emph{all in the same way}. Assembly lines are an analogy to task
-parallelism: each worker does a \emph{different} thing.
+\begin{lstlisting}[language=C]
+   a = (c + d) * y;
+   b = (c + d) * z;
 
-More precisely, in data parallelism, multiple threads perform the
-\emph{same} operation on separate data items. For instance, you have a
-big array and want to double all of the elements. Assign part of the
-array to each thread. Each thread does the same thing: double array
-elements.
+   w = 3;
+   x = f(); y = x;
+   z = w + y;
 
-In task parallelism, multiple threads perform \emph{different}
-operations on separate data items. So you might have a thread that
-renders frames and a thread that compresses frames and combines them
-into a single movie file.
+\end{lstlisting}
 
-%We'll continue by looking at a number of parallelization patterns,
-%examples of how to apply them, and situations where they might apply.
 
-\subsection*{You're not using those bytes, are you?}
-So as a first idea we might think of saving some space by considering the range of, for example, an integer. An \texttt{i32} is 4 bytes. (In C, \texttt{int} is usually 4, though only guaranteed to be at least 2). If we have an integer array of capacity $N$ that uses $N \times 4$ bytes and if we want to do something like increment each element, we iterate over the array and increment it, which is a read of 4 and write of 4. Now, if we could live with limiting our maximum value from 2,147,483,647 (signed, or 4,294,967,295 unsigned) to 32,767  (signed, or 65,535 unsigned), we could reduce in half the amount of space needed for this array and make operations like incrementing take half as much time!
+\noindent \emph{Enabled at {\tt -O2}, {\tt -O3} or with {\tt -fgcse}.} 
+These flags actually enable a global (i.e. across-basic-blocks) CSE pass.
+This also enables global constant and copy propagation.
 
-Aside from the obvious tradeoff of limiting the maximum value, the other hidden cost is that of course things that were simple like \texttt{array[i] += 1} is more complicated. What do we do now?
+\paragraph{Constant propagation.} Moves constant values from definition to
+use. The transformation is valid if there are no redefinitions of the
+variable between the definition and its use. In the above example,
+we can propagate the constant value 3 to its use in {\tt z = w + y},
+yielding {\tt z = 3 + y}.
 
-Instead of \texttt{+=1} we need to calculate the new number to add. The interesting part is about how to represent the upper portion of the number. For just adding 1 it might be simple, and we can manually break out our calculators or draw a bit vector or think in hexadecimal about how to convert a number if it's more difficult. But you wouldn't---you would probably just use bit shift to calculate it. But one must be careful with that as well: the bit shift does sign extension which sometimes you don't want (or does unexpected things), and if we have to bit shift on every iteration of the loop, it's not clear that this is better than two assignment statements\ldots
+\paragraph{Copy propagation.} A bit more sophisticated than constant
+propagation---telescopes copies of variables from their definition to
+their use. This usually runs after CSE. Using it, we can replace the
+last statement with {\tt z = w + x}. If we run both constant and copy
+propagation together, we get {\tt z = 3 + x}.
 
-Maybe you think this example is silly because of Rust's \texttt{i8}/C's \texttt{short} types. Which you could certainly use to reduce the size of the array. But then modifying each \texttt{short} in a different instruction defeats the purpose.
+These scalar optimizations are more complicated in the presence
+of pointers, e.g. {\tt z = *w + y}. More next time.
 
-Aha! We can also take it a step farther: if it's a 64-bit processor there's no reason why you couldn't modify 8 bytes in a single instruction. The principle is the same, even if the math is a little more complex.
+%\paragraph{Scalar Replacement of Aggregates.} Censored. Too many people misunderstood it last year.
 
-What we've got here is a poor person's version of Single Instruction Multiple Data (SIMD) (in NZ-speak, using No. 8 wire to implement SIMD), because we have to do our own math in advance and/or do a lot of bit shifting every time we want to use a value\ldots This is a pain. Fortunately, we don't have to\ldots
+\paragraph{Redundant Code Optimizations.} In some sense, most optimizations
+remove redundant code, but one particular optimization is \emph{dead code
+elimination}, which removes code that is guaranteed to not execute.
+For instance:
 
-\subsection*{Data Parallelism with SIMD}
-The ``typical'' boring standard uniprocessor is Single Instruction Single Data (SISD) but since the mid-1980s we've had more options than that. We'll talk about single-instruction multiple-data (SIMD) later on in
-this course, but here's a quick look. Each SIMD
-instruction operates on an entire vector of data. These instructions
-originated with supercomputers in the 70s. More recently, GPUs; the
-x86 SSE instructions; the SPARC VIS instructions; and the
-Power/PowerPC AltiVec instructions all implement SIMD.
-
-% #updateAfterCOVID
-SIMD provides an advantage by using a single control unit to command multiple processing units and therefore the amount of overhead in the instruction stream. This is something that we do quite frequently in the everyday: if I asked someone to erase the board\footnote{Classrooms. How 2019.}, it's more efficient if I say ``erase these segments of the board'' (and clearly indicate which segments) than if I say ``erase this one'' and when that's done, then say ``erase that one''\ldots and so on. So we can probably get some performance benefit out of this!
-
-There is the downside, though, that because there's only the one control unit, all the processing units are told to do the same thing. That might not be what you want, so SIMD is not something we can use in every situation. There are also diminishing returns: the more processing units you have, the less likely it is that you can use all of that power effectively (because it will be less likely to have enough identical operations)~\cite{sse}.
-
-\paragraph{Compilation.} Let's look at an example of SIMD instructions when they are compiled.
-
-By default your compiler will assume a particular target architecture; which one exactly is dependent on what the Rust team decided some time in the past. Choosing a too-new architecture will cause your code to fail on older machines. The choice of architecture can be overridden in your compile-time options with the \texttt{target} parameter. Let's look at some SSE code to add two slides and put the result in a third slice:
-
-\begin{lstlisting}[language=Rust]
-pub fn foo(a: &[f64], b: &[f64], c: &mut [f64]) {
-    for ((a, b), c) in a.iter().zip(b).zip(c) {
-        *c = *a + *b;
+{\scriptsize
+\begin{center}
+\vspace*{-2em}
+\begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=C]
+  int f(int x) {
+    return x * 2;
+  }
+  \end{lstlisting}
+  \end{minipage} \begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=C]
+  int g() {
+    if (f(5) % 2 == 0) {
+      // do stuff...
+    } else {
+      // do other stuff
     }
-}\end{lstlisting}
-
-%% Compiling this without SIMD on a 32-bit x86 ({\tt --target=i586-unknown-linux-gnu}, decidedly not the default) might give this core loop contents:
-%% \begin{verbatim}
-%%   fld     qword ptr [ecx]
-%%   fld     qword ptr [edx]
-%%   faddp   st(1), st
-%%   fstp    qword ptr [eax]
-%% \end{verbatim}
-
-We can compile with \texttt{rustc} defaults
-and get something like this as core loop contents:
-\begin{verbatim}
-  movsd   xmm0, qword ptr [rcx]
-  addsd   xmm0, qword ptr [rdx]
-  movsd   qword ptr [rax], xmm0
-\end{verbatim}
-This uses the SSE\footnote{You can also compile without SIMD using \texttt{--target=i586-unknown-linux-gnu} and see the stack-based x87 instructions.} register \texttt{xmm0} and SSE2 instructions \texttt{movsd} and
-\texttt{addsd}; the \texttt{sd} suffix denotes scalar double instructions, applying
-only to the first 64 bits of the 128-bit \texttt{xmm0} register---this is a literal
-translation of the code. If you additionally specify \texttt{-O}, the compiler generates a number of variants, including this middle one:
-\begin{verbatim}
-  movupd  xmm0, xmmword ptr [rdi + 8*rcx]
-  movupd  xmm1, xmmword ptr [rdi + 8*rcx + 16]
-  movupd  xmm2, xmmword ptr [rdx + 8*rcx]
-  addpd   xmm2, xmm0
-  movupd  xmm0, xmmword ptr [rdx + 8*rcx + 16]
-  addpd   xmm0, xmm1
-  movupd  xmmword ptr [r8 + 8*rcx], xmm2
-  movupd  xmmword ptr [r8 + 8*rcx + 16], xmm0
-\end{verbatim}
-The \emph{packed} operations ({\tt p}) operate on multiple data
-elements at a time (what kind of parallelism is this?)  The
-implication is that the loop only needs to loop half as many times.
-The compiler includes more variants, not shown, to handle cases where
-there are odd numbers of elements in the slices.
-
-So this is a piece of good news, for once: there's automatic use of the SSE instructions if your compiler knows the target machine architecture supports them. However, we can also explicitly invoke these instructions, or use libraries\footnote{A discussion of libraries available as of May 2020: \url{https://www.mdeditor.tw/pl/pdnr}; your choices are \texttt{packed\_simd} (nightly Rust only), \texttt{faster} (unmaintained), or \texttt{simdeez} (must use unsafe Rust).}, although we won't do that much. Instead, we'll learn more about how they work and then do some measures as to whether they really do. 
-
-SIMD is different from the other types of parallelization we're
-looking at, since there aren't multiple threads working at once.
-It is complementary to using threads, and good for cases
-where loops operate over vectors of data. These loops could also be
-parallelized; multicore chips can do both, achieving high throughput.
-SIMD instructions also work well on small data sets, where thread startup
-cost is too high, while registers are just there.
-
-In~\cite{lemire18:_multic_simd}, Daniel Lemire argues that vector
-instructions are, in general, a more efficient way to parallelize code
-than threads. That is, when applicable, they use less overall CPU
-resources (cores and power) and run faster.
-
-Data alignment, however, can be an issue with SIMD. According to~\cite{sse}: ``Data must be 16-byte aligned when loading to and storing from the 128-bit XMM registers used by SSE/SSE2/SSE3/SSSE3. This must be done to avoid severe performance penalties.''. That's a pretty harsh restriction. SSE4.2 lifts it, if your machine is new enough.
-
-But in any case, Rust will generally align primitives to their sizes. Under the default representation, Rust promises nothing else about alignment. You can use the \texttt{repr(packed(N)} or \texttt{repr(align(N)} directives to express constraints on alignment, and you can specify the C representation, which allows you more control over data layout.
-
-%% This is not all quite true for Rust.
-%% If you've heard me talk about the dangers of unaligned data before, I usually give you something that looks like this as an example.
-%% \begin{lstlisting}[language=Rust]
-%% #[repr(C)]
-%% struct Position {
-%%   marked: bool,
-%%   w: i32,
-%%   x: i32,
-%%   y: i32,
-%%   z: i32
-%% }
-%% \end{lstlisting}
-%% First of all, if you use the default representation (i.e. omit \texttt{repr}), then Rust makes no guarantees about the representation except for meeting any \texttt{align} or \texttt{packed} modifiers.
-
-%% Now, if you use the \texttt{C} representation, Rust publishes an algorithm for determining the layout, again respecting modifiers. This algorithm potentially results in the integer values being unaligned if the boolean type is of size 1. You might be in trouble even if you deleted that boolean type out of the structure because your \texttt{w} parameter might not be 16-byte aligned even if it's 4-byte aligned.
-%% %% Rust aligns primitives to their sizes, except for \texttt{u64} and \texttt{f64} on x86, which are only aligned to 4 bytes. However, you can also specify a \texttt{repr} of \texttt{C, packed(N)} or \texttt{C, align(N)} to align to N bytes.
-
-%% Alignment headaches can be reduced by using the SSE specific types (and there are some) as the compiler will automatically see to it that the memory is allocated in accordance with this requirement. But then we're sort of back to packing our larger types ourselves, or at least writing them as a smaller type array and telling the compiler to pretend it's now a 128-bit type.
-
-\paragraph{Worked Example.} So let's say that you actually wanted to try it out. Let's consider a \texttt{simdeez} example, which I've put in the repo's live coding subdir under \texttt{lectures/live-coding/L18}.
-
-\begin{lstlisting}[language=C]
-use simdeez::*;
-use simdeez::scalar::*;
-use simdeez::sse2::*;
-use simdeez::sse41::*;
-use simdeez::avx2::*;
-
-simd_runtime_generate!(
-// assumes that the input sizes are evenly divisible by VF32_WIDTH
-pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
-  let len = a.len();
-  let mut result: Vec<f32> = Vec::with_capacity(len);
-  result.set_len(len);
-  for i in (0..len).step_by(S::VF32_WIDTH) {
-    let a0 = S::loadu_ps(&a[i]);
-    let b0 = S::loadu_ps(&b[i]);
-    S::storeu_ps(&mut result[0], S::add_ps(a0, b0));
   }
-  result
-});
-
-fn main() {
-  let a : [f32; 4] = [1.0, 2.0, 3.0, 4.0];
-  let b : [f32; 4] = [5.0, 6.0, 7.0, 8.0];
-
-  unsafe {
-    println!("{:?}", add_sse2(&a, &b))
-  }
+\end{lstlisting}
+\end{minipage}
+\end{center}
 }
-\end{lstlisting}
-What this does is generate an \texttt{add\_*} function for each of \texttt{scalar},
-\texttt{sse2}, \texttt{sse41}, and \texttt{avx}. Then \texttt{main}
-unsafely calls \texttt{add\_sse2} with two length-4 arrays of \texttt{f32}s and
-gets a \texttt{Vec<f32>} back.
+We see that the then-branch in {\tt g()} is always going to execute, and the
+else-branch is never going to execute.
 
-\texttt{simdeez} is a fairly lightweight wrapper around SIMD instructions and just
-calls the \texttt{loadu\_ps} and \texttt{storeu\_ps} calls to load and store
-packed single-precision numbers, and \texttt{add\_ps} to add them. Operator overloading
-works too.
+The general problem, as with many other compiler problems, is undecidable. Let's not get too caught up in the semantics of the \textit{Entscheidungsproblem}, even if you do speak German and like to show it off by pronouncing that word correctly.
 
-\section*{Case Study on SIMD: Stream VByte }
+\subsection*{Loop Optimizations}
+Loop optimizations are particularly profitable when loops execute
+often. This is often a win, because programs spend a lot of time looping.
+The trick is to find which loops are going to be the important ones.
+Profiling is helpful.
 
-\hfill ``Can you run faster just by trying harder?''
+A loop induction variable is a variable that varies on each iteration
+of the loop; the loop variable is definitely a loop induction variable,
+but there may be others. \emph{Induction variable elimination} gets
+rid of extra induction variables.
 
-The performance improvements we've seen to date have been leveraging parallelism
-to improve throughput. Decreasing latency is trickier---it often requires domain-specific
-tweaks.
+\emph{Scalar replacement} replaces an array read {\tt a[i]}
+occuring multiple times with a single read {\tt temp = a[i]} and references
+to {\tt temp} otherwise. It needs to know that {\tt a[i]} won't change
+between reads.
 
-Sometimes it's classic computer science: Quantum Flow found a place
-where they could cache the last element of a list to reduce time
-complexity for insertion from $O(n^2)$ to $O(n \log n)$.
+Sane languages include array bounds checks, and loop optimizations
+can eliminate array bounds checks if they can prove that the loop
+never iterates past the array bounds.
 
-\begin{center}
-\url{https://bugzilla.mozilla.org/show_bug.cgi?id=1350770}
-\end{center}
-
-We'll also look at a more involved example of decreasing latency today, Stream VByte~\cite{LEMIRE20181}, and briefly at parts of its \CPP~implementation.
-Even this example leverages parallelism---it uses vector instructions. But there
-are some sequential improvements, e.g. Stream VByte takes care to be predictable
-for the branch predictor.
-
-\paragraph{Context.} We can abstract the problem to that of storing a sequence of small integers.
-Such sequences are important, for instance, in the context of inverted indexes, which allow
-fast lookups by term, and support boolean queries which combine terms.
-
-Here is a list of documents and some terms that they contain:
-\begin{center}
-\begin{tabular}{r|l}
-docid & terms \\ \hline
-1 & dog, cat, cow\\
-2 & cat\\
-3 & dog, goat\\
-4 & cow, cat, goat\\
-\end{tabular}
-\end{center}
-
-The inverted index looks like this:
-\begin{center}
-\begin{tabular}{r|l}
-term & docs \\ \hline
-dog & 1, 3 \\
-cat & 1, 2, 4 \\
-cow & 1, 4 \\
-goat & 3, 4
-\end{tabular}
-\end{center}
-
-Inverted indexes contain many small integers in their lists: it is
-sufficient to store the delta between a doc id and its successor, and
-the deltas are typically small if the list of doc ids is sorted.
-(Going from deltas to original integers takes time logarithmic
-in the number of integers).
-
-VByte is one of a number of schemes that use a variable number of
-bytes to store integers.  This makes sense when most integers are
-small, and especially on today's 64-bit processors.
-
-VByte works like this:
-\vspace*{-1em}
-\begin{itemize}[noitemsep]
-\item $x$ between 0 and $2^7-1$, e.g. $17 = 0b10001$: $0xxx xxxx$, e.g. $0001 0001$;
-\item $x$ between $2^7$ and $2^{14}-1$, e.g. $1729 = 0b110 11000001$:
-                   $1xxx xxxx/0xxx xxxx$, e.g. $1100 0001/0000 1101$;
-\item $x$ between $2^{14}$ and $2^{21}-1$: $0xxx xxxx/1xxx xxxx/1xxx xxxx$;
-\item etc.
-\end{itemize}
-That is, the control bit, or high-order bit, is 0 if you have finished representing the integer,
-and 1 if more bits remain. (UTF-8 encodes the length, from 1 to 4, in high-order bits of the first byte.)
-
-It might seem that dealing with variable-byte integers might be
-harder than dealing fixed-byte integers, and it is. But there are performance benefits: because we are
-using fewer bits, we can fit more information into our limited RAM and
-cache, and even get higher throughput. Storing and reading 0s isn't an effective
-use of resources. However, a naive algorithm to decode VByte also gives
-lots of branch mispredictions.
-
-Stream VByte is a variant of VByte which works using SIMD instructions.
-Science is incremental, and Stream VByte builds on earlier work---masked VByte
-as well as {\sc varint}-GB and {\sc varint}-G8IU. The innovation in
-Stream VByte is to store the control and data streams separately.
-
-Stream VByte's control stream uses two bits per integer to represent the size of the integer:
+\paragraph{Loop unrolling.} This optimization
+lets the processor run more code without having to branch
+as often. \emph{Software pipelining} is a synergistic optimization,
+which allows multiple iterations of a loop to proceed in parallel.
+This optimization is also useful for SIMD. Here's an example.
 \begin{center}
 \vspace*{-1em}
-\begin{tabular}{ll@{~~~~~~~~}ll}
-00 & 1 byte & 10 & 3 bytes\\
-01 & 2 bytes & 11 & 4 bytes
-\end{tabular}
-\end{center}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 4; ++i)
+    f(i)
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+f(0); f(1); f(2); f(3);
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+\noindent \emph{Enabled with {\tt -funroll-loops}.}
 
-Each decode iteration reads a byte from the control stream and 16 bytes of data from memory.
-It uses a lookup table over the possible values of the control stream to decide how many
-bytes it needs out of the 16 bytes it has read, and then uses SIMD instructions to shuffle
-the bits each into their own integers. Note that, unlike VByte, Stream VByte uses all 8 bits
-of each data byte as data.
+\paragraph{Loop interchange.} This optimization can give big wins
+for caches (which are key); it changes the nesting of loops to
+coincide with the ordering of array elements in memory. For instance,
+in C:
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < N; ++i)
+    for (int j = 0; j < M; ++j)
+        a[j][i] = a[j][i] * c
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int j = 0; j < M; ++j)
+    for (int i = 0; i < N; ++i)
+        a[j][i] = a[j][i] * c
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+  since C is \emph{row-major} (meaning a[1][1] is beside a[1][2]),
+rather than \emph{column-major}.
 
-For instance, if the control stream contains $0b1000~1100$, then the data stream
-contains the following sequence of integer sizes: $3, 1, 4, 1$. Out of the 16 bytes read,
-this iteration will use 9 bytes; it advances the data pointer by 9. It then uses the SIMD
-``shuffle'' instruction to put the decoded integers from the data stream at known positions in the
-128-bit SIMD register; in this case, it pads the first 3-byte integer with 1 byte, then
-the next 1-byte integer with 3 bytes, etc. Let's say that the input is
-{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. The 128-bit output is
-{\tt 0x00f8~23e1/0000~0027/2524 9748/0000/001b}, with the /s denoting separation
-between outputs. The shuffle mask is precomputed and, at
-execution time, read from an array.
+\noindent
+\emph{Enabled with {\tt -floop-interchange}.}
 
-The core of the (\CPP) implementation uses three SIMD instructions (also available in \texttt{simdeez}):
+Strangely enough, sometimes you want to do things the column-major way even though it's ``wrong''. If your two dimensional array is of an appropriate size then by intentionally hitting things in the ``wrong'' order, you'll trigger all your page faults up front and load all your pages into cache and then you can go wild. This was suggested as a way to make matrix multiplication faster for a sufficiently large matrix...
+
+\paragraph{Loop fusion.} This optimization is like the OpenMP collapse
+construct; we transform
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i)
+    a[i] = 4
+
+for (int i = 0; i < 100; ++i)
+    b[i] = 7
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i) {
+    a[i] = 4
+    b[i] = 7
+}
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+There's a trade-off between data locality and loop overhead; hence,
+sometimes the inverse transformation, \emph{loop fission}, will
+improve performance.
+
+\paragraph{Loop-invariant code motion.} Also known as \emph{Loop hoisting},
+this optimization moves calculations out of a loop. 
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=C]
+for (int i = 0; i < 100; ++i) {
+    s = x * y;
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=C]
+s = x * y;
+for (int i = 0; i < 100; ++i) {
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+
+This reduces the amount of work we have to do for each iteration of the loop.
+
+
+\subsection*{Miscellaneous Low-Level Optimizations}
+Some optimizations affect low level code generation; here are two examples.
+
+\paragraph{Branch Prediction.} {\tt gcc} attempts to guess the probability of each branch to
+best order the code. (For an {\tt if}, fall-through is most efficient. Why?)
+
+This isn't quite an optimization, but you can use {\tt
+  \_\_builtin\_expect(expr, value)} to help GCC, if you know the
+run-time characteristics of your program. An example, from the
+  Linux kernel:
+
+  \begin{lstlisting}[language=C]
+#define likely(x)       __builtin_expect((x),1)
+#define unlikely(x)     __builtin_expect((x),0)
+  \end{lstlisting}
+
+\paragraph{Architecture-Specific.} {\tt gcc} can also generate code tuned to particular
+processors and processor variants. You can specify this using {\tt
+  -march} and {\tt -mtune}. ({\tt -march} implies {\tt -mtune}).
+This will enable specific instructions that not all CPUs support (e.g. SSE4.2).
+For example, {\tt -march=corei7}.
+
+\noindent
+Good to use on your local machine or your cloud servers, not ideal for code you ship to others.
+
+
+\section*{Interprocedural Analysis and Link-Time Optimizations}
+\hfill ``Are economies of scale real?''
+
+In this context, does a
+whole-program optimization really improve your program?
+We'll start by first talking about some information that is critical for
+whole-program optimizations.
+
+\subsection*{Alias and Pointer Analysis}
+As we've seen in the above analyses, compiler optimizations often need
+to know about what parts of memory each statement reads to.  This is
+easy when talking about scalar variables which are stored on the
+stack. This is much harder when talking about pointers or arrays
+(which can alias). \emph{Alias analysis} helps by declaring that a
+given variable {\tt p} does not alias another variable {\tt q}; that
+is, they point to different heap locations. \emph{Pointer analysis}
+abstractly tracks what regions of the heap each variable points to.
+A region of the heap may be the memory allocated at a particular
+program point.
+
+When we know that two pointers don't alias, then we know that their
+effects are independent, so it's correct to move things around.
+This also helps in reasoning about side effects and enabling reordering.
+
+We've talked about automatic parallelization previously in this course.
+At this point, I'll remind you that we used {\tt restrict} so that the
+compiler wouldn't have to do as much pointer analysis. Shape analysis
+builds on pointer analysis to determine that data structures are indeed
+trees rather than lists.
+
+\paragraph{Call Graphs.} Many interprocedural analyses require accurate
+call graphs. A call graph is a directed graph showing relationships between
+functions. It's easy to compute a call graph when you have C-style
+function calls. It's much harder when you have virtual methods, as in
+C++ or Java, or even C function pointers. In particular, you need pointer
+analysis information to construct the call graph.
+
+\paragraph{Devirtualization.} This optimization attempts to convert
+virtual function calls to direct calls.  Virtual method calls have the
+potential to be slow, because there is effectively a branch to
+predict. If the branch prediction goes well, then it doesn't impose
+more runtime cost. However, the branch prediction might go poorly.  (In
+general for C++, the program must read the object's vtable.) Plus, virtual
+calls impede other optimizations. Compilers can help by doing
+sophisticated analyses to compute the call graph and by replacing
+virtual method calls with nonvirtual method calls.  Consider the
+following code:
+  \begin{lstlisting}[language=C]
+class A {
+  public:
+    virtual void m();
+};
+
+class B : public A {
+  public:
+    virtual void m() {}
+};
+
+int main(int argc, char *argv[]) {
+    std::unique_ptr<A> t(new B);
+    t->m();
+}
+  \end{lstlisting}
+Devirtualization could eliminate vtable access; instead, we could just call B's {\tt m} method
+directly. By the way, ``Rapid Type Analysis'' analyzes the entire program, observes that
+only {\tt B} objects are ever instantiated, and enables devirtualization
+of the {\tt b.m()} call.
+
+\noindent \emph{Enabled with {\tt -O2}, {\tt -O3}, or with {\tt -fdevirtualize}.}
+
+\paragraph{Inlining.} We have seen the notion of inlining:
+  \begin{itemize}
+    \item Instructs the compiler to just insert the function code in-place,
+      instead of calling the function.
+    \item Hence, no function call overhead!
+    \item Compilers can also do better---context-sensitive---operations they couldn't
+      have done before.
+  \end{itemize}
+
+OK, so inlining removes overhead. Sounds like better performance! Let's inline everything!
+There are two ways of inlining in C++.
+
+Implicit Inlining (defining a function inside a class definition):
+  \begin{lstlisting}[language=C]
+class P {
+public:
+    int get_x() const { return x; }
+...
+private:
+    int x;
+};
+  \end{lstlisting}
+
+Explicit Inlining:
+  \begin{lstlisting}[language=C]
+inline max(const int& x, const int& y) {
+    return x < y ? y : x;
+}
+  \end{lstlisting}
+
+\paragraph{The Other Side of Inlining.}
+Inlining has one big downside:
+  \begin{itemize}
+    \item Your program size is going to increase.
+  \end{itemize}
+   This is worse than you think:
+      \begin{itemize}
+        \item Fewer cache hits.
+        \item More trips to memory.
+      \end{itemize}
+   Some inlines can grow very rapidly (C++ extended constructors).
+  Just from this your performance may go down easily.
+
+  Note also that inlining is merely a suggestion to compilers~\cite{gcc:inlining}.
+  They may ignore you.
+  For example:
+  \begin{itemize}
+    \item taking the address of an ``inline'' function and using it; or
+    \item virtual functions (in C++),
+  \end{itemize}
+  will get you ignored quite fast.
+
+\paragraph{Implications of inlining.} Inlining can make your life worse in two ways.
+First, debugging is more difficult (e.g. you can't set a breakpoint in a function that
+  doesn't actually exist).
+ Most compilers simply won't inline code with debugging symbols on.
+ Some do, but typically it's more of a pain.
+
+Second, it can be a problem for library design:
+  \begin{itemize}
+    \item If you change any inline function in your library, any users
+      of that library have to {\bf recompile} their program if the
+      library updates. (Congratulations, you made a non-binary-compatible change!)
+  \end{itemize}
+This would not be a problem for non-inlined functions---programs execute the new function
+dynamically at runtime.
+
+\noindent \emph{Enabled with {\tt -O2} and {\tt -O3}.}
+
+Obviously, inlining and devirtualization require call graphs. But so
+does any analysis that needs to know about the heap effects of
+functions that get called; for instance, consider this code:
+
+{\small
 \begin{lstlisting}[language=C]
-  uint8_t C = lengthTable[control];
-  __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
-  __m128i Shuf = _mm_loadu_si128(shuffleTable[control]);
-  Data = _mm_shuffle_epi8(Data, Shuf);
-  databytes += C; control++;
+  int n;
+
+  int f() { /* opaque */ }
+
+  int main() {
+    n = 5;
+    f();
+    printf("%d\n", n);
+  }
 \end{lstlisting}
+}
+We could propagate the constant value 5, as long as we know that {\tt
+  f()} does not write to {\tt n}.
 
-\paragraph{Discussion.} The paper~\cite{LEMIRE20181} includes a number of benchmark results
-showing how Stream VByte performs better than previous techniques on a realistic input.
-Let's discuss how it achieves this performance.
+\paragraph{Tail Recursion Elimination.} This optimization is mandatory
+in some functional languages; we replace a call by a {\tt goto} at the
+compiler level. Consider this example, courtesy of Wikipedia:
 
+{\small
+\begin{lstlisting}[language=C]
+  int bar(int N) {
+    if (A(N))
+      return B(N);
+    else
+      return bar(N);
+  }
+\end{lstlisting}
+}
+
+For both calls, to {\tt B} and {\tt bar}, we don't need to return control
+to the calling {\tt bar()} before returning to its caller (because {\tt bar()}
+is done anyway). This avoids
+function call overhead and reduces call stack use.
+
+\noindent \emph{Enabled with {\tt -foptimize-sibling-calls}.} Also supports
+sibling calls as well as tail-recursive calls.
+
+\section*{Link-Time Optimizations}
+Next up: mechanics of interprocedural optimizations in modern open-source
+compilers. Conceptually, interprocedural optimizations have been well-understood
+for a while. But practical implementations in open-source compilers are still
+relatively new; Hubi\v{c}ka~\cite{hubicka14:_linkt_gcc} summarizes recent history.
+In 2004, the only real interprocedural optimization in gcc was inlining, and it was
+quite ad-hoc.
+
+The biggest challenge for interprocedural optimizations is scalability, so 
+it fits right in as a topic of discussion for this course.
+Here's an outline of how it works:
 \begin{itemize}[noitemsep]
-\item control bytes are sequential: the processor can always prefetch the next control byte, because
-its location is predictable;
-\item data bytes are sequential and loaded at high throughput;
-\item shuffling exploits the instruction set so that it takes 1 cycle;
-\item control-flow is regular (executing only the tight loop which retrieves/decodes control
-and data; there are no conditional jumps).
+\item local generation (parallelizable): compile to Intermediate Representation. Must generate compact
+IR for whole-program analysis phase.
+\item whole-program analysis (hard to parallelize!): create call graph, make transformation decisions. Possibly partition
+the program.
+\item local transformations (parallelizable): carry out transformations to local IRs, generate object code.
+Perhaps use call graph partitions to decide optimizations. 
 \end{itemize}
-We're exploiting SIMD, so this isn't quite strictly single-threaded performance.
-Considering branch prediction and caching issues, though,
-certainly improves single-threaded performance.
+There were a number of conceptually-uninteresting implementation
+challenges to be overcome before gcc could have its intermediate code available for
+interprocedural analysis (i.e. there was no stable on-disk IR format). The transformations look like this:
+\begin{itemize}[noitemsep]
+\item global decisions, local transformations:
+\begin{itemize}[noitemsep]
+\item devirtualization
+\item dead variable elimination/dead function elimination
+\item field reordering, struct splitting/reorganization
+\end{itemize}
+\item global decisions, global transformations:
+\begin{itemize}[noitemsep]
+\item cross-module inlining
+\item virtual function inlining
+\item interprocedural constant propagation
+\end{itemize}
+\end{itemize}
+The interesting issues arise from making the whole-program analysis scalable. Firefox, the Linux kernel,
+and Chromium contain tens of millions of lines of code. Whole-program analysis requires that all of 
+this code (in IR) be available to the analysis and that at least some summary of the code be in memory, 
+along with the call graph.
+(Since it's a whole-program analysis, any part of the program may affect other parts). The first problem
+is getting it into memory; loading the IR for tens of millions of lines of code is a non-starter.
+Clearly, anything that is more expensive than linear time can cause problems. Partitioning the program
+can help.
 
-\section*{SIMD and Planetary Motion}
+How did gcc get better?
+Hubi\v{c}ka~\cite{hubicka15:_link_gcc} explains how. In line with what I've said earlier, it's
+avoiding unnecessary work.
+\begin{itemize}[noitemsep]
+\item gcc 4.5: initial version of LTO;
+\item gcc 4.6: parallelization; partitioning of the call graph (put closely-related functions together, approximate functions in other partitions); the bottleneck: streaming in types and declarations;
+\item gcc 4.7--4.9: improve build times, memory usage [``chasing unnecessary data away''.]
+\end{itemize}
+As far as I can tell, today's gcc, with {\tt -flto}, does work and includes
+optimizations including constant propagation and function
+specialization.
 
-At the moment, I'm not planning to cover this, but you can read more about SIMD
-in Rust here:
-\begin{center}
-\url{https://medium.com/@Razican/learning-simd-with-rust-by-finding-planets-b85ccfb724c3}
-\end{center}
+\paragraph{Impact.} gcc LTO appears to give 3--5\% improvements in performance, which compiler experts consider good.
+Like we discussed last time, this allows developers to shift their attention from 
+manual factoring of translation units to letting the compiler do it. (This is kind of like going
+from manual transmissions to automatic transmissions for cars\ldots).
+
+The LLVM project provides more details at~\cite{project17:_llvm_link_time_optim}, while gcc details
+can be found at~\cite{novillo09:_linkt}.
+
+%\url{https://gcc.gnu.org/wiki/LightweightIpo}
 
 \input{bibliography.tex}
 

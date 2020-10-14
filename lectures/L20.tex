@@ -2,537 +2,406 @@
 
 \begin{document}
 
-\lecture{20 --- Compiler Optimizations}{\term}{Patrick Lam}
+\lecture{20 --- Performance Case Studies}{\term}{Patrick Lam}
 
-\section*{Compiler Optimizations}
+\section*{Making Firefox Fast}
 
-\hfill ``Is there any such thing as a free lunch?''
-
-Compiler optimizations really do feel like a free lunch.
-But what does it really mean when you say {\tt -O2}?
-We'll see some representative compiler optimizations and discuss how
-they can improve program performance. Because we're talking about
-Programming for Performance, I'll point out cases that stop compilers
-from being able to optimize your code. In general, it's better if the
-compiler automatically does a performance-improving transformation
-rather than you doing it manually; it's probably a waste of time for
-you and it also makes your code less readable.
-
-Many pages on the Internet describe
-optimizations. Here's one that contains good examples:
-
-$\qquad \qquad$ \url{http://www.digitalmars.com/ctg/ctgOptimizer.html}
-
-You can find a full list of {\tt gcc} options here:
-
-$\qquad \qquad$ \url{http://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html}
-
-\paragraph{About Compiler Optimizations.} First of all, ``optimization'' is
-a bit of a misnomer, since compilers generally do not generate ``optimal'' code.
-They just generate \emph{better} code.
-
-Often, what happens is that the program you literally wrote is too slow. The
-contract of the compiler (working with the architecture) is to actually execute
-a program with the same behaviour as yours, but which runs faster.
-
-\paragraph{{\tt gcc} optimization levels.} Here's what {\tt -On} means for
-{\tt gcc}. Other compilers have similar (but not identical) optimization flags.
-
-\begin{itemize}[noitemsep]
-\item {\tt -O0} (default): Fastest compilation time. Debugging works as expected.
-\item {\tt -O1} ({\tt -O}): Reduce code size and execution time.
- No optimizations that increase compiliation time.
-\item {\tt -O2}: All optimizations except space vs. speed tradeoffs.
-\item {\tt -O3}: All optimizations.
-\item {\tt -Ofast}: All {\tt -O3} optimizations, plus non-standards compliant optimizations,
-      particularly {\tt -ffast-math}. (Like {\tt -fast} on the Solaris compiler.)\\[1em]
-  This flag turns off exact implementations of IEEE or ISO rules/specifications for math
-  functions. Generally, if you don't care about the exact result, you can use this for
-  a speedup.
-\end{itemize}
-
-\subsection*{Scalar Optimizations}
-By scalar optimizations, I mean optimizations
-which affect scalar (non-array) operations. Here are some examples of scalar
-optimizations.
-
-\paragraph{Constant folding.} Probably the simplest optimization one can think of.
-Tag line: ``Why do later something you can do now?'' We simply translate:
-
+Let's look at Mike Conley's Firefox Performance Updates,
 \begin{center}
-\vspace*{-1em}
-\begin{tabular}{lll}
-i = 1024 * 1024 &
-$\Longrightarrow$ &
-i = 1048576
-\end{tabular}
-\end{center}
-
-\noindent \emph{Enabled at all optimization levels.} The compiler will not emit
-code that does the multiplication at runtime. It will simply use the
-computed value.
-
-\paragraph{Common subexpression elimination.} We can do common subexpression elimination
-when the same expression {\tt x op y} is computed more than once, and
-neither {\tt x} nor {\tt y} change between the two computations. In the
-below example, we need to compute {\tt c + d} only once.
-
-
-\begin{lstlisting}[language=C]
-   a = (c + d) * y;
-   b = (c + d) * z;
-
-   w = 3;
-   x = f(); y = x;
-   z = w + y;
-
-\end{lstlisting}
-
-
-\noindent \emph{Enabled at {\tt -O2}, {\tt -O3} or with {\tt -fgcse}.} 
-These flags actually enable a global (i.e. across-basic-blocks) CSE pass.
-This also enables global constant and copy propagation.
-
-\paragraph{Constant propagation.} Moves constant values from definition to
-use. The transformation is valid if there are no redefinitions of the
-variable between the definition and its use. In the above example,
-we can propagate the constant value 3 to its use in {\tt z = w + y},
-yielding {\tt z = 3 + y}.
-
-\paragraph{Copy propagation.} A bit more sophisticated than constant
-propagation---telescopes copies of variables from their definition to
-their use. This usually runs after CSE. Using it, we can replace the
-last statement with {\tt z = w + x}. If we run both constant and copy
-propagation together, we get {\tt z = 3 + x}.
-
-These scalar optimizations are more complicated in the presence
-of pointers, e.g. {\tt z = *w + y}. More next time.
-
-%\paragraph{Scalar Replacement of Aggregates.} Censored. Too many people misunderstood it last year.
-
-\paragraph{Redundant Code Optimizations.} In some sense, most optimizations
-remove redundant code, but one particular optimization is \emph{dead code
-elimination}, which removes code that is guaranteed to not execute.
-For instance:
-
 {\scriptsize
-\begin{center}
-\vspace*{-2em}
-\begin{minipage}{.3\textwidth}
-\begin{lstlisting}[language=C]
-  int f(int x) {
-    return x * 2;
-  }
-  \end{lstlisting}
-  \end{minipage} \begin{minipage}{.3\textwidth}
-\begin{lstlisting}[language=C]
-  int g() {
-    if (f(5) % 2 == 0) {
-      // do stuff...
-    } else {
-      // do other stuff
-    }
-  }
-\end{lstlisting}
-\end{minipage}
+\vspace*{-1em}
+\url{https://mikeconley.ca/blog/2018/02/14/firefox-performance-update-1/}
+}
 \end{center}
-}
-We see that the then-branch in {\tt g()} is always going to execute, and the
-else-branch is never going to execute.
-
-The general problem, as with many other compiler problems, is undecidable. Let's not get too caught up in the semantics of the \textit{Entscheidungsproblem}, even if you do speak German and like to show it off by pronouncing that word correctly.
-
-\subsection*{Loop Optimizations}
-Loop optimizations are particularly profitable when loops execute
-often. This is often a win, because programs spend a lot of time looping.
-The trick is to find which loops are going to be the important ones.
-Profiling is helpful.
-
-A loop induction variable is a variable that varies on each iteration
-of the loop; the loop variable is definitely a loop induction variable,
-but there may be others. \emph{Induction variable elimination} gets
-rid of extra induction variables.
-
-\emph{Scalar replacement} replaces an array read {\tt a[i]}
-occuring multiple times with a single read {\tt temp = a[i]} and references
-to {\tt temp} otherwise. It needs to know that {\tt a[i]} won't change
-between reads.
-
-Sane languages include array bounds checks, and loop optimizations
-can eliminate array bounds checks if they can prove that the loop
-never iterates past the array bounds.
-
-\paragraph{Loop unrolling.} This optimization
-lets the processor run more code without having to branch
-as often. \emph{Software pipelining} is a synergistic optimization,
-which allows multiple iterations of a loop to proceed in parallel.
-This optimization is also useful for SIMD. Here's an example.
-\begin{center}
 \vspace*{-1em}
-\begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=C]
-for (int i = 0; i < 4; ++i)
-    f(i)
-  \end{lstlisting}
-  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
-f(0); f(1); f(2); f(3);
-  \end{lstlisting}
-  \end{minipage}
-  \end{center}
-\noindent \emph{Enabled with {\tt -funroll-loops}.}
 
-\paragraph{Loop interchange.} This optimization can give big wins
-for caches (which are key); it changes the nesting of loops to
-coincide with the ordering of array elements in memory. For instance,
-in C:
+\begin{itemize}[noitemsep]
+\item don't use CPU animating out-of-view elements
+\item move db init off main thread
+\item keep better profiling data
+\item parallel painting for macOS
+\item lazily instantiate Search Service only when first search starts
+\item halve size of the blocklist
+\item refactor to reduce main-thread IO
+\item don't hold all frames of animated GIFs/APNGs in memory
+\item eliminate an unnecessary hash table
+\item use more modern compiler
+\end{itemize}
+
+We can categorize most of these updates into the categories we've seen before:
+\begin{itemize}[noitemsep]
+\item do less work\\
+ (or do it sooner/later);
+\item use threads (move work off main thread);
+\item track performance;
+\end{itemize}
+Which of the updates fall into which categories?
+
+\subsection*{Tab warming} We continue by examining one particular update, \emph{tab warming}, in detail:
 \begin{center}
+\scriptsize
 \vspace*{-1em}
-\begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=C]
-for (int i = 0; i < N; ++i)
-    for (int j = 0; j < M; ++j)
-        a[j][i] = a[j][i] * c
-  \end{lstlisting}
-  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
-for (int j = 0; j < M; ++j)
-    for (int i = 0; i < N; ++i)
-        a[j][i] = a[j][i] * c
-  \end{lstlisting}
-  \end{minipage}
-  \end{center}
-  since C is \emph{row-major} (meaning a[1][1] is beside a[1][2]),
-rather than \emph{column-major}.
+\url{https://mikeconley.ca/blog/2018/01/11/making-tab-switching-faster-in-firefox-with-tab-warming/}.
+\end{center}
+\vspace*{-1em}
 
-\noindent
-\emph{Enabled with {\tt -floop-interchange}.}
+\hfill ``Maybe this is my Canadian-ness showing, but I like to think of it almost like coming in from shoveling snow off of the driveway, and somebody inside has \emph{already made hot chocolate for you}, because they knew you’d probably be cold.'' --- Mike Conley
 
-Strangely enough, sometimes you want to do things the column-major way even though it's ``wrong''. If your two dimensional array is of an appropriate size then by intentionally hitting things in the ``wrong'' order, you'll trigger all your page faults up front and load all your pages into cache and then you can go wild. This was suggested as a way to make matrix multiplication faster for a sufficiently large matrix...
+Consider switching tabs. Previously, Firefox would request a paint of the newly-selected tab and wait for the rendering to be available before switching the tab.
 
-\paragraph{Loop fusion.} This optimization is like the OpenMP collapse
-construct; we transform
+The idea is to reduce user-visible latency by predicting an imminent tab switch. How do you know that the user is about to switch tabs? When the user has a mouse, then the mouse cursor will hover over the next tab.
+
+\begin{quote}
+Assuming a sufficiently long delay between hover and click, the tab switch should be perceived as instantaneous. If the delay was non-zero but still not long enough, we will have nonetheless shaved that time off in eventually presenting the tab to you.
+
+And in the event that we were wrong, and you weren’t interested in seeing the tab, we eventually throw the uploaded layers away.
+\end{quote}
+
+The blog post does not report performance numbers (but bug 1430160 discusses how to collect them).
+
+\subsection*{Firefox in general}
+
+Try: ``about:mozilla'' in Firefox. On a Quantum Flow-enabled version, you'll see
+
 \begin{center}
-\vspace*{-1em}
-\begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=C]
-for (int i = 0; i < 100; ++i)
-    a[i] = 4
+\emph{The Beast adopted new raiment and studied the ways of Time and Space and Light and the Flow of energy through the Universe. From its studies, the Beast fashioned new structures from oxidised metal and proclaimed their glories. And the Beast’s followers rejoiced, finding renewed purpose in these teachings.}
 
-for (int i = 0; i < 100; ++i)
-    b[i] = 7
-  \end{lstlisting}
-  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
-for (int i = 0; i < 100; ++i) {
-    a[i] = 4
-    b[i] = 7
-}
-  \end{lstlisting}
-  \end{minipage}
-  \end{center}
-There's a trade-off between data locality and loop overhead; hence,
-sometimes the inverse transformation, \emph{loop fission}, will
-improve performance.
+\hfill \emph{from The Book of Mozilla, 11:14}
+\end{center}
 
-\paragraph{Loop-invariant code motion.} Also known as \emph{Loop hoisting},
-this optimization moves calculations out of a loop. 
+In 2017, Mozilla released Electrolysis (E10s)~\cite{electrolysis}.
+which leverages multicore processors by using multiple OS-level
+processes. (Chrome has always done this, but Firefox attempts to also
+keep memory usage
+down~\cite{goldilocks}.
+Beyond internal architecture issues, handling Add-Ons (now
+WebExtensions) was perhaps the most challenging part of going
+multi-process.
+
+Note the connection to different thread/process models.
+Chrome is one-process-per-tab, while Firefox multiplexes tabs across
+the 4 content processes (``hardware threads'', by analogy). Limiting
+the number of tabs also limits the memory consumption of the browser:
+we don't have arbitrary numbers of renderer state.
+
 \begin{center}
-\vspace*{-1em}
-\begin{minipage}{.3\textwidth}
+\includegraphics[width=.9\textwidth]{images/L19-chrome-vs-firefox.png}
+\end{center}
+Source: Ryan Pollock~\cite{goldilocks}
+
+As a crude summary, Electrolysis works on splitting across processes
+while the newer Quantum Flow leverages multithreading and other
+improvements.  Quantum Flow uses the Rust programming language and its
+``fearless concurrency'' (in Rust-speak). Rust should probably be part
+of a future revision of the ECE 459 curriculum. But we'll focus on
+Firefox here.
+
+\subsection*{Quantum Flow}
+Here's a retrospective of the Quantum Flow project:
+\begin{center}
+\url{https://ehsanakhgari.org/blog/2017-09-21/quantum-flow-engineering-newsletter-25}
+\end{center}
+
+To sum up, they formed a small team and did the following.
+\begin{enumerate}[noitemsep]
+\item Measure slowness: gather information, instrument Firefox, collect profiling data and measurements. Prioritize issues.
+\item Gather help: convince other teams to pitch in with perf improvements. Examples: front-end team (reduce flushes, timers); layout team (reflow performance).
+\item Fix all the things! (Or at least the most important ones).
+\end{enumerate}
+Given the short timeline they gave themselves (6 months) and the limited resources, an important part of their work was convincing others to help.
+They triaged 895 bugs and fixed 369 of them. The weekly Quantum Flow Engineering Newsletter was a key motivational tool.
+
+After the project wound down, they aimed to distribute responsibility for perf improvements across the entire project.
+
+\section*{Firefox Telemetry}
+Firefox's Telemetry feature collects lots of information from Firefox
+users.  Idea: collect data before hacking away at things.  Firefox collects hundreds of
+gigabytes of anonymous metrics per day while browsing and makes it all available to
+the public.  One can view this as an analogy of CPU profiling on a
+massively distributed context. This data is collected much less often than
+CPU profiling data but at a much broader scope.
+\begin{center}
+\url{https://telemetry.mozilla.org/}
+\end{center}
+If you are running Firefox and want to see what it is collecting:
+\begin{center}
+\url{about:telemetry}
+\end{center}
+
+You can view distributions of telemetry probes (in the form of
+histograms). You can also make your own dashboard based on Firefox
+Telemetry data and Mozilla has infrastructure for their developres to
+formulate and evaluate their own queries.
+
+Example questions:
+\begin{itemize}[noitemsep]
+\item Is Firefox the user's default browser? (69\% yes)
+\item Does e10s make startup faster? (no, slower)
+\item Which plugins tend to freeze the browser on load? (Silverlight and Flash)
+\end{itemize}
+Can see evolution of data over time.
+
+Firefox developers can propose new telemetry probes which are reviewed
+for data privacy\footnote{Mozilla Data Collection Practices: \url{https://wiki.mozilla.org/Firefox/Data_Collection}} as well as through normal code review channels.
+
+\paragraph{Pings.} Firefox phones the data home using so-called ``pings''.
+Firefox sends a ``main ping'' every 24 hours, upon shutdown, environment change,
+and crash. There are other types of pings as well. Pings get sent either by Firefox
+or by a helper program, Pingsender, when Firefox isn't running. Presumably they
+are sent over the network as compressed JSON to a central server.
+
+Here's the common ping structure:
+
+\begin{verbatim}
+{
+  type: <string>, // "main", "activation", "optout", "saved-session", ...
+  id: <UUID>, // a UUID that identifies this ping
+  creationDate: <ISO date>, // the date the ping was generated
+  version: <number>, // the version of the ping format, currently 4
+
+  application: {
+    architecture: <string>, // build architecture, e.g. x86
+    buildId: <string>, // "20141126041045"
+    name: <string>, // "Firefox"
+    version: <string>, // "35.0"
+    displayVersion: <string>, // "35.0b3"
+    vendor: <string>, // "Mozilla"
+    platformVersion: <string>, // "35.0"
+    xpcomAbi: <string>, // e.g. "x86-msvc"
+    channel: <string>, // "beta"
+  },
+
+  clientId: <UUID>, // optional
+  environment: { ... }, // optional, not all pings contain the environment
+  payload: { ... }, // the actual payload data for this ping type
+}
+\end{verbatim}
+
+Pings contain scalars (counts, booleans, strings) and histograms. A histogram collects
+bucketed data (think grade distributions). Both scalars and histograms can be keyed, e.g.
+how often searches happen for which search engines.
+
+\section*{Case Study: Is Lower Level Always Faster?}
+There's a lot of support for the idea that code written in lower level languages (e.g., choosing C rather than \CPP) means that your code will be faster. Is that always the case? Language elitism aside -- not always!
+
+    \CPP11 has made major strides towards readability and
+    efficiency---it provides light-weight abstractions. We'll look at
+    a couple of examples.
+
+\paragraph{Sorting.} Our goal is simple: we'd like to sort a bunch of integers.
+In C, you would usually just use qsort from {\tt stdlib.h}.
+
+  \begin{lstlisting}
+void qsort (void* base, size_t num, size_t size,
+            int (*comparator) (const void*, const void*));
+  \end{lstlisting}
+
+This is a fairly ugly definition (as usual, for generic C functions). How ugly is it?
+Let's look at a usage example.
   \begin{lstlisting}[language=C]
-for (int i = 0; i < 100; ++i) {
-    s = x * y;
-    a[i] = s * i;
+#include <stdlib.h>
+
+int compare(const void* a, const void* b) {
+    return (*((int*)a) - *((int*)b));
+}
+
+int main(int argc, char* argv[]) {
+    int array[] = {4, 3, 5, 2, 1};
+    qsort(array, 5, sizeof(int), compare);
 }
   \end{lstlisting}
-  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
-s = x * y;
-for (int i = 0; i < 100; ++i) {
-    a[i] = s * i;
+This looks like a nightmare, and is more likely to have bugs than what we'll see next.
+
+
+C++ has a sort with a much nicer interface\footnote{\ldots well, nicer to use, after you get over templates.}:
+
+  \begin{lstlisting}[language=C++]
+template <class RandomAccessIterator>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last
+);
+
+template <class RandomAccessIterator, class Compare>
+void sort (
+    RandomAccessIterator first,
+    RandomAccessIterator last,
+    Compare comp
+);
+  \end{lstlisting}
+It is, in fact, easier to use:
+  \begin{lstlisting}[language=C++]
+#include <vector>
+#include <algorithm>
+
+int main(int argc, char* argv[])
+{
+    std::vector<int> v = {4, 3, 5, 2, 1};
+    std::sort(v.begin(), v.end());
 }
   \end{lstlisting}
-  \end{minipage}
-  \end{center}
 
-This reduces the amount of work we have to do for each iteration of the loop.
+{\bf Note:} Your compare function can be a function or a functor. (Don't know what functors
+are? In C++, they're functions with state.) By default,
+  {\tt sort} uses {\tt operator$<$} on the objects being sorted.
 
-
-\subsection*{Miscellaneous Low-Level Optimizations}
-Some optimizations affect low level code generation; here are two examples.
-
-\paragraph{Branch Prediction.} {\tt gcc} attempts to guess the probability of each branch to
-best order the code. (For an {\tt if}, fall-through is most efficient. Why?)
-
-This isn't quite an optimization, but you can use {\tt
-  \_\_builtin\_expect(expr, value)} to help GCC, if you know the
-run-time characteristics of your program. An example, from the
-  Linux kernel:
-
-  \begin{lstlisting}[language=C]
-#define likely(x)       __builtin_expect((x),1)
-#define unlikely(x)     __builtin_expect((x),0)
-  \end{lstlisting}
-
-\paragraph{Architecture-Specific.} {\tt gcc} can also generate code tuned to particular
-processors and processor variants. You can specify this using {\tt
-  -march} and {\tt -mtune}. ({\tt -march} implies {\tt -mtune}).
-This will enable specific instructions that not all CPUs support (e.g. SSE4.2).
-For example, {\tt -march=corei7}.
-
-\noindent
-Good to use on your local machine or your cloud servers, not ideal for code you ship to others.
-
-
-\section*{Interprocedural Analysis and Link-Time Optimizations}
-\hfill ``Are economies of scale real?''
-
-In this context, does a
-whole-program optimization really improve your program?
-We'll start by first talking about some information that is critical for
-whole-program optimizations.
-
-\subsection*{Alias and Pointer Analysis}
-As we've seen in the above analyses, compiler optimizations often need
-to know about what parts of memory each statement reads to.  This is
-easy when talking about scalar variables which are stored on the
-stack. This is much harder when talking about pointers or arrays
-(which can alias). \emph{Alias analysis} helps by declaring that a
-given variable {\tt p} does not alias another variable {\tt q}; that
-is, they point to different heap locations. \emph{Pointer analysis}
-abstractly tracks what regions of the heap each variable points to.
-A region of the heap may be the memory allocated at a particular
-program point.
-
-When we know that two pointers don't alias, then we know that their
-effects are independent, so it's correct to move things around.
-This also helps in reasoning about side effects and enabling reordering.
-
-We've talked about automatic parallelization previously in this course.
-At this point, I'll remind you that we used {\tt restrict} so that the
-compiler wouldn't have to do as much pointer analysis. Shape analysis
-builds on pointer analysis to determine that data structures are indeed
-trees rather than lists.
-
-\paragraph{Call Graphs.} Many interprocedural analyses require accurate
-call graphs. A call graph is a directed graph showing relationships between
-functions. It's easy to compute a call graph when you have C-style
-function calls. It's much harder when you have virtual methods, as in
-C++ or Java, or even C function pointers. In particular, you need pointer
-analysis information to construct the call graph.
-
-\paragraph{Devirtualization.} This optimization attempts to convert
-virtual function calls to direct calls.  Virtual method calls have the
-potential to be slow, because there is effectively a branch to
-predict. If the branch prediction goes well, then it doesn't impose
-more runtime cost. However, the branch prediction might go poorly.  (In
-general for C++, the program must read the object's vtable.) Plus, virtual
-calls impede other optimizations. Compilers can help by doing
-sophisticated analyses to compute the call graph and by replacing
-virtual method calls with nonvirtual method calls.  Consider the
-following code:
-  \begin{lstlisting}[language=C]
-class A {
-  public:
-    virtual void m();
-};
-
-class B : public A {
-  public:
-    virtual void m() {}
-};
-
-int main(int argc, char *argv[]) {
-    std::unique_ptr<A> t(new B);
-    t->m();
-}
-  \end{lstlisting}
-Devirtualization could eliminate vtable access; instead, we could just call B's {\tt m} method
-directly. By the way, ``Rapid Type Analysis'' analyzes the entire program, observes that
-only {\tt B} objects are ever instantiated, and enables devirtualization
-of the {\tt b.m()} call.
-
-\noindent \emph{Enabled with {\tt -O2}, {\tt -O3}, or with {\tt -fdevirtualize}.}
-
-\paragraph{Inlining.} We have seen the notion of inlining:
   \begin{itemize}
-    \item Instructs the compiler to just insert the function code in-place,
-      instead of calling the function.
-    \item Hence, no function call overhead!
-    \item Compilers can also do better---context-sensitive---operations they couldn't
-      have done before.
+    \item Which is less error prone?
+    \item Which is {\bf faster}?
   \end{itemize}
 
-OK, so inlining removes overhead. Sounds like better performance! Let's inline everything!
-There are two ways of inlining in C++.
+The second question is empirical. Let's see. We generate an array of 2 million ints
+and sort it (10 times, taking the average).
 
-Implicit Inlining (defining a function inside a class definition):
-  \begin{lstlisting}[language=C]
-class P {
-public:
-    int get_x() const { return x; }
-...
-private:
-    int x;
-};
-  \end{lstlisting}
+\begin{itemize}
+\item qsort: 0.49 seconds
+\item C++ sort: 0.21 seconds
+\end{itemize}
 
-Explicit Inlining:
-  \begin{lstlisting}[language=C]
-inline max(const int& x, const int& y) {
-    return x < y ? y : x;
-}
-  \end{lstlisting}
-
-\paragraph{The Other Side of Inlining.}
-Inlining has one big downside:
-  \begin{itemize}
-    \item Your program size is going to increase.
-  \end{itemize}
-   This is worse than you think:
+The C++ version is {\bf twice} as fast. Why?
       \begin{itemize}
-        \item Fewer cache hits.
-        \item More trips to memory.
+        \item The C version just operates on memory---it has no clue about the
+          data.
+        \item We're throwing away useful information about what's being sorted.
+        \item A C function-pointer call prevents inlining of the compare function.
       \end{itemize}
-   Some inlines can grow very rapidly (C++ extended constructors).
-  Just from this your performance may go down easily.
+OK. What if we write our own sort in C, specialized for the data?
 
-  Note also that inlining is merely a suggestion to compilers~\cite{gcc:inlining}.
-  They may ignore you.
-  For example:
+\begin{itemize}
+\item Custom C sort: 0.29 seconds
+\end{itemize}
+
+Now the C++ version is still faster (but it's close). But, this is
+quickly going to become a maintainability nightmare.
+      \begin{itemize}
+        \item Would you rather read a custom sort or 1 line?
+        \item What (who) do you trust more?
+      \end{itemize}
+
+\subsection*{Lesson}
+Abstractions will not make your program slower. 
+
+\noindent
+They allow speedups and are much easier to maintain and read.
+
+\subsection*{Vectors vs Lists}
+Consider two
+problems.
+
+\begin{enumerate}
+\item Generate {\bf N} random integers and insert them into (sorted)
+      sequence.
+      
+      {\bf Example:} 3 4 2 1
+      
+      \begin{itemize}
+        \item 3
+        \item 3 4
+        \item 2 3 4
+        \item 1 2 3 4
+      \end{itemize}
+
+\item Remove {\bf N} elements one-at-a-time by going to a random position
+      and removing the element.
+
+      {\bf Example:} 2 0 1 0
+      
+      \begin{itemize}
+        \item 1 2 4
+        \item 2 4
+        \item 2
+        \item 
+      \end{itemize}
+\end{enumerate}
+
+For which {\bf N} is it better to use a list than a vector (or array)?
+
+ 
+\paragraph{Complexity analysis.} As good computer scientists, let's analyze
+the complexity.  
+
+{\bf Vector}:\\[-2em]
+      \begin{itemize}
+        \item Inserting\\[-2em]
+          \begin{itemize}
+            \item $O(\log n)$ for binary search
+            \item $O(n)$ for insertion (on average, move half the elements)
+          \end{itemize}
+        \item Removing\\[-2em]
+          \begin{itemize}
+            \item $O(1)$ for accessing
+            \item $O(n)$ for deletion (on average, move half the elements)
+          \end{itemize}
+      \end{itemize}
+
+{\bf List}:\\[-2em]
+      \begin{itemize}
+        \item Inserting\\[-2em]
+          \begin{itemize}
+            \item $O(n)$ for linear search
+            \item $O(1)$ for insertion
+          \end{itemize}
+        \item Removing\\[-2em]
+          \begin{itemize}
+            \item $O(n)$ for accessing
+            \item $O(1)$ for deletion
+          \end{itemize}
+      \end{itemize}
+
+Therefore, based on their complexity, lists should be better.
+
+\paragraph{Reality.} OK, here's what happens. 
+\begin{verbatim}
+$ ./vector_vs_list 50000
+Test 1
+======
+vector: insert 0.1s   remove 0.1s   total 0.2s
+list:   insert 19.44s   remove 5.93s   total 25.37s
+Test 2
+======
+vector: insert 0.11s   remove 0.11s   total 0.22s
+list:   insert 19.7s   remove 5.93s   total 25.63s
+Test 3
+======
+vector: insert 0.11s   remove 0.1s   total 0.21s
+list:   insert 19.59s   remove 5.9s   total 25.49s
+\end{verbatim}
+
+{\bf Vectors} dominate lists, performance wise. Why?
   \begin{itemize}
-    \item taking the address of an ``inline'' function and using it; or
-    \item virtual functions (in C++),
+    \item Binary search vs. linear search complexity dominates.
+    \item Lists use far more memory.
+      {\bf On 64 bit machines:}
+      \begin{itemize}
+        \item Vector: 4 bytes per element.
+        \item List: At least 20 bytes per element.
+      \end{itemize}
+    \item Memory access is slow, and results arrive in blocks:
+      \begin{itemize}
+        \item Lists' elements are all over memory, hence many
+          cache misses.
+        \item A cache miss for a vector will bring a lot more usable data.
+      \end{itemize}
   \end{itemize}
-  will get you ignored quite fast.
 
-\paragraph{Implications of inlining.} Inlining can make your life worse in two ways.
-First, debugging is more difficult (e.g. you can't set a breakpoint in a function that
-  doesn't actually exist).
- Most compilers simply won't inline code with debugging symbols on.
- Some do, but typically it's more of a pain.
-
-Second, it can be a problem for library design:
+So, here are some tips for getting better performance.
   \begin{itemize}
-    \item If you change any inline function in your library, any users
-      of that library have to {\bf recompile} their program if the
-      library updates. (Congratulations, you made a non-binary-compatible change!)
+    \item Don't store unnecessary data in your program.
+    \item Keep your data as compact as possible.
+    \item Access memory in a predictable manner.
+    \item Use vectors instead of lists by default.
+    \item Programming abstractly can save a lot of time.
+    \item Often, telling the compiler more gives you better code.
+    \item Data structures can be critical, sometimes more than complexity.
+    \item {\bf Low-level code != Efficient}.
+    \item Think at a low level if you need to optimize anything.
+    \item Readable code is good code---different hardware needs different
+      optimizations.
   \end{itemize}
-This would not be a problem for non-inlined functions---programs execute the new function
-dynamically at runtime.
 
-\noindent \emph{Enabled with {\tt -O2} and {\tt -O3}.}
 
-Obviously, inlining and devirtualization require call graphs. But so
-does any analysis that needs to know about the heap effects of
-functions that get called; for instance, consider this code:
 
-{\small
-\begin{lstlisting}[language=C]
-  int n;
 
-  int f() { /* opaque */ }
-
-  int main() {
-    n = 5;
-    f();
-    printf("%d\n", n);
-  }
-\end{lstlisting}
-}
-We could propagate the constant value 5, as long as we know that {\tt
-  f()} does not write to {\tt n}.
-
-\paragraph{Tail Recursion Elimination.} This optimization is mandatory
-in some functional languages; we replace a call by a {\tt goto} at the
-compiler level. Consider this example, courtesy of Wikipedia:
-
-{\small
-\begin{lstlisting}[language=C]
-  int bar(int N) {
-    if (A(N))
-      return B(N);
-    else
-      return bar(N);
-  }
-\end{lstlisting}
-}
-
-For both calls, to {\tt B} and {\tt bar}, we don't need to return control
-to the calling {\tt bar()} before returning to its caller (because {\tt bar()}
-is done anyway). This avoids
-function call overhead and reduces call stack use.
-
-\noindent \emph{Enabled with {\tt -foptimize-sibling-calls}.} Also supports
-sibling calls as well as tail-recursive calls.
-
-\section*{Link-Time Optimizations}
-Next up: mechanics of interprocedural optimizations in modern open-source
-compilers. Conceptually, interprocedural optimizations have been well-understood
-for a while. But practical implementations in open-source compilers are still
-relatively new; Hubi\v{c}ka~\cite{hubicka14:_linkt_gcc} summarizes recent history.
-In 2004, the only real interprocedural optimization in gcc was inlining, and it was
-quite ad-hoc.
-
-The biggest challenge for interprocedural optimizations is scalability, so 
-it fits right in as a topic of discussion for this course.
-Here's an outline of how it works:
-\begin{itemize}[noitemsep]
-\item local generation (parallelizable): compile to Intermediate Representation. Must generate compact
-IR for whole-program analysis phase.
-\item whole-program analysis (hard to parallelize!): create call graph, make transformation decisions. Possibly partition
-the program.
-\item local transformations (parallelizable): carry out transformations to local IRs, generate object code.
-Perhaps use call graph partitions to decide optimizations. 
-\end{itemize}
-There were a number of conceptually-uninteresting implementation
-challenges to be overcome before gcc could have its intermediate code available for
-interprocedural analysis (i.e. there was no stable on-disk IR format). The transformations look like this:
-\begin{itemize}[noitemsep]
-\item global decisions, local transformations:
-\begin{itemize}[noitemsep]
-\item devirtualization
-\item dead variable elimination/dead function elimination
-\item field reordering, struct splitting/reorganization
-\end{itemize}
-\item global decisions, global transformations:
-\begin{itemize}[noitemsep]
-\item cross-module inlining
-\item virtual function inlining
-\item interprocedural constant propagation
-\end{itemize}
-\end{itemize}
-The interesting issues arise from making the whole-program analysis scalable. Firefox, the Linux kernel,
-and Chromium contain tens of millions of lines of code. Whole-program analysis requires that all of 
-this code (in IR) be available to the analysis and that at least some summary of the code be in memory, 
-along with the call graph.
-(Since it's a whole-program analysis, any part of the program may affect other parts). The first problem
-is getting it into memory; loading the IR for tens of millions of lines of code is a non-starter.
-Clearly, anything that is more expensive than linear time can cause problems. Partitioning the program
-can help.
-
-How did gcc get better?
-Hubi\v{c}ka~\cite{hubicka15:_link_gcc} explains how. In line with what I've said earlier, it's
-avoiding unnecessary work.
-\begin{itemize}[noitemsep]
-\item gcc 4.5: initial version of LTO;
-\item gcc 4.6: parallelization; partitioning of the call graph (put closely-related functions together, approximate functions in other partitions); the bottleneck: streaming in types and declarations;
-\item gcc 4.7--4.9: improve build times, memory usage [``chasing unnecessary data away''.]
-\end{itemize}
-As far as I can tell, today's gcc, with {\tt -flto}, does work and includes
-optimizations including constant propagation and function
-specialization.
-
-\paragraph{Impact.} gcc LTO appears to give 3--5\% improvements in performance, which compiler experts consider good.
-Like we discussed last time, this allows developers to shift their attention from 
-manual factoring of translation units to letting the compiler do it. (This is kind of like going
-from manual transmissions to automatic transmissions for cars\ldots).
-
-The LLVM project provides more details at~\cite{project17:_llvm_link_time_optim}, while gcc details
-can be found at~\cite{novillo09:_linkt}.
-
-%\url{https://gcc.gnu.org/wiki/LightweightIpo}
 
 \input{bibliography.tex}
 
