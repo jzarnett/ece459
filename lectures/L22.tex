@@ -2,199 +2,85 @@
 
 \begin{document}
 
-\lecture{22 --- GPU Programming (CUDA) }{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{22 --- GPU Programming Continued }{\term}{Patrick Lam \& Jeff Zarnett}
 
 \section*{GPUs: Heterogeneous Programming}
 
-The next part will be about programming for heterogeneous
-architectures. In particular, we'll talk about GPU programming, as
-seen in CUDA. The general idea is to
-leverage vector programming; vendors use the term SIMT (Single
-Instruction Multiple Thread) to describe this kind of
-programming. We've talked about the existence of SIMD instructions
-previously, but now we'll talk about leveraging SIMT more
-consciously. We are again in the domain of embarrassingly parallel
-problems.
-
-\paragraph{Cell, CUDA, and OpenCL.} 
-Other examples of heterogeneous programming include
-programming for the PlayStation 3 Cell~\cite{cellprimer} architecture and CUDA. (Note that the PS4 returns to a regular CPU/GPU configuration; however, it uses AMD hardware which combines the CPU and GPU on one chip.) The Cell includes a PowerPC core as well as
-8 SIMD coprocessors:
-
-\begin{center}
-\includegraphics[width=.4\textwidth]{images/cell.jpg}
-\end{center}
-\hfill (from the Linux Cell documentation)
-
-CUDA (Compute Unified Device Architecture) is NVIDIA's architecture
-for processing on GPUs. ``C for CUDA'' predates OpenCL; NVIDIA still
-makes CUDA tools available, and they may be faster than OpenCL on NVIDIA
-hardware. On recent devices, you can use (most) \CPP~features in CUDA code,
-which you can't do in OpenCL code. We used to teach OpenCL, but it seems
-to be the case that CUDA has found widespread acceptance out in industry.
-Hence, we use CUDA in the course. If you really need cross-platform or 
-you have AMD hardware, then you want OpenCL. The principles are similar 
-enough that you can take what you learned in one toolchain and apply it 
-to the other.
-
-\paragraph{Programming Model.} The programming
-model for all of these architectures is similar: you write the code for
-the massively parallel computation (kernel) separately from the main
-code. Then at run-time, set up the data (input), transfer the data to the GPU, wait while the GPU executes the kernel, then transfer the results back. 
-
-It makes sense to hand it over to the GPU because there are a lot of cores, although they run at a slower speed when compared to the CPU. Looking at the hardware in the ECE servers as of Fall 2020, ecetesla2 has a 4 core 3.6 GHz CPU. It also has 1920 CUDA cores that run at about 1.8 GHz. So, half the speed, but 480 times the workers. Sounds good... if the workload is suitable.
-
-At run-time, there is significant set-up cost for interacting with the GPU and then the data transfers (input to the GPU and collecting the results) mean there is a significant overhead cost for using the GPU. But the GPU can do lots of work in parallel once it gets going. This is a lot like deciding whether to drive or fly. 
-
-If the distance is short, say, 200 km (the distance between Ottawa and Montreal) then flying makes no sense: you have to get to the airport, be there at least an hour or two early to make your way through security checkpoints, then fly, then get from the destination airport to your final destination. Sure, the flying part is fast, but the overhead makes your total average speed not worth it.
-
-On the other hand, if you're going a longer distance, like 4000 km (roughly the distance between Waterloo and San Francisco), then driving is way slower! Sure, the overhead of going the airport remains, but once you're in the air you're moving at 800 km/h or so and in 5.5 hours you are there. Compare that to 40 hours of driving.
-
-CUDA includes both task parallelism and data parallelism, as we've
-discussed earlier in this course. \emph{Data parallelism} is the central
-feature. You are evaluating a function, or \emph{kernel},
-at a set of points. Each point represents a data element, such as one of the
-bodies in the n-body simulation. But you could also perform some 
-transformation on each pixel of an image or each frame of a video. If you 
-imagine a 2-dimensional problem, each little circle in the diagram below is
-a work-item:
-
-\begin{center}
-\begin{tikzpicture}
-\foreach \x in {0,0.25,...,2}
-  \foreach \y in {0,0.25,...,2}
-    \draw (\x, \y) circle (0.25mm);
-\end{tikzpicture}
-\end{center}
-
-Another name for the set of points is the \emph{index space}. 
-Each of the points corresponds to a \emph{work-item}.
-
-CUDA also supports \emph{task parallelism}: it can run different
-kernels in parallel. Such kernels may have a one-point index space. This is
-doing a large number of different things in parallel. We're not really going
-to focus on that and will instead stick to the part about data parallelism.
-
-\paragraph{More on work-items.} The work-item is the fundamental
-unit of work. These work-items live on an $n$-dimensional
-grid (ND-Range); we've seen a 2-dimensional grid above. You may choose
-to divide the ND-Range into smaller work-groups, or the system can
-divide the range for you. CUDA spawns a thread for each work item,
-with a unique thread ID; they are grouped into blocks. Blocks can share 
-memory locally, but each block has to be able to execute independently.
-That is, the system can schedule the blocks to run in any order and possibly
-in parallel (we hope so!). 
-
-You get your choice about block size. Usually, we say let the system decide. However, for some computations it's better to specify; if you do, however, you want to make best use of the hardware and use a multiple of the size of the \textit{warp}. A warp is the NVIDIA term for a unit of execution, and there can be multiple units of execution in a given GPU.
-
-\paragraph{Shared memory.} CUDA makes lots of different types of
-memory available to you:
-
-\begin{itemize}
-\item private memory: available to a single work-item;
-\item local memory (aka ``shared memory''): shared between work-items
-  belonging to the same work-group; like a user-managed cache;
-\item global memory: shared between all work-items as well as the host;
-\item constant memory: resides on the GPU, and cached. Does not change.
-\item texture memory: this is global memory too, also cached, and it provides potentially a very slight speedup over using global memory. The GPU has texture memory and caches that it uses for rendering and interpolating textures, and it's available for the GPU's general-purpose operations if your use case is a match. 
-\end{itemize}
-
-Choosing which kind of memory to use is an important design decision. A simple kernel might put everything in global memory, but that's likely to be slower than making good use of local memory. It could also be tempting to put all unchanging data in the constant memory, but its space is limited, so giant vectors won't always fit.
-
-There is also host memory (RAM in your computer), which generally contains the application's data. We will be doing explicit transfers the  of data from host memory to the GPU memory, in both directions.
-
-\paragraph{My very own Kernel.} Let's start looking at a kernel. This is the code that will be executed by every CUDA thread somewhat in parallel. First, let's see what the code would look like if we just wrote it in \CPP:
-
-\begin{lstlisting}[language=C++]
-void vector_add(int n, const float *a, const float *b, float *c) {
-  for (int i = 0; i < n; i++) {
-    c[i] = a[i] + b[i];
-}
-\end{lstlisting}
-
-
-The same code looks like this as a kernel~\cite{cuda}:
-\begin{lstlisting}[language=C++]
-__global__ void VecAdd(float* A, float* B, float* C)
-{
-    int i = threadIdx.x;
-    C[i] = A[i] + B[i];
-}
-\end{lstlisting}
-
-You can write kernels in a variant of \CPP, and it looks mostly like the language we (hopefully) know, with a few additions like the \texttt{\_\_global\_\_} designation in the previous example. A large number of features of more recent versions of the language are supported, but how much will vary based on your release of the kernel compiler (\texttt{nvcc}). There's a very long list of things that are not allowed in device code. It's unlikely that we'll be doing too many things that are exotic enough to be forbidden by the compile in this course. However, if you aren't sure why something isn't working or want to know what kind of stuff is not allowed, see \url{https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#restrictions}
-
-\paragraph{Branches.} OpenCL implements a SIMT architecture.
-What this means is that the computation for each work-item can branch
-arbitrarily. The hardware will execute all branches that any thread in
-a warp executed (which can be slow). 
-
-{\scriptsize \hspace*{2em} \begin{minipage}{.5\textwidth}
-    \begin{lstlisting}
-kernel void contains_branch(global float *a, global float *b) {
-    int id = get_global_id(0);
-    if (cond) {
-        a[id] += 5.0;
-    } else {
-        b[id] += 5.0;
-    }
-}
-    \end{lstlisting}
-      \end{minipage}}
-
-In the above example, the {\tt if} statement will cause
-each thread to execute both branches of the {\tt if}, keeping only the
-result of the appropriate branch.
-
-Similarly, executing a loop will cause the
-workgroup to wait for the maximum number of iterations of the loop in
-any work-item.
-
-{\scriptsize \hspace*{2em} \begin{minipage}{.5\textwidth}
-    \begin{lstlisting}verbatim
-kernel void contains_loop(global float *a, 
-                          global float *b) {
-    int id = get_global_id(0);
-    
-    for (i = 0; i < id; i++) {
-        b[i] += a[i];
-    }
-}
-    \end{lstlisting}
-\end{minipage} }
-
-If you're setting up workgroups, though, you can arrange for all
-of the work-items in a workgroup to execute the same branches.
-
-\paragraph{Synchronization.} You might define
-workgroups because you can only put barriers and memory fences between
-work items in the same workgroup. Different workgroups execute
-independently.
-
-OpenCL also supports all of the notions that we've talked about
-before: memory fences (read and write), barriers, and the volatile
-keyword.  The barrier ({\tt barrier()}) ensures that all of the
-threads in the workgroup all reach the barrier before they continue.
-Recall that the fence ensures that no load or store instructions
-(depending on the type of fence) migrate to the other side of the fence.
-
-
-\section*{More Complicated Kernel}
-
-
-\begin{lstlisting}
-                                              
-\end{lstlisting}
-
-
 \section*{Host Code}
-Now, fortunately, we don't have to write the whole program in \CPP~ or C, even though the kernel has to be written in the CUDA variant. 
+We've learned about how a kernel works and a bit about how to write one. The next part is the host code, Now, fortunately, we don't have to write the whole program in \CPP~ or C, even though the kernel has to be written in the CUDA variant. We're going to use the Rustacuda library from \url{https://github.com/bheisler/RustaCUDA}. 
 
+
+We'll look at a quick example of launching a very simple kernel from the Rustacuda examples\footnote{\url{https://github.com/bheisler/RustaCUDA/blob/master/examples/launch.rs}}: 
 \begin{lstlisting}[language=Rust]
+#[macro_use]
+extern crate rustacuda;
+
+use rustacuda::prelude::*;
+use std::error::Error;
+use std::ffi::CString;
+
+fn main() -> Result<(), Box<dyn Error>> {
+    // Set up the context, load the module, and create a stream to run kernels in.
+    rustacuda::init(CudaFlags::empty())?;
+    let device = Device::get_device(0)?;
+    let _ctx = Context::create_and_push(ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, device)?;
+
+    let ptx = CString::new(include_str!("../resources/add.ptx"))?;
+    let module = Module::load_from_string(&ptx)?;
+    let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
+
+    // Create buffers for data
+    let mut in_x = DeviceBuffer::from_slice(&[1.0f32; 10])?;
+    let mut in_y = DeviceBuffer::from_slice(&[2.0f32; 10])?;
+    let mut out_1 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
+    let mut out_2 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
+
+    // This kernel adds each element in `in_x` and `in_y` and writes the result into `out`.
+    unsafe {
+        // Launch the kernel with one block of one thread, no dynamic shared memory on `stream`.
+        let result = launch!(module.sum<<<1, 1, 0, stream>>>(
+            in_x.as_device_ptr(),
+            in_y.as_device_ptr(),
+            out_1.as_device_ptr(),
+            out_1.len()
+        ));
+        result?;
+
+        // Launch the kernel again using the `function` form:
+        let function_name = CString::new("sum")?;
+        let sum = module.get_function(&function_name)?;
+        // Launch with 1x1x1 (1) blocks of 10x1x1 (10) threads, to show that you can use tuples to
+        // configure grid and block size.
+        let result = launch!(sum<<<(1, 1, 1), (10, 1, 1), 0, stream>>>(
+            in_x.as_device_ptr(),
+            in_y.as_device_ptr(),
+            out_2.as_device_ptr(),
+            out_2.len()
+        ));
+        result?;
+    }
+
+    // Kernel launches are asynchronous, so we wait for the kernels to finish executing.
+    stream.synchronize()?;
+
+    // Copy the results back to host memory
+    let mut out_host = [0.0f32; 20];
+    out_1.copy_to(&mut out_host[0..10])?;
+    out_2.copy_to(&mut out_host[10..20])?;
+
+    for x in out_host.iter() {
+        assert_eq!(3.0 as u32, *x as u32);
+    }
+
+    println!("Launched kernel successfully.");
+    Ok(())
+}
 \end{lstlisting}
 
 \paragraph{Walk-through.} Let's look at all of the code in the example and
-explain the terms. 1) First, we request an OpenCL \emph{platform}.
+explain the terms. For a more detailed explanation of all the steps, see~\cite{cuda}.
+
+ 1) First, we request a \emph{platform}.
 Platforms, also known as hosts, contain 2) OpenCL \emph{compute devices},
 which may in turn contain multiple compute units. Note that we could
 also request a CPU device in step 2, without changing the rest of the code.
