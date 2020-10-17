@@ -66,7 +66,7 @@ fn dangle() -> &String {
 }
 \end{lstlisting} 
 
-In C this would be a ``dangling pointer'' (a pointer that's pointing to a location that is no longer valid). I see this kind of error a lot in C programs where someone has stack allocated a structure and then wants to pass it to another thread and does so with the address-of operator. It compiles and might even work sometimes at runtime, but is still wrong and can eventually lead to a bug that bites you. 
+In C this would be a ``dangling pointer'' (a pointer that's pointing to a location that is no longer valid). I see this kind of error a lot in C programs where someone has stack allocated a structure and then wants to pass it to another thread and does so with the address-of operator. It compiles and might even work sometimes at runtime, but is still wrong and can eventually be exposed as a bug that bites you.
 
 If we actually try to compile the previous code example, the compiler says something about giving the value a lifetime. We'll come back to the idea of lifetimes soon.
 
@@ -114,13 +114,13 @@ It's recommended to use \texttt{Result} types for functions you write too. Make 
 This does come at a small performance hit. CS~343 included a performance comparison of exceptions versus error codes (\`a la \texttt{Result}). Exceptions that don't happen (the happy path) are, indeed, faster than explicitly handling error codes / \texttt{Result} types. As an engineering trade-off, both exceptions and \texttt{Result} types force the programmer to explictly deal with errors (at the very least, explicitly ignoring them rather than silently ignoring them). Rust doesn't have exceptions, so you always have to pay the performance hit. (Simulating exceptions with \texttt{panic!} is not a best practice.)
 
 \section*{Fearless Concurrency}
-More than just trying to prevent memory problems by making them compiler errors, Rust is also intended to make concurrency errors compile-time problems too! That's actually difficult, of course, but the good news is that the key ideas of ownership and borrowing and such will enable you to avoid concurrency problems.
+More than just trying to prevent memory problems by making them compiler errors, Rust is also intended to make concurrency errors compile-time problems too! That's actually difficult, of course, but the good news is that the key ideas of ownership and borrowing and such will help you avoid concurrency problems.
 
 The drawback to concurrency is that it brings new problems with it: race conditions, deadlock, that sort of thing. Making your program faster is great, but not if it's at the cost of the answers being incorrect (or your program failing to produce an answer some of the time).
 
 If the compiler can help with making sure your concurrent program is correct, it doesn't make your program faster directly, but it helps indirectly. If you can be (more) sure of the correctness of your code, you don't have to spend as much time testing it before you can deploy it and move on to the next thing. Also, if the bug is prevented from being introduced in the first place, you don't have to spend time debugging it and fixing it, which lets you spend more time on speeding up other things. And honestly, if you are looking at a piece of code that is super business critical, anything that adds to your confidence that no issue has been introduced makes it that much easier to make that change you want to make.
 
-\paragraph{Threads.} Rust uses threads for concurrency, with a model that resembles the create/join semantics of the POSIX pthread. If you are unfamiliar with pthreads, the course repository has a PDF refresher of the topic. We will talk about the Rust way, but the background material will help you to be caught up.
+\paragraph{Threads.} Rust uses threads for concurrency, with a model that resembles the create/join semantics of the POSIX pthread. If you are unfamiliar with pthreads, the course repository has a PDF refresher of the topic (\texttt{pthreads.pdf}). We will talk about the Rust way, but the background material will provide context.
 
 So you want to create a thread! The mechanism for doing so is referred to as spawning a thread. Here's a quick example from the official docs~\cite{rustdocs}:
 
@@ -170,7 +170,7 @@ The only problem is: this example does not work. The compiler is not sure how lo
 
 Well, I had the idea that if I put something after the \texttt{join()} call that uses \texttt{v}, then the compiler should know that \texttt{v} has to remain in existence until after the thread in question. Yet, it still reports the error E0373 that says the thread might outlive the borrowed value. This actually got me thinking about why this didn't work and I decided to ask some of the compiler devs. It has to do with the fact that a thread isn't really a first-class construct in Rust, and the ``lifetime'' of arguments that you pass has to be sufficiently long. We'll learn about lifetimes soon.
 
-Anyway, the error message suggests what you actually want in this scenario: to move the variables into the thread. To do so, specify \texttt{move} before the closure: \texttt{let handle = thread::spawn(move || \{}\ldots This addition results in the transfer of ownership to the thread being created. You can also copy if you need. 
+Anyway, the error message suggests what you actually want in this scenario: to move the variables into the thread. To do so, specify \texttt{move} before the closure: \texttt{let handle = thread::spawn(move || \{}\ldots~ This addition results in the transfer of ownership to the thread being created. You can also copy if you need. 
 
 One thing you don't want to do is try to make the lifetime of your vector or other construct \texttt{static}, even though the compiler might suggest this. We can revisit that when we talk about lifetimes as well.
 
