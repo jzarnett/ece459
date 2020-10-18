@@ -124,6 +124,22 @@ __global__ void VecAdd(float* A, float* B, float* C)
 
 You can write kernels in a variant of \CPP, and it looks mostly like the language we (hopefully) know, with a few additions like the \texttt{\_\_global\_\_} designation in the previous example. A large number of features of more recent versions of the language are supported, but how much will vary based on your release of the kernel compiler (\texttt{nvcc}). There's a very long list of things that are not allowed in device code. It's unlikely that we'll be doing too many things that are exotic enough to be forbidden by the compile in this course. However, if you aren't sure why something isn't working or want to know what kind of stuff is not allowed, see \url{https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#restrictions}
 
+(Just for completeness: the kernel itself is actually compiled into a form called PTX -- Parallel Thread eXecution -- instructions. It's possible to write those directly, but we won't; we'll just let the compiler do it. Also, using the nvcc compiler makes it so your kernel will run on whatever hardware you have.)
+
+
+
+
+\subsection*{Writing a Kernel Well}
+
+To start with, of course, we need to decide what sort of work belongs in the kernel to begin with. Anything that would benefit from the very large number of execution units is a good candidate, so that's typically things that are the iterations of a loop. If the loops need to be sequential, though, this is not a good match. If you need a little bit of coordination, we can achieve that, though, with barriers (as we can see in the advanced section).
+
+Comparing the first kernel that we saw against its CPU-code equivalent, we've taken the explicit for loop and made it implicit. It's possible to have up to three-dimensional problems supported. So for the N-body problem, we could have it be a one-dimensional problem where we just use the GPU on the outer loop. Or, we could instead treat each pair of points as two dimensions in the space, making it 
+
+
+If you want something more than a three-dimensional, you have to have some loops in your code. So that 6-level-deep nested-for-loop? You can have the outer three loops as your x, y, and z dimensions, but the rest will be in for loops. Can't avoid everything, I am afraid. The limit to three dimensions is probably because graphics cards were designed for rendering images in 3-D so it seems logical? But that's only a guess.
+
+Of course, you can sometimes flatten the dimensions of your problem a bit. A rectangular array in C/\CPP~is really stored as a linear array and the \texttt{[x][y]} is just notational convenience so you could easily just treat it as a linear array. Or, in the case of the N-Body problem, you could consider each pair of points \textit{(i, j)} to be one point in the problem space and it's linear, potentially allowing you a bit more simplicity in your kernel at the cost of slightly more complicated host code. 
+
 \paragraph{Branches.} OpenCL implements a SIMT architecture.
 What this means is that the computation for each work-item can branch
 arbitrarily. The hardware will execute all branches that any thread in
@@ -150,6 +166,7 @@ Similarly, executing a loop will cause the
 workgroup to wait for the maximum number of iterations of the loop in
 any work-item.
 
+
 {\scriptsize \hspace*{2em} \begin{minipage}{.5\textwidth}
     \begin{lstlisting}verbatim
 kernel void contains_loop(global float *a, 
@@ -164,27 +181,11 @@ kernel void contains_loop(global float *a,
 \end{minipage} }
 
 If you're setting up workgroups, though, you can arrange for all
-of the work-items in a workgroup to execute the same branches.
+of the work-items in a workgroup to execute the same branches. 
 
-\paragraph{Synchronization.} You might define
-workgroups because you can only put barriers and memory fences between
-work items in the same workgroup. Different workgroups execute
-independently.
+\subsection*{Launch?}
 
-OpenCL also supports all of the notions that we've talked about
-before: memory fences (read and write), barriers, and the volatile
-keyword.  The barrier ({\tt barrier()}) ensures that all of the
-threads in the workgroup all reach the barrier before they continue.
-Recall that the fence ensures that no load or store instructions
-(depending on the type of fence) migrate to the other side of the fence.
-
-
-\section*{More Complicated Kernel}
-
-
-\begin{lstlisting}
-                                              
-\end{lstlisting}
+So far, all we have covered is the theory and then how to write a kernel. To make use of it, we'll have to look at the host code. That's our next topic. 
 
 
 \input{bibliography.tex}

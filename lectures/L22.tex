@@ -9,7 +9,6 @@
 \section*{Host Code}
 We've learned about how a kernel works and a bit about how to write one. The next part is the host code, Now, fortunately, we don't have to write the whole program in \CPP~ or C, even though the kernel has to be written in the CUDA variant. We're going to use the Rustacuda library from \url{https://github.com/bheisler/RustaCUDA}. 
 
-
 We'll look at a quick example of launching a very simple kernel from the Rustacuda examples\footnote{\url{https://github.com/bheisler/RustaCUDA/blob/master/examples/launch.rs}}: 
 \begin{lstlisting}[language=Rust]
 #[macro_use]
@@ -45,19 +44,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             out_1.len()
         ));
         result?;
-
-        // Launch the kernel again using the `function` form:
-        let function_name = CString::new("sum")?;
-        let sum = module.get_function(&function_name)?;
-        // Launch with 1x1x1 (1) blocks of 10x1x1 (10) threads, to show that you can use tuples to
-        // configure grid and block size.
-        let result = launch!(sum<<<(1, 1, 1), (10, 1, 1), 0, stream>>>(
-            in_x.as_device_ptr(),
-            in_y.as_device_ptr(),
-            out_2.as_device_ptr(),
-            out_2.len()
-        ));
-        result?;
     }
 
     // Kernel launches are asynchronous, so we wait for the kernels to finish executing.
@@ -77,52 +63,76 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 \end{lstlisting}
 
+And the kernel it corresponds to is\footnote{\url{https://github.com/bheisler/RustaCUDA/blob/master/resources/add.cu}}:
+\begin{lstlisting}[language=Rust]
+extern "C" __constant__ int my_constant = 314;
+
+extern "C" __global__ void sum(const float* x, const float* y, float* out, int count) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < count; i += blockDim.x * gridDim.x) {
+        out[i] = x[i] + y[i];
+    }
+}
+\end{lstlisting}
+
 \paragraph{Walk-through.} Let's look at all of the code in the example and
 explain the terms. For a more detailed explanation of all the steps, see~\cite{cuda}.
 
- 1) First, we request a \emph{platform}.
-Platforms, also known as hosts, contain 2) OpenCL \emph{compute devices},
-which may in turn contain multiple compute units. Note that we could
-also request a CPU device in step 2, without changing the rest of the code.
+One thing that we won't see is any explicit call to initialize the runtime. The CUDA runtime is automatically initialized when there's the first call into it. Thus, the first call might report errors that you wouldn't expect from that call, because they are really a setup problem on your system.
 
-Next, in step 3, we request an OpenCL \emph{context} (representing all
-OpenCL state) and create a \emph{command-queue}. We will request that
-OpenCL do work by telling it to run a kernel in the queue.
+Right, in the example, we need to include the prelude for Rustacuda, just as we've seen previously for Rayon. This imports a bunch of commonly used types to save on having a lot of imports. 
 
-In step 4, we create an OpenCL \emph{program}. This is a confusing
-term; an OpenCL program is what runs on the compute unit, and includes
-kernels, functions, and declarations. Your application can contain
-more than one OpenCL program. In this case, we create a program
-from the C string {\tt source}, which contains the kernel
-{\tt memset}. OpenCL can also create programs from binaries, which may be
-in an intermediate representation, or already compiled for a particular
-device. We get a pointer to the kernel in this step, as the return
-value from {\tt clCreateKernel}.
+First thing we have to do is initialize he API. This has to happen at the start of the program, so no sense in delaying it! At present, there are no flags defined so the call with \texttt{CudaFlags::empty()} is the only valid argument to the initialization function. 
+
+Then we get a \textit{device}. The device is your graphics card or any other hardware that does the work. It's obviously possible to have more than one compute device, but we'll just take the first one. 
+
+Next, in step 3, we request a \emph{context}. The context is described by the documents as analogous to a process. When we launch something within that context, it executes in there and has its own address space, and when the context is destroyed, all its resources are cleaned up. Each host thread may have one context. The call shown is ``create and push'' because a host thread has a stack of current contexts. We don't actually need the context for any of the later steps, but we just need to be in possession of one. In this simple example, stays in scope because everything happens in \texttt{main}. If you want more structure to your program, then you do have to ensure it doesn't go out of scope and get dropped, because it has to exist for the other functions to work. When it does get dropped, some cleanup actions take place, of course.
+
+The next step is to create our \textit{module}. A module is technically a package of code and data to run on the device, but in this case it just really means our kernel. What we do here is read the compiled PTX code into a C-String, then create the module from that string. It's also possible to load from a file directly. 
+
+Once we have created a module, we then create a \textit{stream}. The stream is where we assign work. You can think of it as being similar to a priority queue: you put items in there and work that is more important (lower priority number) can pre-empt work that is less important (higher priority number). Otherwise, work is done in the order it was scheduled, and tasks don't overlap. The stream is asynchronous, so once work has been assigned, it returns immediately. I'll point out that the Rustacuda implementation says you should set the \texttt{NON\_BLOCKING} flag to prevent synchronization with the NULL stream (the details of which we'll skip). 
 
 There's one more step before launching the kernel; in step 5, we
-create a \emph{data buffer}, which enables communication between
-devices. Recall that OpenCL requires explicit communication,
-which we'll see later. Since this example doesn't have input, we 
-don't need to put anything into the buffer initially.
+create some \emph{data buffers}, which are used for moving data to and from the GPU. Remember, CUDA requires explicit communication, so whatever data want to provide as input has to be put into a buffer and then the buffer is transferred to the kernel. Whatever data comes as output will be transferred by the GPU into the output buffers we specify.
 
-Finally, we can launch the kernel in step 6. In this case, we don't
-specify anything about workgroups, but enqueue the entire
-1-dimensional index space, starting at $(0)$. We also state that the
-index space has {\tt NWITEMS} elements, and not to subdivide the
-problem into work-items. The last three parameters are about events.
-We call {\tt clFinish()} to wait for the command-queue to empty.
+After all this setup, we can finally launch the kernel. This has to be done in an \texttt{unsafe} block, because the launch macro is unsafe (unfortunately). The good news is that the unsafe block is only the launch, limiting the area of extra scrutiny to something small. When we launch, we specify the kernel that's supposed to run as well as the arguments. Each buffer is converted using the \texttt{as\_device\_ptr()} so that the contents of the device buffer are provided. For scalar types like the count, no such conversion is necessary and we can just provide the value.
 
-Finally, in step 7, we copy the results back from the shared buffer
-using {\tt clEnqueueMapBuffer}. This copy is blocking (first {\tt
-  CL\_TRUE} argument), so we don't need an explicit {\tt clFinish()}
-call. We also indicate the details of the command we'd like to
-run: in particular, a read of {\tt NWITEMS} from the buffer.
+Great! We launched the kernel and sent it over to the GPU. This is an asynchronous process, so we could do more stuff here if we need. There's nothing else to do at the moment, so we'll wait for the items in the queue to complete by calling \texttt{stream.synchronize()}. Straightforward!
 
-You might also want to consider cleaning up the objects you've
-allocated; I haven't shown that here. The code also doesn't contain
-any error-handling.
+Finally, in the last step, we copy the items out of the buffer and back into host memory. Here, the example code checks that all the values are correct (3.0) and it is! Alright, we have a simple working example of how to setup, launch, and collect results from a CUDA computation!
+
+\subsection*{More Complex Host Code}
+
+Here's an alternate example of the unsafe block for launching, This function form gives us some input into how we want the grid and block size to be organized. 
+
+\begin{lstlisting}[language=Rust]
+        // Launch the kernel again using the `function` form:
+        let function_name = CString::new("sum")?;
+        let sum = module.get_function(&function_name)?;
+        // Launch with 1x1x1 (1) blocks of 10x1x1 (10) threads, to show that you can use tuples to
+        // configure grid and block size.
+        let result = launch!(sum<<<(1, 1, 1), (10, 1, 1), 0, stream>>>(
+            in_x.as_device_ptr(),
+            in_y.as_device_ptr(),
+            out_2.as_device_ptr(),
+            out_2.len()
+        ));
+        result?;
+\end{lstlisting}
 
 
+\subsection*{Advanced!}
+
+\paragraph{Synchronization.} You might define
+workgroups because you can only put barriers and memory fences between
+work items in the same workgroup. Different workgroups execute
+independently.
+
+OpenCL also supports all of the notions that we've talked about
+before: memory fences (read and write), barriers, and the volatile
+keyword.  The barrier ({\tt barrier()}) ensures that all of the
+threads in the workgroup all reach the barrier before they continue.
+Recall that the fence ensures that no load or store instructions
+(depending on the type of fence) migrate to the other side of the fence.
 
 \input{bibliography.tex}
 
