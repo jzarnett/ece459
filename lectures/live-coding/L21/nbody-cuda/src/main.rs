@@ -1,12 +1,15 @@
 #[macro_use]
 extern crate rustacuda;
+extern crate rustacuda_derive;
+extern crate rustacuda_core;
 
 use cuda_sys::vector_types::{float3, float4};
 use rustacuda::prelude::*;
 use std::error::Error;
 use std::ffi::CString;
-use std::fmt::{Display, Formatter};
 use rand::Rng;
+use rustacuda_core::DeviceCopy;
+use std::ops::Deref;
 
 /* A Rustification by Jeff Zarnett of a past ECE 459 N-Body assignment that was
 originally from GPU Gems, Chapter 31 and modified by Patrick Lam.
@@ -15,6 +18,25 @@ Then CUDA-fied by Jeff Zarnett using the Rustacuda library example code
 
 const NUM_POINTS: u32 = 100000;
 const SPACE: f32 = 1000.0;
+
+struct CudaFloat4(float4);
+unsafe impl DeviceCopy for CudaFloat4 {}
+impl Deref for CudaFloat4 {
+    type Target = float4;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+struct CudaFloat3(float3);
+unsafe impl DeviceCopy for CudaFloat3 {}
+impl Deref for CudaFloat3 {
+    type Target = float3;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Set up the context, load the module, and create a stream to run kernels in.
@@ -27,25 +49,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     for pt in initial_positions.iter() {
         println! {"({}, {}, {}) [{}]", pt.x, pt.y, pt.z, pt.w};
     }
+    let mut accelerations = initialize_accelerations();
 
     let ptx = CString::new(include_str!("../resources/nbody.ptx"))?;
     let module = Module::load_from_string(&ptx)?;
     let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
 
     // Create buffers for data
-    let mut in_x = DeviceBuffer::from_slice(&[1.0f32; 10])?;
-    let mut in_y = DeviceBuffer::from_slice(&[2.0f32; 10])?;
-    let mut out_1 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
-    let mut out_2 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
+    let mut points = DeviceBuffer::from_slice(initial_positions.as_slice())?;
+    let mut accel = DeviceBuffer::from_slice(accelerations.as_slice())?;
 
     // This kernel adds each element in `in_x` and `in_y` and writes the result into `out`.
     unsafe {
         // Launch the kernel with one block of one thread, no dynamic shared memory on `stream`.
         let result = launch!(module.calculate_forces<<<1, 1, 0, stream>>>(
-            in_x.as_device_ptr(),
-            in_y.as_device_ptr(),
-            out_1.as_device_ptr(),
-            out_1.len()
+            points.as_device_ptr(),
+            accel.as_device_ptr(),
+            points.len()
         ));
         result?;
     }
@@ -54,45 +74,42 @@ fn main() -> Result<(), Box<dyn Error>> {
     stream.synchronize()?;
 
     // Copy the results back to host memory
-    let mut out_host = [0.0f32; 20];
-    out_1.copy_to(&mut out_host[0..10])?;
-    out_2.copy_to(&mut out_host[10..20])?;
+    accel.copy_to(&mut accelerations)?;
 
-    for x in out_host.iter() {
-        assert_eq!(3.0 as u32, *x as u32);
+    println! {"Accelerations:"}
+    for a in accelerations.iter() {
+        println! {"({}, {}, {})", a.x, a.y, a.z};
     }
-
-    // let final_accelerations = calculate_forces(initial_positions);
-    // println! {"Accelerations:"}
-    // for accel in final_accelerations.iter() {
-    //     println! {"{}", accel};
-    // }
     Ok(())
 }
 
-fn initialize_positions() -> Vec<float4> {
-    let mut result: Vec<float4> = Vec::new();
+fn initialize_positions() -> Vec<CudaFloat4> {
+    let mut result: Vec<CudaFloat4> = Vec::new();
     let mut rng = rand::thread_rng();
 
     for _i in 0..NUM_POINTS {
-        result.push(float4 {
-            x: rng.gen_range(0.0, SPACE),
-            y: rng.gen_range(0.0, SPACE),
-            z: rng.gen_range(0.0, SPACE),
-            w: rng.gen_range(0.01, 100.0),
+        result.push(CudaFloat4 {
+            0: float4 {
+                x: rng.gen_range(0.0, SPACE),
+                y: rng.gen_range(0.0, SPACE),
+                z: rng.gen_range(0.0, SPACE),
+                w: rng.gen_range(0.01, 100.0),
+            }
         });
     }
     result
 }
 
-fn initialize_accelerations() -> Vec<float3> {
-    let mut result: Vec<float3> = Vec::new();
+fn initialize_accelerations() -> Vec<CudaFloat3> {
+    let mut result: Vec<CudaFloat3> = Vec::new();
     for _i in 0 .. NUM_POINTS {
-        result.push(float3 {
-            x: 0f32,
-            y: 0f32,
-            z: 0f32,
-        })
+        result.push(CudaFloat3 {
+            0: float3 {
+                x: 0f32,
+                y: 0f32,
+                z: 0f32,
+            }
+        });
     }
     result
 }
