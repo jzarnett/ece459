@@ -2,9 +2,87 @@
 
 \begin{document}
 
-\lecture{16 --- Rayon and Crossbeam}{\term}{Jeff Zarnett}
+\lecture{16 --- Crossbeam and Rayon}{\term}{Jeff Zarnett}
 
-\section*{Data Parallelism with Rayon}
+\section*{Use Libs Wisely!}
+In previous courses, such as a concurrency course, there was a lot of expectation to do most things the hard way: write your own implementation and don't use libraries. In this course, such restrictions don't apply. In industry, you'll use libraries that have appropriate functionality, assuming the license for them is acceptable to your project. The two we'll talk about today, Crossbeam and Rayon are, for the record, Apache licensed, so it should pose no issue. In the previous version of the course where we used C and \CPP, we taught the OpenMP functionality, which is used to direct the compiler to parallelize things in a pretty concise way. The same idea applies here, except it's using the Crossbeam and Rayon crates rather than compiler directives.
+
+
+\subsection*{Concurrency with Crossbeam} 
+
+You'll recall from earlier when we introduced threads, that this doesn't work:
+\begin{lstlisting}[language=Rust]
+use std::thread;
+
+fn main() {
+    let v = vec![1, 2, 3];
+
+    let handle = thread::spawn(|| {
+        println!("Here's a vector: {:?}", v);
+    });
+
+    handle.join().unwrap();
+}
+\end{lstlisting}
+
+The problem was that the compiler can't tell for sure how long the data is going to live, and we said that we can get around this by moving the vector into the thread and returning it if needed again. Then later, when we wanted to share a Mutex between threads, we used the \texttt{Arc} type worked. We could have used the \texttt{Arc} type here too, but that's a bit of a pain if the thread is going to be short-lived. Crossbeam gives us the ability to create ``scoped'' threads. Scope is like a little container we are going to put our threads in. It allows the compiler to be convinced that a thread will be joined before leaving the scope (container). Alright, how about this?
+
+\begin{lstlisting}[language=Rust]
+fn main() {
+    let v = vec![1, 2, 3];
+
+    crossbeam::scope(|scope| {
+        println!("Here's a vector: {:?}", v);
+    }).unwrap();
+
+    println!("Vector v is back: {:?}", v);
+}
+\end{lstlisting}
+
+Wait a minute. That's not quite right, because if I add statements where we print the thread ID, I get this output:
+
+{\scriptsize 
+\begin{verbatim}
+main thread has id 4583173568
+Here's a vector: [1, 2, 3]
+Now in thread with id 4583173568
+Vector v is back: [1, 2, 3]
+\end{verbatim}
+}
+
+All we did was make the container, but we didn't spawn any threads. Here's a better version:
+\begin{lstlisting}[language=Rust]
+fn main() {
+    let v = vec![1, 2, 3];
+    println!("main thread has id {}", thread_id::get());
+
+    crossbeam::scope(|scope| {
+        scope.spawn(|inner_scope| {
+            println!("Here's a vector: {:?}", v);
+            println!("Now in thread with id {}", thread_id::get());
+        });
+    }).unwrap();
+
+    println!("Vector v is back: {:?}", v);
+}
+\end{lstlisting}
+With output:
+
+{\scriptsize 
+\begin{verbatim}
+main thread has id 4439997888
+Here's a vector: [1, 2, 3]
+Now in thread with id 123145430474752
+Vector v is back: [1, 2, 3]
+\end{verbatim}
+}
+
+There are still rules, of course, and you cannot borrow the vector mutably into two threads in the same scope. This does, however, reduce the amount of ceremony required for passing the data back and forth. Wrapping everything in \texttt{Arc} is tedious, to be sure. 
+
+
+\paragraph{Producer-Consumer with channels.} One of the guidelines that Rust gives is that it's preferable to do message passing as compared to shared memory. Unfortunately, for something like the producer-consumer scenario, the standard multiple-producer-single-consumer channel we are provided won't do; we need a multiple-producer-multiple-consumer channel. And sure enough, Crossbeam gives us one.
+
+\subsection*{Data Parallelism with Rayon}
 
 Looking back at the nbody-bins-parallel code that we discussed earlier, you may have noticed that it contains some includes of a library called Rayon. It's a data parallelism library that's intended to make your sequential computation into a parallel one. In an ideal world, perhaps you've designed your application from the ground up to be easily parallelizable, or use multiple threads from the beginning. That might not be the situation you encounter in practice; you may instead be faced with a program that starts out as serial and you want to parallelize some sections that are slow (or lend themselves well to being done in parallel, at least) without a full or major rewrite.
 
@@ -13,8 +91,6 @@ That's what I wanted to do with the nbody problem. I was able to identify the cr
 My initial approach looked at spawning threads and moving stuff into the thread. This eventually ran up against the problem of trying to borrow the \texttt{accelerations} vector as mutable more than once. I have all these points in a collection and I'm never operating on one of them from more than one thread, but a compile time analysis of the borrowing semantics is that the vector is going to more than one thread. The compiler can't prove to itself that my slices will never overlap so they can't all be mutable.
 
  This is a super common operation, and I know the operation I want to do is correct and won't have race conditions because each element in the vector is being modified only by the one thread. I eventually learned that you can split slices but it was going to be a slightly painful process. You can use \texttt{split\_at\_mut()} and it divides the slice into two pieces... it's a start, but would require doing this multiple times and probably use recursion or similar. Further research eventually told me to stop reinventing the wheel and use a library for this. Thus, Rayon.
-
-As an aside as to why we're talking about this -- in previous courses, such as a concurrency course, there was a lot of expectation to do most things the hard way: write your own implementation and don't use libraries. In this course, such restrictions don't apply. In industry, you'll use libraries that have appropriate functionality, assuming the license for them is acceptable to your project. Rayon is, for the record, Apache licensed, so it should pose no issue. In the previous version of the course where we used C and \CPP, we taught the OpenMP functionality, which is used to direct the compiler to parallelize things in a pretty concise way. The same idea applies here, except it's using the Rayon crate rather than compiler directives.
 
 \paragraph{Parallelizing loops.} Back on track. A quick glance over this program tells us it is likely that the slow step is computing the interactions. It's reasonably common that computationally-intensive parts of the program happen in a loop, so parallelizing loops is likely to be quite profitable in terms of speeding things up. This is something that Rayon specializes in: it's easy to apply some parallelization directives to the loop to get a large speedup at a small cost (here, cost is programmer time in writing the change and reviewing it).
 
@@ -119,8 +195,6 @@ fn main() {
 \end{lstlisting}
 
  The non-parallel code takes about 136.2~ms. This problem doesn't have enough work to parallelize effectively. While the lock-free version speeds it up a small amount, the mutex version was easier to write (and is therefore what you would probably do) but made it much slower. So it's important to consider carefully when to apply the library, because a speedup is not guaranteed just by parallelizing a given loop.
-
-\section*{Concurrency with Crossbeam} 
 
 \input{bibliography.tex}
 

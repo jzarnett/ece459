@@ -128,54 +128,49 @@ You can write kernels in a variant of \CPP, and it looks mostly like the languag
 
 
 
+Remember that the kernel has none of the safety guarantees that we normally get in Rust! 
 
 \subsection*{Writing a Kernel Well}
 
 To start with, of course, we need to decide what sort of work belongs in the kernel to begin with. Anything that would benefit from the very large number of execution units is a good candidate, so that's typically things that are the iterations of a loop. If the loops need to be sequential, though, this is not a good match. If you need a little bit of coordination, we can achieve that, though, with barriers (as we can see in the advanced section).
 
-Comparing the first kernel that we saw against its CPU-code equivalent, we've taken the explicit for loop and made it implicit. It's possible to have up to three-dimensional problems supported. So for the N-body problem, we could have it be a one-dimensional problem where we just use the GPU on the outer loop. Or, we could instead treat each pair of points as two dimensions in the space, making it 
+Comparing the first kernel that we saw against its CPU-code equivalent, we've taken the explicit for loop and made it implicit. It's possible to have up to three-dimensional problems supported. So for the N-body problem, we could have it be a one-dimensional problem where we just use the GPU on the outer loop. Or, we could instead treat each pair of points as two dimensions in the space, making it a two-dimensional problem. 
 
 
 If you want something more than a three-dimensional, you have to have some loops in your code. So that 6-level-deep nested-for-loop? You can have the outer three loops as your x, y, and z dimensions, but the rest will be in for loops. Can't avoid everything, I am afraid. The limit to three dimensions is probably because graphics cards were designed for rendering images in 3-D so it seems logical? But that's only a guess.
 
 Of course, you can sometimes flatten the dimensions of your problem a bit. A rectangular array in C/\CPP~is really stored as a linear array and the \texttt{[x][y]} is just notational convenience so you could easily just treat it as a linear array. Or, in the case of the N-Body problem, you could consider each pair of points \textit{(i, j)} to be one point in the problem space and it's linear, potentially allowing you a bit more simplicity in your kernel at the cost of slightly more complicated host code. 
 
-\paragraph{Branches.} OpenCL implements a SIMT architecture.
-What this means is that the computation for each work-item can branch
-arbitrarily. The hardware will execute all branches that any thread in
-a warp executed (which can be slow). 
+\paragraph{Branches.} OpenCL implements a SIMT architecture. The documentation warns you, however, that unlike a CPU, there's neither branch prediction nor speculative execution. This means that branches are much more costly than they would be on the CPU. 
 
-{\scriptsize \hspace*{2em} \begin{minipage}{.5\textwidth}
-    \begin{lstlisting}
-kernel void contains_branch(global float *a, global float *b) {
-    int id = get_global_id(0);
-    if (cond) {
+In practice, the hardware will execute all branches that any thread in
+a warp executed (which can be slow). It then keeps only the results that are valid. Consider this brief pseudocode-example:
+
+    \begin{verbatim}
+kernel contains_branch(global float *a, global float *b) {
+    if (condition) {
         a[id] += 5.0;
     } else {
         b[id] += 5.0;
     }
 }
-    \end{lstlisting}
-      \end{minipage}}
+\end{verbatim}
 
 In the above example, the {\tt if} statement will cause
-each thread to execute both branches of the {\tt if}, keeping only the
-result of the appropriate branch.
+the warp both branches of the {\tt if}, keeping only the
+result that is correct. But still, unnecessary work is done and we want to
+avoid that if we can. 
 
 Similarly, executing a loop will cause the
 workgroup to wait for the maximum number of iterations of the loop in
-any work-item.
-
+any work-item. Frequently that isn't a problem, because the loop will be executed The compiler will try to unroll loops if they have a known number of iterations. Here, an example from the CUDA docs of a loop it can unroll:
 
 {\scriptsize \hspace*{2em} \begin{minipage}{.5\textwidth}
     \begin{lstlisting}verbatim
-kernel void contains_loop(global float *a, 
-                          global float *b) {
-    int id = get_global_id(0);
-    
-    for (i = 0; i < id; i++) {
-        b[i] += a[i];
-    }
+__device__ void foo(int *p1, int *p2) {
+  for (int i = 0; i < 12; ++i) {
+    p1[i] += p2[i]*2;
+  }
 }
     \end{lstlisting}
 \end{minipage} }
