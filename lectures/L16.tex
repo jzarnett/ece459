@@ -80,7 +80,78 @@ Vector v is back: [1, 2, 3]
 There are still rules, of course, and you cannot borrow the vector mutably into two threads in the same scope. This does, however, reduce the amount of ceremony required for passing the data back and forth. Wrapping everything in \texttt{Arc} is tedious, to be sure. 
 
 
-\paragraph{Producer-Consumer with channels.} One of the guidelines that Rust gives is that it's preferable to do message passing as compared to shared memory. Unfortunately, for something like the producer-consumer scenario, the standard multiple-producer-single-consumer channel we are provided won't do; we need a multiple-producer-multiple-consumer channel. And sure enough, Crossbeam gives us one.
+\paragraph{Producer-Consumer with channels.} One of the guidelines that Rust gives is that it's preferable to do message passing as compared to shared memory. Unfortunately, for something like the producer-consumer scenario, the standard multiple-producer-single-consumer channel we are provided won't do; we need a multiple-producer-multiple-consumer channel. And sure enough, Crossbeam gives us one. 
+
+Recall the multi-producer multi-consumer example from earlier. We had to define a shared buffer structure and use semaphores and a mutex to coordinate access, and we saw it's possible to get it wrong in when we drop the mutex. Here's the excerpts from the Crossbeam version. First, a little setup to create a bounded channel with capacity the same as the bounded buffer (100): 
+
+\begin{lstlisting}[language=Rust]
+let (send_end, receive_end) = bounded(CHANNEL_CAPACITY);
+let send_end = Arc::new(send_end);
+let receive_end = Arc::new(receive_end);
+\end{lstlisting}
+
+This uses the bounded channel, which has a maximum capacity as specified. If it's full, the sender is blocked until space becomes available. You can also choose an unbounded channel, which allows an arbitrary number at a time (but of course, they have to go somewhere so uncollected messages still take up space in memory and memory is not infinite, but close...).
+And look how much simpler the consumer is:
+\begin{lstlisting}[language=Rust]
+    for _j in 0 .. NUM_THREADS {
+        // create consumers
+        let receive_end = receive_end.clone();
+        threads.push(
+            thread::spawn(move || {
+                for _k in 0 .. ITEMS_PER_THREAD {
+                    let to_consume = receive_end.recv().unwrap();
+                    consume_item(to_consume);
+                }
+            })
+        );
+    }
+\end{lstlisting}
+
+Certainly that's a lot simpler and cleaner, but is it faster? Testing says yes! Hyperfine says the original producer-consumer-opt version takes 372 ms to run for 10000 items consumed per thread, and the version with the channel takes 232. 
+
+\paragraph{Try Again Later.}
+Another small thing that Crossbeam enables is an exponential backoff. When attempting to access some resource, we acknowledge that it might not be available right now. If that's the case, an error is  to necessarily fatal and the client might want to retry. However, it's very unhelpful to have a tight loop that simply retries as fast as possible. What you should do instead is an exponential backoff: wait a little bit and try again, and if the error occurs, next time wait a little longer.
+
+The idea is that if the resource is not available, repeatedly retrying doesn't help. If it's down for maintenance, it could be quite a while before it's back and calling the endpoint 5 or 10 times every second doesn't make it come back faster and just wastes effort. Or, if the resource is overloaded right now, the reaction of requesting it more will make it even more overloaded and makes the problem worse! And the more failures have occurred, the longer the wait, which gives the service a chance to recover.
+
+Eventually, though, you may have to conclude that there's no point in further retries. At that point you can block the thread or return an error, but setting a cap on the maximum retry attempts is reasonable.
+
+The \texttt{Backoff} util from Crossbeam gives you this functionality. Each step of the backoff takes about double the amount of time of the previous, up to a certain maximum.
+
+Here's an example from the Crossbeam docs of using the backoff in a lock-free loop. Here, the \texttt{spin()} function is used because we can try again immediately. We can do so because if the compare-and-swap operation failed, it's because another did the compare-and-swap and got a chance to run.
+\begin{lstlisting}[language=Rust]
+use crossbeam_utils::Backoff;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
+
+fn fetch_mul(a: &AtomicUsize, b: usize) -> usize {
+    let backoff = Backoff::new();
+    loop {
+        let val = a.load(SeqCst);
+        if a.compare_and_swap(val, val.wrapping_mul(b), SeqCst) == val {
+            return val;
+        }
+        backoff.spin();
+    }
+}
+\end{lstlisting}
+
+If what we actually need is to wait for another thread to take its turn before we go, we don't want to spin, we want to ``snooze''. This means we'll be waiting longer for the thread 
+
+\begin{lstlisting}[language=Rust]
+fn spin_wait(ready: &AtomicBool) {
+    let backoff = Backoff::new();
+    while !ready.load(SeqCst) {
+        backoff.snooze();
+    }
+}
+\end{lstlisting}
+
+In both cases, the \texttt{backoff} type has a function \texttt{is\_completed} which returns true if the maximum backoff time has been reached and it's advised to give up. And an existing \texttt{backoff} can be re-used if it's reset with the unsurprisingly-named \texttt{reset} function.
+
+Having read a little bit of the source code of the Crossbeam backoff, I'm not sure they implement a little randomness (called jitter). This is an improvement on the algorithm that prevents all threads or callers from retrying at the exact same time. Let me explain with an example: I once wrote a little program that tried synchronizing its threads via the database and had an exponential backoff if the thread in question did not successfully lock the item it wanted. I got a lot of warnings in the log about failing to lock, until I added a little randomness to the delay. It makes sense; if two threads fail at time $X$ and they will both retry at time $X+5$ then they will just fight over the same row. If one thread retries at $X+9$ and another $X+7$, they won't conflict.
+
+The exponential backoff with jitter strategy is good for a scenario where you have lots of independent clients accessing the same resource. If you have one client accessing the resource lots of times, you might want something else; something resembling TCP congestion control. See~\cite{expbackoff} for details. 
 
 \subsection*{Data Parallelism with Rayon}
 
