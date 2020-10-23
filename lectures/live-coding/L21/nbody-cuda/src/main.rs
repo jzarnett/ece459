@@ -59,7 +59,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut points = DeviceBuffer::from_slice(initial_positions.as_slice())?;
     let mut accel = DeviceBuffer::from_slice(accelerations.as_slice())?;
 
-    // This kernel adds each element in `in_x` and `in_y` and writes the result into `out`.
     unsafe {
         // Launch the kernel with one block of one thread, no dynamic shared memory on `stream`.
         let result = launch!(module.calculate_forces<<<1, 1, 0, stream>>>(
