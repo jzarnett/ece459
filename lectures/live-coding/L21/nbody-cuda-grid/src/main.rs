@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     unsafe {
         // Launch the kernel with one block of one thread, no dynamic shared memory on `stream`.
-        let result = launch!(module.calculate_forces<<<NUM_POINTS, 1, 0, stream>>>(
+        let result = launch!(module.calculate_forces<<<(NUM_POINTS/256) + 1, 256, 0, stream>>>(
             points.as_device_ptr(),
             accel.as_device_ptr(),
             points.len()
