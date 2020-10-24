@@ -2,7 +2,7 @@
 
 \begin{document}
 
-\lecture{21 --- GPU Programming (CUDA) }{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{21 --- GPU Programming (CUDA) }{\term}{Jeff Zarnett, based on original by Patrick Lam}
 
 \section*{GPUs: Heterogeneous Programming}
 
@@ -132,6 +132,18 @@ The \texttt{nvcc} compiler has specific requirements for the underlying compiler
 
 Remember that the kernel has none of the safety guarantees that we normally get in Rust! We can easily read off the end of an array, forget to initialize a variable, allocate memory that we forget to deallocate, or have race conditions, amongst other things. So not only can you encounter runtime errors in your kernel, but also that it's wise to check that your output matches expectations rather than just assume it's fine. So, just because it compiles, doesn't mean it will work.
 
+If you want a quick example of what can go wrong with the kernel at runtime, here's something I got in testing:
+{\scriptsize
+\begin{verbatim}
+thread 'main' panicked at 'Failed to deallocate CUDA Device memory.: IllegalAddress', 
+/home/jzarnett/.cargo/registry/src/github.com-1ecc6299db9ec823/rustacuda-0.1.2/src/memory/device/device_buffer.rs:259:32
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+thread 'main' panicked at 'Failed to deallocate CUDA Device memory.: IllegalAddress', 
+/home/jzarnett/.cargo/registry/src/github.com-1ecc6299db9ec823/rustacuda-0.1.2/src/memory/device/device_buffer.rs:259:32
+stack backtrace:
+\end{verbatim}
+}
+
 \paragraph{More complex kernel example.} Here's a kernel we wrote for the N-body problem that we saw earlier. It is the version without the approximations optimization; just the straightforward brute-force approach: 
 
 \begin{lstlisting}[language=C++]
@@ -176,7 +188,7 @@ We'll also be using the N-body kernel soon as an example for when we examine how
 
 \subsection*{Writing a Kernel Well}
 
-To start with, of course, we need to decide what sort of work belongs in the kernel to begin with. Anything that would benefit from the very large number of execution units is a good candidate, so that's typically things that are the iterations of a loop. If the loops need to be sequential, though, this is not a good use of the parallelism. If you need a little bit of coordination, we can achieve that, though, with barriers (as we will eventually see).
+To start with, of course, we need to decide what sort of work belongs in the kernel to begin with. Anything that would benefit from the very large number of execution units is a good candidate, so that's typically things that are the iterations of a loop. If the loops need to be sequential, though, this is not a good use of the parallelism. If you need a little bit of coordination, we can achieve that, though, with barriers (similar to the concept as seen in concurrency). 
 
 Comparing the first kernel that we saw against its CPU-code equivalent, we've taken the explicit for loop and made it implicit as a one-dimensional problem. We just use the GPU on the outer loop. What if we wanted to make it a two-dimensional problem? We could instead treat each pair of points $(i, j)$ as a point in the space, making it a two-dimensional problem. Then you could think of it as a matrix rather than an array and provide it to CUDA like that. This might increase the parallelism! 
 
