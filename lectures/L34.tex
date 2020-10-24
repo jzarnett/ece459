@@ -4,15 +4,14 @@
 
 \lecture{ 34 --- DevOps for P4P }{\term}{Patrick Lam \& Jeff Zarnett}
 
-Two topics today: 1) DevOps considerations (think
-big); 2) the cost of scalability (think small).
-
 \section*{DevOps for P4P}
-% this part took the whole 50 minutes, at least on the blackboard.
 So far, we've talked almost exclusively about one-off computations:
 you want to figure out the answer to a question, and you write code to
-do that. Our assignments have been like that, for instance. But a lot
-of the time we want to keep systems running over time. That gets us
+do that. Our assignments have been like that, for instance. There are lots
+of programs in the world at are solely on-demand. Still, a lot
+of the time we want to keep systems running over time. That is, a service
+that is available (if not always then close to it) and responds to requests
+whenever they may happen to arrive. That gets us
 into the notion of operations. Your service or product is more likely than 
 ever to have at least some component that's server side (whether hosted
 in a cloud service or not) that's under your control.
@@ -23,7 +22,7 @@ does have some relevance, because the operations (or IT, if you prefer)
 processes and procedures, while different from development, have some
 similarities. 
 
-Even when we've talked about multi-computer tools like MPI and cloud
+Even when we've talked about multi-computer tools like cloud
 computing, it still has not been in the context of keeping your
 systems operational over longer timescales. The trend today is away
 from strict separation between a development team, which writes the
@@ -33,7 +32,7 @@ software, and an operations team, which runs the software.
 	\includegraphics[width=0.45\textwidth]{images/devops.jpg}
 \end{center}
 
-The separation is totally nonexistent at the typical startup company. There isn't the money to pay for separate developers and operations teams. And in the beginning there's probably not that many servers, just a few demo systems, test systems, etc... but it spirals out from there. You're not really going to ask the sales guys to manage these servers, are you? So, there's DevOps. 
+The separation is totally nonexistent at the typical startup company. There isn't the money to pay for separate developers and operations teams. And in the beginning there's probably not that many servers, just a few demo systems, test systems, etc... but it spirals out from there. You're not really going to ask the sales team to manage these servers, are you? So, there's DevOps. 
 
 Is DevOps a good idea? Like most ideas it can be used for both good and evil. There's a lot to be said for letting the developers be involved in all the parts of the software from development to deployment to management to training the customers. Developers can learn a lot by having to do these kinds of things, and be motivated to make proper management and maintenance tools and procedures. If we make the pain of operations felt by developers, they might do something about it. If it's the problem of another team, somehow those tickets just never make it to the top of the backlog.
 
@@ -42,7 +41,7 @@ Thanks to Chris Jones and Niall Murphy for the following points.
 \subsection*{Configuration as code}
 Systems have long come with complicated configuration options.
 Sendmail is particularly notorious, but apache and nginx aren't super
-easy to configure either.\footnote{If anyone should be foolish enough to want to look into procmail, well, good luck to you...} The first principle is to treat \emph{configuration as code}.
+easy to configure either.\footnote{If anyone should be foolish enough to want to look into procmail, well, good luck to you...} The first principle is to treat \emph{configuration as code}. 
 Therefore:
 \begin{itemize}
 \item use version control on your configuration.
@@ -58,9 +57,19 @@ Therefore:
 \item use continuous builds (more on that later).
 \end{itemize}
 
-Furthermore, it's an excellent idea to have tools for configuration. It's not enough to just have a wiki page or github document titled ``How to Install AwesomeApp'' (fill in name of program here). There are tons of great tools like the Red Hat Package Manager (RPM) which will allow you to make the installation and update process automatic and simple. Complicated means mistakes... people forget steps. They are human. Don't let them make mistakes: make it automatic.
+Furthermore, it's an excellent idea to have tools for configuration. It's not enough to just have a wiki page or github document titled ``How to Install AwesomeApp'' (fill in name of program here). Complicated means mistakes and people will forget steps. Don't let them make mistakes: make it automatic.
 
-What about containers? Well, let's see how we got there first. In the beginning, you had services where you installed the binaries and config files by hand. That sucked. So there were packages; a package includes everything the program needs (including a list of dependencies) and a script to install it and set it up. Great! But if you just install multiple services on the same machine you don't get isolation and you might have incompatible versions of dependencies and you're in RPM hell (see also: JAR hell, classloader hell, and DLL hell).
+One particular example of applying all those principles to infrastructure
+is Terraform. Its whole purpose is to manage your config as codes
+situation where you want to run your code using a cloud provider (e.g., AWS), 
+then you can control the infrastructure using Terraform: you write the
+configuration files that say you want this service with these permissions
+(and any other details) and then you can apply that configuration easily.
+Terraform does support a ``plan'' operation so it can tell you what it will
+do, so you can verify that, before anything is actually changed. Then, if 
+you are happy with it, apply it! 
+
+\paragraph{Containers.} What about containers? Well, let's see how we got there first. In the beginning, you had services where you installed the binaries and config files by hand. That sucked. So there were packages; a package includes everything the program needs (including a list of dependencies) and a script to install it and set it up. Great! But if you just install multiple services on the same machine you don't get isolation and you might have incompatible versions of dependencies and you're in RPM hell (see also: JAR hell, classloader hell, and DLL hell).
 
 Right, so instead you say you should have virtual machines: you configure the VM parameters and install the guest OS and set it up (and you can copy-paste the initial image, which helps) but for every application you have a guest operating system running underneath. Maybe we don't need every app to have its own guest OS; why do we have to install the same security patch ten times...?
 
@@ -70,13 +79,29 @@ Containerization gives many of the advantages of this separation, but without ne
 	\includegraphics[width=0.55\textwidth]{images/cvm.png}
 \end{center}
 
+Containers do potentially come with a downside of letting you just not upgrade things. Whereas before if you installed the OS patches you might get updates in your shared libraries, the container allows you to keep an old insecure version of a library around forever. So, don't do that. Keeping on top of security updates is important. Let's talk about that, actually.
+
+\paragraph{Security, report to the bridge.}
+Having an always-available service accessible over the internet makes security a very big concern. You can run some program with tons of security vulnerabilities offline and feel that the security problems can be managed, but when it's online the risk is enormous. All kinds of vulnerabilities are a problem, but I'll call out two of them as being especially bad: code execution/injection and data leakage (information exposure). 
+
+Code execution is exactly what it sounds like: attackers run their code using your platform. They can mess with your data, send spam or harrassing e-mails to your customers, take services without paying for them, mine bitcoin at your expense, and many other things. Sometimes these are company-ending events.
+
+Information exposure is not only terrible for your company's reputation, but also against privacy laws and data protection regulations. A breach of the EU GDPR can get very expensive. See \url{https://www.enforcementtracker.com/} to find out which companies have recently gotten their wrists slapped or a huge fine. At the time of writing, the record holder is Marriott International Inc of the UK with a fine of 	110,390,200 EUR which is roughly 171,898,556.93 CAD (using exchange rates from October 2020). Not exactly pocket change.
+
+There are some companies out there that will check your code for libraries with versions having known security vulnerabilities. This is transitive, so if your app depends on some library that depends on a parsing library with a vulnerability, the vulnerability is noticed and reported. Each vulnerability is usually assigned a severity and the service may even suggest that updating from version X to Y will solve the problem. They can say this because they observe that a vulnerability reported in version X of a library is reported as fixed in version Y. 
+
+Sadly, when there is an updated version of a library, there may be breaking changes in it, so an upgrade might be more painful than just changing a version number and rebuilding. It may also take time for libraries to correct and release a fixed version of the library. In the meantime, you may need to implement some mitigation of your own, or just keep an eye open for when the patch is released. These mean that the vulnerability checks give you the ability to ignore or snooze the alert. Tempting as it is to do that and get on with other work, it's leaving the vulnerability in your code. Good practice would be for reviewers to discourage ignoring if it can be avoided.
+
+As with the other parts of managing your application, like build and deployment, checking for vulnerabilities should be an automatic process as part of your build and release procedures. 
 
 \subsection*{Servers as cattle, not pets}
 By servers, I mean servers, or virtual machines, or containers. It's much better to have a reproducible process for deployment of a server than doing it manually every single time. The amount of manual intervention should be minimized and ideally zero. If this is done you can save a lot of hours of time, reduce errors, and allow for automatic scaling (starting and stopping servers depending on demand).
 
 The title references the idea that cattle are dealt with as a herd: you try to get the whole group to move along and do what they need. Pets are individuals, though, and you'll treat them all differently. This amount of individual attention quickly becomes unmanageable and there's no reason why you should worry about these differences in a world with virtualization (containers) or similar. 
 
-\subsection*{Common infrastructure}
+As with managing infrastructure, I'll give a specific example: Kubernetes. This is used to automate deploying and scaling of applications. This means you don' have to manually manage them; if you want to deploy a new version of a container, just tell Kubernetes to do it. The part about how it does so is that it provides a framework for your environment. It can do load balancing, automatic rollouts and reverts (if something went wrong), will figure out what instances run on what hardware, check the health of instances, replace them if they die, and more.
+
+subsection*{Common infrastructure}
 Use APIs to access your infrastructure. That is, you should view different parts of your infrastructure as having an interface and communication is done exclusively via the interface/API. This reduces the coupling between different components, and, as we've discussed, allows you to scale the parts that need scaling. 
 
 Try to avoid not-invented-here syndrome: it is usually better to use an open-source tool (or a commercial one) than to roll your own. Some examples might be:
@@ -88,42 +113,12 @@ Try to avoid not-invented-here syndrome: it is usually better to use an open-sou
 
 However, be prepared to build your own tools if needed. Sometimes what you want, or need, doesn't exist (yet). Think carefully about whether this service that is needed is really part of your core competence and whether creating it adds sufficient value to the business. It's fun to make your own system and all, but are you doing what you're best at? 
 
-Think extra carefully if you plan to do roll your own anything that is security or encryption related. I'm just going to say that unless you have experts on staff who know the subject really well and you're willing to pay for external audits and the like, you're more likely to end up with a terrible security breach than a terrific secure system. PS: a breach of data protection regulations can get very expensive. See \url{https://www.enforcementtracker.com/} to find out which companies have recently gotten their wrists slapped.
+Think extra carefully if you plan to do roll your own anything that is security or encryption related. I'm just going to say that unless you have experts on staff who know the subject really well and you're willing to pay for external audits and the like, you're more likely to end up with a terrible security breach than a terrific secure system. 
 
 As a second followup soapbox point to that: if what you are looking for doesn't exist, there might be a reason, Maybe the reason is that you are the first to think of it, but consider the possibility that it's not that good of an idea (either due to inefficiency or just not being great in principle).  
 
-\subsection*{Design for 10$\times$ growth, redesign before 100$\times$}
-[original credit: Jeff Dean at Google] This discussion is based on
-Martin Fowler's piece on sacrificial architecture:
-\url{http://martinfowler.com/bliki/SacrificialArchitecture.html}.
-
-Consider eBay: in 1995, perl scripts; in 1997, C++/Windows; in 2002,
-Java.  Each of these architectures was appropriate at the time, but
-not as the requirements change. The more sophisticated successor
-architectures, however, would have been overkill at an earlier
-time. And it's hard to predict what would be needed in the future.
-% look up eBay growth stats
-%http://martinfowler.com/bliki/images/sacrificialArchitecture/sketch.png
-%http://web.archive.org/web/20000510004517/http://www.ebay.com/
-% http://www.ebay.com/
-
-\begin{quote}
-``Perf is a feature''.\\
-\hfill --- Jeff Atwood
-\end{quote}
-That is, you apply developer time to perf, and you make engineering tradeoffs
-to get it. Some thoughts:
-\begin{itemize}
-\item design with the eventual replacement in mind;
-\item don't abandon internal quality (e.g. modularity);
-\item sacrifice individual modules at a time, not the whole system;
-\item you can also implement new features with a rough draft and deploy to a test audience.
-\end{itemize}
-
 \subsection*{Naming}
-Naming is one of the hard problems in computing. There is a saying that there are only two hard things in computers: cache invalidation, naming things, and off by one errors. 
-
-There are a
+Naming is one of the hard problems in computing. There is a saying that there are only two hard things in computers: cache invalidation, naming things, and off by one errors.  There are a
 lot of ways to name things. We'll talk about
 systems/VMs\footnote{\url{http://mnx.io/blog/a-proper-naming-scheme}},
 but naming is necessary for resources of all kinds.
