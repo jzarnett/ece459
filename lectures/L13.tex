@@ -17,169 +17,135 @@ Some computations appear to be ``inherently sequential''. There are plenty of re
 \item students must submit assignment before course staff can mark the assignment (also sort of... I can assign you a grade of zero if you didn't submit an assignment!)
 \end{itemize}
 
-There are some prerequisite steps that need to be taken before a given step can take place. The problem is that we need some result or state from an earlier step before we can go on to the next step. Interestingly, in many of the analogies, sometimes if you fail to respect the dependency, nothing physically stops the next step from taking place, but the outcome might not be what you want (... you don't want zero on your assignment, right?).
+There are some prerequisite steps that need to be taken before a given step can take place. The problem is that we need some result or state from an earlier step before we can go on to the next step. Interestingly, in many of the analogies, sometimes if you fail to respect the dependency, nothing physically stops the next step from taking place, but the outcome might not be what you want (\ldots you don't want zero on your assignment, right?).
 
-The same with dependencies in computation. If you need the result of the last step you will have to wait for it to be available before you can go on to the next. And if you jump the gun and try to do it early, you will get the wrong result (if any at all).
+The same with dependencies in computation. If you need the result of the last step you will have to wait for it to be available before you can go on to the next. And if you jump the gun and try to do it early, you will get the wrong result (if any at all). 
 
-Note that, in this lecture, we are going to assume that memory accesses follow the
-sequentially consistent memory model. For instance, if you declared all variables
-to be C++11 atomics, that would be fine. This reasoning is not guaranteed to work
-in the presence of undefined behaviour, which exists when you have data races.
+Note that, in this lecture, we are going to assume that we don't have data races. This reasoning is not guaranteed to work in the presence of undefined behaviour, which exists when you have data races.
 
 \paragraph{Main Idea.} A \emph{dependency} prevents parallelization
 when the computation $XY$ produces a different result from the
-computation $YX$.
+computation $YX$. That is to say, there is a correct order for doing these two steps and getting the order wrong means we get the wrong outcome. If you want to bake a cake, you have to mix all the ingredients before you bake them; if you bake all ingredients and then mix them, whatever you get isn't a cake.
 
-\paragraph{Loop- and Memory-Carried Dependencies.} We distinguish
-between \emph{loop-carried} and \emph{memory-carried} dependencies.
-In a loop-carried dependency, an iteration depends on the result of
-the previous iteration. For instance, consider this code to
-compute whether a complex number $x_0 + iy_0$ belongs to the Mandelbrot
-set.
+Remember, of course, that there are lots of things that don't have dependencies and can be done in arbitrary order (or even concurrently). If your household chores are to vacuum the floor and do the laundry, you get a valid outcome no matter what order you do them in, as long as you do both correctly. The outcome is the same!
 
-{\small \begin{lstlisting}[language=C]
-    // Repeatedly square input, return number of iterations before 
-    // absolute value exceeds 4, or 1000, whichever is smaller.
-    int inMandelbrot(double x0, double y0) {
-      int iterations = 0;
-      double x = x0, y = y0, x2 = x*x, y2 = y*y;
-      while ((x2+y2 < 4) && (iterations < 1000)) {
-        y = 2*x*y + y0;
-        x = x2 - y2 + x0;
-        x2 = x*x; y2 = y*y;
-        iterations++;
-      }
-      return iterations;
+There are two kinds of dependency that we'll cover and they are \emph{loop-carried} and \emph{memory-carried} dependencies.
+
+\paragraph{Loop-Carried Dependencies.} Let's start with the loop-carried version. In this kind of dependency, executing an iteration of the loop depends on the result of the previous iteration. Initially, {\tt vec[0]} and {\tt vec[1]} are 1. Can we run these lines in parallel?
+
+\begin{lstlisting}[language=Rust]
+let mut vec = vec![1; 32];
+    /* */
+vec[4] = vec[0] + 1;
+vec[5] = vec[0] + 2;
+\end{lstlisting}
+
+
+It turns out that there are no dependencies between the two lines. But this is
+an atypical use of arrays. Let's look at more typical uses.
+
+What about this? (Again, all elements initially 1.)
+
+\begin{lstlisting}[language=Rust]
+for i in 1 .. vec.len() {
+    vec[i] = vec[i-1] + 1;
+}
+\end{lstlisting}
+
+Nope! We can unroll the first two iterations:
+\begin{lstlisting}[language=Rust]
+vec[1] = vec[0] + 1;
+vec[2] = vec[1] + 1;
+\end{lstlisting}
+
+Depending on the execution order, either {\tt vec[2] = 3} or {\tt vec[2] =
+  2}.  In fact, no out-of-order execution here is safe---statements depend
+on previous loop iterations, which exemplifies the notion of a
+\emph{loop-carried dependency}. 
+
+Okay, that's perhaps a silly example. 
+Let's try a real problem. Consider this code to compute whether a complex number $x_0 + iy_0$ belongs to the Mandelbrot set.
+
+\begin{lstlisting}[language=Rust]
+// Repeatedly square input, return number of iterations before
+// absolute value exceeds 4, or 1000, whichever is smaller.
+fn mandelbrot(x0: f64, y0: f64) -> i32 {
+    let mut iterations = 0;
+    let mut x = x0;
+    let mut y = y0;
+    let mut x_squared = x * x;
+    let mut y_squared = y * y;
+    while (x_squared + y_squared < 4f64) && (iterations < 1000) {
+        y = 2f64 * x * y + y0;
+        x = x_squared - y_squared + x0;
+        x_squared = x * x;
+        y_squared = y * y;
+        iterations += 1;
     }
-\end{lstlisting} }
+    return iterations;
+}
+\end{lstlisting}
 In this case, it's impossible to parallelize loop iterations, because
 each iteration \emph{depends} on the $(x, y)$ values calculated in the
 previous iteration. For any particular $x_0 + iy_0$, you have to run the
 loop iterations sequentially.
 
-Note that you can parallelize the Mandelbrot set calculation
+That doesn't mean that the problem cannot be parallelized at all, however.
+You can parallelize the Mandelbrot set calculation
 by computing the result simultaneously over many points at
-once. Indeed, that is a classic ``embarassingly parallel'' problem,
+once, even if each point's calculation needs to be done sequentially.
+Indeed, that is a classic ``embarassingly parallel'' problem,
 because the you can compute the result for all of the points
 simultaneously, with no need to communicate.
 
-On the other hand, a memory-carried dependency is one where the result
-of a computation \emph{depends} on the order in which two memory accesses
-occur. For instance:
-
-{\small \begin{lstlisting}[language=C]
-    int val = 0;
-
-    void g() { val = 1; }
-    void h() { val = val + 2; }
-\end{lstlisting} }
-
-{\sf What are the possible outcomes after executing {\tt g()} and {\tt h()}
-in parallel threads?} \\[1em]
-
-A loop-carried dependency is one where an
-iteration depends on the result of the previous iteration. Let's look
-at a couple of examples.
-
-
-Initially, {\tt a[0]} and {\tt a[1]} are 1.
-Can we run these lines in parallel?
+ Now consider this example---is it parallelizable? (Again, all elements initially 1.)
 
 \begin{lstlisting}[language=C]
-     a[4] = a[0] + 1;
-     a[5] = a[1] + 2;
-\end{lstlisting}
-
-\url{http://www.youtube.com/watch?v=jjXyqcx-mYY}. (This one is legit! Really!)
-
-It turns out that there are no dependencies between the two lines. But this is
-an atypical use of arrays. Let's look at more typical uses.
-
-
-What about this? (Again, all elements initially 1.)
-
-\begin{lstlisting}[language=C]
-    for (int i = 1; i < 12; ++i)
-        a[i] = a[i-1] + 1;
-\end{lstlisting}
-
-Nope! We can unroll the first two iterations:
-\begin{lstlisting}[language=C]
-    a[1] = a[0] + 1
-    a[2] = a[1] + 1
-\end{lstlisting}
-
-Depending on the execution order, either {\tt a[2] = 3} or {\tt a[2] =
-  2}.  In fact, no out-of-order execution here is safe---statements depend
-on previous loop iterations, which exemplifies the notion of a
-\emph{loop-carried dependency}. You would have
-to play more complicated games to parallelize this.
-
-
-  Now consider this example---is it parallelizable? (Again, all elements initially 1.)
-
-\begin{lstlisting}[language=C]
-    for (int i = 4; i < 12; ++i)
-        a[i] = a[i-4] + 1;
+for i in 4 .. vec.len() {
+    vec[i] = vec[i-4] + 1;
+}
 \end{lstlisting}
 
 Yes, to a degree. We can execute 4 statements in parallel at a time:
 \begin{itemize}
-  \item a[4] = a[0] + 1, a[8] = a[4] + 1
-  \item a[5] = a[1] + 1, a[9] = a[5] + 1
-  \item a[6] = a[2] + 1, a[10] = a[6] + 1
-  \item a[7] = a[3] + 1, a[11] = a[7] + 1
+  \item \texttt{vec[4] = vec[0] + 1, vec[8] = vec[4] + 1}
+  \item \texttt{vec[5] = vec[1] + 1, vec[9] = vec[5] + 1}
+  \item \texttt{vec[6] = vec[2] + 1, vec[10] = vec[6] + 1}
+  \item \texttt{vec[7] = vec[3] + 1, vec[11] = vec[7] + 1}
 \end{itemize}  
-We can say that the array accesses have stride 4---there are no
+We can say that the array accesses have stride 4 --- there are no
 dependencies between adjacent array elements. In general, consider
 dependencies between iterations.
 
-\paragraph{Larger loop-carried dependency example.}
-Now consider the following function.
 
-\begin{lstlisting}[language=C]
-  // Repeatedly square input, return number of iterations before 
-  // absolute value exceeds 4, or 1000, whichever is smaller.
-  int inMandelbrot(double x0, double y0) {
-    int iterations = 0;
-    double x = x0, y = y0, x2 = x*x, y2 = y*y;
-    while ((x2+y2 < 4) && (iterations < 1000)) {
-      y = 2*x*y + y0;
-      x = x2 - y2 + x0;
-      x2 = x*x; y2 = y*y;
-      iterations++;
-    }
-    return iterations;
-  }
-\end{lstlisting}
+\paragraph{Memory-Carried Dependencies.} On the other hand, a memory-carried dependency is one where the result
+of a computation \emph{depends} on the order in which two memory accesses
+occur. For instance:
 
-How do we parallelize this?
+{\small \begin{lstlisting}[language=Rust]
+let mut acct: Account = Account {
+    balance: 0.0f32
+};
+f(&mut acct);
+g(&mut acct);
 
-Well, that's a trick question. There's not much that you can do with that
-function. What you can do is to run this function sequentially for each
-point, and parallelize along the different points.
+/* */
 
-As mentioned in class, but one potential problem with that
-approach is that one point may take disproportionately long. The safe thing to do is to parcel out the work
-at a finer granularity. There are
-(unsafe!) techniques for dealing with that too. We'll talk about that
-later.
+fn f (a: &mut Account) {
+    a.balance += 50.0f32;
+}
+fn g (a: &mut Account) {
+    a.balance *= 1.01f32;
+}
+\end{lstlisting} }
 
-%What I did do in class was to actually live-code a parallelization
-%of the Mandelbrot code. I had to first refactor the code, creating
-%an array to hold the output. Then I added a struct to pass the offset and
-%stride to the thread. Finally, I invoked pthread to create and join threads.
+{\sf What are the possible outcomes after executing {\tt g()} and {\tt f()}
+in parallel threads? Obviously, assuming they are properly wrapped in Atomic reference counted types to allow the code to compile.} \\[1em]
 
-%In class, I live-coded a parallelization
-%of the Mandelbrot code. I had to first refactor the code, creating
-%an array to hold the output. Then I added a struct to pass the offset and
-%stride to the thread. Finally, I invoked pthread to create and join threads.
 
 \section*{Critical Paths}
-You should be familiar with the concept of a critical path from previous
-courses; it is the minimum amount of time to complete the task, taking
-dependencies into account.
-
+You should be familiar with the concept of a critical path from other courses (e.g., capstone design project) or just from project management you've experienced on coop terms. 
+It is the minimum amount of time to complete the task, taking dependencies into account.
 Consider the following diagram, which illustrates dependencies between
 tasks (shown on the arrows). 
 Note that B depends on A, and D depends on B and C, but C does
@@ -201,10 +167,15 @@ for different strategies.
 \end{tikzpicture}
 \end{center}
 
+ Having a diagram like this makes it easy to see what can run in parallel and what steps need to happen in what order.  You might not need such a thing, but they are super useful for explaining to nontechnical coworkers or senior management what is happening and how it's going.
+
 
 \section*{Breaking Dependencies with Speculation}
-Let's go back to a real life analogy of speculation. Under normal circumstances, the coffee shop staff waits for you to place your order (``medium double double'') before they start making your order. Sensible. If you go to a certain coffee shop enough, then the staff start to know you and know your typical order and they might speculate about your order and start preparing it in advance, even before you get up to the counter. If they're right, time is saved: your order is ready sooner. If they're wrong, the staff did some unnecessary work and they'll throw away that result and start again with what you did order. If they can predict with high accuracy what you want, then most of the time this is a benefit, and that's what we want.
+Let's go back to a real life analogy of speculation. Under normal circumstances, the coffee shop staff waits for you to place your order (``medium double double'') before they start making your order. Sensible. If you go to a certain coffee shop enough, then the staff start to know you and know your typical order and they might speculate about your order and start preparing it in advance, even before you get up to the counter. If they're right, time is saved: your order is ready sooner. If they're wrong, the staff did some unnecessary work and they'll throw away that result and start again with what you did order. If they can predict with high accuracy what you will order, then this is a net savings of time on average.
 
+You can even put some numbers on it! If successfully predicting your order saves 30 seconds per day, and if they're wrong, remaking it takes 3 minutes longer than normal, then if your order is unpredictable one out of every 10 days, how much time is saved? 9 days are correct for a savings of 4.5 minutes, from which we subtract the 3 minute penalty for being wrong, and we've saved 1.5 minutes in the 10 day period (or about 15 seconds per day on average). Not huge, but imagine if the coffee shop can do that for every regular customer. If there are 100 regular customers that's 25 minutes of waiting saved per day! It all adds up.
+
+Mind you, the idea of speculation isn't new in this course.
 Recall that computer architects often use speculation to predict branch
 targets: the direction of the branch depends on the condition codes
 when executing the branch code. To get around having to wait, the processor
@@ -215,47 +186,57 @@ We can also use speculation at a coarser-grained level and
 speculatively parallelize code. We discuss two ways of doing so: one
 which we'll call speculative execution, the other value speculation.
 
-\subsection*{Speculative Execution for Threads.} The idea here is to
+\paragraph{Speculative Execution for Threads.} The idea here is to
 start up a thread to compute a result that you may or may not need.
 Consider the following code:
 
-{\small \begin{lstlisting}[language=C]
-  void doWork(int x, int y) {
-    int value = longCalculation(x, y);
-    if (value > threshold) {
-      return value + secondLongCalculation(x, y);
+\begin{lstlisting}[language=Rust]
+fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
+    let val = long_calculation(x, y);
+    if val > threshold {
+        return val + second_long_calculation(x, y);
     }
-    else {
-      return value;
-    }
-  }
-\end{lstlisting} }
+    return val;
+}
+\end{lstlisting}
 Without more information, you don't know whether you'll have to execute
-{\tt secondLongCalculation} or not; it depends on the return value of
-{\tt longCalculation}. 
-
-Fortunately, the arguments to {\tt secondLongCalculation} do not
-depend on {\tt longCalculation}, so we can call it at any point. 
+{\tt secondLongCalculation()} or not; it depends on the return value of
+{\tt longCalculation()}.  Fortunately, the arguments to {\tt secondLongCalculation()} do not
+depend on {\tt longCalculation()}, so we can call it at any point. 
 Here's one way to speculatively thread the work:
 
-{\small \begin{lstlisting}[language=C]
-  void doWork(int x, int y) {
-    thread_t t1, t2;
-    point p(x,y);
-    int v1, v2;
-    thread_create(&t1, NULL, &longCalculation, &p);
-    thread_create(&t2, NULL, &secondLongCalculation, &p);
-    thread_join(t1, &v1);
-    thread_join(t2, &v2);
-    if (v1 > threshold) {
-      return v1 + v2;
-    } else {
-      return v1;
+\begin{lstlisting}[language=Rust]
+fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
+    let t1 = thread::spawn(move || {
+        return long_calculation(x, y);
+    });
+    let t2 = thread::spawn(move || {
+        return second_long_calculation(x, y);
+    });
+    let val = t1.join().unwrap();
+    let v2 = t2.join().unwrap();
+    if val > threshold {
+        return val + v2;
     }
-  }
-\end{lstlisting} }
+    return val;
+}
+\end{lstlisting}
 We now execute both of the calculations in parallel and return the same
-result as before.
+result as before. Is this the only way to do it? No. The current thread is a valid thread for doing work and we don't have to create two threads and join two threads: we can create one and maybe have less overhead.
+
+\begin{lstlisting}[language=Rust]
+fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
+    let t1 = thread::spawn(move || {
+        return second_long_calculation(x, y);
+    });
+    let val = long_calculation(x, y);
+    let v2 = t1.join().unwrap();
+    if val > threshold {
+        return val + v2;
+    }
+    return val;
+}
+\end{lstlisting}
 
 {\sf Intuitively: when is this code faster? When is it slower? How
   could you improve the use of threads?}\\[4em]
@@ -274,47 +255,44 @@ speculation as shown above. There are two cases: $T_1 > T_2$ and $T_1
 < T_2$. (You can ignore $T_1 = T_2$.)
 
 
-\subsection*{Value Speculation}
+\paragraph{Value Speculation.}
 The other kind of speculation is value speculation. In this case,
 there is a (true) dependency between the result of a computation 
 and its successor:
 % note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
 
-{\small \begin{lstlisting}[language=C]
-  void doWork(int x, int y) {
-    int value = longCalculation(x, y);
-    return secondLongCalculation(value);
-  }
-\end{lstlisting} }
-If the result of {\tt value} is predictable, then we can speculatively
-execute {\tt secondLongCalculation} based on the predicted value.
-(Most values in programs are indeed predictable).
-{\small \begin{lstlisting}[language=C]
-void doWork(int x, int y) {
-    thread_t t1, t2;
-    point p(x,y);
-    int v1, v2, last_value;
-    thread_create(&t1, NULL, &longCalculation, &p);
-    thread_create(&t2, NULL, &secondLongCalculation,
-                  &last_value);
-    thread_join(t1, &v1);
-    thread_join(t2, &v2);
-    if (v1 == last_value) {
-      return v2;
-    } else {
-      last_value = v1;
-      return secondLongCalculation(v1);
-    }
+\begin{lstlisting}[language=Rust]
+fn do_other_work(x: i32, y: i32) -> i32 {
+    let val = long_calculation(x, y);
+    return second_long_calculation(val);
 }
 \end{lstlisting}
+
+If the result of {\tt value} is predictable, then we can speculatively
+execute {\tt secondLongCalculation} based on the predicted value.
+(Most values in programs are indeed predictable). If 90\% of customers are using the standard billing plan, you might assume that that's correct in your calculations, and then change that later if it turns out you are wrong. Or you might have a software cache where you keep the latest state so you don't have to go to the database to check a value that changes rarely. 
+
+\begin{lstlisting}[language=C]
+fn do_other_work(x: i32, y: i32, last_value: i32) -> i32 {
+    let t = thread::spawn(move || {
+        return second_long_calculation(last_value);
+    });
+    let val = long_calculation(x, y);
+    let v2 = t.join().unwrap();
+    if val == last_value {
+        return v2;
+    }
+    return second_long_calculation(val);
 }
+\end{lstlisting}
+
 Note that this is somewhat similar to memoization, except with 
 parallelization thrown in. In this case, the original running time is
 \[ T = T_1 + T_2, \]
 while the speculatively parallelized code takes time
 \[ T_s = \max(T_1, T_2) + S + pT_2,\]
 where $S$ is still the synchronization overhead, and $p$ is the probability that
-\verb+v1 != last_value+.
+\verb+val != last_value+.
 
 \paragraph{Exercise.} Do the same computation as for speculative execution.
 
@@ -328,43 +306,51 @@ Speculation isn't always safe. We need the following conditions:
     \item The return value of {\tt longCalculation} must be deterministic.
   \end{itemize}
 
-As a general warning: Consider the \emph{side effects} of function calls. Oh, let's talk about side effects. Why not. They have a big impact on parallelism. Side effects are problematic, but why? For one thing they're kind of unpredictable (why does calling this function result in unexpected changes elsewhere?!). Side effects are changes in state that do not depend on the function input. Calling a function or expression has a side effect if it has some visible effect on the outside world. Some things necessarily have side effects, like printing to the console. Others are side effects which may be avoidable if we can help it, like modifying a global variable.
+As a general warning: Consider the \emph{side effects} of function calls. Oh, let's talk about side effects. Why not. They have a big impact on parallelism. Side effects are problematic, but why? For one thing they're kind of unpredictable (why does calling this function result in unexpected changes elsewhere?!). Side effects are changes in state that do not depend on the function input. Calling a function or expression has a side effect if it has some visible effect on the outside world. Some things necessarily have side effects, like printing to the console. Others are side effects which may be avoidable if we can help it, like modifying a global variable. As we've seen, Rust discourages those kinds of problems but doesn't forbid them: we can still have atomic types shared that would represent some sort of global state.
 
 
 \section*{Software Transactional Memory}
-Developers use software transactions by 
-writing {\tt atomic} blocks~\cite{stm}. These blocks are just like {\tt
-  synchronized} blocks, but with different semantics.
-\begin{lstlisting}
-  atomic {
-    this.x = this.z + 4;
-  }
+Somewhat related to the idea of speculation is the idea of software transactional memory. In this case, a group of changes are carried out on a speculative basis, assuming that they will succeed, and we'll check afterwards if everything is okay and retry if necessary~\cite{stm}. 
+
+There is a library for this in Rust\footnote{\url{https://github.com/Marthog/rust-stm}} although we can't vouch for its quality or usefulness. Developers use software transactions by writing {\tt atomic} blocks:
+\begin{lstlisting}[language=Rust]
+let x = atomically(|trans| {
+    var.write(trans, 42)?; // Pass failure to parent.
+    var.read(trans) // Return the value saved in var.
+});
 \end{lstlisting}
-You're meant to think of database transactions, which I expect you to
-know about. The {\tt atomic} construct means that either the code in
+The idea resembles database transactions, which most likely you know about
+The {\tt atomic} construct means that either the code in
 the atomic block executes completely, or aborts/rolls back in the
 event of a conflict with another transaction (which triggers a retry
-later on).
+later on, and repeated retries if necessary to get it applied).
 
 \paragraph{Benefit.} The big win from transactional memory is the simple
 programming model. It is far easier to program with transactions than with
 locks. Just stick everything in an atomic block and hope the compiler does the
 right thing with respect to optimizing the code.
 
-\paragraph{Motivating Example.} We'll illustrate STM with the usual bank account example\footnote{Apparently, bank account transactions aren't actually atomic, but they still make a good example.}.
-  \begin{lstlisting}
-transfer_funds(Account* sender, Account* receiver, double amount) {
-  atomic {
-    sender->funds -= amount;
-    receiver->funds += amount;
-  }
+\paragraph{Motivating Example.} We'll illustrate STM with the usual bank account example\footnote{It turns out that bank account transactions aren't actually atomic, but they still make a good example.}.
+\begin{lstlisting}[language=Rust]
+struct Account {
+    balance: TVar<f32>,
 }
-  \end{lstlisting}
+
+fn transfer_funds(sender: &mut Account, receiver: &mut Account, amount: f32) {
+    atomically(|tx| {
+        let sender_balance = sender.balance.read(tx)?;
+        let receiver_balance = receiver.balance.read(tx)?;
+        sender.balance.write(tx, sender_balance - amount)?;
+        receiver.balance.write(tx, receiver_balance + amount)?;
+        Ok(0)
+    });
+}
+\end{lstlisting}
 
 Using locks, we have two main options:
       \begin{itemize}
-        \item Big Global Lock: Lock everything to do with modifying accounts. (This is slow; and you might forget to grab the lock).
-        \item Use a different lock for every account. (Prone to deadlocks; may forget to grab the lock).
+        \item Big Global Lock: Lock everything to do with modifying accounts. This is slow and serializes your program.
+        \item Use a different lock for every account. Prone to deadlocks; high overhead.
       \end{itemize}
 With STM, we do not have to worry about remembering to acquire locks,
 or about deadlocks.
@@ -380,8 +366,8 @@ transactions are as follows:
 \item Nested transactions: The concept of nesting transactions is easy
   to understand. The problem is: what do you do when you commit the
   inner transaction but abort the nested transaction? The clean
-  transactional fa\,cade doesn't work anymore in the presence of
-  nested transactions.
+  transactional fa\c{c}ade doesn't work anymore in the presence of
+  nested transactions. (The Rust library will panic at runtime if you try to nest transactions)
 
 \item Transaction size: Some transaction implementations (like
   all-hardware implementations) have size limits for their
@@ -405,27 +391,34 @@ against data races, but just rollback to recover, a datarace may still
 trigger problems in your program.
 
 \begin{tabular}{r|l}
-\hspace*{2em}  \begin{minipage}{.4\textwidth}
-\begin{lstlisting}
-atomic {
-  x++;
-  y++;
+\begin{minipage}{.46\textwidth}
+\begin{lstlisting}[language=Rust]
+fn what_could_go_wrong(x: TVar<i32>, y: TVar<i32>) {
+    atomically(|t| {
+        x.write(t, x.read(t)? + 1);
+        y.write(t, y.read(t)? + 1);
+        Ok(0)
+    });
 }
 \end{lstlisting}
 \end{minipage}
 &
-\hspace*{2em} \begin{minipage}{.4\textwidth}
-\begin{lstlisting}
-atomic {
-  if (x != y)
-     while (true) { }
+\begin{minipage}{.52\textwidth}
+\begin{lstlisting}[language=Rust]
+fn oh_no(x: TVar<i32>, y: TVar<i32>) {
+    atomically(|transaction| {
+        if x.read(transaction)? != y.read(transaction)? {
+            loop { /* Cursed Thread */}
+        }
+        Ok(0)
+    });
 }
 \end{lstlisting}
 \end{minipage}
 \end{tabular}
 
 In this silly example, assume initially {\tt x = y}. You may think the
-code will not go into an infinite loop, but it can.
+code will not go into an infinite loop, but it can. That's because intermediate states can still become visible! Although the block is atomic, that just means the changes succeed or are rolled back as a group; it does not mean that another thread cannot read \texttt{x} and \texttt{y} and see them at some partial-completion state of the transaction. (Maybe this doesn't happen in the Rust implementation, but it certainly can in C/\CPP~versions of STM.)
 
 
 \input{bibliography.tex}
