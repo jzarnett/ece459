@@ -2,15 +2,19 @@
 
 \begin{document}
 
-\lecture{25 --- System-Level Profiling, Profiler Guided Optimization}{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{25 --- Profilers, Profiler Guided Optimization}{\term}{Patrick Lam \& Jeff Zarnett}
 
-      \section*{System-level profiling}
-Most profiling tools interrogate the CPU in more detail than {\tt
-  gprof} and friends. These tools are typically aware of the whole
+      \section*{Profilers}
+Most profiling tools can gather more data than we've seen in the previous
+topic. Your tools are typically aware of the whole
 system, but may focus on one application, and may have both
-per-process and system-wide modes. We'll discuss a couple of these
-tools here, highlighting conceptual differences between these
-applications.
+per-process and system-wide modes. Frequently, though, you will find you can
+use only the per-process mode if you're not a system administrator. That's not
+super surprising, though, for security reasons. And for the same reason, in 
+per-process mode you can usually see that the kernel was called, but no
+details about what's going on inside. 
+
+We'll discuss a couple of these tools here, highlighting conceptual differences between these applications. They're all slightly different in how they work, but they get the job done.
 
 \paragraph{Solaris Studio Performance Analyzer.} This 
 tool\footnote{You can find a high-level description at
@@ -90,108 +94,7 @@ translation lookaside buffer (DTLB) misses, while EBP indicates four
 potential guilty instructions.
 
 
-\paragraph{oprofile.} This free software is a sampling-based tool which uses the Linux Kernel Performance
-Events API to access CPU performance counters. It tracks the
-currently-running function (or even the line of code) and can, in
-system-wide mode, work across processes, recording data for every
-active application.
 
-Webpage: \url{http://oprofile.sourceforge.net}.
-
-You can run oprofile either in system-wide mode (as root) or per-process. To run it in system-wide mode:
-  \begin{lstlisting}
-% sudo opcontrol --vmlinux=/usr/src/linux-3.2.7-1-ARCH/vmlinux
-% echo 0 | sudo tee /proc/sys/kernel/nmi_watchdog
-% sudo opcontrol --start
-Using default event: CPU_CLK_UNHALTED:100000:0:1:1
-Using 2.6+ OProfile kernel interface.
-Reading module info.
-Using log file /var/lib/oprofile/samples/oprofiled.log
-Daemon started.
-Profiler running.
-  \end{lstlisting}
-
-Or, per-process:
-\begin{lstlisting}
-[plam@lynch nm-morph]$ operf ./test_harness
-operf: Profiler started
-
-Profiling done.
-\end{lstlisting}%$
-
-Both of these invocations produce profiling output. You can read the profiling output
-by running {\tt opreport} and giving it your executable.
-
-  \begin{lstlisting}
-% sudo opreport -l ./test    
-CPU: Intel Core/i7, speed 1595.78 MHz (estimated)
-Counted CPU_CLK_UNHALTED events (Clock cycles when not
-halted) with a unit mask of 0x00 (No unit mask) count 100000
-samples  %        symbol name
-7550     26.0749  int_math_helper
-5982     20.6596  int_power
-5859     20.2348  float_power
-3605     12.4504  float_math
-3198     11.0447  int_math
-2601      8.9829  float_math_helper
-160       0.5526  main
-  \end{lstlisting}
-  If you have debug symbols ({\tt -g}) you can also get better data:
-  {\small
-  \begin{lstlisting}
-% sudo opannotate --source --output-dir=/path/to/annotated-source /path/to/mybinary
-  \end{lstlisting}
-  }
-
-Use {\tt opreport} by itself for a whole-system view.
-    You can also reset and stop the profiling.
-  \begin{lstlisting}
-% sudo opcontrol --reset 
-Signalling daemon... done
-% sudo opcontrol --stop
-Stopping profiling.
-  \end{lstlisting}
-
-\paragraph{perf.} This uses the same base data as oprofile, but provides a better
-(git-like) interface. Once again, it is an interface to the Linux kernel's built-in
-sample-based profiling using CPU counters. It works per-process, per-CPU, or system-wide.
-It can report the cost of each line of code.
-
-Webpage: \url{https://perf.wiki.kernel.org/index.php/Tutorial}
-
-\noindent
-Here's a usage example on some old assignment code from last year:
-\begin{lstlisting}[basicstyle=\scriptsize]
-[plam@lynch nm-morph]$ perf stat ./test_harness
-
- Performance counter stats for './test_harness':
-
-       6562.501429 task-clock                #    0.997 CPUs utilized          
-               666 context-switches          #    0.101 K/sec                  
-                 0 cpu-migrations            #    0.000 K/sec                  
-             3,791 page-faults               #    0.578 K/sec                  
-    24,874,267,078 cycles                    #    3.790 GHz                     [83.32%]
-    12,565,457,337 stalled-cycles-frontend   #   50.52% frontend cycles idle    [83.31%]
-     5,874,853,028 stalled-cycles-backend    #   23.62% backend  cycles idle    [66.63%]
-    33,787,408,650 instructions              #    1.36  insns per cycle        
-                                             #    0.37  stalled cycles per insn [83.32%]
-     5,271,501,213 branches                  #  803.276 M/sec                   [83.38%]
-       155,568,356 branch-misses             #    2.95% of all branches         [83.36%]
-
-       6.580225847 seconds time elapsed
-\end{lstlisting} %$
-
-\noindent
-perf can tell you which instructions are taking time, or which lines
-of code; compile with {\tt -ggdb} to enable source code viewing.
-
-\begin{lstlisting}
-% perf record ./test_harness
-% perf annotate
-\end{lstlisting}
-
-\noindent
-{\tt perf annotate} is interactive. Play around with it.
 
 \paragraph{DTrace.} 
 DTrace~\cite{Cantrill:2004:DIP:1247415.1247417} is an instrumentation-based
@@ -298,13 +201,7 @@ The paper presents six case studies where WAIT helped solve performance
 problems, including deadlocks, server underloads, memory leaks, database
 bottlenecks, and excess filesystem activity.
 
-\subsection*{Other Applications of Profiling.} 
-Profiling applies to languages beyond C/C++ and Java, of course. If you are
-profiling an interpreted language, you'll need a specific tool to get useful
-results. For Python, you can use {\tt cProfile}; it is a standard implementation
-of profiling, from what I can see.
-
-
+\paragraph*{Other Applications of Profiling.} 
 Here's a short tangent. Many of the concepts that we've seen for code
 also apply to web pages. Google's Page Speed
 tool\footnote{\url{http://code.google.com/speed/page-speed/}}, in
@@ -314,6 +211,62 @@ includes improvements for the web page's design, e.g. not requiring
 multiple DNS lookups; leveraging browser caching; or combining images;
 as well as traditional profiling for the JavaScript on your pages.
 
+I also mentioned earlier that I used the profiling tool for CUDA to find out what was wrong with my N-Body program. I ran the command \texttt{nvprof target/release/nbody-cuda}, and in addition to the regular program output I got the following, which showed that the time was going to the kernel and I wasn't losing a lot in overhead:
+
+{\scriptsize
+\begin{verbatim}
+==20734== Profiling application: target/release/nbody-cuda
+==20734== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:  100.00%  10.7599s         1  10.7599s  10.7599s  10.7599s  calculate_forces
+                    0.00%  234.72us         2  117.36us  100.80us  133.92us  [CUDA memcpy HtoD]
+                    0.00%  94.241us         1  94.241us  94.241us  94.241us  [CUDA memcpy DtoH]
+      API calls:   97.48%  10.7599s         1  10.7599s  10.7599s  10.7599s  cuStreamSynchronize
+                    1.92%  211.87ms         1  211.87ms  211.87ms  211.87ms  cuCtxCreate
+                    0.54%  59.648ms         1  59.648ms  59.648ms  59.648ms  cuCtxDestroy
+                    0.04%  4.8704ms         1  4.8704ms  4.8704ms  4.8704ms  cuModuleLoadData
+                    0.00%  404.72us         2  202.36us  194.51us  210.21us  cuMemAlloc
+                    0.00%  400.58us         2  200.29us  158.08us  242.50us  cuMemcpyHtoD
+                    0.00%  299.30us         2  149.65us  121.42us  177.88us  cuMemFree
+                    0.00%  243.86us         1  243.86us  243.86us  243.86us  cuMemcpyDtoH
+                    0.00%  85.000us         1  85.000us  85.000us  85.000us  cuModuleUnload
+                    0.00%  41.356us         1  41.356us  41.356us  41.356us  cuLaunchKernel
+                    0.00%  18.483us         1  18.483us  18.483us  18.483us  cuStreamCreateWithPriority
+                    0.00%  9.0780us         1  9.0780us  9.0780us  9.0780us  cuStreamDestroy
+                    0.00%  2.2080us         2  1.1040us     215ns  1.9930us  cuDeviceGetCount
+                    0.00%  1.4600us         1  1.4600us  1.4600us  1.4600us  cuModuleGetFunction
+                    0.00%  1.1810us         2     590ns     214ns     967ns  cuDeviceGet
+                    0.00%     929ns         3     309ns     230ns     469ns  cuDeviceGetAttribute
+\end{verbatim}
+}
+
+Oh, and for comparison, here's the one where I make much better use of the GPU's capabilities (with better grid and block settings):
+
+{\scriptsize
+\begin{verbatim}
+=22619== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   99.92%  417.53ms         1  417.53ms  417.53ms  417.53ms  calculate_forces
+                    0.06%  236.03us         2  118.02us  101.44us  134.59us  [CUDA memcpy HtoD]
+                    0.02%  93.057us         1  93.057us  93.057us  93.057us  [CUDA memcpy DtoH]
+      API calls:   52.09%  417.54ms         1  417.54ms  417.54ms  417.54ms  cuStreamSynchronize
+                   26.70%  214.00ms         1  214.00ms  214.00ms  214.00ms  cuCtxCreate
+                   13.63%  109.26ms         1  109.26ms  109.26ms  109.26ms  cuModuleLoadData
+                    7.42%  59.502ms         1  59.502ms  59.502ms  59.502ms  cuCtxDestroy
+                    0.05%  364.08us         2  182.04us  147.65us  216.42us  cuMemcpyHtoD
+                    0.04%  306.48us         2  153.24us  134.10us  172.37us  cuMemAlloc
+                    0.04%  285.73us         2  142.86us  122.90us  162.83us  cuMemFree
+                    0.03%  246.37us         1  246.37us  246.37us  246.37us  cuMemcpyDtoH
+                    0.01%  61.916us         1  61.916us  61.916us  61.916us  cuModuleUnload
+                    0.00%  26.218us         1  26.218us  26.218us  26.218us  cuLaunchKernel
+                    0.00%  15.902us         1  15.902us  15.902us  15.902us  cuStreamCreateWithPriority
+                    0.00%  9.0760us         1  9.0760us  9.0760us  9.0760us  cuStreamDestroy
+                    0.00%  1.6720us         2     836ns     203ns  1.4690us  cuDeviceGetCount
+                    0.00%  1.0950us         1  1.0950us  1.0950us  1.0950us  cuModuleGetFunction
+                    0.00%     888ns         3     296ns     222ns     442ns  cuDeviceGetAttribute
+                    0.00%     712ns         2     356ns     212ns     500ns  cuDeviceGet
+\end{verbatim}
+}
 
 \section*{Profiler Guided Optimization (POGO)}
 
