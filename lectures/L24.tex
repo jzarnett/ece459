@@ -15,13 +15,13 @@ If you don't use tools, then you end up guessing. You just make some assumptions
 \end{quote}
 	\hfill -- Donald Knuth
 
-So going about this blindly is probably a waste of time. You might be fortunate and optimize a slow part\footnote{There is a saying that even a blind squirrel sometimes finds a nut.} but we should really follow one of my favourite rules: ``don't guess, measure!''\footnote{Now I am certain you are sick of hearing that.} So, to make your programs or systems fast, you need to find out what is currently slow and improve it (duh!). Up until now in the course it's mostly been about ``let's speed this up'', but we did not take much time to decide what we should speed up (though you maybe did this on your assignment 2...?).
+So going about this blindly is probably a waste of time. You might be fortunate and optimize a slow part\footnote{There is a saying that even a blind squirrel sometimes finds a nut.} but we should really follow one of my favourite rules: ``don't guess, measure!''\footnote{Now I am certain you are sick of hearing that.} So, to make your programs or systems fast, you need to find out what is currently slow and improve it (duh!). Up until now in the course it's mostly been about ``let's speed this up'', but we did not take much time to decide what we should speed up (though you maybe did this on an assignment...?).
 
 The general idea is, collect some data on what parts of the code are taking up the majority of the time. This can be broken down into looking at what functions get called, or how long functions take, or what's using memory...
 
 There is always the ``informal'' way of doing this; it sort of works but it's not exactly the best plan. You probably know that when developing a program you can ``debug'' it without using any tools (e.g., \texttt{gdb}) by inserting a lot of print statements to the console or the log file. So when you enter function \texttt{foo} you print a nice little line on the console that say something like ``entering function foo'', associated with a timestamp and then when you're ready to return, a corresponding print function that says ``exiting'' appears, also with a timestamp.
 
-This approach kind of works, and I've used it myself to figure out what blocks of a single large function are taking a long time (updating exchange rates... yeah). But this approach is not necessarily a good one.  It's an example of ``invasive'' profiling -- we are going in and changing the source code of the program in question -- to add instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half hour range and I could see that the save operation was taking twelve minutes. Not kidding. 
+This approach kind of works, and I've used it myself to figure out what blocks of a single large function are taking a long time (such as a time when I found out that updating exchange rates was slow.). But this approach is not necessarily a good one.  It's an example of ``invasive'' profiling -- we are going in and changing the source code of the program in question -- to add instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half-hour range and I could see that the save operation was taking twelve minutes. Not kidding. 
 
 (Also like debugging, if you get to be a wizard you can maybe do it by code inspection, but that technique of speculative execution inside your head is a lot harder to apply to performance problems than it is to debugging.)
 
@@ -30,10 +30,9 @@ So we should all agree, we want to use tools and do this in a methodical way.
 Now that we agree on that, let's think about how profiling tools work\:
 
 \begin{itemize}
-\item sampling-based (traditional): every so often (e.g. 100ms for gprof), query the
-system state; or,
+\item sampling-based (traditional): every so often (e.g. 100ms for gprof), stop the system and ask it what it's doing (query the system state); or,
 \item instrumentation-based, or probe-based/predicate-based
-  (traditionally too expensive): query system state under certain
+  (sometimes, too expensive): query system state under certain
   conditions; like conditional breakpoints.
 \end{itemize}
 We'll talk about both per-process profiling and system-wide profiling.
@@ -51,13 +50,8 @@ that spray is often made of ``unobtainium''\footnote{\url{http://en.wikipedia.or
 \paragraph{Tips for Leveraging Profiling.}
 When writing large software projects:
   \begin{itemize}
-    \item First, write clear and concise code. \\
-      Don't do any premature optimizations---focus on correctness.
-    \item Profile to get a baseline of your performance:
-      \begin{itemize}
-        \item allows you to easily track any performance changes;
-        \item allows you to re-design your program before it's too late.
-      \end{itemize}
+    \item First, write clear and concise code. Don't do any premature optimizations---focus on correctness. Still, there are choices you can make that support performance at this stage, like using an efficient search or sort algorithm, if you know it's better and won't take additional effort.
+    \item Once it's working, profile to get a baseline of your performance: it allows you to easily track any performance changes and to re-design your program before it's too late.
   \end{itemize}
 Focus your optimization efforts on the code that matters.
 
@@ -82,366 +76,50 @@ performance or reliability.
 \section*{Userspace per-process profiling}
 Sometimes---or, in this course, often---you can get away with
 investigating just one process and get useful results about that
-process's behaviour.  We'll first talk about {\tt gprof}, the GNU
-profiler
-tool\footnote{\url{http://sourceware.org/binutils/docs/gprof/}}, and
-then continue with other tools.
+process's behaviour.  We'll first talk about {\tt perf}, the profiler 
+recommended for use with Rust. This is Linux-specific, though.
 
-{\tt gprof} does sampling-based profiling for single processes: it
-requests that the operating system interrupt the process being
-profiled at regular time intervals and figures out which procedure is
-currently running. It also adds a bit of instrumentation to collect
-information about which procedures call other procedures.
+The \texttt{perf} tool is an interface to the Linux kernel's built-in
+sample-based profiling using CPU counters. It works per-process, per-CPU, or system-wide. It can report the cost of each line of code.
 
-\paragraph{``Flat'' profile.} The obvious thing to do with the
-profile information is to just print it out. You get a list of
-procedures called and the amount of time spent in each of these 
-procedures.
+Webpage: \url{https://perf.wiki.kernel.org/index.php/Tutorial}
 
-The general limitation is that procedures that don't run for
-long enough won't show up in the profile. (There's a caveat: if
-the function was compiled for profiling, then it will show up
-anyway, but you won't find out about how long it executed for).
-
-\paragraph{``Call graph''.} {\tt gprof} can also print out 
-its version of a call graph, which shows the amount of time that
-either a function runs (as in the ``flat'' profile) as well as the
-amount of time that the callees of the function run.  Another term for
-such a call graph is a ``dynamic call graph'', since it tracks the
-dynamic behaviour of the program.  Using the {\tt gprof} call graph,
-you can find out who is responsible for calling the functions that
-take a long time.
-
-\paragraph{Limitations of {\tt gprof}.} Beyond the usual limitations
-of a process-oriented profiler, {\tt gprof} also suffers limitations
-from running completely in user-space. That is, it has no access to
-information about system calls, including time spent doing I/O.
-It also doesn't know anything about the CPU's built-in counters
-(e.g. cache miss counts, etc). Like the other profilers, it causes
-overhead when it's running, but the overhead isn't too large.
-
-\section*{{\tt gprof} usage guide}
-We'll give some details about using {\tt gprof}. First,
-use the {\tt -pg} flag with {\tt clang} when compiling and linking.
-(It's currently broken in gcc, unless you give {\tt -no-pie}.)
-Next, run your program as you normally would.
- Your program will now create {\tt gmon.out}.
-
-Use gprof to interpret the results: {\tt gprof <executable>}.
-
-\paragraph*{Example.} Consider a program with 100 million calls 
-to two math functions.
-
-\begin{tabular}{ll}
-\begin{minipage}{.5\textwidth}
-\begin{lstlisting}[language=C,basicstyle=\scriptsize]
-int main() {
-    int i,x1=10,y1=3,r1=0;
-    float x2=10,y2=3,r2=0;
-
-    for(i=0;i<100000000;i++) {
-        r1 += int_math(x1,y1);
-        r2 += float_math(y2,y2);
-    }
-}
-
-int int_math(int x, int y){
-    int r1;
-    r1=int_power(x,y);
-    r1=int_math_helper(x,y);
-    return r1;
-}
-
-int int_math_helper(int x, int y){
-    int r1;
-    r1=x/y*int_power(y,x)/int_power(x,y);
-    return r1;
-}
-
-int int_power(int x, int y){
-    int i, r;
-    r=x;
-    for(i=1;i<y;i++){
-        r=r*x;
-    }
-    return r;
-}
-\end{lstlisting}
-\end{minipage}
-\begin{minipage}{0.5\textwidth}
-\begin{lstlisting}[language=C]
-float float_math(float x, float y) {
-    float r1;
-    r1=float_power(x,y);
-    r1=float_math_helper(x,y);
-    return r1;
-}
-
-float float_math_helper(float x, float y) {
-    float r1;
-    r1=x/y*float_power(y,x)/float_power(x,y);
-    return r1;
-}
-
-float float_power(float x, float y){
-    float i, r;
-    r=x;
-    for(i=1;i<y;i++) {
-        r=r*x;
-    }
-    return r;
-}
-  \end{lstlisting}
-\end{minipage}
-\end{tabular}
-
-Looking at the code, we have no idea what takes longer.
-One might guess that floating point math takes longer. This is admittedly a
-silly example, but it works well to illustrate our point.
-
-\paragraph{Flat Profile Example.}
-    When we run the program and look at the flat profile, we see:
-
-  \begin{lstlisting}
-          Flat profile:
-
-          Each sample counts as 0.01 seconds.
-            %   cumulative   self              self     total           
-           time   seconds   seconds    calls  ns/call  ns/call  name    
-           32.58      4.69     4.69 300000000    15.64    15.64  int_power
-           30.55      9.09     4.40 300000000    14.66    14.66  float_power
-           16.95     11.53     2.44 100000000    24.41    55.68  int_math_helper
-           11.43     13.18     1.65 100000000    16.46    45.78  float_math_helper
-            4.05     13.76     0.58 100000000     5.84    77.16  int_math
-            3.01     14.19     0.43 100000000     4.33    64.78  float_math
-            2.10     14.50     0.30                             main
-  \end{lstlisting}
-
- There is one function per line. Here are what the columns mean:
-  \begin{itemize}
-    \item {\bf \% time:} the percent of the total execution time in this function.
-    \item {\bf self:} seconds in this function.
-    \item {\bf cumulative:} sum of this function's time + any above it in table.
-    \item {\bf calls:} number of times this function was called.
-    \item {\bf self ns/call:} just self nanoseconds / calls.
-    \item {\bf total ns/call:} mean function execution time, including
-       calls the function makes.
-  \end{itemize}
-
-\paragraph{Call Graph Example.}
-After the flat profile gives you a feel for which functions are costly, you
-      can get a better story from the call graph.
-
-  \begin{lstlisting}
-          index % time    self  children    called     name
-                                                           <spontaneous>
-          [1]    100.0    0.30   14.19                 main [1]
-                          0.58    7.13 100000000/100000000     int_math [2]
-                          0.43    6.04 100000000/100000000     float_math [3]
-          -----------------------------------------------
-                          0.58    7.13 100000000/100000000     main [1]
-          [2]     53.2    0.58    7.13 100000000         int_math [2]
-                          2.44    3.13 100000000/100000000     int_math_helper [4]
-                          1.56    0.00 100000000/300000000     int_power [5]
-          -----------------------------------------------
-                          0.43    6.04 100000000/100000000     main [1]
-          [3]     44.7    0.43    6.04 100000000         float_math [3]
-                          1.65    2.93 100000000/100000000     float_math_helper [6]
-                          1.47    0.00 100000000/300000000     float_power [7]
-          -----------------------------------------------
-                          2.44    3.13 100000000/100000000     int_math [2]
-          [4]     38.4    2.44    3.13 100000000         int_math_helper [4]
-                          3.13    0.00 200000000/300000000     int_power [5]
-          -----------------------------------------------
-                          1.56    0.00 100000000/300000000     int_math [2]
-                          3.13    0.00 200000000/300000000     int_math_helper [4]
-          [5]     32.4    4.69    0.00 300000000         int_power [5]
-          -----------------------------------------------
-                          1.65    2.93 100000000/100000000     float_math [3]
-          [6]     31.6    1.65    2.93 100000000         float_math_helper [6]
-                          2.93    0.00 200000000/300000000     float_power [7]
-          -----------------------------------------------
-                          1.47    0.00 100000000/300000000     float_math [3]
-                          2.93    0.00 200000000/300000000     float_math_helper [6]
-          [7]     30.3    4.40    0.00 300000000         float_power [7]
-  \end{lstlisting}
-
-To interpret the call graph, note that the line with the index [N] is the \emph{primary line},
-or the current function being considered.
-\begin{itemize}
-    \item Lines above the primary line are the functions which called this function.
-    \item Lines below the primary line are the functions which were called by this function
-      (children).
-\end{itemize}
-
-For the primary line, the columns mean:
-  \begin{itemize}  
-    \item {\bf time:} total percentage of time spent in this function and its
-      children.
-    \item {\bf self:} same as in flat profile.
-    \item {\bf children:} time spent in all calls made by the function;
-      \begin{itemize}
-        \item should be equal to self + children of all functions below.
-      \end{itemize}
-  \end{itemize}
-
-For callers (functions above the primary line):
-  \begin{itemize}
-    \item {\bf self:} time spent in primary function, when called from current
-      function.
-    \item {\bf children:} time spent in primary function's children, when
-      called from current function.
-    \item {\bf called:} number of times primary function was called from current
-      function / number of nonrecursive calls to primary function.
-  \end{itemize}
-
-For callees (functions below the primary line):
-  \begin{itemize}  
-    \item {\bf self:} time spent in current function when called from primary.
-    \item {\bf children:} time spent in current function's children calls when
-      called from primary.
-      \begin{itemize}
-        \item self + children is an estimate of time spent in current function
-          when called from primary function.
-      \end{itemize}
-    \item {\bf called:} number of times current function was called from primary
-      function / number of nonrecursive calls to current function.
-  \end{itemize}
-
-Based on this information, we can now see where most of the time comes
-from, and pinpoint any locations that make unexpected calls, etc.
-This example isn't too exciting; we could simplify the math and optimize the
-program that way.
-
-\section*{Introduction to gperftools}
-Next, we'll talk about the Google Performance Tools. 
-\begin{center}
-\url{http://google-perftools.googlecode.com/svn/trunk/doc/cpuprofile.html}
-\end{center}
-They include:
-      \begin{itemize}
-        \item a CPU profiler
-        \item a heap profiler
-        \item a heap checker; and 
-        \item a faster (multithreaded) {\tt malloc}.
-      \end{itemize}
-
-We'll mostly use the CPU profiler. Characteristics include:
-      \begin{itemize}
-        \item  supposedly works for
-multithreaded programs;
-        \item purely statistical sampling;
-        \item no recompilation required (typically benefit from re-linking); and
-        \item better output, including built-in graphical output.
-      \end{itemize}
-
-You can use the profiler without any recompilation. But this is not recommended;
-you'll get worse data. Use {\tt LD\_PRELOAD}, which changes the dynamic libraries that
-an executable uses.
-
-  \begin{lstlisting}[basicstyle=\scriptsize]
-  % LD_PRELOAD="/usr/lib/libprofiler.so" CPUPROFILE=test.prof ./test
-  \end{lstlisting}
-
-The other (more-recommended) option is to link to the profiler with {\tt -lprofiler}.
-
-Both options read the {\tt CPUPROFILE} environment variable, which
-specifies where profiling data goes.
-
-You can use the profiling library directly as well:
+\noindent
+Here's a usage example on some old assignment code from a previous offering of the course:
 \begin{lstlisting}[basicstyle=\scriptsize]
-          #include <gperftools/profiler.h>
-\end{lstlisting}
-Then, bracket code you want profiled with:
-\begin{lstlisting}[basicstyle=\scriptsize]
-          ProfilerStart()
-          // ...
-          ProfilerStop()
-\end{lstlisting}
-    
-You can change the sampling frequency with the {\tt CPUPROFILE\_FREQUENCY} environment variable
-(default value 100 interrupts/second).
+[plam@lynch nm-morph]$ perf stat ./test_harness
 
-\paragraph{{\tt pprof} usage.} {\tt pprof} is like {\tt gprof} for Google Perf Tools. It
-analyzes profiling results. Here are some usage examples.
-  \begin{lstlisting}[basicstyle=\scriptsize]
-          % pprof test test.prof
-              Enters "interactive" mode
-          % pprof --text test test.prof
-              Outputs one line per procedure
-          % pprof --gv test test.prof
-               Displays annotated call-graph via 'gv'
-          % pprof --gv --focus=Mutex test test.prof
-              Restricts to code paths including a .*Mutex.* entry
-          % pprof --gv --focus=Mutex --ignore=string test test.prof
-              Code paths including Mutex but not string
-          % pprof --list=getdir test test.prof
-              (Per-line) annotated source listing for getdir()
-          % pprof --disasm=getdir test test.prof
-              (Per-PC) annotated disassembly for getdir()
-  \end{lstlisting}
+ Performance counter stats for './test_harness':
 
-Can also output {\tt dot}, {\tt ps}, {\tt pdf} or {\tt gif} instead of {\tt gv}.
+       6562.501429 task-clock                #    0.997 CPUs utilized          
+               666 context-switches          #    0.101 K/sec                  
+                 0 cpu-migrations            #    0.000 K/sec                  
+             3,791 page-faults               #    0.578 K/sec                  
+    24,874,267,078 cycles                    #    3.790 GHz                     [83.32%]
+    12,565,457,337 stalled-cycles-frontend   #   50.52% frontend cycles idle    [83.31%]
+     5,874,853,028 stalled-cycles-backend    #   23.62% backend  cycles idle    [66.63%]
+    33,787,408,650 instructions              #    1.36  insns per cycle        
+                                             #    0.37  stalled cycles per insn [83.32%]
+     5,271,501,213 branches                  #  803.276 M/sec                   [83.38%]
+       155,568,356 branch-misses             #    2.95% of all branches         [83.36%]
 
-\paragraph{{\tt pprof} text output.}
-This is similar to the flat profile in {\tt gprof}.
+       6.580225847 seconds time elapsed
+\end{lstlisting} %$
 
-  \begin{lstlisting}[basicstyle=\scriptsize]
-          jon@riker examples master % pprof --text test test.prof 
-          Using local file test.
-          Using local file test.prof.
-          Removing killpg from all stack traces.
-          Total: 300 samples
-                95  31.7%  31.7%      102  34.0% int_power
-                58  19.3%  51.0%       58  19.3% float_power
-                51  17.0%  68.0%       96  32.0% float_math_helper
-                50  16.7%  84.7%      137  45.7% int_math_helper
-                18   6.0%  90.7%      131  43.7% float_math
-                14   4.7%  95.3%      159  53.0% int_math
-                14   4.7% 100.0%      300 100.0% main
-                 0   0.0% 100.0%      300 100.0% __libc_start_main
-                 0   0.0% 100.0%      300 100.0% _start
-  \end{lstlisting}
+Right, let's get started. We're going to use the blog post~\cite{rustflamegraph} as a guide; that source tells a more complete story of an example of using the profiler to optimize, but for now we are just interested in the steps.
 
-Columns, from left to right, denote:
-\begin{itemize}
-\item  Number of samples in this function.
-\item  Percentage of samples in this function (same as {\bf time} in {\tt gprof}).
-\item  Percentage of checks in the functions printed so far (equivalent to {\bf cumulative}, but in \%).
-\item     Number of checks in this function and its callees.
-\item     Percentage of checks in this function and its callees.
-\item    Function name.
-\end{itemize}
+The first thing to do is to compile with debugging info, go to your \texttt{Cargo.toml} file and add:
+\begin{verbatim}
+[profile.release]
+debug = true
+\end{verbatim}
 
-\paragraph{Graphical Output.} Google Perf Tools can also produce graphical output:
+This means that \texttt{cargo build --release} will now compile the version with debug info (you can tell because it will say \texttt{Finished release [optimized + debuginfo] target(s) in 0.55s}; without this, we wouldn't get the part that says debug info so we can tell if it's correct. And we want it to be the release version that we're instrumenting, because we want the compiler optimizations to be applied. Without those, we might be trying to optimize things where the compiler would do it for us anyway.
 
-\begin{center}
-    \includegraphics[scale=0.3]{images/pprof-test-big.png}
-\end{center}
+The basic plan is to run the program using \texttt{perf record}, which will sample the execution of the program to produce a data set. Then there are three ways we can look at the code: \texttt{perf report}, \texttt{perf annotate}, and a flamegraph. We'll look at all of those, but in a live demo.
 
-This shows the same numbers as the text output. This particular graphical example is on a different program than the text output, and that's why they look different. Directed edges denote function calls.
-Note: 
-\[ \mbox{\# of samples in callees} = \mbox{\# in ``this function + callees''} - \mbox{\# in ``this function''}.\]
 
-For example, in {\tt float\_math\_helper}, we have ``51 (local) of 96 (cumulative)''.
-Here,
-\[ 96 - 51 = 45 \mbox{ (callees)}. \]
-      \begin{itemize}
-        \item callee {\tt int\_power} = 7 (bogus)
-        \item callee {\tt float\_power} = 38
-        \item callees total = 45
-      \end{itemize}
-
-Note that the call graph is not exact.
-In fact, it shows many bogus relations which clearly don't exist.
-For instance, we know that there are no cross-calls between {\tt int} and {\tt float} functions.
-
-As with {\tt gprof}, optimizations will change the
-      graph.\
-
-You'll probably want to look at the text profile first, then use the
-      {\tt --focus} flag to look at individual functions.
-
+\paragraph{CLion.} While we've seen how to use \texttt{perf}, it's not the only way. During development of some of the code exercises, I used the CLion built-in profiler for this purpose. It generates a flamegraph for you too, and I'll show that for how to create the flamegraph as well.
 
 \input{bibliography.tex}
 
