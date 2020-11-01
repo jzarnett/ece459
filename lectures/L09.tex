@@ -11,7 +11,6 @@ Aside from my obvious passion about the subject, why are we talking about Norse 
 
 But all of these, in program form, are analysis tools for your (usually) C and \CPP programs. They are absolute murder on performance, but they are wonderful for finding errors in your program. To use them you will start the tool of your choice and instruct it to invoke your program. The target program then runs under the ``supervision'' of the tool. This results in running dramatically slower than normal, but you get additional checks and monitoring of the program. It's important to enable debugging symbols in your compile (\texttt{-g} option if using \texttt{gcc}) if you want stack traces to be useful.
 
-This lecture is unlike the others in this course, in that it mostly revolves around in-class demonstrations. So if you missed it, well, you will need to play around with Valgrind/Helgrind yourself to see what it does. Fortunately, that is the next in-class exercise!
 
 \subsection*{Valgrind (or Memcheck) }
 Valgrind is the base name of the project and by default it runs the memcheck tool. The purpose of memcheck is to look into all memory reads, writes, and to intercept and analyze every call to \texttt{malloc}/\texttt{free} and \texttt{new}/\texttt{delete}. Thus, memcheck will check all memory accesses and allocations/deallocations, and can find problems like:
@@ -22,15 +21,31 @@ Valgrind is the base name of the project and by default it runs the memcheck too
 	\item Incorrect freeing of memory (double free calls or a mismatch)
 	\item Incorrect use of C standard functions like \texttt{memcpy}
 	\item Using memory after it's been freed.
-	\item Asking for an invalid number of bytes in an allocation (negative\textinterrobang)
+	\item Asking for an invalid number of bytes in an allocation (negative?)
 \end{itemize}
 
-These errors will be reported to the console when they occur. Ideally, this will help you find the source of the problem. Ideally, you're going to see this:
+These errors will be reported to the console when they occur. Ideally, this will help you find the source of the problem. Now you might be thinking that these problems cannot occur in Rust! Well, not quite. Here are some ways that you can end up with memory leaks in Rust:
+
+\begin{itemize}
+	\item Explicitly calling the \texttt{leak} and \texttt{forget} functions (which have corner case uses)
+	\item Unsafe code and calling functions from other languages 
+	\item Reference-count cycles
+\end{itemize}
+
+
+So bad things can still happen. Ideally, you're going to see this:
 \begin{verbatim}
-==8476== All heap blocks were freed -- no leaks are possible
+==4209== HEAP SUMMARY:
+==4209==     in use at exit: 0 bytes in 0 blocks
+==4209==   total heap usage: 19 allocs, 19 frees, 3,457 bytes allocated
+==4209== 
+==4209== All heap blocks were freed -- no leaks are possible
 \end{verbatim}
 
-Okay, everything going perfectly is unlikely in anything other than a small program.  If you take the program's suggestion to use \verb+--leak-check=full+ then you end up with a bit more detail about where memory was allocated. It can't tell you where the call to \texttt{free} should go, only where the memory that isn't freed was allocated.
+Okay, everything going perfectly is unlikely in anything other than a small program. 
+
+
+If you take the program's suggestion to use \verb+--leak-check=full+ then you end up with a bit more detail about where memory was allocated. It can't tell you where the call to \texttt{free} should go, only where the memory that isn't freed was allocated.
 
 From the Valgrind FAQ, how to read the leak summary:
 \begin{itemize}
@@ -51,7 +66,7 @@ We'll take some time to do some examples that show the kind of error that Valgri
 The purpose of Helgrind is to detect errors in the use of POSIX pthreads. In a way, Helgrind is a pretty neat tool for improving performance, even though it doesn't actually directly speed anything up. When we take a single-threaded program and split it off into a multithreaded program, we may introduce a lot of errors (or at least, introduce the possibility of a lot of errors). Truthfully, humans are not very good at parallel thinking; we are very much sequential. But a program that is fast and wrong is probably less useful than one that is slow and correct. Can we make it faster and still have it be correct? That's the goal of Helgrind: after you parallelize your code, it will do some automatic checking of the code to determine where, if anywhere, there are concurrency problems. It can't prove that your program is correct (if only) but it can at least catch some of the common problems you might introduce when writing a parallel program. Helgrind classifies errors into three basic categories:
 
 \begin{enumerate}[noitemsep]
-	\item Misuses of the pthreads API;
+	\item Misuses of the API;
 	\item Lock ordering problems; and
 	\item Data races.
 \end{enumerate}
