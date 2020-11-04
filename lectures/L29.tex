@@ -2,103 +2,59 @@
 
 \begin{document}
 
-\lecture{29 --- Clusters \& Cloud Computing}{\term}{Patrick Lam}
+\lecture{29 --- Clusters \& Cloud Computing}{\term}{Jeff Zarnett \& Patrick Lam}
 
-\section*{Clusters and cloud computing}
+\section*{Clusters and Cloud Computing}
 Almost everything we've seen so far has improved performance on a single
 computer. Sometimes, you need more performance than you can get on a
-single computer. If you're lucky, then the problem can be divided
-among multiple computers. We'll survey techniques for programming for
+single computer, or you have reached a point where it's a lot better value for
+your money to buy two cheap computers than one very expensive computer.
+For the most part, if you could split your problem into
+multiple threads or multiple processes, you can do the same with multiple
+computers. We'll survey techniques for programming for
 performance using multiple computers; although there's overlap with
 distributed systems, we're looking more at calculations here.
 
-\subsection*{Message Passing} For the majority of this course, 
-we've talked about shared-memory systems. Last week's discussion of
-GPU programming moved away from that a bit: we had to explicitly
-manage copying of data. Message-passing is yet another paradigm.  In
-this paradigm, often we run the same code on a number of nodes. These
-nodes may potentially run on different computers (a cluster),
-which communicate over a network.
+\paragraph*{Message Passing.} Rust has encourages message-passing, but
+a lot of your previous experience when working with C may have centred around
+shared memory systems and you may have done that in Rust too (\texttt{Mutex}, 
+anyone?). In some circumstances that we've seen, you don't have a choice!
+The model of GPU programming meant we had to explicitly
+manage copying of data. When we have multiple computers, shared memory is not
+an option, so we have to use message passing. Fortunately, we know how to do
+that. The only thing to note now is that communication over the network is
+much more expensive than communicating within the same system, so we will
+need to think carefully about how much to communicate.
 
-MPI, the \emph{Message Passing Interface}, is a de facto standard for
-programming message-passing systems. Communication is explicit in MPI:
-processes pass data to each other using {\tt MPI\_Send} and {\tt
-  MPI\_Recv} calls. 
+There was a time when we would talk about MPI, the \emph{Message Passing 
+Interface}, a de facto standard for programming message-passing multi-
+computer systems. This is, unfortunately, no longer the way. 
+MPI sounds good, but in practice people tend to use other things. 
+Here's a detailed piece about the relevance of MPI today:~\cite{hpcmpi}, if 
+you are curious. 
 
-Relevant piece about the relevance of MPI today:~\cite{hpcmpi}
+\paragraph{REST}
+We've already seen asynchronous I/O using HTTP (curl) which we could use to
+consume a REST API as one mechanism for multi-computer communication. You
+may have also learned about sockets and know how to use those, which would
+underly a lot of the mechanisms we're discussing. The socket approach is too
+low-level for what we want to discuss, and while the REST API approach is at a
+reasonable level of abstraction. 
 
-\paragraph{Hello, World in MPI.} As with OpenCL kernels,
-the first thing to do when writing an MPI program is to
-figure out what the current process is supposed to compute.
-Here's fairly standard skeleton code for that,
-from \url{http://www.dartmouth.edu/~rc/classes/intro_mpi/}:
+REST APIs are often completely synchronous, but don't have to be: 
+you can set up  callbacks to be notified when a computation is done, or
+the caller can check back later to see if the request is finished. But these
+aren't truly asynchronous, because the remote machine has to be available at
+the time of each call. Perhaps we'd like to decouple services even more than
+that and use something else...
 
-{\small
-\begin{lstlisting}[language=C]
-#include <stdio.h>
-#include <mpi.h>
+\paragraph{Kafka.} 
 
-int main (int argc, char * argv[])
-{
-  int rank, size;
+\paragraph{Alternatives.} There's also some popular AWS (Amazon Web Services)-based solutions for this kind of multiple computer communication: SNS (Simple Notification Service) and SQS (Simple Queueing Service). They are, broadly speaking, just other ways to decouple the communication of your programs.
 
-  MPI_Init (&argc, &argv);	/* starts MPI */
-  MPI_Comm_rank (MPI_COMM_WORLD, &rank);	/* get current process id */
-  MPI_Comm_size (MPI_COMM_WORLD, &size);	/* get number of processes */
-  printf( "Hello world from process %d of %d\n", rank, size );
-  MPI_Finalize();
-  return 0;
-}
-\end{lstlisting}
-}
+SNS is good for sending lots of messages to multiple receivers, maybe push notifications or making sure all systems update their records
 
-\paragraph{Simple communication example.} The slides and live coding example contain
-a second MPI example which demonstrates {\tt MPI\_Send} and  {\tt MPI\_Recv} usage,
-also found at \url{http://en.wikipedia.org/wiki/Message_Passing_Interface}.
-
-\paragraph{Matrix multiplication example.} We'll next discuss the code 
-from another MPI example. You can find the code at
-\url{http://www.nccs.gov/wp-content/training/mpi-examples/C/matmul.c}.
-I'll discuss the structure of the code and
-include relevant excerpts. Here are the steps that the program uses
-to compute the matrix product $AB$:
-
-\begin{enumerate}
-\item Initialize MPI, as in the Hello, World example.
-\item If the current process is the master task (task id 0):
-\begin{enumerate}
-\item Initialize the matrices.
-\item Send work to each worker task: row number (offset); number of rows;
-row contents from $A$; complete contents of matrix $B$. For example,
-
-{\scriptsize
-\begin{verbatim}
-MPI_Send(&a[offset][0], rows*NCA, MPI_DOUBLE, dest, mtype, MPI_COMM_WORLD);
-\end{verbatim}
-}
-
-\item Wait for results from all worker tasks (\verb+MPI_Recv+).
-\item Print results.
-\end{enumerate}
-\item For all other tasks:
-\begin{enumerate}
-\item Receive offset, number of rows, partial matrix $A$, and complete matrix $B$, using {\tt MPI\_Recv}, e.g.
-
-{\scriptsize
-\begin{verbatim}
-MPI_Recv(&offset, 1, MPI_INT, MASTER, mtype, MPI_COMM_WORLD, &status);
-\end{verbatim}
-}
-\item Do the computation.
-\item Send the results back to the sender.
-\end{enumerate}
-\end{enumerate}
-
-\paragraph{On communication complexity.} To write fast MPI programs,
-keeping communication complexity down is key. Each step from multicore
-machines to GPU programming to MPI brings with it an
-order-of-magnitude decrease in communication bandwidth and a similar
-increase in latency.
+SQS is more for batches of work where it's not particularly time-sensitive and the item will be consumer 
 
 \subsection*{Cloud Computing}
 Historically, if you wanted a cluster, you had to find a bunch of
