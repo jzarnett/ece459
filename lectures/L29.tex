@@ -49,15 +49,32 @@ the time of each call. Perhaps we'd like to decouple services even more than
 that and use something else...
 
 \paragraph{Kafka.} 
+Let's talk about Apache Kafka, a self-described ``distributed streaming platform'' that's got significant adoption in industry as a mechanism of communication between different services running over a network. For a breakdown on how it works, we're using~\cite{kafka} as a guide.
+
+Communication is based around the idea of producers writing a record (some data element, like an invoice) into a topic (categorizing messages) and consumers taking the item from the topic and doing something useful with it. A message remains available for a fixed period of time and can be replayed if needed. I think at this point you have enough familiarity with the concept of the producer-consumer problem and channels/topics/subscriptions that we don't need to spend a lot of time on it. 
+
+
+Kafka's basic strategy is to write things into an immutable log. The log is split into different partitions; you choose how many when creating the topic, where more partitions equals higher parallelism. The producer writes something and it goes into one of the partitions. Consumers read from each one of the partitions and writes down its progress (``commit its offset'') to keep track of how much of the topic it has consumed.  See this image from \url{kafka.apache.org}:
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/kafka-partition.png}
+\end{center}
+
+The nice part about such an architecture is that we can provision the parallelism that we want, and the logic for the broker (the system between the producer and the consumer, that is, Kafka) is simple. Also, consumers can take items and deal with them at their own speed and there's no need for consumers to coordinate; they manage their own offsets. Messages are removed from the topic based on their expiry, so it's not important for consumers to get them out of the queue as quickly as possible.
+
+Quick aside on that: under normal circumstances, in something like a standard queue, there's a little bit of pressure to get items out of the queue quickly. If the queue is growing, it might mean the queue is full and new items can't be produced or are thrown away... or perhaps you get charged money for the storage space the queue is using. 
+
+You might think that it's a solution to take the item out of the queue in one transaction and then process it later. That's okay only if you've successfully saved it to a database or other persistent storage. Otherwise, you could take the item out and a crash or called shutdown means that the item doesn't actually get processed. Oops!
 
 \paragraph{Alternatives.} There's also some popular AWS (Amazon Web Services)-based solutions for this kind of multiple computer communication: SNS (Simple Notification Service) and SQS (Simple Queueing Service). They are, broadly speaking, just other ways to decouple the communication of your programs.
 
-SNS is good for sending lots of messages to multiple receivers, maybe push notifications or making sure all systems update their records
+SNS is good for sending lots of messages to multiple receivers, maybe push notifications or making sure all systems update their records or that you send pager alerts to people about things that have gone wrong. SNS messages are not persistent, so if you miss it, you miss it. 
 
-SQS is more for batches of work where it's not particularly time-sensitive and the item will be consumer 
+SQS is more for batches of work where it's not particularly time-sensitive and the item will be consumed by a worker. SQS data is deleted after being taken out of the queue and may or may not have ordering guarantees. SQS does have limits on how long a message can be stored, though. 
 
 \subsection*{Cloud Computing}
-Historically, if you wanted a cluster, you had to find a bunch of
+We'll start with a little bit of history.
+In the old days, if you wanted a cluster, you had to find a bunch of
 money to buy and maintain a pile of expensive machines. Not anymore.
 Cloud computing is perhaps way overhyped, but we can talk about 
 one particular aspect of it, as exemplified by Amazon's Elastic
@@ -84,7 +101,9 @@ In cloud computing, you pay according to the number of machines, or
 instances, that you've started up. Providers offer different instance
 sizes, where the sizes vary according to the number of cores, local
 storage, and memory. Some instances even have GPUs, but it seemed 
-uneconomic to use this for Assignment 3. Instead we have the {\tt ecetesla} machines.
+uneconomic to use this for Assignment 3, at least in previous years (I
+have not done the calculation this year). 
+Instead we have the {\tt ecetesla} machines.
 
 \paragraph{Launching Instances.} When you need more compute power,
 you launch an instance. The input is a virtual machine image.  You use
@@ -100,6 +119,10 @@ want, including Hadoop and OpenMPI.
 \paragraph{Terminating Instances.} A key part of cloud computing is
 that, once you no longer need an instance, you can just shut it down
 and stop paying for it. All of the data on that instance goes away.
+
+\paragraph{Continuous Deployment.} The combination of launching and terminating instances can mean that updates don't require downtime: you start up the new instances and then shut down the old ones so there's no gap where the service is down.
+
+Sometimes this causes slight headaches, like if you make a database change that's incompatible: the old nodes will have a problem, so you need to be a little careful with this.
 
 \paragraph{Storing Data.} You probably want to keep some persistent results
 from your instances. Basically, you can either mount a storage device,
