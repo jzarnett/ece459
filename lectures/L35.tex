@@ -2,451 +2,203 @@
 
 \begin{document}
 
-\lecture{ 35 --- Rust }{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{ 35 --- DevOps for P4P }{\term}{Patrick Lam \& Jeff Zarnett}
 
-\section*{This, Too, Shall Fade and Pass Away}
-In ECE~459 we've used C and \CPP~as systems languages. A lot of your previous courses have been in one of those and it's entirely possible that one of those was your first programming language and perhaps even the one you've used the most. The languages themselves have their strengths and weaknesses, of course, but there's no denying that these languages come without some of the niceties found in other languages like clever static type checking and garbage collection.
+\section*{DevOps for P4P}
+So far, we've talked almost exclusively about one-off computations:
+you want to figure out the answer to a question, and you write code to
+do that. Our assignments have been like that, for instance. There are lots
+of programs in the world at are solely on-demand. Still, a lot
+of the time we want to keep systems running over time. That is, a service
+that is available (if not always then close to it) and responds to requests
+whenever they may happen to arrive. That gets us
+into the notion of operations. Your service or product is more likely than 
+ever to have at least some component that's server side (whether hosted
+in a cloud service or not) that's under your control.
 
+The theme today will be using software development skills in
+operations (e.g., system administration, database management, etc). This
+does have some relevance, because the operations (or IT, if you prefer)
+processes and procedures, while different from development, have some
+similarities. 
 
-The nature of the languages make it hard, or even impossible, to write code that is fast, correct, and secure. The focus of this course hasn't been on security. But in many cases, writing insecure fast code isn't the right thing. Is it even possible to write secure C and \CPP?
+Even when we've talked about multi-computer tools like cloud
+computing, it still has not been in the context of keeping your
+systems operational over longer timescales. The trend today is away
+from strict separation between a development team, which writes the
+software, and an operations team, which runs the software.
 
-Maybe not. The usual arguments are something along the lines of experience. Experience isn't it either, given this quotation from Robert O'Callahan: ``I cannot consistently write safe C/\CPP~ code.\footnote{\url{https://robert.ocallahan.org/2017/07/confession-of-cc-programmer.html}}'' (17 July 2017) (Holds a PhD in CS from Carnegie Mellon University; was Distinguished Engineer at Mozilla for 10 years; etc.)
+\begin{center}
+	\includegraphics[width=0.45\textwidth]{images/devops.jpg}
+\end{center}
 
-What about use of better tools and best practices? March 2019: disclosure of Chrome use-after-free vulnerability\footnote{\url{https://security.googleblog.com/2019/03/disclosing-vulnerabilities-to-protect.html}}; 0-day attacks
-observed in the wild. Google implements best practices, and has all the tools and developers that
-money can buy!
+The separation is totally nonexistent at the typical startup company. There isn't the money to pay for separate developers and operations teams. And in the beginning there's probably not that many servers, just a few demo systems, test systems, etc... but it spirals out from there. You're not really going to ask the sales team to manage these servers, are you? So, there's DevOps. 
 
-Much of the advice about how to avoid these problems comes down to ``try harder'', which is\ldots not helpful. If the strategy is just dragging people and saying that they need to pay more attention, or be more careful, or other similar phrase\ldots this is going to constantly be an uphill battle. Expecting people to be perfect and make no mistakes is unrealistic. What we want is to make mistakes difficult-to-impossible.
+Is DevOps a good idea? Like most ideas it can be used for both good and evil. There's a lot to be said for letting the developers be involved in all the parts of the software from development to deployment to management to training the customers. Developers can learn a lot by having to do these kinds of things, and be motivated to make proper management and maintenance tools and procedures. If we make the pain of operations felt by developers, they might do something about it. If it's the problem of another team, somehow those tickets just never make it to the top of the backlog.
 
-A lot of the problems we frequently encounter are the kind that can be found by Valgrind, such as memory errors or race conditions. Other tools like code reviews and Coverity (static analysis defect-finding tool) exist. These are good, but not perfect. Valgrind, for example, only reports errors that it actually sees executed, so until and unless every function and every code path is run, it might not report a problem. Static analysis tools try to track down problems at compile-time, and that seems like a lot better of a solution.
+Thanks to Chris Jones and Niall Murphy for the following points.
 
-
-I like to solve not just an individual problem, but an entire class of problems all at once. A recent example: if you change the contents of a list in a background thread while it's being rendered, the rendering thread will fail because the list has changed. I can fix the line of code so the list manipulation does not happen during rendering, and that fixes it once, but not forever: in the future another person could write code that calls this function from a background thread. There's no good way (in Java, sadly) to make it so invoking this function incorrectly is a compile-time error, so the best I can do is set a trap in it that throws an error if called inappropriately, so that the responsible developer will find what they did wrong during development and testing. Compile-time error checking is preferable to run-time.
-
-This brings us to Rust. It is an alternative to C/\CPP. It is a new-school
-secure systems programming language used by Mozilla's Project Quantum. A design goal of this language is to avoid issues with memory allocation and concurrency. We'll consider both concepts, but we won't dwell too much on the syntax (mostly for time reasons). It's worth reading up on the topic (outside of lecture) if you are curious about the language, though, and it might help you to understand the examples better.  
-
-\section*{Rust} This material is based
-on \emph{The Rust Programming Language} by Steve Klabnik and Carol
-Nichols~\cite{klabnik18:_rust_progr_languag} and I'll make references as appropriate.
-
-Here's some Rust code.
-\vspace*{-.5em}
-\begin{lstlisting}[language=Rust]
-  fn main() {
-    let x = 42; // NB: Rust infers type "s32" for x.
-    println!("x is {}", x);
-  }
-\end{lstlisting}
-By default, Rust variables are \emph{immutable}.
-\vspace*{-.5em}
-\begin{lstlisting}[language=Rust]
-  fn main() {
-    let x = 42; // NB: Rust infers type "s32" for x.
-    x = 17; // compile-time error!
-  }
-\end{lstlisting}
-Let's consider two examples that look similar but have drastically different meanings.
-
-\vspace*{-1.5em}
-\begin{minipage}{.4\textwidth}
-\begin{lstlisting}[language=Rust]
-  let x = 1729;
-  let x = 88;
-  println!("shadowed x is {}", x);
-\end{lstlisting}
-\end{minipage}\
-\begin{minipage}{.4\textwidth}
-\begin{lstlisting}[language=Rust]
-  let mut x = 33; // mutable
-  x = 5;
-  println!("mutated x is {}", x);
-\end{lstlisting}
-\end{minipage}
-
-In the first case, old ``x'' still exists but is inaccessible under the name ``x''.
-In the second case, the storage cell for ``x'' used to contain 33 and then contains 5.
-The difference matters, for instance, when there are references to ``x''. This example is a bit silly though; the real usage for shadowing is perhaps something more familiar, specifically parsing (or other transformation): 
-
-\begin{lstlisting}[language=Rust]
-let mut guess = String::new();
-
-io::stdin().read_line(&mut guess)
-    .expect("Failed to read line");
-
-let guess: u32 = guess.trim().parse()
-     .expect("Please type a number!");
-\end{lstlisting}
-
-In this example, the data is read in as a string and then turned into an unsigned integer. We like this because we can re-use the variable name without having things like \texttt{guess} and \texttt{guess\_parsed} or other ``what do I call this now'' problems.
-
-\paragraph{Rust immutability.} 
-By default, a variable in Rust is immutable. You can make it mutable if you choose, explicitly by declaring it as mutable. Lots of concurrency issues involve the internal state of objects that are accessed by different threads. Structs or tuples are either all mutable or all immutable. (Although interior mutability is a thing in Rust. We're not talking about it.)
-
-Rust obviously has compile-time constants and they are truly unmodifiable. These have to be known at compile time, and are truly a fixed value. This is different from an immutable type which is determined at runtime but cannot be changed once it has been assigned.
-
-In C, you can cast away {\tt const}-ness; not so in Rust.
-If something is not mutable in Rust, you can't cast it into mutability.
-
-
-\paragraph{Perf implications.}
-We mentioned immutability in Lecture 7. The best way to avoid having
-to use locks: have no writes. (Even read/write locks require writes to acquire
-the read lock). However, there's a tradeoff. If your
-data structure is immutable but you want to update it (as we often do
-with data structures), you need to copy the data structure, at least
-partially. That can be slow.
-
-
-\paragraph{Runtime safety.} We said that Rust is safe. One way in which it is safe is for
-arrays. Rust has tuples and structs. Hard to go out of bounds on those. Rust also has arrays.
-Like with any language, one can imagine going beyond the ends of an array. Rust defines
-the behaviour of going beyond the end of an array: it is a runtime exception (``panic''),
-unlike C/\CPP, where it is undefined behaviour (anything can happen).
-
-
-\begin{lstlisting}[language=Rust]
-  let a = [1,2,3,4,5];
-  let index = 10;
-  println!("error! {}", a[index]); // panics here.
-\end{lstlisting}
-
-\subsection*{What's special about Rust?}
-Let's step back and do some Rust propaganda.
-\begin{itemize}[noitemsep]
-\item harder to write unsafe code: compiler + runtime ensure safety. No arrays-out-of-bounds accesses, null pointers (at all), wild pointers;
-\item yet can still write low-level code;
-\item supports zero-cost abstractions (like \CPP);
-\item designed with ergonomics in mind;
-\item type system obviates need for either garbage collection or manual memory management\footnote{Well, mostly. Sometimes you need to use ref-counted data, and we'll see that.} (and you'll get manual memory management wrong);
-\item type system prevents race conditions;
-\item dependency management using crates.
+\subsection*{Configuration as code}
+Systems have long come with complicated configuration options.
+Sendmail is particularly notorious, but apache and nginx aren't super
+easy to configure either.\footnote{If anyone should be foolish enough to want to look into procmail, well, good luck to you...} The first principle is to treat \emph{configuration as code}. 
+Therefore:
+\begin{itemize}
+\item use version control on your configuration.
+\item implement code reviews on changes to the configuration.
+\item test your configurations: that means that you check that they
+  generate expected files, or that they spawn expected
+  services. (Behaviours, or outcomes.) Also, configurations should
+  ``converge''. Unlike code, they might not terminate; we're talking
+  indefinitely-running services, after all. But the CPU usage should
+  go down after a while, for instance.
+\item aim for a suite of modular services that integrate together smoothly.
+\item refactor configuration files (Puppet manifests, Chef recipes, etc);
+\item use continuous builds (more on that later).
 \end{itemize}
-As far as I know, Firefox's rendering engine, Project Servo, is the largest deployed Rust codebase, at 350 kLOC of non-test code in January 2020.
 
+Furthermore, it's an excellent idea to have tools for configuration. It's not enough to just have a wiki page or github document titled ``How to Install AwesomeApp'' (fill in name of program here). Complicated means mistakes and people will forget steps. Don't let them make mistakes: make it automatic.
 
-\section*{Ownership in Rust [Chapter 4.1]}
-Also known as ``how to fight the borrow checker and win''.
+One particular example of applying all those principles to infrastructure
+is Terraform. Its whole purpose is to manage your config as codes
+situation where you want to run your code using a cloud provider (e.g., AWS), 
+then you can control the infrastructure using Terraform: you write the
+configuration files that say you want this service with these permissions
+(and any other details) and then you can apply that configuration easily.
+Terraform does support a ``plan'' operation so it can tell you what it will
+do, so you can verify that, before anything is actually changed. Then, if 
+you are happy with it, apply it! 
 
-Rust uses ownership types to manage its heap. Ownership types were not invented by the Rust
-community, but Rust is the first production-scale language to deploy it. The alternatives
-are {\tt malloc}/{\tt free} in C, or {\tt new}/GC in Java. Rust does still have a stack, but
-we'll see when things go on the stack vs when they go on the heap.
+\paragraph{Containers.} What about containers? Well, let's see how we got there first. In the beginning, you had services where you installed the binaries and config files by hand. That sucked. So there were packages; a package includes everything the program needs (including a list of dependencies) and a script to install it and set it up. Great! But if you just install multiple services on the same machine you don't get isolation and you might have incompatible versions of dependencies and you're in RPM hell (see also: JAR hell, classloader hell, and DLL hell).
 
-\subsection*{The Rules}
-\begin{enumerate}[noitemsep]
-\item Each value in Rust has a variable that \emph{owns} it.
-\item This variable is \emph{unique}.
-\item When the owner goes out of scope, the value will be dropped (aka freed).
-\end{enumerate}
+Right, so instead you say you should have virtual machines: you configure the VM parameters and install the guest OS and set it up (and you can copy-paste the initial image, which helps) but for every application you have a guest operating system running underneath. Maybe we don't need every app to have its own guest OS; why do we have to install the same security patch ten times...?
 
-Variable scopes are fairly standard.
-\begin{lstlisting}[language=Rust]
-  fn main() {
-    println!("start");
-    { // no s
-      let s = "I am s";
-      println!("s is {}", s);
-    } // s now out of scope
-  }
-\end{lstlisting}
-
-OK, let's put something on the heap. We'll be using Rust {\tt String} objects rather than
-string literals. String literals are compile-time constants. String objects contain a heap component,
-which may be allocated and freed.
-
-(What can go wrong with heap allocation? You might not free/free too late;
-free too early; double free. GC manages this through an approximation: if you have no more pointers to it,
-then it doesn't spark joy, and you don't need it anymore. For Rust, this is not the way.)
-\begin{lstlisting}[language=Rust]
-  fn main() {
-    let s = String::from("hello"); // immutable String
-    let mut s2 = String::from("459 assignments"); // mutable String
-    s2.push_str(", maybe?");
-    println!("got string {}", s);
-  }
-\end{lstlisting}
-
-Rust uses rule \#3: if something goes out of scope, then drop (free) it.
-This is quite like \CPP~RAII (Resource Acquisition is Initialization).
-
-Still, we need a solution for objects that live beyond their original scope, e.g.
-return values.
-\begin{lstlisting}[language=Rust]
-  fn return_a_string() -> String {
-    let s = String::from("longevity");
-    return s; // transfers ownership (moves) to caller
-  }
-
-  fn main() {
-    let returned_string = return_a_string();
-    println!("string {}", returned_string);
-  }
-\end{lstlisting}
-
-So, Rust frees owned values when variables go out of scope. Also, Rust calls
-``drop'' (akin to a destructor) on objects that go out of scope. Note that
-going out of scope, not the drop call, is what actually causes the free.
-
-\section*{Transferring Ownership (aka move semantics)}
-
-Let's look at an example.
-\begin{lstlisting}[language=Rust]
-  let s1 = String::from("no surprise");
-  println!("can print {}", s1);
-  let s2 = s1;
-  println!("can still print {}", s2);
-  println!("this line won't compile! {}", s1); // no longer owns
-\end{lstlisting}
-
-(Note that string literals, or ints, or anything only on the stack,
-doesn't have this behaviour---they are copied, or technically, they
-have the ``Copy'' trait.)
-
-OK, so what's going on? Let's take a step back.
-
-Rust strings are a hybrid, containing both a stack part and a heap part.
+Containerization gives many of the advantages of this separation, but without nearly so much overhead of the guest operating systems (both its maintenance and runtime costs). Containers are run by a container engine so there is some abstraction of the underlying hardware, and the container is assembled from a specification that says what libraries, tools, etc. are needed. And thus when the container is built and deployed it is sufficiently isolated but shares (in read only mode) where it can. So a container is a very lightweight VM, in some sense. See this diagram from~\cite{netappcontainer}:
 
 \begin{center}
-\begin{tikzpicture}
-\draw (0,1) node {stack};
-\draw (0,0) node (one) {
-\begin{tabular}{|l|l|}
-\multicolumn{2}{l}{s1} \\
-\hline
-len & 5 \\ \hline
-ptr & \\ \hline
-\end{tabular}
-};
-
-\draw (0,-2) node (two) {
-\begin{tabular}{|l|l|} 
-\multicolumn{2}{l}{s2} \\ \hline
-len & 5 \\ \hline
-ptr & \\ \hline
-\end{tabular}
-};
-
-\draw (3,0.8) node {heap};
-\draw (3, -1) node (s) {
-\begin{tabular}{|l|l|} \hline
-index & value \\ \hline
-0 & 'n' \\ \hline
-1 & 'o' \\ \hline
-\ldots & \ldots \\ \hline
-\end{tabular}
-};
-
-\path[draw,-{Latex[length=3mm]}] (one) ++ (0.4,-0.38) -- (s.west);
-\path[draw,-{Latex[length=3mm]}] (two) ++ (0.4,-0.38) -- (s.west);
-
-\end{tikzpicture}
+	\includegraphics[width=0.55\textwidth]{images/cvm.png}
 \end{center}
 
-The assignment {\tt let s2 = s1} carries out a shallow copy of the stack part. Rust
-does not automatically copy the heap part.
+Containers do potentially come with a downside of letting you just not upgrade things. Whereas before if you installed the OS patches you might get updates in your shared libraries, the container allows you to keep an old insecure version of a library around forever. So, don't do that. Keeping on top of security updates is important. Let's talk about that, actually.
 
-Now, recall that Rust has automatic memory reclamation. How can that
-work? What gets freed?  Here, {\tt s1} and {\tt s2} are in the same
-scope. When they go out of scope, what should get freed? We
-don't want to double free.
+\paragraph{Security, report to the bridge.}
+Having an always-available service accessible over the internet makes security a very big concern. You can run some program with tons of security vulnerabilities offline and feel that the security problems can be managed, but when it's online the risk is enormous. All kinds of vulnerabilities are a problem, but I'll call out two of them as being especially bad: code execution/injection and data leakage (information exposure). 
 
-\paragraph{Key idea.} For automatic memory reclamation to work, we give {\tt let s2 = s1} \emph{move semantics}
-(as in \CPP). After the move, {\tt s1} is no longer valid.
-Ownership of the heap part is moved from {\tt s1} to {\tt s2} by the assignment.
+Code execution is exactly what it sounds like: attackers run their code using your platform. They can mess with your data, send spam or harrassing e-mails to your customers, take services without paying for them, mine bitcoin at your expense, and many other things. Sometimes these are company-ending events.
 
-That is, {\tt s1} no longer owns the heap object and is not responsible for freeing the heap part
-when it goes out of scope. Only when {\tt s2} goes out of scope do we free the heap object.
-And because the heap object only has one owner, it is only freed once.
+Information exposure is not only terrible for your company's reputation, but also against privacy laws and data protection regulations. A breach of the EU GDPR can get very expensive. See \url{https://www.enforcementtracker.com/} to find out which companies have recently gotten their wrists slapped or a huge fine. At the time of writing, the record holder is Marriott International Inc of the UK with a fine of 	110,390,200 EUR which is roughly 171,898,556.93 CAD (using exchange rates from October 2020). Not exactly pocket change.
 
-Note: deep copy is possible with ``clone'', but we have to trigger that explicitly.
+There are some companies out there that will check your code for libraries with versions having known security vulnerabilities. This is transitive, so if your app depends on some library that depends on a parsing library with a vulnerability, the vulnerability is noticed and reported. Each vulnerability is usually assigned a severity and the service may even suggest that updating from version X to Y will solve the problem. They can say this because they observe that a vulnerability reported in version X of a library is reported as fixed in version Y. 
 
-Want to know more about ownership? Here's a blog post:
-\begin{center}
-  \url{http://squidarth.com/rc/rust/2018/05/31/rust-borrowing-and-ownership.html}
-\end{center}
-\section*{Functions and Return Values}
+Sadly, when there is an updated version of a library, there may be breaking changes in it, so an upgrade might be more painful than just changing a version number and rebuilding. It may also take time for libraries to correct and release a fixed version of the library. In the meantime, you may need to implement some mitigation of your own, or just keep an eye open for when the patch is released. These mean that the vulnerability checks give you the ability to ignore or snooze the alert. Tempting as it is to do that and get on with other work, it's leaving the vulnerability in your code. Good practice would be for reviewers to discourage ignoring if it can be avoided.
 
-Move semantics also applies to function calls and return values, e.g.
-\begin{lstlisting}[language=Rust]
-  fn main() {
-    let s = String::from("moving to callee");
-    callee(s); // afterwards, s is invalid
-  }
-  fn callee(param:String) {
-    println!("got {}", param);
-  } // param goes out of scope, object dropped
-\end{lstlisting}
-If you return something, then the ownership passes back to the caller.
-Tuples help pass ownership of multiple objects, but this is still quite
-high-overhead for developers.
+As with the other parts of managing your application, like build and deployment, checking for vulnerabilities should be an automatic process as part of your build and release procedures. 
 
-\paragraph{``Can I please borrow your object?''}
-\begin{lstlisting}[language=Rust]
-  fn main() {
-    let s = String::from("459");
-    let len = calculate_length(s);
-    println!("string {} has length {}", s /* we still have it! */,
-             len);
-  }
-  fn calculate_length(s:&String) -> usize { // note the & for borrow
-    s.len() // last expr is return value
-  } // s is ref so nothing goes out of scope
-\end{lstlisting}
-  
-\section*{Borrowing and mutation} Like other variables, references are immutable by default.
-We can have mutable references, though.
-\begin{lstlisting}[language=Rust]
-  fn change(s:&mut String) {
-    s.push_str("more");
-  }
-  fn main() {
-    let mut main_str = String::from("some ");
-    change(&mut main_str); // create mutable ref to main_str
-  }
-\end{lstlisting}
+\subsection*{Servers as cattle, not pets}
+By servers, I mean servers, or virtual machines, or containers. It's much better to have a reproducible process for deployment of a server than doing it manually every single time. The amount of manual intervention should be minimized and ideally zero. If this is done you can save a lot of hours of time, reduce errors, and allow for automatic scaling (starting and stopping servers depending on demand).
 
-\paragraph{There can be only one (mutable).} The following code won't compile:
-\begin{lstlisting}[language=Rust]
-  let mut s = String::from("one");
-  let r1 = &mut s;
-  let r2 = &mut s; // rustc complains!
-  r1.push_str("two");
-\end{lstlisting}
-In fact, while {\tt r1} is in scope and a future use of {\tt r1} is to execute\footnote{The borrow checker got upgraded in 2018 to support Non-Lexical Lifetimes. It's kind of complicated, but see \url{http://smallcultfollowing.com/babysteps/blog/2016/04/27/non-lexical-lifetimes-introduction/} and related posts for more information.},
-you can't do anything with the original {\tt s}.
-The only way to access the string is through {\tt r1}.
-After the last use of {\tt r1},
-you can create {\tt r2}.
+The title references the idea that cattle are dealt with as a herd: you try to get the whole group to move along and do what they need. Pets are individuals, though, and you'll treat them all differently. This amount of individual attention quickly becomes unmanageable and there's no reason why you should worry about these differences in a world with virtualization (containers) or similar. 
 
-Since there is only one way to access {\tt r1}, then there will be no race conditions.
+As with managing infrastructure, I'll give a specific example: Kubernetes. This is used to automate deploying and scaling of applications. This means you don' have to manually manage them; if you want to deploy a new version of a container, just tell Kubernetes to do it. The part about how it does so is that it provides a framework for your environment. It can do load balancing, automatic rollouts and reverts (if something went wrong), will figure out what instances run on what hardware, check the health of instances, replace them if they die, and more.
 
-This is OK:
-\begin{lstlisting}[language=Rust]
-  let mut s = String::from("one");
-  let r1 = &s;
-  let r2 = &s; // no problem!
-\end{lstlisting}
-But you can't then do {\tt let r3 = \&mut s;}.
+subsection*{Common infrastructure}
+Use APIs to access your infrastructure. That is, you should view different parts of your infrastructure as having an interface and communication is done exclusively via the interface/API. This reduces the coupling between different components, and, as we've discussed, allows you to scale the parts that need scaling. 
 
-\paragraph{How many?} You can have as many outstanding immutable refs as you want.
-If there are any immutable refs, you can't have \emph{any} mutable refs. The mutable
-ref can't be created until the last use of the immutable ref.
+Try to avoid not-invented-here syndrome: it is usually better to use an open-source tool (or a commercial one) than to roll your own. Some examples might be:
+\begin{itemize}
+\item storage: some sort of access layer (e.g., MongoDB or S3);
+\item naming and discovery infrastructure (e.g., Consul) (more below);
+\item monitoring infrastructure (e.g., Prometheus).
+\end{itemize}
 
-You also can't commit use-after-free errors: you can't return a ref that outlives
-its value.
-\begin{lstlisting}[language=Rust]
-  fn dangle() -> &String {
-    let s = String::from("hello");
-    &s // rustc complains: s goes out of scope with active refs
-  }
-\end{lstlisting}
+However, be prepared to build your own tools if needed. Sometimes what you want, or need, doesn't exist (yet). Think carefully about whether this service that is needed is really part of your core competence and whether creating it adds sufficient value to the business. It's fun to make your own system and all, but are you doing what you're best at? 
 
-Rust also has \emph{smart pointers}, which may be reference
-counted. This is like \CPP's smart pointers, specifically {\tt
-  shared\_ptr} (but Rust can tell you about some things at compile
-time which \CPP~will tell you at runtime). Normal Rust objects are more
-like {\tt unique\_ptr}.
+Think extra carefully if you plan to do roll your own anything that is security or encryption related. I'm just going to say that unless you have experts on staff who know the subject really well and you're willing to pay for external audits and the like, you're more likely to end up with a terrible security breach than a terrific secure system. 
 
-We need reference counted heap objects e.g. to implement graphs. We don't have
-enough time to talk about smart pointers, but Chapter 15 of the Rust book is good.
+As a second followup soapbox point to that: if what you are looking for doesn't exist, there might be a reason, Maybe the reason is that you are the first to think of it, but consider the possibility that it's not that good of an idea (either due to inefficiency or just not being great in principle).  
 
-\section*{Fearless Concurrency}
-As with many other aspects of Rust, we trade compiler errors for runtime
-errors; in this case, runtime concurrency errors like race conditions.
-That is, the type system ensures concurrency safety!
+\subsection*{Naming}
+Naming is one of the hard problems in computing. There is a saying that there are only two hard things in computers: cache invalidation, naming things, and off by one errors.  There are a
+lot of ways to name things. We'll talk about
+systems/VMs\footnote{\url{http://mnx.io/blog/a-proper-naming-scheme}},
+but naming is necessary for resources of all kinds.
 
-Rust uses a fork/join model like pthreads. It delegates to the operating
-system's threads support and hence implements 1:1 threads.
-\begin{lstlisting}[language=Rust]
-  let handle = thread::spawn(|| { // closure (can put args between ||)
-    // thread code goes here
-  });
-  // main thread continues here
-  handle.join.unwrap(); // unwrap: panic in case of error
-\end{lstlisting}
-This is not too different from \CPP.
+In brief:
+\begin{itemize}
+\item use canonical one-word names for servers;
+\item but, use aliases to specify functions, e.g. 1) geography (nyc); 2) environment (dev/tst/stg/prod); 
+3) purpose (app/sql/etc); and 4) serial number.
+\end{itemize}
+This enables you to have a way of referring to each machine in an absolute sense, but also 
+allows you to use functional names when creating dependencies between systems.
 
-OK, how do we share data between threads? We can move it from main to thread:
-\begin{lstlisting}[language=Rust]
-  let v = vec![1,2,3];
-  let handle = thread::spawn(move || { // move: everything accessed inside closure is moved
-    println!("vector {:?}", v);
-  }); // no longer have access to v in main
-  handle.join().unwrap();
-\end{lstlisting}
-Rust is saving you from being able to concurrently access {\tt v} in main and thread.
+There's also the Java package approach of infinite dots: live.application.customer.webdomain.com or however you want to call it. But pick something and be consistent.
 
-But that's only one way! This isn't quite enough.
+\subsection*{Other Topics}
+Beyond the five principles above, there are a couple more techniques that particularly apply to
+DevOps:
 
-\subsection*{Message Passing}
-One way to share data is message passing. We've seen this before (OpenMPI).
-In this case, each value still only has one owner. We use \emph{channels}. The ownership passes
-from the sender, through the channel, to the receiver.
-\begin{lstlisting}[language=Rust]
-  use std::thread;
-  use std::sync::mpsc; // multi producer, single consumer
+\paragraph{Continuous Integration.} 
+This is now a best practice. It's enabled by the use of version control, good tests, and scripted deployments.
+It works like this:
+\begin{itemize}
+\item pull code from version control;
+\item build;
+\item run tests;
+\item report results.
+\end{itemize}
+What's also key is a social convention to not break the build. These things get done automatically on every commit and the results are sent to people by e-mail or instant messenger (because e-mail is for old people, right?).\footnote{I did work at a company where the person who broke the build got a sign outside his cubicle that said IOTD - Idiot of the Day. I'm not too proud to admit that I won this award on my last day of the co-op term.}
 
-  fn main() {
-    let (tx, rx) = mpsc::channel(); // tx is cloneable
-    thread::spawn(move || { // here, tx goes to closure
-      let val = String::from("april");
-      tx.send(val).unwrap(); // val moved from sender
-    });
-    let received = rx.recv().unwrap();
-    println!("got: {}", received);
-  }
-\end{lstlisting}
-Note the send/receive pair. There is also {\tt try\_recv} to do nonblocking receives.
+%https://jenkins-ci.org/sites/default/files/jenkins_logo.png
 
-\subsection*{Shared State}
-People debated for a long time which was better: shared state (like pthreads) or channels.
-Rust supports both. Of course, the problem with shared state is race conditions.
-Like manual memory management, we can manually acquire and release mutexes. What could
-possibly go wrong? Rust's ownership system will help.
+CI is good for all code, but it's especially good for configuration-as-code, which is especially likely
+to break in different environments.
 
-We'll need to talk about multiple ownership. But let's talk about mutexes first.
-\begin{lstlisting}[language=Rust]
-  use std::sync::Mutex;
-  fn main() {
-    let m = Mutex::new(5); // mutex guards access to an i32
-    {
-      let mut num = m.lock().unwrap();
-      // unwrap: maybe some other thread panicked while holding lock;
-      //         then we panic too.
-      *num = 6; // "deref" the mutex (is actually a smart pointer)
-    } // release lock when num goes out of scope
-    println!("m={:?}", m);
-  }
-\end{lstlisting}
-Well, that's fine, but it's just one thread. We really do need multiple ownership
-to share data. The shared data needs to be owned by all threads, and a naive solution
-will get rejected by the borrow checker. Instead, we have to use \emph{reference counted
-  cells}, implemented by {\tt Arc}.
-% end of 3rd lecture
-\begin{lstlisting}[language=Rust]
-  use std::sync::{Mutex, Arc};
-  use std::thread;
-  fn main() {
-    let counter = Arc::new(Mutex::new(0)); // atomic reference cell
-    let mut handles = vec![];
+\paragraph{Canarying.}
+%http://www.post-gazette.com/image/2013/10/29/ca27,76,1566,1822/Canary.jpg
+Deploy new software incrementally alongside production software, also known as ``test in prod''. Sometimes
+you just don't know how code is really going to work until you try it. After, of course, you use your best
+efforts to make sure the code is good. Steps:
+\begin{itemize}
+\item stage for deployment;
+\item remove canary servers from service;
+\item upgrade canary servers;
+\item run automatic tests on upgraded canaries;
+\item reintroduce canary servers into service;
+\item see how it goes!
+\end{itemize}
+Of course, you should implement your system so that rollback is possible.
 
-    for _ in 0..10 {
-      let counter = Arc::clone(&counter); // clone the Arc
-      let handle = thread::spawn(move || {
-        let mut num = counter.lock().unwrap();
-        *num += 1;
-      });
-      handles.push(handle);
-    }
-    for handle in handles {
-      handle.join().unwrap();
-    }
-    println!("result: {}", *counter.lock().unwrap());
-  }
-\end{lstlisting}
-Rust guarantees that you have the appropriate lock, using ownership (possibly multiple ownership).
-Rust does not guarantee lack of deadlocks.
+\paragraph{Monitoring.}
+
+Monitoring is surprisingly difficult. There are a lot of recommendations about what to monitor and what to do about it. We care about performance so here are a few things to think about:
+
+\begin{itemize}
+	\item CPU Load
+	\item Memory Utilization
+	\item Disk Space
+	\item Disk I/O
+	\item Network Traffic
+	\item Clock Skew
+	\item Application Response Times
+\end{itemize}
+
+With multiple systems, you will want some sort of dashboard that gives an overview of all the multiple systems in a summary. The summary needs to be sufficiently detailed that you can detect if anything is wrong, but not an overwhelming wall of data. Then you do not necessarily want to pay someone to stare at the dashboard and press the  ``Red Alert!'' button if anything goes out of some preset range of what is okay. No, for that we need some automatic monitoring.
+
+Here's one way to think about it. 
+% track down the source here: Niall Murphy interview.
+\begin{itemize}
+\item {\bf Alerts}: a human must take action now;
+\item {\bf Tickets}: a human must take action soon (hours or days);
+\item {\bf Logging}: no need to look at this except for forensic/diagnostic purposes.
+\end{itemize}
+A common bad situation is logs-as-tickets: you should never be in the
+situation where you routinely have to look through logs to find
+errors. Write code to scan logs.
+
+It is very important to be judicious about the use of alerts. If your alerts are too common, they get ignored. When you hear the fire alarm in a building, chances are your thought is not ``the building is on fire; I should leave it immediately in an orderly fashion.''. More likely your reaction is ``great, some jerk\footnote{This is the PG-13 version of what I actually think.} has pulled the fire alarm for a stupid prank or to get out of failing a midterm.'' This is because we have been trained by far too many false alarms to think that any alarm is a false one. It's a good heuristic; you'll be correct most of the time. But if there is an actual fire, you will not only be wrong, you might also be dead.
+
+Still, alerts and tickets are a great way to make user pain into developer pain. Being woken up in the middle of the night (... day? A lot of programmers are nocturnal, now that I think of it) because of some SUPER CRITICAL ticket OMG KITTENS ARE ENDANGERED is an excellent way to learn the lesson that production code needs to be written carefully, reviewed, QA'd, and perhaps run by a customer or two before it gets deployed to everyone. Developers, being human (... grant me some leeway here), will probably take steps to avoid their pain\footnote{There is a great quotation to this effect by Fr\'ed\'eric Bastiat about how men will avoid pain and work is pain.}. and they will take steps that keep these things from happening in the future: good processes and monitoring and all that goes with it.
 
 
 \input{bibliography.tex}
