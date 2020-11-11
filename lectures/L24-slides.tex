@@ -1,8 +1,31 @@
 \input{configuration}
 
-\title{Lecture 24 --- Profiling }
+% Custom packages
+\usepackage{xcolor}
+\definecolor{solarizedBase03}{HTML}{FFFFFF}
+\definecolor{solarizedBase02}{HTML}{000000}
+\definecolor{solarizedBase00}{HTML}{657B83}
+\definecolor{solarizedBase0}{HTML}{000000}
+\definecolor{solarizedBase1}{HTML}{93A1A1}
+\definecolor{solarizedBase3}{HTML}{FDF6E3}
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+
+\usepackage[listings]{tcolorbox}
+\newtcbinputlisting{\codelisting}[2][]{
+    listing file={#2},
+    colback=solarizedBase03,
+    colframe=solarizedBase02,
+    colupper=solarizedBase0,
+    fonttitle=\bfseries\color{solarizedBase1},
+    listing options={basicstyle=\ttfamily\footnotesize},
+    listing only,
+    #1
+}
+\newtheorem{defn}{Definition}
+
+\title{Lecture 24 --- Password Cracking, Bitcoin Mining }
+
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -16,841 +39,323 @@
  \end{frame}
 
 
-\begin{frame}
-\frametitle{Remember the Initial Quiz}
-
-
-Think back: what operations are fast and what operations are not?
-
-Takeaway: our intuition  is often wrong. 
-
-Not just at a macro level, \\
-but at a micro level. 
-
-You may be able to narrow down that this computation of $x$ is slow, \\
-but if you examine it carefully\ldots what parts of it are slow?
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Premature Optimization}
-
-\vspace*{.5cm}
-
-\begin{quote}
-\textit{Programmers waste enormous amounts of time thinking about, or worrying about, the speed of noncritical parts of their programs, and these attempts at efficiency actually have a strong negative impact when debugging and maintenance are considered. We should forget about small efficiencies, say about 97\% of the time: premature optimization is the root of all evil. Yet we should not pass up our opportunities in that critical 3\%.}
-\end{quote}
-	\hfill -- Donald Knuth
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{That Saying You Were Expecting}
-
-
-\begin{changemargin}{1.5cm}
-Feeling lucky? \\
-Maybe you optimized a slow part. 
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/feellucky.jpg}
-\end{center}
-
-To make your programs or systems fast, \\
-you need to find out what is currently slow and improve it (duh!). 
-
-Up until now, it's mostly been about \\
-\qquad ``let's speed this up''.\\
-We haven't taken much time to decide what we should speed up.
-\end{changemargin}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Basic Overview}
-
-
-\begin{changemargin}{1.5cm}
-General idea:\\
-\qquad collect data on what parts of the code\\
-\qquad are taking up most of the time.
-
-\begin{itemize}
-\item What functions get called?
-\item How long do functions take?
-\item What's using memory?
-\end{itemize}
-\end{changemargin}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{\texttt{printf}}
-
-
-\begin{changemargin}{1.5cm}
-There is always the ``informal'' way: ``debug'' by print statements.
-
-On entry to \texttt{foo}, log ``entering function foo'', plus timestamp.
-
-On exit, log ``exiting foo'', also with timestamp.
-\end{changemargin}
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/stringerbell.jpg}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Console Profiling}
-
-
-\begin{changemargin}{1cm}
-Kind of works, and [JZ] has used it... But this approach is not necessarily good.  
-
-This is ``invasive'' profiling---change the source code of the program to add instrumentation (log statements). 
-
-Plus we have to do a lot of manual accounting.
-
-Doesn't really scale.
-\end{changemargin}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Wizardry!}
-
-
-\begin{changemargin}{2cm}
-Like debugging: if you get to be a wizard you can maybe do it by code inspection.
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/miracle.jpeg}
-\end{center}
-
-But speculative execution inside your head is harder for perf than debugging.
-
-So: we want to use tools \\ 
-and do this in a methodical way.
-\end{changemargin}
-
-\end{frame}
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Introduction to Profiling}
-
-
-
-\begin{changemargin}{1.5cm}
-    So far we've been looking at small problems.\\[1em]
-    Must {\bf profile} to see what's slow in a
-      large program.\\[1em]
-    Two main outputs:
-      \begin{itemize}
-        \item flat;
-        \item call-graph.
-      \end{itemize}
-
-
-
-    Two main data gathering methods:
-      \begin{itemize}
-        \item statistical;
-        \item instrumentation.
-      \end{itemize}
-   \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Profiler Outputs}
-
-
-\begin{changemargin}{.5cm}
-  
-  {\bf Flat Profiler:}
-
-  \begin{itemize}
-    \item Only computes average time in a particular function.
-    \item Does not include other (useful) information (callees).
-  \end{itemize}
-
-~\\[1em]
-
-  {\bf Call-graph Profiler:}
-
-  \begin{itemize}
-    \item Computes call times.
-    \item Reports frequency of function calls.
-    \item Gives a call graph: who called what function?
-  \end{itemize}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data Gathering Methods}
-
-
-\begin{changemargin}{1.5cm}
-  {\bf Statistical:}
-
-  Mostly, take samples of the system state, that is:
-  \begin{itemize}
-    \item every 100ms, check the system state.
-    \item will cause some slowdown, but not much.
-  \end{itemize}
-~\\[1em]
-
-  {\bf Instrumentation:}\\
-  Add instructions at specified program points:
-  \begin{itemize}
-    \item can do this at compile time or run time (expensive);
-    \item can instrument either manually or automatically;
-    \item like conditional breakpoints.
-  \end{itemize}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Guide to Profiling}
+  \frametitle{Reference: scrypt}
 
   
+    scrypt is the algorithm behind DogeCoin. \\[1em] The reference:\\[1em]
+    
+    Colin Percival, ``Stronger Key Derivation via Sequential Memory-Hard Functions''. \\
+    Presented at BSDCan'09, May~2009.\\[1em]
 
-\begin{changemargin}{1cm}
-  When writing large software projects:\\[1em]
-
-     $\bullet$ First, write clear and concise code. \\
-      \qquad Don't do premature optimizations---\\
-      \qquad focus on correctness.\\
-     $\bullet$ Profile to get a baseline of your performance:\\[0em]
-      \begin{itemize}
-        \item allows you to easily track any performance changes;
-        \item allows you to re-design your program before it's too late.
-      \end{itemize}
-  Focus your optimization efforts on the code that matters.
-  \end{changemargin}
+    \url{http://www.tarsnap.com/scrypt.html}
+  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Things to Look For}
-
-
-\begin{changemargin}{1.5cm}
+  \frametitle{Acceptable Practices for Password Storage}
   
-    Good signs:\\[0em]
+    \begin{itemize}
+    \item {\Huge \alert{{\bf not} plaintext!}}
+    \item \Large hashed and salted
+    \end{itemize}
+       
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Cryptographic hashing}
+  
+    One-way function:
+    \begin{itemize}
+    \item $x \mapsto f(x)$ ~~easy to compute; but
+      \item $f(x) \stackrel{?~}{\mapsto} x$ ~~hard to reverse.
+    \end{itemize}~\\
+    Examples: SHA1, scrypt.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Not Secret}
+Perhaps passwords have already been leaked!
+
+\begin{center}
+	\includegraphics[width=0.75\textwidth]{images/haveibeenpwned.png}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{All Too Easy}
+
+The first thing is to try really common passwords.
+
+You just might get a hit!
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/alltooeasy.jpg}
+\end{center}
+
+``All too easy.''
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Breaking the Hash}
+  
+    How can we reverse the hash function?
+    \begin{itemize}
+    \item    Brute force.
+    \end{itemize}~\\
+    GPUs (or custom hardware) are good at that!
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{The Arms Race: Making Cracking Difficult}
+  
+    Historically: force repeated iterations of hashing.\\[1em]
+
+    Main idea behind scrypt (hence DogeCoin):
+    \begin{itemize}
+    \item make hashing expensive in time and space.
+    \end{itemize}~\\
+    Implication: require more circuitry to break passwords.\\
+    Increases both \# of operations and cost of brute-forcing.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Obligatory xkcd}
+
+Of course, there's always this form of cracking:
+\begin{center}
+\includegraphics[width=0.75\textwidth]{images/xkcd-538}\\
+\hfill (Source: xkcd 538)
+\end{center}
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Formalizing ``expensive in time and space''}
+  
+    Want to force use of the ``most memory possible'' for a given
+    number of operations.\\[1em]
+  
+    \begin{defn}
+      A \emph{memory-hard} algorithm on a Random Access Machine is an
+      algorithm which uses $S(n)$ space and $T(n)$ operations, where
+      $S(n) \in \Omega(T(n)^{1-\varepsilon})$.
+    \end{defn}~\\
+    
+      Such algorithms are expensive to implement in either hardware or software.
+    
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Generalizing to functions}
+  
+    Next, add a quantifier: \\move from particular algorithms to underlying functions.\\[1em]
+    A \emph{sequential memory-hard function} is one where:
 
     \begin{itemize}
-      \item Time is spent in the right part of the system.
-      \item Most time should not be spent handling errors;\\
- in non-critical code; or in exceptional cases.
-      \item Time is not unnecessarily spent in OS.
+      \item the fastest
+        sequential algorithm is memory-hard; and
+      \item it is impossible for a
+        parallel algorithm to asymptotically achieve lower cost.
     \end{itemize}
-    \end{changemargin}
-    
-    \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/tobermory.jpg}\\
-	\hfill Kitchener driver follows GPS directions right into Lake Huron...
- 	\end{center}
-    
+  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{{\tt gprof} introduction}
-
+  \frametitle{Not made of unicorn tears}
   
-
-\begin{changemargin}{1.5cm}
-\vspace*{-3em}
-    Statistical profiler, plus some instrumentation for calls.\\[1em]
-    Runs completely in user-space.\\[1em]
-    Only requires a compiler.
-    \end{changemargin}
+    \emph{Exhibit.} ReMix is a concrete example of a sequential memory hard function.\\[1em]
+    The scrypt paper concludes with an example of a more realistic (cache-aware) model and
+    a function in that context, BlockMix.
+  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{{\tt gprof} usage}
+\frametitle{Across the Rainbow Bridge}
 
-  
+If designed well, hash functions aren't easy to brute force.
 
-\begin{changemargin}{1.5cm}
-\vspace*{-3em}
-    Use the {\tt -pg} flag with {\tt clang}.\\[1em]
-    Run your program as you normally would.
-      \begin{itemize}
-        \item Your program will now create a {\tt gmon.out} file.
-      \end{itemize}
+What if we remembered some previous work? 
 
-    Use gprof to interpret the results:\\
- \qquad {\tt gprof <executable>}.
-    \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{{\tt gprof} example}
-
-  
-
-\begin{changemargin}{1.5cm}
-    A program with 100 million calls to two math functions.
-
-  \begin{lstlisting}
-int main() {
-    int i,x1=10,y1=3,r1=0;
-    float x2=10,y2=3,r2=0;
-
-    for(i=0;i<100000000;i++) {
-        r1 += int_math(x1,y1);
-        r2 += float_math(y2,y2);
-    }
-}
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item Looking at the code, we have no idea what takes longer.
-    \item Probably would guess floating point math taking longer.
-    \item (Overall, silly example.)
-  \end{itemize}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example (Integer Math)}
-
-  
-
-\begin{changemargin}{1.5cm}
-  \begin{lstlisting}
-int int_math(int x, int y){
-    int r1;
-    r1=int_power(x,y);
-    r1=int_math_helper(x,y);
-    return r1;
-}
-
-int int_math_helper(int x, int y){
-    int r1;
-    r1=x/y*int_power(y,x)/int_power(x,y);
-    return r1;
-}
-
-int int_power(int x, int y){
-    int i, r;
-    r=x;
-    for(i=1;i<y;i++){
-        r=r*x;
-    }
-    return r;
-}
-  \end{lstlisting}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example (Float Math)}
-
-
-\begin{changemargin}{1.5cm}
-  
-  \begin{lstlisting}
-float float_math(float x, float y) {
-    float r1;
-    r1=float_power(x,y);
-    r1=float_math_helper(x,y);
-    return r1;
-}
-
-float float_math_helper(float x, float y) {
-    float r1;
-    r1=x/y*float_power(y,x)/float_power(x,y);
-    return r1;
-}
-
-float float_power(float x, float y){
-    float i, r;
-    r=x;
-    for(i=1;i<y;i++) {
-        r=r*x;
-    }
-    return r;
-}
-  \end{lstlisting}
-  \end{changemargin}
+It isn't practical, or possible, to store the hashes for every possible plaintext.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Flat Profile}
 
 
-\begin{changemargin}{1.5cm}
+\begin{frame}
+\frametitle{Rainbow Table}
 
-    When we run the program, profile says:
+The rainbow table is a compromise between speed and space. 
 
-{
-  \begin{lstlisting}[basicstyle=\tiny]
-Flat profile:
+The ``reduction'' function maps hashes to plaintext:
 
-Each sample counts as 0.01 seconds.
-  %   cumulative   self              self     total           
- time   seconds   seconds    calls  ns/call  ns/call  name    
- 32.58      4.69     4.69 300000000    15.64    15.64  int_power
- 30.55      9.09     4.40 300000000    14.66    14.66  float_power
- 16.95     11.53     2.44 100000000    24.41    55.68  int_math_helper
- 11.43     13.18     1.65 100000000    16.46    45.78  float_math_helper
-  4.05     13.76     0.58 100000000     5.84    77.16  int_math
-  3.01     14.19     0.43 100000000     4.33    64.78  float_math
-  2.10     14.50     0.30                             main
-  \end{lstlisting}
-}
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/rainbow-tables-reduce.png}
+\end{center}
 
-  \begin{itemize}
-    \item One function per line.
-    \item {\bf \% time:} the percent of the total execution time in this function.
-    \item {\bf self:} seconds in this function.
-    \item {\bf cumulative:} sum of this function's time + any above it in table.
-  \end{itemize}
-  \end{changemargin}
+Example: \texttt{123456} $\rightarrow$ \texttt{d41d8cd98f00b204e9800998ecf8427e} $\rightarrow$ 418980
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Flat Profile}
 
 
+\begin{frame}
+\frametitle{Chain Formation}
 
-\begin{changemargin}{1.5cm}
-  \begin{lstlisting}[basicstyle=\tiny]
-Flat profile:
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/rainbow-tables-reduce.png}
+\end{center}
 
-Each sample counts as 0.01 seconds.
-  %   cumulative   self              self     total           
- time   seconds   seconds    calls  ns/call  ns/call  name    
- 32.58      4.69     4.69 300000000    15.64    15.64  int_power
- 30.55      9.09     4.40 300000000    14.66    14.66  float_power
- 16.95     11.53     2.44 100000000    24.41    55.68  int_math_helper
- 11.43     13.18     1.65 100000000    16.46    45.78  float_math_helper
-  4.05     13.76     0.58 100000000     5.84    77.16  int_math
-  3.01     14.19     0.43 100000000     4.33    64.78  float_math
-  2.10     14.50     0.30                             main
-  \end{lstlisting}
+We should do this to develop some number of chains. 
 
+This is the sort of task you could do with a GPU, because they can do a reduction relatively efficiently. 
 
-  \begin{itemize}
-    \item {\bf calls:} number of times this function was called
-    \item {\bf self ns/call:} just self nanoseconds / calls
-    \item {\bf total ns/call:} average time for function execution, including
-      any other calls the function makes
-  \end{itemize}
-  \end{changemargin}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Call Graph Example (1)}
 
 
-\begin{changemargin}{1.5cm}
-  
-    After the flat profile gives you a feel for which functions are costly, 
-      can get a better story from the call graph.
-  \vfill
-  \begin{lstlisting}[basicstyle=\tiny]
-index % time    self  children    called     name
-                                                 <spontaneous>
-[1]    100.0    0.30   14.19                 main [1]
-                0.58    7.13 100000000/100000000     int_math [2]
-                0.43    6.04 100000000/100000000     float_math [3]
------------------------------------------------
-                0.58    7.13 100000000/100000000     main [1]
-[2]     53.2    0.58    7.13 100000000         int_math [2]
-                2.44    3.13 100000000/100000000     int_math_helper [4]
-                1.56    0.00 100000000/300000000     int_power [5]
------------------------------------------------
-                0.43    6.04 100000000/100000000     main [1]
-[3]     44.7    0.43    6.04 100000000         float_math [3]
-                1.65    2.93 100000000/100000000     float_math_helper [6]
-                1.47    0.00 100000000/300000000     float_power [7]
-  \end{lstlisting}
-  \end{changemargin}
+\begin{frame}
+\frametitle{Or, y'know, just download them}
+
+Once we have those developed for a specific input set and hash function, they can be re-used forever. 
+
+You do not even need to make them yourself anymore (if you don't want) because you can download them on the internet... they are not hard to find. 
+
+They are large, yes, but in the 25 - 900 GB range. 
+
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reading the Call Graph}
 
 
-\begin{changemargin}{1.5cm}
-  
-    The line with the index is the current function being looked at {\bf (primary line)}.\\
+\begin{frame}
+\frametitle{Rated `S' for Suck}
+
+\begin{center}
+\includegraphics[width=0.3\textwidth]{images/Fallout_76_box_cover.jpg}
+\end{center}
+
+I mean, Fallout 76 had a day one patch of 52 GB, and it was a disaster of a game.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{How to Use Rainbow Tables}
+
+\begin{enumerate}
+	\item Look for the hash in the list of final hashes; if there, we are done
+	\item If it's not there, reduce the hash into another plaintext and hash the new plaintext
+	\item Go back to step 1
+	\item If the hash matches a final hash, the chain with the match contains the original hash
+	\item Having identified the correct chain, we can start at the beginning of the chain with the starting plaintext and hash, check to see if we are successful (if so, we are done); if not, reduce and try the next plaintext. 
+\end{enumerate} 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Is it Fast?}
+
+Like generation, checking the tables can also be done efficiently by the GPU.
+
+Some numbers from \url{http://www.cryptohaze.com/gpurainbowcracker.php.html}: 
+
 \begin{itemize}
-    \item Lines above are functions which called this function.
-    \item Lines below are functions which were called by this function
-      (children).
-  \end{itemize}
-~\\
-  {\bf Primary Line}
+	\item Table generation on a GTX295 core for MD5 proceeds at around 430M links/sec.
+	\item Cracking a password 'K\#n\&r4Z': real: 1m51.962s, user: 1m4.740s. sys: 0m15.320s
+\end{itemize}
 
-  \begin{itemize}  
-    \item {\bf time:} total percentage of time spent in this function and its
-      children
-    \item {\bf self:} same as in flat profile
-    \item {\bf children:} time spent in all calls made by the function
-      \begin{itemize}
-        \item should be equal to self + children of all functions below
-      \end{itemize}
-  \end{itemize}
-  \end{changemargin}
+Yikes.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reading Callers from Call Graph}
-
-  
-
-\begin{changemargin}{1.5cm}
-  {\bf Callers (functions above the primary line)}
-  \begin{itemize}  
-    \item {\bf self:} time spent in primary function, when called from current
-      function.
-    \item {\bf children:} time spent in primary function's children, when
-      called from current function.
-    \item {\bf called:} number of times primary function was called from current
-      function / number of nonrecursive calls to primary function.
-  \end{itemize}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reading Callees from Call Graph}
 
 
-\begin{changemargin}{1.5cm}
-  
-  {\bf Callees (functions below the primary line)}
-  \begin{itemize}  
-    \item {\bf self:} time spent in current function when called from primary.
-    \item {\bf children:} time spent in current function's children calls when
-      called from primary.
-      \begin{itemize}
-        \item self + children is an estimate of time spent in current function
-          when called from primary function.
-      \end{itemize}
-    \item {\bf called:} number of times current function was called from primary
-      function / number of nonrecursive calls to current function.
-  \end{itemize}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Call Graph Example (2)}
-
-
-\begin{changemargin}{1.5cm}
-  
-  \begin{lstlisting}[basicstyle=\tiny]
-index % time    self  children    called     name
-
-                2.44    3.13 100000000/100000000     int_math [2]
-[4]     38.4    2.44    3.13 100000000         int_math_helper [4]
-                3.13    0.00 200000000/300000000     int_power [5]
------------------------------------------------
-                1.56    0.00 100000000/300000000     int_math [2]
-                3.13    0.00 200000000/300000000     int_math_helper [4]
-[5]     32.4    4.69    0.00 300000000         int_power [5]
------------------------------------------------
-                1.65    2.93 100000000/100000000     float_math [3]
-[6]     31.6    1.65    2.93 100000000         float_math_helper [6]
-                2.93    0.00 200000000/300000000     float_power [7]
------------------------------------------------
-                1.47    0.00 100000000/300000000     float_math [3]
-                2.93    0.00 200000000/300000000     float_math_helper [6]
-[7]     30.3    4.40    0.00 300000000         float_power [7]
-  \end{lstlisting}
-
-  
- We can now see where most of the time comes from, and pinpoint 
-      locations that make unexpected calls, etc.\\[1em]
- This example isn't too exciting; could simplify the math.
- \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Introduction to gperftools}
+\frametitle{The World is Not Enough}
 
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/bitcoin.png}
+\end{center}
 
-\begin{changemargin}{1.5cm}
-
-    Google Performance Tools include:
-      
-      \begin{itemize}
-        \item CPU profiler.
-        \item Heap profiler.
-        \item Heap checker.
-        \item Faster (multithreaded) {\tt malloc}.
-      \end{itemize}
-~\\[-1em]
-     We'll mostly use the CPU profiler:
-      \begin{itemize}
-        \item purely statistical sampling;
-        \item no recompilation; at most linking; and
-        \item built-in visual output.
-      \end{itemize}
-      \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Google Perf Tools profiler usage}
-
-  
-
-\begin{changemargin}{1.5cm}
-    You can use the profiler without any recompilation.
-      \begin{itemize}
-        \item Not recommended---worse data.
-      \end{itemize}
-
-  \begin{lstlisting}
-LD_PRELOAD="/usr/lib/libprofiler.so" \
-CPUPROFILE=test.prof ./test
-  \end{lstlisting}
-
-     The other option is to link to the profiler:
-      \begin{itemize}
-        \item {\tt -lprofiler}
-      \end{itemize}
-    Both options read the {\tt CPUPROFILE} environment variable:
-      \begin{itemize}
-        \item states the location to write the profile data.
-      \end{itemize}
-      \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Other Usage}
-
-
-\begin{changemargin}{1.5cm}
-  
-     You can use the profiling library directly as well:
-      \begin{itemize}
-        \item {\tt \#include <gperftools/profiler.h>}
-      \end{itemize}
-     Bracket code you want profiled with:
-      \begin{itemize}
-        \item {\tt ProfilerStart()}
-        \item {\tt ProfilerStop()}
-      \end{itemize}~\\
-    
-    You can change the sampling frequency with the
-      {\tt CPUPROFILE\_FREQUENCY} environment variable.
-      \begin{itemize}
-        \item {\bf Default value:} 100
-      \end{itemize}
-      \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{{\tt pprof} Usage}
-
-
-
-\begin{changemargin}{1.5cm}
-    Like {\tt gprof}, it will analyze profiling results.
-
-  \begin{lstlisting}
-% pprof test test.prof
-    Enters "interactive" mode
-% pprof --text test test.prof
-    Outputs one line per procedure
-% pprof --gv test test.prof
-     Displays annotated call-graph via 'gv'
-% pprof --gv --focus=Mutex test test.prof
-    Restricts to code paths including a .*Mutex.* entry
-% pprof --gv --focus=Mutex --ignore=string test test.prof
-    Code paths including Mutex but not string
-% pprof --list=getdir test test.prof
-    (Per-line) annotated source listing for getdir()
-% pprof --disasm=getdir test test.prof
-    (Per-PC) annotated disassembly for getdir()
-  \end{lstlisting}
-
-    Can also output {\tt dot}, {\tt ps}, {\tt pdf} or {\tt gif} instead of
-      {\tt gv}.
-      \end{changemargin}
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Text Output}
 
 
-\begin{changemargin}{1.5cm}
-
-    Similar to the flat profile in {\tt gprof}
-
-  \begin{lstlisting}
-jon@riker examples master % pprof --text test test.prof 
-Using local file test.
-Using local file test.prof.
-Removing killpg from all stack traces.
-Total: 300 samples
-      95  31.7%  31.7%      102  34.0% int_power
-      58  19.3%  51.0%       58  19.3% float_power
-      51  17.0%  68.0%       96  32.0% float_math_helper
-      50  16.7%  84.7%      137  45.7% int_math_helper
-      18   6.0%  90.7%      131  43.7% float_math
-      14   4.7%  95.3%      159  53.0% int_math
-      14   4.7% 100.0%      300 100.0% main
-       0   0.0% 100.0%      300 100.0% __libc_start_main
-       0   0.0% 100.0%      300 100.0% _start
-  \end{lstlisting}
-  
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Text Output Explained}
+\frametitle{Bitcoin Consuption}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/Bitcoin-usage.png}\\
+	\hfill https://digiconomist.net/bitcoin-energy-consumption As of Dec 2019
+\end{center}
 
 
-\begin{changemargin}{1.5cm}
-  
-    Columns, from left to right:\\[1em]
-
-    Number of checks (samples) in this function.\\
-    Percentage of checks in this function.
-      \begin{itemize}
-        \item Same as {\bf time} in {\tt gprof}.\\[1em]
-      \end{itemize}
-    Percentage of checks in the functions printed so far.
-      \begin{itemize}
-        \item Equivalent to {\bf cumulative} (but in \%).\\[1em]
-      \end{itemize}
-    Number of checks in this function and its callees.\\
-    Percentage of checks in this function and its callees.\\
-    Function name.
-    \end{changemargin}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Graphical Output}
+\frametitle{Hash Calculations}
 
-  \begin{center}
-    \includegraphics[width=0.5\textwidth]{images/pprof-test-big.png}
-  \end{center}
+Basis: SHA-256
+
+Started with CPU... then GPU... then what?
+
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Graphical Output Explained}
+\frametitle{Custom Hardware}
 
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/dragonmint.jpeg}
+\end{center}
 
-\begin{changemargin}{1.5cm}
-  
-  Output was too small to read on the slide.
+Custom hardware: optimize exactly what you need.
 
-  \begin{itemize}
-    \item Shows the same numbers as the text output.
-    \item Directed edges denote function calls.
-    \item Note: number of samples in callees = \\
-      \qquad number in ``this function + callees'' - \\
-      \qquad number in ``this function''.\\
-    \item {\bf Example:}\\
-{{\tt float\_math\_helper}, 51 (local) of 96 (cumulative)} \\
-      96 - 51 = 45 (callees)
-      \begin{itemize}
-        \item callee {\tt int\_power} = 7 (bogus)
-        \item callee {\tt float\_power} = 38
-        \item callees total = 45
-      \end{itemize}
+First FPGA, then ASIC...
 
-  \end{itemize}
-  \end{changemargin}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Things You May Notice}
+\frametitle{Please Don't}
 
-  
+We've uncovered why you should not mine Bitcoin.
 
-\begin{changemargin}{1.5cm}
-    Call graph is not exact.
-    
-      \begin{itemize}
-        \item In fact, it shows many bogus relations which clearly don't exist.
-        \item For instance, we know that there are no cross-calls between {\tt int} and {\tt float} functions.
-      \end{itemize}~\\
+Not cost efficient; way too much competition.
 
-    As with {\tt gprof}, optimizations will change the
-      graph.\\[1em]
+Not a hardware course, but this is the logical extension of GPU...
 
-    You'll probably want to look at the text profile first, then use the
-      {\tt --focus} flag to look at individual functions.
-      \end{changemargin}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 
 

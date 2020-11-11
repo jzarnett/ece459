@@ -2,376 +2,316 @@
 
 \begin{document}
 
-\lecture{27 --- Memory Profiling, Cachegrind}{\term}{Jeff Zarnett}
+\lecture{27 --- Liar, Liar}{\term}{Patrick Lam \& Jeff Zarnett}
 
-\section*{\st{Memory Profiling} Return to Asgard}
+\section*{Lies about Calling Context}
 
-Thus far we have focused on CPU profiling. Other kinds of profiling got some mention, but they're not the only kind of profiling we can do. Memory profiling is also a thing, and specifically we're going to focus on heap profiling. We kind of touched on the subject a little bit earlier when we looked at finding memory leaks. The ideas are the same: we don't want to leak memory, but remember that last category (other than suppressed), ``Still Reachable'', things that remained allocated and we still had pointers to them, but were not properly deallocated? Right, we care about them too, and for that we want to do heap profiling.
+Let's open with a video that illustrates one of the problems with sampling-based profiling:
 
-If we don't look after those things, we're just using more and more memory over time. That likely means more paging and the potential for running out of heap space altogether. Again, the memory isn't really lost, because we could free it.
+\begin{center}
+	\url{https://www.youtube.com/watch?v=jQDjJRYmeWg}
+\end{center}
 
-Well, let's start with where we left off. Returning to the realm of Asgard, we're going to call again on our old friend Valgrind. Except this time we're going to use a fourth tool in it: Massif. This is, obviously, a joke on ``massive'', combined with the name Sif, a Norse goddess associated with the earth (and in the Marvel movies, Shieldmaiden to Thor). While we're on the subject, Sif has an axe (shield?) to grind with Loki, because at some point he cut off her golden hair (and in the Marvel films, it grew back in dark). That Loki---what a trickster! Right, we're digressing\ldots what do you mean the course isn't ECE 459: Norse Mythology?!
+The video's not fake; it's a real helicopter and it's really flying. What's happening, however, is that the camera is taking images at some multiple of the frequency of the blade rotation speed so it gives the illusion that the blades are not spinning at all. This is a sampling problem, and you see the same problem in car commercials on TV where it looks like the wheels are spinning backwards. They're not, but the sampling effect of the camera can make it look that way.
 
-So what does Massif do? It will tell you about how much heap memory your program is using, and also how the situation got to be that way. So let's start with the example program from the documentation~\cite{massif}:
+Some profiler results are real.  Other results are interpolated, and
+perhaps wrong. Who can we trust? We'll start by talking about gprof and callgrind/KCacheGrind. The reference for this part of the lecture is a blog post by Yossi Kreinin~\cite{lies}.
 
-{\scriptsize
+\paragraph{Running Example.} Consider the following code.
+
+\begin{lstlisting}
+void work(int n) {
+  volatile int i=0; //don't optimize away
+  while(i++ < n);
+}
+void easy() { work(1000); }
+void hard() { work(1000*1000*1000); }
+int main() { easy(); hard(); }
+\end{lstlisting}
+
+We see that there is a worker function whose runtime depends on its input.
+Function {\tt easy} calls the worker function with a small input, and {\tt hard} calls
+it with a large input. So we expect most of the time should be spent in the \texttt{hard} function, right? 
+Profiling yields:
 \begin{verbatim}
-#include <stdlib.h>
+[plam@lynch L27]\$ gprof ./try gmon.out
+Flat profile:
 
-void g ( void ) {
-    malloc( 4000 );
-}
-
-void f ( void ) {
-    malloc( 2000 );
-    g();
-}
-
-int main ( void ) {
-    int i;
-    int* a[10];
-
-    for ( i = 0; i < 10; i++ ) {
-        a[i] = malloc( 1000 );
-    }
-    f();
-    g();
-
-    for ( i = 0; i < 10; i++ ) {
-        free( a[i] );
-    }
-    return 0;
-}
+Each sample counts as 0.01 seconds.
+  \%   cumulative   self              self     total           
+ time   seconds   seconds    calls  ms/call  ms/call  name    
+101.30      1.68     1.68        2   840.78   840.78  work
+  0.00      1.68     0.00        1     0.00  {840.78}  easy
+  0.00      1.68     0.00        1     0.00  {840.78}  hard
 \end{verbatim}
-}
+%$
+Most of the profiler output is just fine. But there are lies in the
+``total ms/call'' column. The call to {\tt easy} takes about 0 seconds,
+while that to {\tt hard} takes 1.68s. Less importantly, the total ms/call for
+{\tt work} is indeed an average, but that hides the variance between runtimes.
 
-After we compile (remember the \texttt{-g} option for debug symbols), run the command:
-{\scriptsize
-\begin{verbatim}
-jz@Loki:~/ece459$ valgrind --tool=massif ./massif
-==25187== Massif, a heap profiler
-==25187== Copyright (C) 2003-2013, and GNU GPL'd, by Nicholas Nethercote
-==25187== Using Valgrind-3.10.1 and LibVEX; rerun with -h for copyright info
-==25187== Command: ./massif
-==25187== 
-==25187== 
-\end{verbatim}
-}
-
-Doesn't that look useful?! What happened? Your program executed slowly, as is always the case with any of the Valgrind toolset, but you don't get summary data on the console like we did with Valgrind or helgrind or cachegrind. Weird. What we got instead was the file \texttt{massif.out.25187} (matches the PID of whatever we ran). This file, which you can open up in your favourite text editor is not especially human readable, but it's not incomprehensible like the output from cachegrind (``Aha, a 1 in column 4 of line 2857. That's what's killing our performance!''). There is an associated tool for summarizing and interpreting this data in a much nicer way: \texttt{ms\_print}, which has nothing whatsoever to do with Microsoft. Promise.
-
-If we look at the output there (hint: pipe the output to \texttt{less} or something, otherwise you get a huge amount of data thrown at the console), it looks much more user friendly.
-
-{\scriptsize
-\begin{verbatim}
-
-    KB
-19.71^                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                       #
-     |                                                                      :#
-     |                                                                      :#
-     |                                                                      :#
-     |                                                                      :#
-   0 +----------------------------------------------------------------------->ki
-     0                                                                   111.9
-\end{verbatim}
-}
-
-Now wait a minute. This bar graph might be user friendly but it's not exactly what I'd call... useful, is it? For a long time, nothing happens, then... kaboom! According to the docs, what actually happened here is, we gave in a trivial program where most of the CPU time was spent doing the setup and loading and everything, and the trivial program ran for only a short period of time, right at the end. So for a relatively short program we should tell Massif to care more about the bytes than the CPU cycles, with the \verb+--time-unit=B+ option. Let's try that.
-
-{\scriptsize
-\begin{verbatim}
-
-    KB
-19.71^                                               ###                      
-     |                                               #                        
-     |                                               #  ::                    
-     |                                               #  : :::                 
-     |                                      :::::::::#  : :  ::               
-     |                                      :        #  : :  : ::             
-     |                                      :        #  : :  : : :::          
-     |                                      :        #  : :  : : :  ::        
-     |                            :::::::::::        #  : :  : : :  : :::     
-     |                            :         :        #  : :  : : :  : :  ::   
-     |                        :::::         :        #  : :  : : :  : :  : :: 
-     |                     @@@:   :         :        #  : :  : : :  : :  : : @
-     |                   ::@  :   :         :        #  : :  : : :  : :  : : @
-     |                :::: @  :   :         :        #  : :  : : :  : :  : : @
-     |              :::  : @  :   :         :        #  : :  : : :  : :  : : @
-     |            ::: :  : @  :   :         :        #  : :  : : :  : :  : : @
-     |         :::: : :  : @  :   :         :        #  : :  : : :  : :  : : @
-     |       :::  : : :  : @  :   :         :        #  : :  : : :  : :  : : @
-     |    :::: :  : : :  : @  :   :         :        #  : :  : : :  : :  : : @
-     |  :::  : :  : : :  : @  :   :         :        #  : :  : : :  : :  : : @
-   0 +----------------------------------------------------------------------->KB
-     0                                                                   29.63
-
-\end{verbatim}
-}
-
-Neat. Now we're getting somewhere. We can see that 25 snapshots were taken. It will take snapshots whenever there are appropriate allocation and deallocation statements, up to a configurable maximum, and for a long running program, toss some old data if necessary. Let's look in the documentation to see what the symbols mean (they're not just to look pretty). So, from the docs~\cite{massif}:
+\paragraph{Why?} To make any sense of the lies, we need to understand how {\tt gprof} works.
+It uses two standard-library functions: {\bf profil()} and {\bf mcount()}.
 
 \begin{itemize}
-\item Most snapshots are normal (they have just basic information) They use the `:' characters.
-
-\item Detailed snapshots are shown with `@' characters.  By default, every 10th snapshot is detailed.
-
-\item There is at most one peak snapshot. The peak snapshot is a detailed snapshot, and records the point where memory consumption was greatest. The peak snapshot is represented in the graph by a bar consisting of `\#' characters.
+\item {\bf profil()}: asks glibc to record which instruction 
+  is currently executing (100$\times$/second).
+\item {\bf mcount()}: records call graph edges; called by {\tt -pg} instrumentation.
 \end{itemize}
 
-As a caveat, the peak can be a bit inaccurate. Peaks are only recorded when a deallocation happens. This just avoids wasting time recording a peak and then overwriting it; if you are allocating a bunch of blocks in succession (e.g., in assignment 1, a bunch of structs that have a buffer) then you would constantly be overwriting the peak over and over again. Also, there's some loss of accuracy to speed things up. Well, okay.
+Hence, {\bf profil} information is statistical, while {\bf mcount}
+information is exact.  Bringing that information back to the profiler
+output columns, we can see that the ``calls'' column is reliable; the
+``self seconds'' column is sampled, but reasonably accurate here; and
+the ``total ms/call'' is interpolated, and we deceived it in this
+contrived example. How is that?
 
-So let's look at the snapshots. We'll start with the normal ones. There are 9 of those, numbers 0 through 8:
+gprof sees:
+\begin{itemize}
+    \item a total of 1.68s in {\tt work};
+    \item 1 call to {\tt work} from {\tt easy}; and
+    \item 1 call to {\tt work} from {\tt hard}.
+\end{itemize}
+All of these numbers are reliable. However, gprof draws the unreliable inference that
+both {\tt easy}, {\tt hard} cause 840ms of {\tt work} time. How did we get here? Well, gprof used some correct data: 3.84 seconds spent in \texttt{work}, divides it between \texttt{easy} and \texttt{hard}, each of which \texttt{mcount} reported was called once, and gets 1.92. So we got a bogus result using correct 
 
-{\scriptsize
-\begin{verbatim}
---------------------------------------------------------------------------------
-  n        time(B)         total(B)   useful-heap(B) extra-heap(B)    stacks(B)
---------------------------------------------------------------------------------
-  0              0                0                0             0            0
-  1          1,016            1,016            1,000            16            0
-  2          2,032            2,032            2,000            32            0
-  3          3,048            3,048            3,000            48            0
-  4          4,064            4,064            4,000            64            0
-  5          5,080            5,080            5,000            80            0
-  6          6,096            6,096            6,000            96            0
-  7          7,112            7,112            7,000           112            0
-  8          8,128            8,128            8,000           128            0
-\end{verbatim}
-}
+This is wrong. {\tt work} takes 1000000$\times$ longer when called from {\tt hard}!
 
-The columns are pretty much self explanatory, with a couple exceptions. The time(B) column corresponds to time measured in allocations thanks to our choice of the time unit at the command line. The extra-heap(B) represents internal fragmentation\footnote{Remember from operating systems: if the user asked for some $n$ bytes where $n$ is not a nice multiple the returned block may be ``rounded up''. So a request for 1000 bytes is bumped up to 1016 bytes in this example. The extra space is ``wasted'' but it's nicer than having a whole bunch of little tiny useless fragments of the heap to be managed.} in the blocks we received. The stacks column shows as zero because by default, Massif doesn't look at the stack. It's a heap profiler, remember?
 
-Number 9 is a ``detailed'' snapshot, so I've separated it out, and reproduced the headers there to make this a little easier to remember what they are.
+The following results from gprof are suspect:
+\begin{itemize}
+  \item contribution of children to parents;
+  \item total runtime spent in self+children;
+  \item etc.
+\end{itemize}
 
-{
-\begin{verbatim}
---------------------------------------------------------------------------------
-  n        time(B)         total(B)   useful-heap(B) extra-heap(B)    stacks(B)
---------------------------------------------------------------------------------
-  9          9,144            9,144            9,000           144            0
-98.43% (9,000B) (heap allocation functions) malloc/new/new[], --alloc-fns, etc.
-->98.43% (9,000B) 0x4005BB: main (massif.c:17)
-\end{verbatim}
-}
+\paragraph{When are call graph edges right?}
+Two cases:
+    \begin{itemize}
+    \item functions with only one caller
+      (e.g. {\tt f()} only called by {\tt g()}); or,
+    \item functions which always take the same time to complete
+      (e.g. {\tt rand()}).
+    \end{itemize}
 
-So the additional information we got here is a reflection of where our heap allocations took place. Thus far, all the allocations took place on line 17 of the program, which was \texttt{  a[i] = malloc( 1000 ); } inside that for loop.
+On the other hand, results for any function whose running time depends on its inputs,
+and which is called from multiple contexts, are sketchy.
 
-Then let's look at the peak snapshot (again, trimmed a bit to call out exactly what we need to see here):
-
-{
-\begin{verbatim}
---------------------------------------------------------------------------------
-  n        time(B)         total(B)   useful-heap(B) extra-heap(B)    stacks(B)
---------------------------------------------------------------------------------
- 14         20,184           20,184           20,000           184            0
-99.09% (20,000B) (heap allocation functions) malloc/new/new[], --alloc-fns, etc.
-->49.54% (10,000B) 0x4005BB: main (massif.c:17)
-| 
-->39.64% (8,000B) 0x400589: g (massif.c:4)
-| ->19.82% (4,000B) 0x40059E: f (massif.c:9)
-| | ->19.82% (4,000B) 0x4005D7: main (massif.c:20)
-| |   
-| ->19.82% (4,000B) 0x4005DC: main (massif.c:22)
-|   
-->09.91% (2,000B) 0x400599: f (massif.c:8)
-  ->09.91% (2,000B) 0x4005D7: main (massif.c:20)
-
-\end{verbatim}
-}
-
-Massif has found all the allocations in this program and distilled them down to a tree structure that traces the path through which all of these various memory allocations occurred. So not just where the \texttt{malloc} call happened, but also how we got there.
-
-When program termination occurs we get a final output of what blocks remains allocated and where they come from. These point to memory leaks, incidentally, and valgrind would not be amused with us.
-
-{
-\begin{verbatim}
- 24         30,344           10,024           10,000            24            0
-99.76% (10,000B) (heap allocation functions) malloc/new/new[], --alloc-fns, etc.
-->79.81% (8,000B) 0x400589: g (massif.c:4)
-| ->39.90% (4,000B) 0x40059E: f (massif.c:9)
-| | ->39.90% (4,000B) 0x4005D7: main (massif.c:20)
-| |   
-| ->39.90% (4,000B) 0x4005DC: main (massif.c:22)
-|   
-->19.95% (2,000B) 0x400599: f (massif.c:8)
-| ->19.95% (2,000B) 0x4005D7: main (massif.c:20)
-|   
-->00.00% (0B) in 1+ places, all below ms_print's threshold (01.00%)
-\end{verbatim}
-}
-
-In fact, if I ask valgrind what it thinks of this program, it says:
-
-{\scriptsize
-\begin{verbatim}
-jz@Loki:~/ece459$ valgrind ./massif
-==25775== Memcheck, a memory error detector
-==25775== Copyright (C) 2002-2013, and GNU GPL'd, by Julian Seward et al.
-==25775== Using Valgrind-3.10.1 and LibVEX; rerun with -h for copyright info
-==25775== Command: ./massif
-==25775== 
-==25775== 
-==25775== HEAP SUMMARY:
-==25775==     in use at exit: 10,000 bytes in 3 blocks
-==25775==   total heap usage: 13 allocs, 10 frees, 20,000 bytes allocated
-==25775== 
-==25775== LEAK SUMMARY:
-==25775==    definitely lost: 10,000 bytes in 3 blocks
-==25775==    indirectly lost: 0 bytes in 0 blocks
-==25775==      possibly lost: 0 bytes in 0 blocks
-==25775==    still reachable: 0 bytes in 0 blocks
-==25775==         suppressed: 0 bytes in 0 blocks
-==25775== Rerun with --leak-check=full to see details of leaked memory
-==25775== 
-==25775== For counts of detected and suppressed errors, rerun with: -v
-==25775== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
-\end{verbatim}
-}
-
-So probably a good idea to run valgrind first and make it happy before we go into figuring out where heap blocks are going with Massif. Okay, what to do with the information from Massif, anyway? It should be pretty easy to act upon this information. Start with the peak snapshot (worst case scenario) and see where that takes you (if anywhere). You can probably identify some cases where memory is hanging around unnecessarily. 
+\subsection*{callgrind/KCacheGrind}
+Next, we'll talk about callgrind/KCacheGrind. Like our old friends memcheck, hell grind, and cachegrind, callgrind is part of valgrind, and runs the program under an x86 JIT.  KCacheGrind is a frontend to callgrind. callgrind gives better information, but imposes
+more overhead.
 
 \newpage
-Things to watch out for:
+KCacheGrind works properly on the earlier running example:
+
+\begin{center}
+  \includegraphics[width=.4\textwidth]{images/kcachegrind}
+\end{center}
+
+It properly reports that {\tt hard} takes all the time.
+But we can still deceive it.
+
+\paragraph{More Complex Example.} Let's look at this example.
+
+\begin{minipage}{.4\textwidth}
+\begin{lstlisting}[basicstyle=\scriptsize]
+void worker1(int n) {
+  volatile int i=0;
+  while(i++<n);
+}
+void worker2(int n) {
+  volatile int i=0;
+  while(i++<n);
+}
+void manager(int n1, int n2) {
+  worker1(n1);
+  worker2(n2);
+}
+\end{lstlisting}
+\end{minipage}
+\begin{minipage}{.4\textwidth}
+\begin{lstlisting}[basicstyle=\scriptsize]
+void project1() {
+  manager(1000, 1000000);
+}
+void project2() {
+  manager(1000000, 1000);
+}
+int main() {
+  project1();
+  project2();
+}
+\end{lstlisting}
+\end{minipage}
+
+Now, {\tt worker2} takes all the time in {\tt project1},
+and {\tt worker1} takes all the time in {\tt project2}.
+
+Let's see how KCacheGrind does on this example.
+
+\begin{center}
+  \includegraphics[width=.25\textwidth]{images/kcachegrind2}
+\end{center}
+
+
+The call graph, on the bottom, shows that 
+{\tt worker1} and {\tt worker2} do each take about 50\% of time.
+So do {\tt project2} and {\tt project1}. This is fine.
+(I think gprof would correctly interpolate that too.)
+
+However, KCacheGrind also lies, in the report on top. It is saying
+that {\tt worker1} and {\tt worker2} doing half the work in each
+project.  That's not what the code says. Why is it lying?
+
 \begin{itemize}
-\item memory usage climbing over a long period of time, perhaps slowly, but never really decreasing---memory is filling up somehow with some junk? 
-\item large spikes in the graph---why so much allocation and deallocation in a short period?
+\item gprof reports time spent in {\tt f()} and {\tt g()},
+and how many times {\tt f()} calls {\tt g()}.
+\item callgrind also reports 
+time spent  in {\tt g()} when called from {\tt f()}, i.e. some calling-context information.
+\item callgrind does \emph{not} report time spent in {\tt g()} when
+     called from {\tt f()} when called from {\tt h()}.
+     We don't get the {\tt project1} to {\tt manager} to {\tt worker1} link.
+     (We have Edges but need Edge-Pairs).
 \end{itemize}
 
-Other cool things we can do with Massif~\cite{massif}:
+\paragraph{Summary.} We've seen that some profiler results are exact;
+some results are sampled; and some results are interpolated. If you understand the tool, you understand where it can go
+wrong. 
 
-\begin{itemize}
-	\item Look into stack allocation (\verb+--stacks=yes+) option. This slows stuff down a lot, and not really necessary since we want to look at heap.
-	\item Look at the children of a process (anything split off with \texttt{fork}) if desired.
-	\item Check low level stuff: if we're doing something other than \texttt{malloc}, \texttt{calloc}, \texttt{new}, etc. and doing low level stuff like \texttt{mmap} or \texttt{brk} that is usually missed, but we can do profiling at page level (\verb+--pages-as-heap=yes+).
-\end{itemize}
+Understand your tools!
 
-As is often the case, we have examined how the tool works on a trivial program. As a live demo, let's see what happens when we take the program complexity up a little bit by (1) looking at the search program we saw in the earlier talk about valgrind; and (2) looking at the original (unmodified) paster.c file from assignment 1 (and then perhaps fixing it and going on). Depending on time available, we may look at some more complex programs.
+\section*{Lies from Metrics}
+While app-specific metrics can lie too, mostly we'll talk about CPU
+perf counters today.
 
-\subsection*{Cachegrind}
+The reference here is a blog post by Paul Khuong~\cite{metrics}.
 
-Cachegrind is another tool in the package and this one is much more performance oriented than the other two tools. Yes, Valgrind's memcheck and Helgrind look for errors in your program that are likely to lead to slowdowns (memory leaks) or make it easier to parallelize (spawn threads) without introducing errors. Cachegrind, however, does a simulation of how your program interacts with cache and evaluates how your program does on branch prediction. As we discussed earlier, cache misses and branch mispredicts have a huge impact on performance.
+This goes back to {\tt mfence}, which we've seen before. It is used, for instance, in
+spinlock implementations. Khuong found that his profiles said that spinlocking didn't take much time.
+But empirically: eliminating spinlocks = better than expected! Hmm.
 
-Recall that a miss from the fastest cache results in a small penalty (perhaps, 10 cycles); a miss that requires going to memory requires about 200 cycles. A mispredicted branch costs somewhere between 10-30 cycles. All figures \& estimates from the cachegrind manual~\cite{cachegrind}.
-
-Cachegrind reports data about:
-\begin{itemize}
-	\item The First Level Instruction Cache (I1) [L1 Instruction Cache]
-	\item The First Level Data Cache (D1) [L1 Data Cache]
-	\item The Last Level Cache (LL) [L3 Cache].
-\end{itemize}
-
-Unlike for normal Valgrind operation, you probably want to turn optimizations on (\texttt{-O2} or perhaps \texttt{-O3} in \texttt{gcc}). You still want debugging symbols, of course, but enabling optimizations will tell you more about what is going to happen in the released version of your program.
-
-If I instruct cachegrind to run on the search example (same one from above), using the \texttt{--branch-sim=yes} option because by default it won't show it:
-
-\begin{verbatim}
-jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
-==16559== Cachegrind, a cache and branch-prediction profiler
-==16559== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
-==16559== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
-==16559== Command: ./search
-==16559== 
---16559-- warning: L3 cache found, using its data for the LL simulation.
-Found at 11 by thread 1 
-Found at 22 by thread 3 
-==16559== 
-==16559== I   refs:      310,670
-==16559== I1  misses:      1,700
-==16559== LLi misses:      1,292
-==16559== I1  miss rate:    0.54%
-==16559== LLi miss rate:    0.41%
-==16559== 
-==16559== D   refs:      114,078  (77,789 rd   + 36,289 wr)
-==16559== D1  misses:      4,398  ( 3,360 rd   +  1,038 wr)
-==16559== LLd misses:      3,252  ( 2,337 rd   +    915 wr)
-==16559== D1  miss rate:     3.8% (   4.3%     +    2.8%  )
-==16559== LLd miss rate:     2.8% (   3.0%     +    2.5%  )
-==16559== 
-==16559== LL refs:         6,098  ( 5,060 rd   +  1,038 wr)
-==16559== LL misses:       4,544  ( 3,629 rd   +    915 wr)
-==16559== LL miss rate:      1.0% (   0.9%     +    2.5%  )
-==16559== 
-==16559== Branches:       66,622  (65,097 cond +  1,525 ind)
-==16559== Mispredicts:     7,202  ( 6,699 cond +    503 ind)
-==16559== Mispred rate:     10.8% (  10.2%     +   32.9%   )
-
-\end{verbatim}
-
-So we see a breakdown of the instruction accesses, data accesses, and how well the last level of cache (L3 here) does. 
-
-Why did I say enable optimization? Well, here's the output of the search program if I compile with the \texttt{-O2} option:
-
-\begin{verbatim}
-jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
-==16618== Cachegrind, a cache and branch-prediction profiler
-==16618== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
-==16618== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
-==16618== Command: ./search
-==16618== 
---16618-- warning: L3 cache found, using its data for the LL simulation.
-Found at 11 by thread 1 
-Found at 22 by thread 3 
-==16618== 
-==16618== I   refs:      306,169
-==16618== I1  misses:      1,652
-==16618== LLi misses:      1,286
-==16618== I1  miss rate:    0.53%
-==16618== LLi miss rate:    0.42%
-==16618== 
-==16618== D   refs:      112,015  (76,522 rd   + 35,493 wr)
-==16618== D1  misses:      4,328  ( 3,353 rd   +    975 wr)
-==16618== LLd misses:      3,201  ( 2,337 rd   +    864 wr)
-==16618== D1  miss rate:     3.8% (   4.3%     +    2.7%  )
-==16618== LLd miss rate:     2.8% (   3.0%     +    2.4%  )
-==16618== 
-==16618== LL refs:         5,980  ( 5,005 rd   +    975 wr)
-==16618== LL misses:       4,487  ( 3,623 rd   +    864 wr)
-==16618== LL miss rate:      1.0% (   0.9%     +    2.4%  )
-==16618== 
-==16618== Branches:       65,827  (64,352 cond +  1,475 ind)
-==16618== Mispredicts:     7,109  ( 6,596 cond +    513 ind)
-==16618== Mispred rate:     10.7% (  10.2%     +   34.7%   )
-\end{verbatim}
-
-Interesting results: our data and instruction miss rates went down marginally but the branch mispredict rates went up! Well, sort of---there were fewer branches and thus fewer we got wrong as well as fewer we got right. So the total cycles lost to mispredicts went down. Is this an overall win for the code? Yes. 
-
-In some cases it's not so clear cut, and we could do a small calculation. If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400; a decrease of 11~400 cycles. Repeat for each of the measures and sum them up to determine if things got better overall and by how much. Also be sure that you're reasoning about a realistic workload.
-
-Cachegrind also produces a more detailed output file, titled cachegrind.out.<pid> (the PID in the example is 16618). This file is not especially human-readable, but we can ask the associated tool \texttt{cg\_annotate} to break it down for us, and if we have the source code available, so much the better, because it will give you line by line information. That's way too much to show even in the notes, so it's the sort of thing I can show in class (or you can create for yourself) but here's a small excerpt from the \texttt{search.c} example:
-
-
+The next step is (as we do in this course) to create microbenchmarks to better understand what's
+going on. The microbenchmark contained memory accesses to uncached locations, or computations,
+surrounded by store pairs/mfence/locks. He used perf to evaluate the impact of mfence vs lock.
 
 {\scriptsize
-\begin{verbatim}
---------------------------------------------------------------------------------
--- Auto-annotated source: /home/jz/ece254/search.c
---------------------------------------------------------------------------------
- Ir I1mr ILmr Dr D1mr DLmr Dw D1mw DLmw Bc Bcm Bi Bim 
-127    1    1 96    3    0  4    0    0 23  11  0   0      for ( int i = arg->startIndex; i < arg->endIndex; ++i ) {
-147    0    0 84    3    2  0    0    0 21   9  0   0          if ( array[i] == arg->searchValue ) {
-  6    0    0  4    0    0  2    0    0  0   0  0   0              *result = i;
-  2    0    0  0    0    0  0    0    0  0   0  0   0              break;
-  .    .    .  .    .    .  .    .    .  .   .  .   .          }
-  .    .    .  .    .    .  .    .    .  .   .  .   .      }
-\end{verbatim}
+\begin{lstlisting}
+# for locks:
+$ perf annotate -s cache_misses
+[...]
+    0.06 :        4006b0:       and    %rdx,%r10
+    0.00 :        4006b3:       add    $0x1,%r9
+    ;; random (out of last level cache) read
+    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
+   30.37 :        4006bb:       mov    %rcx,%r10
+    ;; foo is cached, to simulate our internal lock
+    0.12 :        4006be:       mov    %r9,0x200fbb(%rip)
+    0.00 :        4006c5:       shl    $0x17,%r10
+    [... Skipping arithmetic with < 1% weight in the profile]
+    ;; locked increment of an in-cache "lock" byte
+    1.00 :        4006e7:       lock incb 0x200d92(%rip)
+   21.57 :        4006ee:       add    $0x1,%rax
+    [...]
+    ;; random out of cache read
+    0.00 :        400704:       xor    (%rsi,%r10,8),%rbp
+   21.99 :        400708:       xor    %r9,%r8
+    [...]
+    ;; locked in-cache decrement
+    0.00 :        400729:       lock decb 0x200d50(%rip)
+   18.61 :        400730:       add    $0x1,%rax
+    [...]
+    0.92 :        400755:       jne    4006b0 <cache_misses+0x30>
+\end{lstlisting}
 }
 
-Cachegrind is very\ldots verbose\ldots and it can be very hard to come up with useful changes based on what you see\ldots assuming your eyes don't glaze over when you see the numbers. Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). They have the highest penalty. You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints about what the likelihood of branch prediction is~\cite{cachegrind}. Of course, to learn more about how Cachegrind actually does what it does and how it runs the simulation, the manual is worth reading. Not that anybody reads manuals anymore\ldots Just give it a shot, when you get stuck, google the problem, click the first stack overflow link result\ldots
+We can see that in the lock situation, reads take 30 + 22 = 52\% of runtime,
+while locks take 19 + 21 = 40\% of runtime.
+
+{\scriptsize
+\begin{lstlisting}
+# for mfence:
+$ perf annotate -s cache_misses
+[...]
+    0.00 :        4006b0:       and    %rdx,%r10
+    0.00 :        4006b3:       add    $0x1,%r9
+    ;; random read
+    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
+   42.04 :        4006bb:       mov    %rcx,%r10
+    ;; store to cached memory (lock word)
+    0.00 :        4006be:       mov    %r9,0x200fbb(%rip)
+    [...]
+    0.20 :        4006e7:       mfence 
+    5.26 :        4006ea:       add    $0x1,%rax
+    [...]
+    ;; random read
+    0.19 :        400700:       xor    (%rsi,%r10,8),%rbp
+   43.13 :        400704:       xor    %r9,%r8
+    [...]
+    0.00 :        400725:       mfence 
+    4.96 :        400728:       add    $0x1,%rax
+    0.92 :        40072c:       add    $0x1,%rax
+    [...]
+    0.36 :        40074d:       jne    4006b0 <cache_misses+0x30>
+\end{lstlisting}
+}
+Looks like the reads take 85\% of runtime,
+while the mfence takes 15\% of runtime.
+
+Metrics lie, though, and when you focus on the metrics as opposed to what you
+actually care about, it's easy to be led astray.
+
+In this case, what we actually care about is the total \# of cycles.
+
+    \begin{tabular}{lr}
+    No atomic/fence:& 2.81e9 cycles\\
+    lock inc/dec: & 3.66e9 cycles\\
+    mfence: & 19.60e9 cycles
+    \end{tabular}
+
+That 15\% number is a total lie.
+Profilers, even using CPU expense counts, drastically underestimate the impact of mfence,
+and overestimate the impact of locks.
+
+This is because mfence causes a pipeline flush, and the resulting 
+costs get attributed to instructions being flushed, not to the mfence itself.
+
+
+\section*{The Long Tail}
+
+Our source here is the blog post by Dan Luu~\cite{perf-tracing}. Suppose we have a task that's going to get distributed over multiple computers (like a search). If we look at the latency distribution, the problem is mostly that we see a long tail of events and when we are doing a computation or search where we need all the results, we can only go as the slowest step. Let's take a look at a histogram of disk read latencies, where we are performing a 64 kB read, also from that source:
+
+\begin{center}
+	\includegraphics[width=0.65\textwidth]{images/disk_tail.png}
+\end{center}
+
+Let's break it down. Peak 1 corresponds to something cached in RAM---best case scenario. Peak 2 is at around 3ms, which is too fast for spinning and seeking magnetic hard disks, but it's fast enough for reading something from the disk cache via the PCI-Express interface. Peak 3 is obviously disk seek and read times, somewhere around 25ms. 
+
+These numbers don't look terrible, except for the fact that we have peaks at 250, 500, 750, and 1000 ms and the 99th percentile is some 696ms which is a very, very long time. Sampling profilers are not very good at finding these things, because they throw everything into various buckets and therefore we get averages. The averages are misleading, though, because we have these weird outliers that take dramatically longer. Averages are nice as long as our data is also reasonably ``nice''.
+
+So what actually happened? Well, from~\cite{perf-tracing}: The investigator found out that the cause was kernel throttling of the CPU for processes that went beyond their usage quota. To enforce the quota, the kernel puts all of the relevant threads to sleep until the next multiple of a quarter second. When the quarter-second hand of the clock rolls around, it wakes up all the threads, and if those threads are still using too much CPU, the threads get put back to sleep for another quarter second. The phase change out of this mode happens when, by happenstance, there aren't too many requests in a quarter second interval and the kernel stops throttling the threads. After finding the cause, an engineer found that this was happening on 25\% of disk servers at Google, for an average of half an hour a day, with periods of high latency as long as 23 hours. This had been happening for three years.
+
+Further limitations of sampling profilers emerge, as demonstrated in this graph, also from~\cite{perf-tracing}, showing the data we get out of our sampling profiler if we take a look at Lucene (a search indexer):
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/perf-sample.png}
+\end{center}
+
+So at the default sampling interval for perf we see\ldots nothing interesting whatsoever. If we bump up to the max sampling frequency of perf, we get a moderately more interesting graph, but not much. If we use a different tool and can sample at a dramatically higher rate, then we end up with something way more useful. So we're left to wonder why does perf sample so infrequently, and how does SHIM get around this?
+
+Well, for one thing, perf samples are done with interrupts. Processing interrupts takes a fair amount of time and if you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work. SHIM gets around this by being more invasive---it adds some periodically executed code that puts information out whenever there is an appropriate event (e.g., function return). This produces a bunch of data which can be dealt with later to produce something useful.
+
+  \paragraph{Algorithmic profiling.} Coppa et al~\cite{coppa2014input} have proposed another profiling tool,
+  {\tt aprof}.
+  \url{https://code.google.com/p/aprof/}
+{
+  \begin{quote}
+  aprof is a Valgrind tool for performance profiling designed to help developers discover hidden asymptotic inefficiencies in the code. From one or more runs of a program, aprof measures how the performance of individual routines scales as a function of the input size, yielding clues to its growth rate and to the "big-O" of the program.
+  \end{quote}
+  }
+
+\paragraph{Summary} We saw a bunch of lies today: calling-context lies and perf attribution
+lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
+and understand how your tools work.
 
 
 \input{bibliography.tex}

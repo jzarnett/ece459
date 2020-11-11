@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 26 --- Liar, Liar }
+\title{Lecture 26 --- System-Level Profiling, Profiler Guided Optimization }
 
-\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca jzarnett@uwaterloo.ca}}
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -14,631 +14,861 @@
   \titlepage
 
  \end{frame}
-
-
-
+ 
+ 
 \begin{frame}
-\frametitle{Liar, Liar}
+\frametitle{System Profiling}
 
 \begin{center}
-	\includegraphics[width=0.75\textwidth]{images/Liar-Liar.jpg}
+	\includegraphics[width=0.4\textwidth]{images/Eye_of_sauron.jpg}
 \end{center}
 
-
 \end{frame}
 
-\begin{frame}
-\frametitle{Sampling Based Profiling}
 
-Let's open with a video that illustrates one of the problems with sampling-based profiling:
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\begin{center}
-	\url{https://www.youtube.com/watch?v=jQDjJRYmeWg}
-\end{center}
 
-Is this fake?
+% How to Read
+% http://www.cs.utah.edu/dept/old/texinfo/as/gprof.html
+% http://www.civilnet.cn/book/kernel/GNU.Linux.Application.Programming/LiB0055.html
+% http://ececmpsysweb.groups.et.byu.net/cmpsys.2004.winter/citizenship/Bryan_Wheeler/Profiling_Tutorial.html
 
-\end{frame}
+% gprof
+% OProfile
+% Valgrind
+% Intel VTune
+% AMD CodeAnalyst
 
-\part{Lies about Calling Context}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \partpage
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  \frametitle{Introduction: oprofile}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{gprof and KCacheGrind}
-  
-  
-    Who can we trust?\\[1em]
 
-    Some profiler results are real. \\
-    Other results are interpolated, and perhaps wrong.
+\begin{changemargin}{1.5cm}
+
+    \url{http://oprofile.sourceforge.net}\\[1em]
+
+    Sampling-based tool.\\[1em]
     
-    \begin{center}
-	\includegraphics[width=0.6\textwidth]{images/lawandorder.jpg}
-	\end{center}
-  
+    Uses CPU performance counters.\\[1em]
 
-  \begin{center}
-    Reference: Yossi Kreinin,\\
-  \tiny
-  \url{http://www.yosefk.com/blog/how-profilers-lie-the-cases-of-gprof-and-kcachegrind.html}
-  \end{center}
+    Tracks currently-running function;\\
+    records profiling data for every application run.\\[1em]
 
+    Can work system-wide (across processes).\\[1em]
+
+    Technology: Linux Kernel Performance Events\\ (formerly a Linux kernel module).
+    \end{changemargin}
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Running Example}
-
-  \begin{center}
-  \begin{minipage}{.7\textwidth}
-\begin{lstlisting}
-void work(int n) {
-  volatile int i=0; //don't optimize away
-  while(i++ < n);
-}
-void easy() { work(1000); }
-void hard() { work(1000*1000*1000); }
-int main() { easy(); hard(); }
-\end{lstlisting}
-  \end{minipage}
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Running the Running Example}
-
-{\scriptsize
-\begin{verbatim}
-[plam@lynch L27]$ gprof ./try gmon.out
-Flat profile:
-
-Each sample counts as 0.01 seconds.
-  %   cumulative   self              self     total           
- time   seconds   seconds    calls  ms/call  ms/call  name    
-101.30      1.68     1.68        2   840.78   840.78  work
-  0.00      1.68     0.00        1     0.00   840.78  easy
-  0.00      1.68     0.00        1     0.00   840.78  hard
-\end{verbatim}
-}
-
-  That's not right! \\
-  {\tt easy} takes $\approx$ 0s, {\tt hard} takes 1.68s.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{What's Wrong?}
-
-  
-    Need to understand how {\tt gprof} works.\\[1em]
-    \begin{itemize}
-    \item
-      \begin{tabbing}
-      {\bf profil()}: \= asks glibc to record which instruction \\
-      \> is currently executing
-      (100$\times$/second).
-      \end{tabbing}
-    \item
-      \begin{tabbing}
-        {\bf mcount()}: \= records call graph edges;\\
-        \> called by {\tt -pg} instrumentation.
-      \end{tabbing}
-    \end{itemize}
-~\\
-    {\bf profil} information is statistical; \\
-    {\bf mcount} information is exact.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Those Numbers Again}
-
-{\scriptsize
-\begin{verbatim}
-[plam@lynch L27]$ gprof ./try gmon.out
-Flat profile:
-
-Each sample counts as 0.01 seconds.
-  %   cumulative   self              self     total           
- time   seconds   seconds    calls  ms/call  ms/call  name    
-101.30      1.68     1.68        2   840.78   840.78  work
-  0.00      1.68     0.00        1     0.00  *840.78* easy
-  0.00      1.68     0.00        1     0.00  *840.78* hard
-\end{verbatim}
-}
+  \frametitle{Setting up {\tt oprofile}}
 
 
-  \begin{itemize}
-  \item calls: reliable;
-  \item self seconds: sampled, but OK here;
-    \item total ms/call: interpolated!
-  \end{itemize}
+\begin{changemargin}{1.5cm}
 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{total ms/call}
-
-  gprof sees:
-  \begin{itemize}
-    \item total of 1.68s in {\tt work},\\
-    \item 1 call to {\tt work} from {\tt easy};
-    \item 1 call to {\tt work} from {\tt hard}.
-  \end{itemize}
-  All of these numbers are reliable.\\[1em]
-  gprof's unreliable conclusion: \\ {\tt easy}, {\tt hard} 
-  both cause 840ms of {\tt work} time.\\[1em]
-  
-  \alert{Wrong}: {\tt work} takes 1000000$\times$ longer when called from {\tt hard}!
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Where gprof guesses: Call graph edges}
-  
-    \begin{itemize}
-  \item contribution of children to parents;
-  \item total runtime spent in self+children;
-  \item etc.
-    \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{When are call graph edges right?}
-
-    Two cases:
-    \begin{itemize}
-    \item functions with only one caller\\
-      (e.g. {\tt f()} only called by {\tt g()}); or,
-    \item functions which always take the same time to complete\\
-      (e.g. {\tt rand()}).
-    \end{itemize}
-    ~\\
-    What's sketchy:\\
-    Any function whose running time depends on its inputs,\\
-    and which is called from multiple contexts.
-    
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{KCacheGrind}
-  
-    KCacheGrind is a frontend to callgrind.\\[1em]
-    callgrind is part of valgrind,\\
-    and runs the program under an x86 JIT.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{KCacheGrind example}
-  \begin{center}
-    \includegraphics[width=.5\textwidth]{images/kcachegrind}
-  \end{center}
-  
-    Yes, {\tt hard} takes all the time.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{More Complex Example}
-
-  \begin{center}
-  \begin{minipage}{.7\textwidth}
-\begin{lstlisting}
-void worker1(int n) {
-  volatile int i=0;
-  while(i++<n);
-}
-void worker2(int n) {
-  volatile int i=0;
-  while(i++<n);
-}
-void manager(int n1, int n2) {
-  worker1(n1);
-  worker2(n2);
-}
-void project1() {
-  manager(1000, 1000000);
-}
-void project2() {
-  manager(1000000, 1000);
-}
-int main() {
-  project1();
-  project2();
-}
-\end{lstlisting}
-  \end{minipage}
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Example explained in 2 lines}
-  
-    Now {\tt worker2} takes all the time in {\tt project1},\\
-    and {\tt worker1} takes all the time in {\tt project2}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{What about KCacheGrind now?}
-  \begin{center}
-    \includegraphics[width=.5\textwidth]{images/kcachegrind2}
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{KCacheGrind Truths}
-  \begin{center}
-    \includegraphics[width=.5\textwidth]{images/kcachegrind2-bottom}
-  \end{center}
-  
-    This is the call graph.\\
-    {\tt worker1} and {\tt worker2} do each take about 50\% of time.\\
-    So do {\tt project2} and {\tt project1}.\\[1em]
-    (gprof would interpolate that too.)
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{KCacheGrind Lies}
-  \begin{center}
-    \includegraphics[width=.5\textwidth]{images/kcachegrind2-top}
-  \end{center}
-  
-    KCacheGrind is reporting:
-    \begin{itemize}
-    \item {\tt worker1} and {\tt worker2} doing \\
-      half the work in each project.
-    \end{itemize}
-    That's not what the code says.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Why KCacheGrind Lies}
-
-  \begin{itemize}
-  \item gprof reports time spent in {\tt f()} and {\tt g()},\\
-    and how many times {\tt f()} calls {\tt g()}.
-  \item callgrind also reports \\
-     time spent  in {\tt g()}
-     when called from {\tt f()}, \\
-     i.e. some calling-context information.\\[1em]
-   \item callgrind does \emph{not} report time spent in {\tt g()} \\
-     when
-     called from {\tt f()} when called from {\tt h()}.\\[1em]
-     We don't get the {\tt project1} to {\tt manager} to {\tt worker1} link.\\[1em]
-     \item (We have Edges but need Edge-Pairs).
-     \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{gprof/KCacheGrind summary}
-  
-    Some results are exact;\\
-    some results are sampled;\\
-    some results are interpolated.\\[1em]
-
-    If you understand the tool, \\
-    you understand where it can go wrong.\\[1em]
-
-    Understand your tools!
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\part{Lies from Metrics}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \partpage
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Lying perf counters}
-  
-  
-    While app-specific metrics can lie too,\\
-    mostly we'll talk about CPU perf counters.
-  
-
-
-
-  \begin{center}
-    Reference: Paul Khuong,\\
-  \tiny
-  \url{http://www.pvk.ca/Blog/2014/10/19/performance-optimisation-~-writing-an-essay/}
-
-  \end{center}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{mfence}
-
-
-    We've talked about {\tt mfence}.\\
-    Used in spinlocks, for instance.\\[2em]
-    Profiles said: spinlocking didn't take much time.\\
-    Empirically: eliminating spinlocks = better than expected!
-    
-  
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Exploring the lie}
-
-  
-    Next step: create microbenchmarks.\\[1em]
-    Memory accesses to uncached locations,\\
-    or computations,\\[1em]
-    surrounded by store pairs/mfence/locks.\\[1em]
-    Use perf to evaluate impact of mfence vs lock.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{perf for lock}
-
-    \begin{lstlisting}
-$ perf annotate -s cache_misses
-[...]
-    0.06 :        4006b0:       and    %rdx,%r10
-    0.00 :        4006b3:       add    $0x1,%r9
-    ;; random (out of last level cache) read
-    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
-   30.37 :        4006bb:       mov    %rcx,%r10
-    ;; foo is cached, to simulate our internal lock
-    0.12 :        4006be:       mov    %r9,0x200fbb(%rip)
-    0.00 :        4006c5:       shl    $0x17,%r10
-    [... Skipping arithmetic with < 1% weight in the profile]
-    ;; locked increment of an in-cache "lock" byte
-    1.00 :        4006e7:       lock incb 0x200d92(%rip)
-   21.57 :        4006ee:       add    $0x1,%rax
-    [...]
-    ;; random out of cache read
-    0.00 :        400704:       xor    (%rsi,%r10,8),%rbp
-   21.99 :        400708:       xor    %r9,%r8
-    [...]
-    ;; locked in-cache decrement
-    0.00 :        400729:       lock decb 0x200d50(%rip)
-   18.61 :        400730:       add    $0x1,%rax
-    [...]
-    0.92 :        400755:       jne    4006b0 <cache_misses+0x30>
-    \end{lstlisting}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{lock's effects}
-
-  
-    Reads take 30 + 22 = 52\% of runtime\\
-    Locks take 19 + 21 = 40\%.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{perf for mfence}
+  Must run as root to use system-wide, \\
+otherwise can use per-process.
 
   \begin{lstlisting}
-$ perf annotate -s cache_misses
-[...]
-    0.00 :        4006b0:       and    %rdx,%r10
-    0.00 :        4006b3:       add    $0x1,%r9
-    ;; random read
-    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
-   42.04 :        4006bb:       mov    %rcx,%r10
-    ;; store to cached memory (lock word)
-    0.00 :        4006be:       mov    %r9,0x200fbb(%rip)
-    [...]
-    0.20 :        4006e7:       mfence 
-    5.26 :        4006ea:       add    $0x1,%rax
-    [...]
-    ;; random read
-    0.19 :        400700:       xor    (%rsi,%r10,8),%rbp
-   43.13 :        400704:       xor    %r9,%r8
-    [...]
-    0.00 :        400725:       mfence 
-    4.96 :        400728:       add    $0x1,%rax
-    0.92 :        40072c:       add    $0x1,%rax
-    [...]
-    0.36 :        40074d:       jne    4006b0 <cache_misses+0x30>
+% sudo opcontrol \
+     --vmlinux=/usr/src/linux-3.2.7-1-ARCH/vmlinux
+% echo 0 | sudo tee /proc/sys/kernel/nmi_watchdog
+% sudo opcontrol --start
+Using default event: CPU_CLK_UNHALTED:100000:0:1:1
+Using 2.6+ OProfile kernel interface.
+Reading module info.
+Using log file /var/lib/oprofile/samples/oprofiled.log
+Daemon started.
+Profiler running.
   \end{lstlisting}
 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  Per-process:
+\begin{lstlisting}
+[plam@lynch nm-morph]$ operf ./test_harness
+operf: Profiler started
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{mfence's effects}
-
-  
-    Looks like the reads take 85\% of runtime,\\
-    while the mfence takes 15\% of runtime.
-  
+Profiling done.
+\end{lstlisting}%$
+\end{changemargin}
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Bigger picture}
+\begin{frame}[fragile]
+  \frametitle{{\tt oprofile} Usage (1)}
+  
 
+
+\begin{changemargin}{1.5cm}
+  Pass your executable to {\tt opreport}.
+
+  \begin{lstlisting}
+% sudo opreport -l ./test    
+CPU: Intel Core/i7, speed 1595.78 MHz (estimated)
+Counted CPU_CLK_UNHALTED events (Clock cycles when not
+halted) with a unit mask of 0x00 (No unit mask) count 100000
+samples  %        symbol name
+7550     26.0749  int_math_helper
+5982     20.6596  int_power
+5859     20.2348  float_power
+3605     12.4504  float_math
+3198     11.0447  int_math
+2601      8.9829  float_math_helper
+160       0.5526  main
+  \end{lstlisting}
   
-    Must also look at total \# of cycles.\\[1em]
-    \begin{tabular}{lr}
-    No atomic/fence:& 2.81e9 cycles\\
-    lock inc/dec: & 3.66e9 cycles\\
-    mfence: & 19.60e9 cycles
-    \end{tabular}
-~\\[1em]
-    That 15\% number is a total lie.
+    If you have debug symbols ({\tt -g}) you could use:
+
+  \begin{lstlisting}
+% sudo opannotate --source \
+--output-dir=/path/to/annotated-source /path/to/mybinary
+  \end{lstlisting}
+  \end{changemargin}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{{\tt oprofile} Usage (2)}
   
-  \begin{center}
-	\includegraphics[width=0.3\textwidth]{images/maury.jpg}
-\end{center}
+
+
+\begin{changemargin}{1.5cm}
+    Use {\tt opreport} by itself for a whole-system view.\\
+    You can also reset and stop the profiling.
+
+  \begin{lstlisting}
+% sudo opcontrol --reset 
+Signalling daemon... done
+% sudo opcontrol --stop
+Stopping profiling.
+  \end{lstlisting}
+  \end{changemargin}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Perf: Introduction}
+
+
+\begin{changemargin}{1cm}
+
+    \url{perf.wiki.kernel.org/index.php/Tutorial}\\[1em]
+
+    Interface to Linux kernel built-in sampling-based profiling.\\
+    Per-process, per-CPU, or system-wide.\\
+    Can even report the cost of each line of code.
+    \end{changemargin}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Perf: Usage Example}
+
+
+\begin{changemargin}{1.5cm}
+On previous Assignment 3 code:
+\begin{lstlisting}[basicstyle=\tiny]
+[plam@lynch nm-morph]$ perf stat ./test_harness
+
+ Performance counter stats for './test_harness':
+
+       6562.501429 task-clock                #    0.997 CPUs utilized          
+               666 context-switches          #    0.101 K/sec                  
+                 0 cpu-migrations            #    0.000 K/sec                  
+             3,791 page-faults               #    0.578 K/sec                  
+    24,874,267,078 cycles                    #    3.790 GHz                     [83.32%]
+    12,565,457,337 stalled-cycles-frontend   #   50.52% frontend cycles idle    [83.31%]
+     5,874,853,028 stalled-cycles-backend    #   23.62% backend  cycles idle    [66.63%]
+    33,787,408,650 instructions              #    1.36  insns per cycle        
+                                             #    0.37  stalled cycles per insn [83.32%]
+     5,271,501,213 branches                  #  803.276 M/sec                   [83.38%]
+       155,568,356 branch-misses             #    2.95% of all branches         [83.36%]
+
+       6.580225847 seconds time elapsed
+\end{lstlisting} %$
+\end{changemargin}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Perf: Source-level Analysis}
+
+
+
+\begin{changemargin}{1.5cm}
+perf can tell you which instructions are taking time, or which lines of code.\\[1em]
+
+Compile with {\tt -ggdb} to enable source code viewing.
+
+\begin{lstlisting}
+% perf record ./test_harness
+% perf annotate
+\end{lstlisting}
+
+{\tt perf annotate} is interactive. Play around with it.
+\end{changemargin}
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Conclusions}
-
-  
-    \begin{itemize}
-    \item mfence underestimated;
-      \item lock overestimated.
-    \end{itemize}
-    ~\\
-    Why? \\[1em]
-    mfence = pipeline flush,\\
-    costs attributed to instructions being flushed.\\
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  \frametitle{DTrace: Introduction}
 
 
+\begin{changemargin}{1.5cm}
 
 
-\begin{frame}
-\frametitle{The Long Tail}
-
-Suppose we have a task that's going to get distributed over multiple computers (like a search). 
-
-If we look at the latency distribution, the problem is mostly that we see a long tail of events. 
-
-When we are doing a computation or search where we need all the results, we can only go as the slowest step.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Grab the Tiger by the Tail}
-
-\begin{center}
-	\includegraphics[width=0.85\textwidth]{images/disk_tail.png}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Explaining the Peaks}
-
-\begin{enumerate}
-	\item Found in RAM
-	\item Disk Cache
-	\item Disk
-	\item and above... very strange!
+    Intrumentation-based tool.\\
+    System-wide.\\
+    Meant to be used on production systems. (Eh?)\\[1em]
+    
+    \begin{center}
+	\includegraphics[width=0.4\textwidth]{images/pikachu.jpeg}
+	\end{center}
+    
+   
+     {\small (Typical instrumentation can have a slowdown of 100x (Valgrind).)}\\
+     Design goals:\\
+\begin{enumerate} 
+\item No overhead when not in use;
+\item Guarantee safety---must not crash\\ \qquad (strict limits on expressiveness of probes).
 \end{enumerate}
 
+     \end{changemargin}
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{DTrace: Operation}
+
+
+\begin{changemargin}{1.5cm}
+
+    How does DTrace achieve 0 overhead?\\
+\begin{itemize}
+    \item only when activated, dynamically rewrites code by placing a branch to
+      instrumentation code.
+\end{itemize}
+
+    Uninstrumented: runs as if nothing changed.\\[1em]
+
+    Most instrumentation: at function entry or exit points.\\
+    You can also instrument kernel functions, locking, instrument-based
+      on other events.\\[1em]
+
+    Can express sampling as instrumentation-based events also.
+    \end{changemargin}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{DTrace Example}
+
+
+\begin{changemargin}{1cm}
+
+  You write this:
+
+  \begin{lstlisting}
+syscall::read:entry {
+    self->t = timestamp;
+}
+
+syscall::read:return
+/self->t/ {
+    printf("%d/%d spent %d nsecs in read\n"
+           pid, tid, timestamp - self->t);
+}
+  \end{lstlisting}
+
+    {\tt t} is a thread-local variable.\\
+    This code prints how long each call to {\tt read} takes, along with
+      context.\\[1em]
+    To ensure safety, DTrace limits expressiveness---no loops.
+      \begin{itemize}
+        \item (Hence, no infinite loops!)
+      \end{itemize}
+      \end{changemargin}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}
-\frametitle{Why 250, 500, 750, 1000?}
-
-Answer: CPU throttling!
-
-This was happening on 25\% of disk servers at Google, for an average of half an hour a day!
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Faster than a Speeding Bullet}
-
-Another problem with sampling,
-this time from Lucene:
+\frametitle{No-One Expects the Profiling Tools!}
 
 \begin{center}
-	\includegraphics[width=0.7\textwidth]{images/perf-sample.png}
+	\includegraphics[width=0.7\textwidth]{images/spanishinquisition.jpg}
 \end{center}
 
-Why is perf limited to 100~KHz?
+\textbf{AMONGST} our profiling tools are such diverse elements AS...
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Other Tools}
+
+
+\begin{changemargin}{1.5cm}
+
+    AMD CodeAnalyst---based on oprofile; leverages AMD processor features.\\[1em]
+
+    WAIT\\[0em]
+      \begin{itemize}
+        \item IBM's tool tells you what operations your JVM is waiting on while
+          idle.
+        \item Non-free and not available.
+      \end{itemize}
+      \end{changemargin}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{WAIT: Introduction}
+
+
+\begin{changemargin}{1.5cm}
+
+Built for production environments.\\[1em]
+
+Specialized for profiling JVMs, \\uses JVM hooks to analyze idle time.\\[1em]
+
+Sampling-based analysis; infrequent samples\\ (1--2 per minute!)
+\end{changemargin}
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{WAIT: Operation}
+
+
+\begin{changemargin}{1.5cm}
+
+  At each sample: records each thread's state,
+\begin{itemize}
+\item call stack;
+\item participation in system locks.
+\end{itemize}
+
+  Enables WAIT to compute a ``wait state'' \\(using expert-written rules): \\
+what the process is currently doing or waiting on, e.g.
+\begin{itemize}
+\item disk;
+\item GC;
+\item network; 
+\item blocked; 
+\item etc.
+\end{itemize}
+\end{changemargin}
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{WAIT: Workflow}
+
+
+\begin{changemargin}{1.5cm}
+
+You:
+\begin{itemize}
+\item run your application;
+\item collect data (using a script or manually); and 
+\item upload the data to the server.
+\end{itemize}
+Server provides
+a report.\\
+\begin{itemize}
+\item You fix the performance problems.\\[1em]
+\end{itemize}
+
+Report indicates processor utilization (idle, your application, GC, 
+etc); runnable threads; waiting threads (and why they are waiting); 
+thread states; and a stack viewer.\\[1em]
+
+Paper presents 6 case studies where WAIT identified performance
+problems: deadlocks, server underloads, memory leaks, database
+bottlenecks, and excess filesystem activity.
+
+\end{changemargin}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Other Profiling Tools}
+
+  
+
+\begin{changemargin}{1.5cm}
+    Profiling: Not limited to C/C++, or even code.\\[1em]
+
+    You can profile Python using {\tt cProfile}; standard profiling technology.\\[1em]
+
+    Google's Page Speed Tool: profiling for web pages---how can you make your page faster?\\
+\begin{itemize}
+\item reducing number of DNS lookups;
+\item leveraging browser caching;
+\item combining images;
+\item plus, traditional JavaScript profiling.
+\end{itemize}
+\end{changemargin}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Profiler Guided Optimization}
+\begin{frame}
+\partpage
+\end{frame}
+
+\begin{frame}
+\frametitle{Profiler Guided Optimization}
+
+
+\begin{changemargin}{2cm}
+
+Using static analysis, \\
+the compiler makes its best predictions about runtime behaviour.
+
+Example: branch prediction. 
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{A Branch To Predict}
+\begin{changemargin}{1.5cm}
+\begin{lstlisting}[language=C,basicstyle=]
+void whichBranchIsTaken(int a, int b)
+{
+    if (a < b) {
+        puts("a is less than b.");
+    } else {
+        puts("b is >= a.");
+    }
+}
+\end{lstlisting}
+\end{changemargin}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{A Virtual Call to Devirtualize}
+
+\begin{changemargin}{2cm}
+\begin{lstlisting}[language=C,basicstyle=]
+void devirtualization(int count)
+{
+    for (int i = 0; i < count; i++)
+    {
+        (*p) (x, y);
+    }
+}
+\end{lstlisting}
+\end{changemargin}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{A Switch to Predict}
+\begin{changemargin}{2cm}
+\begin{lstlisting}[language=C,basicstyle=]
+void switchCaseExpansion(int i)
+{
+    switch (i)
+    {
+    case 1:
+        puts("I took case 1.");
+        break;
+    case 2:
+        puts("I took case 2.");
+        break;
+    }
+}
+\end{lstlisting}
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Adapting to an Uncertain World}
+
+\begin{changemargin}{2cm}
+How can we know where we go?
+\begin{itemize}
+\item could provide hints\ldots
+\end{itemize}
+
+Java HotSpot virtual machine: \\
+updates predictions on the fly. 
+
+So, just guess.\\
+If wrong, the Just-in-Time compiler adjusts \& recompiles.
+
+The compiler runs and it does its job and that's it; the program is never updated with newer predictions if more data becomes known.
+\end{changemargin}
 
 \end{frame}
 
 
 
 \begin{frame}
-\frametitle{Processing Interrupts}
+\frametitle{Profiling Mitigates Uncertainty}
 
-Answer: perf samples are done with interrupts (slow). 
 
-If you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work.
+\begin{changemargin}{2cm}
+C: usually no adaptive runtime system.
 
-SHIM gets around this by being more invasive.
+POGO:
+\begin{itemize}
+\item observe actual runs;
+\item predict the future.
+\end{itemize}
 
-This produces a bunch of data which can be dealt with later.
+So, we need multi-step compilation:
+\begin{itemize}
+\item compile with profiling;
+\item run to collect data;
+\item recompile with profiling data to optimize.
+\end{itemize}
+
+\end{changemargin}
 
 \end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step One: Measure}
+
+
+\begin{changemargin}{2cm}
+First, generate an executable with instrumentation. 
+
+The compiler inserts a bunch of probes into the generated code to record data. 
+\begin{itemize}
+\item Function entry probes;
+\item Edge probes;
+\item Value probes.
+\end{itemize}
+
+Result: instrumented executable \\
+plus empty database file (for profiling data).
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step Two: Training Day}
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/training-day.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Step Two: Training Day}
+
+\begin{changemargin}{2cm}
+
+Second, run the instrumented executable.
+
+Real-world scenarios are best.
+
+Ideally, spend training time on perf-critical sections. 
+
+Use as many runs as you can stand.
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step Two: Training Day}
+
+
+\begin{changemargin}{2cm}
+Don't exercise every part of the program\\
+(ain't SE 465 here!)
+
+That would be counterproductive.
+
+Usage data must match real world scenarios,\\
+or compiler gets misfacts about what's important. 
+
+Or you might end up teaching it that almost nothing
+is important\ldots (``everything's on the exam!'')
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Step Three: Recompile}
+
+
+\begin{changemargin}{2cm}
+Finally, compile the program again.
+
+Inputs: source plus training data.
+
+Outputs: (you hope) a better output executable than\\
+from static analysis alone.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Summary Graphic}
+
+\begin{center}
+	\includegraphics[width=0.75\textwidth]{images/pogo-workflow.jpg}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Save Some Steps}
+
+
+\begin{changemargin}{2cm}
+Not necessary to do all three steps for every build. 
+
+Re-use training data while it's still valid.
+
+Recommended dev workflow:
+\begin{itemize}
+\item dev A performs these steps, \\
+checks the training data into source control
+\item whole team can use profiling information for their compiles.
+\end{itemize}
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Not fixing all the problems in the world}
+
+
+\begin{changemargin}{2cm}
+What does it mean for it to be better? 
+
+The algorithms will aim for \\
+speed in areas that are ``hot''. 
+
+The algorithms will aim for \\
+minimal code size in areas that are ``cold'' .
+
+Less than 5\% of methods compiled for speed.
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Combining Training Runs}
+
+
+\begin{changemargin}{2cm}
+Can combine multiple training runs and manually give suggestions about important scenarios.
+
+The more a scenario runs in the training data, \\
+the more important it will be, \\
+from POGO's point of view.
+
+Can merge multiple runs \\
+with user-assigned weightings.
+\end{changemargin}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Behind the Scenes}
+
+
+\begin{changemargin}{2cm}
+In the optimize phase, compiler uses the training data for:
+
+\begin{enumerate}
+\item Full and partial inlining
+\item Function layout
+\item Speed and size decision
+\item Basic block layout 
+\item Code separation
+\item Virtual call speculation
+\item Switch expansion
+\item Data separation
+\item Loop unrolling
+\end{enumerate}
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Muh Gainz}
+
+
+\begin{changemargin}{2cm}
+Most performance gains from inlining.
+
+Decisions based on the call graph path profiling. 
+
+But: behaviour of function \texttt{foo} may be very different when called from \texttt{B} than when called from \texttt{D}. 
+
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/callpaths.png}
+\end{center}
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Another Call Graph}
+
+
+Example 2 of relationships between functions.\\
+Numbers on edges represent the number of invocations:
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/callpaths2.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The POGO View of the World}
+
+When considering what to do here, POGO takes the view like this:
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/callpaths3.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The POGO View of the World}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/callpaths4.png}
+\end{center}
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Page Locality}
+
+
+\begin{changemargin}{1cm}
+Call graph profiling data also good for packing blocks.
+
+Put most common cases nearby.\\
+Put successors after their predecessors.
+
+Packing related code = fewer page faults (cache misses).
+
+Calling a function in same page as caller =  ``page locality''.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Block Layout}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/blocklayout.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Dead Code?}
+
+
+\begin{changemargin}{1cm}
+According to the author, ``dead'' code goes in its own special block. 
+
+Probably not truly dead code (compile-time unreachable).
+
+Instead: code that never gets invoked in training.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Benchmark Results}
+ \begin{changemargin}{2cm}
+OK, how well does POGO work?
+
+The application under test is a standard benchmark suite (Spec2K):
+\end{changemargin}
+
+\begin{center}
+\begin{tabular}{l|l|l|l|l|l}
+	\textbf{Spec2k:} & \textbf{sjeng} & \textbf{gobmk} & \textbf{perl} & \textbf{povray} & \textbf{gcc}\\ \hline
+	\textbf{App Size:} &  {Small} & {Medium} & {Medium} & {Medium} & {Large} \\ \hline
+	\textbf{Inlined Edge Count} & 50\% & 53\% & 25\% & 79\% & 65\% \\ \hline
+	\textbf{Page Locality} & 97\% & 75\% & 85\% & 98\% & 80\% \\ \hline
+	\textbf{Speed Gain} & 8.5\% & 6.6\% & 14.9\% & 36.9\% & 7.9\% \\ 
+\end{tabular}
+\end{center}
+
+ \begin{changemargin}{2cm}
+We can speculate about how well synthetic benchmarks results translate to real-world application performance\ldots
+\end{changemargin}
+
+\end{frame}
+
 
 
 \end{document}
