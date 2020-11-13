@@ -2,302 +2,68 @@
 
 \begin{document}
 
-\lecture{20 --- Performance Case Study, Performance Culture}{\term}{Patrick Lam}
+\lecture{20 --- Self-Optimizing Software}{\term}{Jeff Zarnett}
 
-\section*{Making Firefox Fast}
+\section*{Self-Optimizing Software}
+Our previous discussion about compiler optimizations (and optimizing the compiler) was focused on things that the compiler can do at compile-time. But what about runtime? The compiler can't do much at runtime, but a sufficiently-smart program can change itself at runtime to be better. Better, in this case, meaning faster. But what about change? We'll start with the simple things, and move on to the more complex  and harder to get right. The simple stuff has to do with changing what's in memory, and well advance into changing the configuration, and finally, we'll consider changing the binary itself.
 
-Let's look at Mike Conley's Firefox Performance Updates,
-\begin{center}
-{\scriptsize
-\vspace*{-1em}
-\url{https://mikeconley.ca/blog/2018/02/14/firefox-performance-update-1/}
-}
-\end{center}
-\vspace*{-1em}
+\paragraph{Caching.} Your first thought about how a program might change itself for speed might be something like caching! Suppose that you keep track of the most popular exchange rates in memory, so that they are available faster than by going to the database. The management of the cache will be at runtime; the contents of the cache will be based on the actual usage. And, it will change over time to adapt to the patterns of usage: if today the exchange rate of CAD-EUR is popular, it will appear in the cache, and without any code changes if the exchange rate of CAD-GBP becomes popular, it goes in the cache and becomes faster to access. So, you \textit{do} technically get different behaviour at runtime, but this is not quite what we wanted to talk about in this topic. It's too easy, and your program should probably be doing it already.
 
-\begin{itemize}[noitemsep]
-\item don't use CPU animating out-of-view elements
-\item move db init off main thread
-\item keep better profiling data
-\item parallel painting for macOS
-\item lazily instantiate Search Service only when first search starts
-\item halve size of the blocklist
-\item refactor to reduce main-thread IO
-\item don't hold all frames of animated GIFs/APNGs in memory
-\item eliminate an unnecessary hash table
-\item use more modern compiler
-\end{itemize}
+\paragraph{Observe and change.} 
+The next idea relates to having your program's configuration change at runtime to adapt to observed behaviour. If there are multiple routes to the same outcome, we might decide at runtime which is the best. This is effective because our initial guess might not be correct, but also because conditions can change at any time.
 
-We can categorize most of these updates into the categories we've seen before:
-\begin{itemize}[noitemsep]
-\item do less work (or do it sooner/later);
-\item use threads (move work off main thread);
-\item track performance;
-\end{itemize}
-Which of the updates fall into which categories?
+If you've taken a course in databases, you should have been exposed to the idea of query processing: given a certain query (\texttt{SELECT id FROM... JOIN... WHERE...}), the database server comes up with an execution plan for how to carry it out. For a simple query, there might be only one answer. A more complex query will have multiple correct answers and the database server will do what it considers best. However, that is based on an estimated cost only. The server could, at least once, try out a different strategy and notice if it is better than the original plan. A lot of queries happen many times (or are extremely similar to already-observed queries), so remembering what worked is helpful. 
 
-\subsection*{Tab warming} We continue by examining one particular update, \emph{tab warming}, in detail:
-\begin{center}
-\scriptsize
-\vspace*{-1em}
-\url{https://mikeconley.ca/blog/2018/01/11/making-tab-switching-faster-in-firefox-with-tab-warming/}.
-\end{center}
-\vspace*{-1em}
+Building on that, the database server could change how it organizes the data based on what would be most efficient for the most common usage patterns. You can do the same in your program. For an analogy, I can sort the Excel sheet with student grades by either student ID (20xxxxxx) or user ID, based on whatever I use more. So if it is during the term and I'm entering grades, I probably use student ID as the way the file is sorted so I can get efficiently where I need to go. And I could always change that organization if it makes sense, such as after the end of term when people may e-mail me (including their user ID, but not student ID). The idea of re-structuring data storage can also apply to files on disk.
 
-\hfill ``Maybe this is my Canadian-ness showing, but I like to think of it almost like coming in from shoveling snow off of the driveway, and somebody inside has \emph{already made hot chocolate for you}, because they knew you’d probably be cold.'' --- Mike Conley
-
-Consider switching tabs. Previously, Firefox would request a paint of the newly-selected tab and wait for the rendering to be available before switching the tab.
-
-The idea is to reduce user-visible latency by predicting an imminent tab switch. How do you know that the user is about to switch tabs? When the user has a mouse, then the mouse cursor will hover over the next tab.
-
-\begin{quote}
-Assuming a sufficiently long delay between hover and click, the tab switch should be perceived as instantaneous. If the delay was non-zero but still not long enough, we will have nonetheless shaved that time off in eventually presenting the tab to you.
-
-And in the event that we were wrong, and you weren’t interested in seeing the tab, we eventually throw the uploaded layers away.
-\end{quote}
-
-The blog post does not report performance numbers (but bug 1430160 discusses how to collect them).
-
-\subsection*{Firefox in general}
-
-Try: ``about:mozilla'' in Firefox. On a Quantum Flow-enabled version, you'll see
-
-\begin{center}
-\emph{The Beast adopted new raiment and studied the ways of Time and Space and Light and the Flow of energy through the Universe. From its studies, the Beast fashioned new structures from oxidised metal and proclaimed their glories. And the Beast’s followers rejoiced, finding renewed purpose in these teachings.}
-
-\hfill \emph{from The Book of Mozilla, 11:14}
-\end{center}
-
-In 2017, Mozilla released Electrolysis (E10s)~\cite{electrolysis}.
-which leverages multicore processors by using multiple OS-level
-processes. (Chrome has always done this, but Firefox attempts to also
-keep memory usage
-down~\cite{goldilocks}.
-Beyond internal architecture issues, handling Add-Ons (now
-WebExtensions) was perhaps the most challenging part of going
-multi-process.
-
-Note the connection to different thread/process models.
-Chrome is one-process-per-tab, while Firefox multiplexes tabs across
-the 4 content processes (``hardware threads'', by analogy). Limiting
-the number of tabs also limits the memory consumption of the browser:
-we don't have arbitrary numbers of renderer state.
-
-\begin{center}
-\includegraphics[width=.9\textwidth]{images/L19-chrome-vs-firefox.png}
-\end{center}
-Source: Ryan Pollock~\cite{goldilocks}
-
-As a crude summary, Electrolysis works on splitting across processes
-while the newer Quantum Flow leverages multithreading and other
-improvements.  Quantum Flow uses the Rust programming language and its
-``fearless concurrency'' (in Rust-speak). Rust should probably be part
-of a future revision of the ECE 459 curriculum. But we'll focus on
-Firefox here.
-
-\subsection*{Quantum Flow}
-Here's a retrospective of the Quantum Flow project:
-\begin{center}
-\url{https://ehsanakhgari.org/blog/2017-09-21/quantum-flow-engineering-newsletter-25}
-\end{center}
-
-To sum up, they formed a small team and did the following.
-\begin{enumerate}[noitemsep]
-\item Measure slowness: gather information, instrument Firefox, collect profiling data and measurements. Prioritize issues.
-\item Gather help: convince other teams to pitch in with perf improvements. Examples: front-end team (reduce flushes, timers); layout team (reflow performance).
-\item Fix all the things! (Or at least the most important ones).
-\end{enumerate}
-Given the short timeline they gave themselves (6 months) and the limited resources, an important part of their work was convincing others to help.
-They triaged 895 bugs and fixed 369 of them. The weekly Quantum Flow Engineering Newsletter was a key motivational tool.
-
-After the project wound down, they aimed to distribute responsibility for perf improvements across the entire project.
-
-\section*{Firefox Telemetry}
-Firefox's Telemetry feature collects lots of information from Firefox
-users.  Idea: collect data before hacking away at things.  Firefox collects hundreds of
-gigabytes of anonymous metrics per day while browsing and makes it all available to
-the public.  One can view this as an analogy of CPU profiling on a
-massively distributed context. This data is collected much less often than
-CPU profiling data but at a much broader scope.
-\begin{center}
-\url{https://telemetry.mozilla.org/}
-\end{center}
-If you are running Firefox and want to see what it is collecting:
-\begin{center}
-\url{about:telemetry}
-\end{center}
-
-You can view distributions of telemetry probes (in the form of
-histograms). You can also make your own dashboard based on Firefox
-Telemetry data and Mozilla has infrastructure for their developres to
-formulate and evaluate their own queries.
-
-Example questions:
-\begin{itemize}[noitemsep]
-\item Is Firefox the user's default browser? (69\% yes)
-\item Does e10s make startup faster? (no, slower)
-\item Which plugins tend to freeze the browser on load? (Silverlight and Flash)
-\end{itemize}
-Can see evolution of data over time.
-
-Firefox developers can propose new telemetry probes which are reviewed
-for data privacy\footnote{Mozilla Data Collection Practices: \url{https://wiki.mozilla.org/Firefox/Data_Collection}} as well as through normal code review channels.
-
-\paragraph{Pings.} Firefox phones the data home using so-called ``pings''.
-Firefox sends a ``main ping'' every 24 hours, upon shutdown, environment change,
-and crash. There are other types of pings as well. Pings get sent either by Firefox
-or by a helper program, Pingsender, when Firefox isn't running. Presumably they
-are sent over the network as compressed JSON to a central server.
-
-Here's the common ping structure:
-
-{\scriptsize
-\begin{verbatim}
-{
-  type: <string>, // "main", "activation", "optout", "saved-session", ...
-  id: <UUID>, // a UUID that identifies this ping
-  creationDate: <ISO date>, // the date the ping was generated
-  version: <number>, // the version of the ping format, currently 4
-
-  application: {
-    architecture: <string>, // build architecture, e.g. x86
-    buildId: <string>, // "20141126041045"
-    name: <string>, // "Firefox"
-    version: <string>, // "35.0"
-    displayVersion: <string>, // "35.0b3"
-    vendor: <string>, // "Mozilla"
-    platformVersion: <string>, // "35.0"
-    xpcomAbi: <string>, // e.g. "x86-msvc"
-    channel: <string>, // "beta"
-  },
-
-  clientId: <UUID>, // optional
-  environment: { ... }, // optional, not all pings contain the environment
-  payload: { ... }, // the actual payload data for this ping type
-}
-\end{verbatim}
-}
-
-Pings contain scalars (counts, booleans, strings) and histograms. A histogram collects
-bucketed data (think grade distributions). Both scalars and histograms can be keyed, e.g.
-how often searches happen for which search engines.
-
-\section*{Laws of Performant Software}
-
-Suppose you want to write fast programs and you like checklists and handy rules. If so, you are in luck, because there is Crista's Five Laws of Performant Software~\cite{lpsw}. 
-
-\paragraph{1. Programming language $<<$ Programmers' awareness of performance.}
-There is no programming language that is magic, whether good or evil. All the major programming languages allow you to write programs that perform well or badly. 
-
-There's a lot of C-elitism in the world, and then there's the back-in-my-day-sonny people who claim assembly was best, and they also had to walk to school in the snow, uphill both ways.  High level languages give you lots of options... Do I use an array? A vector? A list? And yes, some of the fancy tools you get are syntactic sugar: they are convenient from the programmer's point of view, but what do they do behind the scenes? If the performance is not what you expect, there is probably be a better way to do it in the high level language.
-
-I'll add my own asterisk on this rule: some languages lend themselves better to parallelization than others. A language may force a certain way of thinking, based on its rules (e.g., functional programming languages). But there is no reason why the way of thinking can't be applied in another language.
+The observe-and-change strategy can also apply when invoking external services (external as in, over the internet). Suppose there are three different servers where we can send messages and we'll measure and remember how long it took to get a response from that server. The fastest server might be the one that is the closest geographically, but that server might be very busy, so it might be faster to communicate with a server that's less busy but farther away. Maybe you send 8 out of every 10 messages to the server that was most recently determined to be the fastest, and one to each of the other two servers. You might discover that your current guess at the fastest server is wrong and it's better to switch your primary.
 
 
-\paragraph{2. $d(f^{\tau}(x), f^{\tau}(y)) > e^{\alpha\tau} d(x, y)$ or small details matter.} This complicated formula is from the butterfly effect (chaos theory). If two versions of the code are $x$ and $y$, the difference between the performance outcomes $f(x), f(y)$ is much larger than the difference between the code.
+\paragraph{Genetic algorithms.}
+If you've taken an advanced course on algorithms, you might have covered genetic algorithms in some detail. This isn't going to be a replacement for that, but will just give you an idea of how the idea can be used. First, a quick three-paragraph explainer on genetic algorithms~\cite{genetic}.
 
-A small code change can have a huge impact. Did you fix a memory leak? The addition of one \texttt{free()} call is a single line code change but can, in the long run, have a dramatic impact on performance. Is caching used properly? Can you use a faster serialization algorithm? 
+A genetic algorithm is inspired by the idea of natural selection. Our program is trying to solve a particular problem. A number of candidate solutions are created (usually, randomly) and they are evaluated for their fitness: how well do they solve the problem? Solutions with a higher fitness have a higher chance of continuing forward into the next group of candidates, called the next generation. At each generation, good solutions from the previous generation are combined (if possible) and/or mutated randomly to see if that makes the solution better. This process repeats until a sufficiently-optimal solution is found, or a fixed number of generations have been evaluated. Thus, solutions with good qualities ``reproduce'' and move forward in the simulation, and those with bad qualities ``die out'' and we do not continue down that path. If we do this well, eventually we end up with a solution that's good, or at least good enough.
 
-Basically: don't overlook the small stuff. It's tempting to think that huge major architectural changes are the solution to everything; but there are plenty of gains to be found in the small things.
+This works for the kind of problem where we, first of all, have some parameters to configure. If there is nothing to configure, there's nothing to change or evolve. We also need a fitness function that allows us to evaluate how well the problem is being solved. This function cannot be binary (pass/fail) because that doesn't show whether a given solution A is better or worse than solution B; instead we want a continuous (in the mathematical sense) definition of fitness so we can say solution A with 84.1 is better than B with 81.0.
 
-\paragraph{3. corr(performance degradation, unbounded resource usage) > 0.9.}
-There is a very high correlation between performance degradation and unbounded use of resources. Often times we focus on functionality: the software must have the following 847~251 features! But if you want a program that scales you need to think in terms of operation, not functionality.
+Of course, a genetic algorithm does not necessarily guarantee the best possible outcome. It is possible that the fitness function tends towards a local-maximum rather than the global one, so we get a good solution but not the best. Similarly, the fitness of a solution might be evaluated rarely or take a long time, making the process of finding a good solution slow.
 
-Resources need to be limited. If there aren't hard limits, eventually a resource will be exhausted. If the program starts threads, use a thread pool and the thread pool should have a fixed size. Is there a cache? It needs a maximum size. If you need to read input, don't use a function that reads an entire line (of arbitrary length). Furthermore your program needs design effort given to what happens when resources are exceeded. So you decide to set a request queue size; once that queue is full, further requests are rejected in some well-understood manner. 
+Right, with that in mind, you might ask how genetic algorithms help in making your program faster. The typical use for a genetic algorithm is something like designing an antenna or an airplane wing where making random changes gives some numbers. We can do the same with a generic program, if ti has the right properties and what we're trying to do is optimize our configuration parameters.
 
-\paragraph{4. Performance improvements = log(controlled experiments)}
-If you want your code to be faster you have to know why it is slow. It's okay not to know the answers, but not knowing how to find out is a problem. Don't guess; measure.
-
-
-\paragraph{5. N*bad != good.}
-No amount of nodes, cores, memory, etc, will save you from poorly-written code. Throwing more hardware at the problem is expensive and ineffective in the long term. Bad code is still bad no matter how much hardware it runs on. 
-
-\section*{Performance Tips}
-
-While we're on the soapbox, a few more small things to note from~\cite{preopt} about how one might write code in a performant as well as maintainable way.
-
-\paragraph{Understand the order of magnitude that matters.} If you are writing code where 100 CPU cycles matters, then a function that will acquire a lock through some sort of shared-memory interlocked instruction then this instruction is performance murder. And it might be even worse if lock acquisition fails and you get blocked for 100~000 cycles trying to acquire the lock... On the other hand, if you have a network intensive then the 100 cycle stuff does not matter even the smallest bit because it is lost in the noise of the network.
-
-\paragraph{Plan for the worst case scenario.} I don't mean for the nuclear apocalypse, as much fun as that might be. As~\cite{preopt} wrote:
-
-\begin{quote}
-What happens if that lock is held for longer than expected, because the system is under load and the scheduler is overloaded? And what if the owning thread was preempted while holding the lock, and now will not get to run again for quite some time? What happens if the network is saturated because a big news event is underway, or worse, the phone network is intermittently cutting out, the network cable has been unplugged, etc.? What about the case where, because a user has launched far too many applications at once, your memory-intensive operation that usually enjoys nice warmth and locality suddenly begins waiting for the disk on the majority of its memory accesses, due to demand paging? These things happen all the time.
-
-In each of these situations, you can end up paying many more orders of magnitude in cost than you expected under ordinary circumstances. The lock acquisition that usually took 100 CPU cycles now takes several million cycles (as long as a network roundtrip), and the network operation that is usually measured in milliseconds is now measured in tens of seconds, as the software painfully waits for the operation to time out. And your ``non-blocking'' memory-intensive algorithm on the UI thread just caused a hang, because it's paging like crazy.
-\end{quote}
-
-No doubt you have seen these sorts of things as well and it is an awful user experience. The spinning beach ball of death and the ``Not Responding'' added to the title bar are all symptoms of this situation. 
-
-\paragraph{Acknowledge and plan for asynchrony.} A quick example from~\cite{preopt}: suppose that Jordan is writing code to return a list of fonts to be used in the UI. The code checks a local font cache, and if that is already initialized, returns the fonts found in the cache in a List object. If the cache is not initialized, however, the data needs to be loaded, perhaps from the printer (which will dutifully tell you what fonts it can print out). Morgan intends to use this list of fonts in the UI of the program but is unaware that in certain circumstances this call will take much longer (that is, when the cache is not initialized).
-
-Supposing that the API just returns a \texttt{List<Font>}, it is not obvious to Morgan where these come from. And in local testing on the dev machine with nothing on it and nothing else doing and the printer is always turned on, and rainbows and unicorns are present. Thus even if the cache is not initialized it is ``fast enough''. But in the real world, of course, the printer will be down and unicorns are nowhere to be found and it runs up against some hard timeout of 20 seconds. 
-
-If, however, Jordan's API now has a return type of \texttt{Task<List>} (generify as desired), then it is obvious to Morgan that there is something asynchronous going on here at least some of the time. With this information in hand, the UI won't wait for this task and we might even convince Jordan to give us partial results (so we can draw the UI elements as backing data arrives) or at the very least, a progress bar. Users love progress bars. They are wildly inaccurate and not super informative even if they are accurate, but at least they give the user the impression that something is happening.
-
-That actually leads us down a side debate about how to make the program appear faster than it is by some UI trickery and psychological ``hacks'', but that is beyond what we want to talk about here...
-
-\section*{Performance Culture}
-
-Now let's take it up a level: how do you make performance an important aspect of the culture of development of a project. The source for this section is~\cite{perfculture}.
-
-The author's recommendations of warning signs that performance culture is off the rails:
+Let's return to the subject of Google Maps. In our earlier discussion on early-phase termination, we tried to brainstorm ideas about how potential routes are generated and how we know if we have enough or a good-enough route. In the discussion, we will imagine that the decision of when to terminate the search is based on when we have a ``good enough'' solution. Then there are the various parameters that go into generating a solution, which I'll guess to be something like:
 
 \begin{itemize}
-\item Answering the question, ``how is the product doing on my key performance metrics,'' is difficult.
-\item Performance often regresses and team members either don't know, don't care, or find out too late to act.
-\item Blame is one of the most common responses to performance problems (either people, infrastructure, or both).
-\item Performance tests swing wildly, cannot be trusted, and are generally ignored by most of the team.
-\item Performance is something one, or a few, individuals are meant to keep an eye on, instead of the whole team.
-\item Performance issues in production are common, and require ugly scrambles to address (and/or cannot be reproduced).
+	\item Number of routes to evaluate
+	\item Heuristic for generating routes to evaluate
+	\item Decay of traffic information reported by other motorists
+	\item Time of day and month and if it's a holiday
+	\item Search radius for alternate routes
 \end{itemize}
 
-As tempting as it is to say these are all technical issues, they are really human problems. It would obviously be preferable to start with a good performance culture in the first place, but that is not always going to happen. But suppose you are already in a hole. The usual course of action is to stop and say to yourself ``I appear to be in a hole... I know, I'll dig my way out!''. Maybe I am cynical. The right thing to do would be stop digging, of course...
+It is Google, after all, so they probably consider many more parameters or use a completely different mechanism. It might be very difficult to choose what the correct values for these parameters are (especially if they vary by time of day, day of the week, on holidays, etc). Changing them by hand probably does not work, but letting a genetic algorithm choose the values based on experimenting and trading off the quality of the solution against the time to come up with it. We might consider a solution that only comes up with awful routes to fail, even if it gets them nearly instantly. And we might consider the successful solution one that comes up with a route that is optimal or nearly-optimal in the shortest time.
 
-Change has to come from both the top down and the bottom up. Management needs to make performance a priority: ask questions, demand rigour... while at the same time, people doing the development need to understand the performance of what they write, making practice improvements. Both sides need to have zero tolerance for regression.
+One reason why genetic algorithms might be a good choice for this kind of problem is that the problem is nonlinear: that is, we cannot treat each parameter as an independent variable and change just one and expect that the change in output is only a result of the change of the one input variable and not also an interaction of one variable with others~\cite{genetic}.
 
-If only one person is responsible for performance, this will not work. One person could not reasonably keep up with the rest of the team. If the other developers don't have performance in mind when writing, it would mean the key performance person would spend unnecessary time rewriting things when the it could have been right in the first place. If this isn't convincing, think about unit tests. Could you really ``outsource'' the writing of all unit tests to one person? And would code quality be the same if you did?
+Perhaps this takes away some of the mystery of genetic algorithms. Maybe you're thinking this isn't really self-optimizing software, it's just optimizing configuration parameters. Let's go up (well, really, down) a level, then. Now we'll move into changing the binary itself.
 
-The author is very adamant that poor performance culture is management's fault. Managers need to budget time, reward the work, and encourage performance work. Managers who don't understand performance culture are likely to be caught by surprise and blame things. 
+\paragraph{Hotspot.}
+The previous discussion of compiler optimizations talked about all the things that compiler can do to make the program more efficient. Some of them are always a clear win. Precomputing something or skipping unnecessary code is always going to be better than the alternative. Other optimizations are not. Let's consider the decision about inlining: sometimes it's good, but sometimes it doesn't help or makes things worse. In those cases, the compiler has to take a decision about whether to do it or not and that's what is in the binary.
 
-Consider the following comparison from~\cite{perfculture}:
+In JVM-languages like Java, the virtual machine itself can do some optimization because of the just-in-time (JIT) compiler. The original program is turned into the intermediate representation by the Java compiler, and then there's a second chance at runtime! Oracle's documentation tell us that there's actually two different JIT compilers; one for clients and one for servers. The client one produces its output faster, but that code produced will be less efficient. The server one takes more time and more resources to produce slightly better code. 
 
-\begin{quote}
-Manager A gives lip service to performance culture. She, however, packs every sprint schedule with a steady stream of features -- ``we've got to crush competitor Z and must reach feature parity!'' -- with no time for breaks in-between. She spends all-hands team meetings praising new features, demos aplenty, and even gives out a reward to an engineer at each one for ``the most groundbreaking feature.'' As a result, her team cranks out features at an impressive clip, delivers fresh demos to the board every single time, and gives the sales team plenty of ammo to pursue new leads. There aren't performance gates and engineers generally don't bother to think much about it.
+The major advantage that the JIT compiler has is being able to observe the runtime behaviour of the program and then change its decision. If we see that, for example, inlining would be helpful but the original decision was not to do it, we can change that decision. This is very helpful in scenarios like inlining, because we'll have the function call overhead every single time and therefore every call to the function increases the penalty of getting the decision wrong. Being able to change our decision is less helpful when it comes to something like a branch prediction, because the hardware will most likely save us if our prediction isn't very good (see our earlier discussion on this topic).
 
-Manager B takes a more balanced approach. She believes that given the competitive landscape, and the need to impress customers and board members with whizbang demos, new features need to keep coming. But she is also wary of building up too much debt in areas like performance, reliability, and quality for areas she expects to stick. So she intentionally puts her foot on the brake and pushes the team just as hard on these areas as she does features. She demands good engineering systems and live flighting of new features with performance telemetry built-in, for example. This requires that she hold board members and product managers at bay, which is definitely unpopular and difficult. In addition to a reward for ``the most groundbreaking feature'' award at each all-hands, she shows charts of performance progress and delivers a ``performance ninja'' award too, to the engineer who delivered the most impactful performance improvement. Note that engineering systems improvements also qualify!
-\end{quote}
+There are actually a few other things that can be done by the JIT compiler at runtime which are not likely to be doable at compile time. In particular, I want to focus on \textit{escape analysis} \textit{on-stack replacement}, and \textit{intrinsics} as outlined in~\cite{escape}. 
 
-But this is a startup, you object, why does it matter, because we need the minimum viable product and we needed it yesterday, and also, VCs like features. Well maybe, but architecture matters. There's time to fix things later, maybe, but you can really cripple your startup by choosing the wrong things early on. 
+Let's start with escape analysis. The purpose of this is to figure out if there are any side effects visible outside of a particular method. This allows some skipping of heap allocation and we can stack allocate them instead. The more interesting thing are possible lock optimizations: lock elision, lock coarsening, and nested locking. Lock elision: if the JIT compiler can determine that a lock serves no purpose -- e.g., a method or block is tagged as \texttt{synchronized} but it can only ever get called from one thread at a time -- there's no lock at all and therefore no setup an1d acquisition costs.  Lock coarsening: if there are sequential blocks sharing the same lock, the compiler can combine them to reduce the amount of locking and unlocking that needs to happen. The cuts down the overhead and we'll take it where we can. Nested locks: if the same lock is required repeatedly without releasing (in some recursive code, perhaps) this can also be combined so we don't have as much overhead lost to locking and unlocking.
 
-After a discussion of the why and the what, it is time to think about how to make it systematic. If it is not systematic, it will not get done and it will be dropped when in a time crunch. And development teams are always in a time crunch! This is why best practices have automated unit tests that run on every commit (or at least build). And much the same way, there need to be performance tests; if something has significantly regressed performance, the build failed and the commit is no good. This obviously requires that the tests be meaningful, testing effectively and not overly noisy. 
+On-stack replacement is a way that the virtual machine can switch between implementations of a particular method. This is helpful if a function is identified as important (sometimes called \textit{hot}) in that it runs frequently, then a more optimized version can be swapped in. This does have a slight cost, in that the virtual machine has to pause execution briefly to swap in the new stack frame (as it may be organized a differently), but it will be of some benefit in the long run if this function is truly a frequently-executed piece of code.
 
-Performance tests may be a bit too large and difficult to run for every commit or every build. Although it would be nice to know exactly which commit is the cause of the problem, you may want a test that runs overnight to see the long term trends. And thus a 12-hour test is probably unsuitable for this. The solution is, obviously, levels of test. 
+Intrinsics are highly-optimized versions of code that is precompiled for a specific platform (e.g., x86). If a particular piece of code is truly critical, then using that native implementation might be faster, but it might not always be available, depending on your platform. These were originally developed in \CPP~rather than Java so it's also done without the safety rails of Java. I guess in that sense you could say that \CPP~ is Java's unsafe mode. That might be a controversial statement. Now there's a different approach called Graal, which turns the Java bytecode directly into machine code. Adding an intrinsic is a complicated process 
 
-One company I worked for did something like this, although it was not performance specific. Before committing to the cvs repository (at this point nobody had heard of git  and it was the newest thing) there was a set of tests called ``precheckin''. Nobody forced a developer to run it, but you were definitely supposed to, and it just verified that everything would compile and some basic stuff worked. These tests took a few minutes to run. Then each build on the build server had a larger set of tests (``build''), including the precheckin material and a lot more, taking about 30-40 minutes to execute. Breaking this breaks the build (and gets everyone's attention). Then there were the ``regression'' tests that ran overnight (and ALL night).
+The hotspot approach is probably closest to what you might have imagined by reading the title of this topic: changing the binary code based on observed runtime behaviour of the program. Rust doesn't have the capability of detecting the parameters at runtime and swapping binary code them, because it has chosen not to have a runtime like the JVM. While that does mean that there's less overhead in general, the tradeoff is that any decisions made at compile time will remain so. Unless...
 
-In~\cite{perfculture} a zero tolerance rules advocated: anything that significantly regresses performance is reverted and re-worked. No exceptions, no questions, no pleading one's case, etc. If exceptions are allowed, exceptions quickly become the rule, and promises to fix something later are procrastinated endlessly.
-
-Obviously when code does more it should be expected to take longer, but then the test(s) should be adjusted as well. This is the same as when developing new features/changes, after all; unit tests are adjusted when code changes are introduced intentionally.
-
-\paragraph{Metrics} There are, roughly speaking, two categories of metrics:
-
-\begin{itemize}
-	\item \textit{Consumption}: measure resources consumed by running a test.
-	\item \textit{Observational}: measure the outcomes of running the test, from the view of outside the system.
-\end{itemize}
-
-Consumption metrics are the things that we can easily measure about the code run during the test: cache misses, TLB misses, context switches, number of I/Os, memory allocated, number of system calls (traps are interrupts, remember). Observational metrics are more along the lines of time it takes to run a dataset, or number of work items processed per unit time, etc.
-
-It might seem like observational metrics are all that we care about. End users care about the amount of time it takes to complete their work, or management/sales/marketing/C-levels care about the throughput and that's it. This matters, sure, but it's not enough to know the outcome; the consumption metrics are necessary to break down why the total time (or throughput) is what it is.
-
-Suppose a change is committed and the tests run and the total time it takes increases by 10\%. If that's all you know, you know that things got worse but have no data as to why. You can obviously read the source code or the diff and try to look for it, but even that might not tell you enough. If you see that memory allocations are reported and you have now allocated more memory than before,  at least you have a theory to start with on what's slowing down the code. It might not be that, it might be something else entirely, but it's a place to start. Memory allocation changes are relatively easy to spot though: there's a new call to \texttt{malloc} or a structure has been extended in some way. If it is a cache miss issue, finding that without the data is harder...
-
-Does this remind you of \texttt{printf} debugging? It's a little bit like that. But then again, you want to use this sort of thing for long running tests anyway. If the test is going to run for 4h it would be helpful to know where exactly in that four hours it went off the rails (on a crazy train!). 
-
-There's one more consideration and that is the variability between runs. In the ideal situation, there is consistent performance every run. That is probably too much to ask for and there will be some natural variation due to nondeterminism in computers. But a change that causes a wild change in the variance is also no good; a test that sometimes finishes in 0.5$x$ time and sometimes in 2$x$ time has a high variance and this will not be acceptable. 
-
-Be ready to dig deep: suppose a developer has introduced a change that is slow under rare circumstances. Those rare circumstances are not triggered until $n$ years later when a second developer introduces another change. The second change will be identified, at least initially, as the ``problem''. There's two ways to go about it; either fix the initial change or work around it. Which one is correct will depend very much on the circumstances, but at the very least both options should be considered. It's not about blame or not about fault; it's about improving the performance of the software.
-
+\paragraph{Rewriting the binary.}
 
 \input{bibliography.tex}
 

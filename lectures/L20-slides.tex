@@ -1,6 +1,7 @@
 \input{configuration}
 
-\title{Lecture 20 --- Performance Case Studies, Performance Culture}
+
+\title{Lecture 20 --- Self-Optimizing Software }
 
 \author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -13,818 +14,976 @@
 \begin{frame}
   \titlepage
 
-\end{frame}
+ \end{frame}
 
 
-\part{Firefox}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\part{OpenCL concepts}
+\frame{\partpage}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Case Study: Firefox Quantum}
+  \frametitle{Introduction}
+
+
+     \structure{OpenCL}: coding on a heterogeneous architecture.
+      \begin{itemize}
+        \item No longer just programming the CPU;\\ will also leverage the GPU.
+      \end{itemize}
+      OpenCL = Open Computing Language.\\
+      Usable on both NVIDIA and AMD GPUs.
+      
+    \begin{center}
+	\includegraphics[width=0.5\textwidth]{images/gpu.jpg}
+	\end{center}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{SIMT}
+
+
+
+  Another term you may see vendors using:
+
+  \begin{itemize}
+    \item {\bf S}ingle {\bf I}nstruction, {\bf M}ultiple {\bf T}hreads.
+    \item Runs on a vector of data.
+    \item Similar to SIMD instructions (e.g. SSE).\\
+     However, the vector is spread out over the GPU.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Other Heterogeneous Programming Examples}
+
+
+\begin{itemize}
+\item PlayStation 3 Cell\\
+\item CUDA
+\end{itemize}
+~\\[1em]
+[PS4: back to a regular CPU/GPU system, albeit on one chip.]
+
+See \url{https://www.youtube.com/watch?v=zW3XawAsaeU} for details on why it was hard to program for the PS3!
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{(PS3) Cell Overview}
+
+
+  Cell consists of:
+  \begin{itemize}
+    \item a PowerPC core; and
+    \item 8 SIMD co-processors.
+  \end{itemize}
+
+
+  \begin{center}
+    \includegraphics[scale=0.5]{images/cell}
+  \end{center}
+  \hfill (from the Linux Cell documentation)
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{CUDA Overview}
+  
+
+     Compute Unified Device Architecture:\\
+     NVIDIA's architecture for processing on GPUs.\\[1em]
+
+     ``C for CUDA'' predates OpenCL,\\
+     NVIDIA supports it first and foremost.
+      \begin{itemize}
+        \item May be faster than OpenCL on NVIDIA hardware.
+        \item API allows you to use (most) C++ features in CUDA; \\
+          OpenCL has more restrictions.
+      \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{GPU Programming Model}
+
+
+
+  The abstract model is simple:
+
+  \begin{itemize}
+    \item Write the code for the parallel computation ({\it kernel}) \\
+      \qquad separately from main code.
+    \item Transfer the data to the GPU co-processor \\
+      \qquad (or execute it on the CPU).
+    \item Wait \ldots
+    \item Transfer the results back.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Data Parallelism}
+
+
+  \begin{itemize}
+    \item Key idea: evaluate a function (or {\it kernel}) \\
+     \qquad over a set of points (data).\\
 
 \begin{center}
-\includegraphics[width=.6\textwidth]{images/L19-logo-quantum.png}
+\begin{tikzpicture}
+\foreach \x in {0,0.25,...,2}
+  \foreach \y in {0,0.25,...,2}
+    \draw (\x, \y) circle (0.25mm);
+\end{tikzpicture}
 \end{center}
 
-\end{frame}
+      Another example of data parallelism.\\[1em]
+    \item Another name for the set of points: {\it index space}.
+    \item Each point corresponds to a {\bf work-item}.
+  \end{itemize}~\\[1em]
 
+  Note: OpenCL also supports {\it task parallelism} (using different kernels),
+  but documentation is sparse.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Work-Items}
+
+
+    \structure{Work-item}: the fundamental unit of work in OpenCL.\\
+    Stored in an {\it n}-dimensional grid (ND-Range); 2D on previous slide.\\[1em]
+
+    OpenCL spawns a bunch of threads to handle work-items.
+    
+    \begin{center}
+	\includegraphics[width=0.2\textwidth]{images/peon.jpeg}\\
+	\hfill ``Ready to work!''
+	\end{center}
+    
+\end{frame}
+    
+\begin{frame}
+\frametitle{Work-Items}
+    
+    When executing, the range is divided into {\bf work-groups}, which
+      execute on the same compute unit.\\[1em]
+
+    The set of compute units (or cores) is called something different
+          depending on the manufacturer.
+          \begin{itemize}
+            \item NVIDIA - {\it warp}
+            \item AMD/ATI - {\it wavefront}
+          \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Work-Items: Three more details}
+
+
+  One thread per work item, each with a different thread ID.\\[1em]
+
+  You can say how to divide the ND-Range into work-groups, \\
+  or the system can do it for you.\\[1em]
+
+  Scheduler assigns work-items to warps/wavefronts until no more left.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Shared Memory}
+
+
+  There are many different types of memory available to you:
+
+
+\begin{itemize}
+\item private memory
+\item local memory
+\item global memory
+\item constant memory
+\end{itemize}
+
+There is also host memory (normal memory);\\ usually contains app data.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Some Firefox Perf Improvements, per Mike Conley}
+  \frametitle{Example Kernel}
 
-\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item don't animate out-of-view elements
-\item move db init off main thread
-\item keep better profiling data
-\item parallel painting for macOS
-\item lazily instantiate Search Service
-\end{itemize}
-\end{minipage}\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item halve size of the blocklist
-\item refactor to reduce main-thread IO
-\item don't hold all frames of animated GIFs/APNGs in memory
-\item eliminate unnecessary hash table
-\item use more modern compiler
-\end{itemize}
-\end{minipage}
+
+    Here's some traditional code to evaluate $C_i = A_iB_i$:
+
+\begin{lstlisting}[language=C]
+  void traditional_mul(int n, 
+                       const float *a, 
+                       const float *b, 
+                       float *c) {
+    int i;
+    for (i = 0; i < n; i++) c[i] = a[i] * b[i];
+  }
+\end{lstlisting}
+
+
+And as a kernel:
+\begin{lstlisting}[language=C]
+  kernel void opencl_mul(global const float *a, 
+                         global const float *b,
+                         global float *c) {
+    int id = get_global_id(0);  // dimension 0
+    c[id] = a[id] * b[id];
+  }
+\end{lstlisting}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Restrictions when writing kernels in OpenCL}
+
+
+  It's mostly C, but:
+  \begin{itemize}
+    \item No function pointers.
+    \item No bit-fields.
+    \item No variable-length arrays.
+    \item No recursion.
+    \item No standard headers.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{OpenCL's Additions to C in Kernels}
+
+
+In kernels, you can also use:
+  \begin{itemize}
+    \item Work-items.
+    \item Work-groups.
+    \item Vectors.
+    \item Synchronization.
+    \item Declarations of memory type.
+    \item Kernel-specific library.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Branches}
+
+The hardware will execute \emph{all} branches that any thread in a warp
+      executes---can be slow!\\[1em]
+
 
 \begin{center}
-\url{https://mikeconley.ca/blog/2018/02/14/firefox-performance-update-1/}
+	\includegraphics[width=0.5\textwidth]{images/whynotboth.jpg}
 \end{center}
 
 \end{frame}
 
-\begin{frame}
-\large
-\frametitle{We've seen this before:}
-\begin{itemize}
-\item do less work (or do it sooner/later);
-\item use threads (move work off main thread);
-\item measure performance;
-\end{itemize}
-Which of the updates fall into which categories?
-\end{frame}
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Branches in kernels}
+
+  \codelisting{images/branch.cpp}
+
+    
+    In other words: an {\tt if} statement will cause each thread to execute
+      both branches; we keep only the result of the taken branch.\\[1em]
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Loops in kernels}
+
+  \codelisting{images/loop.cpp}
+
+      
+    A loop will cause the workgroup to wait for the maximum number of
+      iterations of the loop in any work-item.\\[1em]
+
+  Note: when you set up work-groups, best to arrange for all work-items in
+  a workgroup to execute the same branches \& loops.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Synchronization}
+
+
+
+Different workgroups execute independently.\\
+You can only put barriers and memory fences between work-items in the
+      same workgroup.\\[1em]
+
+OpenCL supports:
+  \begin{itemize}
+    \item Memory fences (load and store).
+    \item Barriers.
+    \item {\tt volatile} (beware!)
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\part{Programming with OpenCL}
+\frame{\partpage}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Introduction}
+
+
+
+  Today, we'll see how to program with OpenCL.
+
+  \begin{itemize}
+    \item We're using OpenCL 1.1.
+    \item There is a lot of initialization and querying.
+    \item When you compile your program, include {\tt -lOpenCL}.
+  \end{itemize}~\\[1em]
+
+  You can find the official documentation here:
+
+  \qquad \url{http://www.khronos.org/opencl/}
+
+  More specifically:\\
+  \quad {\scriptsize \url{http://www.khronos.org/registry/cl/sdk/1.1/docs/man/xhtml/}}
+  \vfill
+  Let's just dive into an example.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{First, reminders}
+
+
+  \begin{itemize}
+    \item All data belongs to an {\bf NDRange}.
+    \item The range can be divided into {\bf work-groups}. (in software)
+    \item The work-groups run on {\bf wavefronts/warps}. (in hardware)
+    \item Each wavefront/warp executes {\bf work-items}.
+  \end{itemize}~\\[1em]
+
+  \alert{All} branches in a wavefront/warp should execute the same path.~\\[1em]
+
+  If an iteration of a loop takes {\tt t}:\\ when one work-item executes 100
+    iterations,\\ the total time to complete the wavefront/warp is {\tt 100t.}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Simple Example}
+\frame{\partpage}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Some Firefox Perf Improvements, per Mike Conley}
+  \frametitle{Simple Example (1)}
 
-\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item don't animate out-of-view elements
-\item move db init off main thread
-\item keep better profiling data
-\item parallel painting for macOS
-\item lazily instantiate Search Service
-\end{itemize}
-\end{minipage}\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item halve size of the blocklist
-\item refactor to reduce main-thread IO
-\item don't hold all frames of animated GIFs/APNGs in memory
-\item eliminate unnecessary hash table
-\item use more modern compiler
-\end{itemize}
-\end{minipage}
 
-\begin{center}
-\begin{minipage}{.6\textwidth}
-\large How?
-\begin{itemize}
-\item do less work (or do it sooner/later);
-\item use threads (move work off main thread);
-\item measure performance;
-\end{itemize}
-\end{minipage}
-\end{center}
+\begin{lstlisting}[language=C]
+// Note by PL: don't use this example as a template;
+// it uses the C bindings! Instead, use the C++ bindings.
+// source: pages 1-9 through 1-11,
+// http://developer.amd.com/wordpress/media/2013/07/
+//     AMD_Accelerated_Parallel_Processing_OpenCL_
+//     Programming_Guide-rev-2.7.pdf
 
-\end{frame}
+#include <CL/cl.h>
+#include <stdio.h>
 
-\begin{frame}
-\frametitle{Tab Warming}
-\begin{center}
-\url{https://mikeconley.ca/blog/2018/01/11/making-tab-switching-faster-in-firefox-with-tab-warming/}.
-\end{center}
+#define NWITEMS 512
 
-\begin{minipage}[t]{.5\textwidth}
-\vspace{0pt}
-\includegraphics[width=.95\columnwidth]{images/L19-hot-chocolate.jpg}
-\end{minipage}%
-\begin{minipage}[t]{.5\textwidth}
-\vspace{3em}
-``Maybe this is my Canadian-ness showing, but I like to think of it almost like coming in from shoveling snow off of the driveway, and somebody inside has \emph{already made hot chocolate for you}, because they knew you’d probably be cold.'' --- Mike Conley
-\end{minipage}
+// A simple memset kernel
+const char *source =
+"__kernel void memset( __global uint *dst )             \n"
+"{                                                      \n"
+"   dst[get_global_id(0)] = get_global_id(0);           \n"
+"}                                                      \n";
 
-\end{frame}
-
-\begin{frame}
-\frametitle{How Can Tab Warming Work?}
-\Large
-
-Before: Firefox requests paint of newly-active tab,\\
-and then waits for the result before switching.
-
-Idea: reduce user-visible latency by predicting an imminent tab switch.
-
-Q: How can we predict the future?
-
-Q': How can we predict which tab will be switched to?
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Predicting the future}
-\large
-
-A: When the user has a mouse, then the mouse cursor will hover over the next tab.
-
-\vspace*{1em}
-\begin{quote}
-Assuming a sufficiently long delay between hover and click, the tab switch should be perceived as instantaneous. If the delay was non-zero but still not long enough, we will have nonetheless shaved that time off in eventually presenting the tab to you.
-
-And in the event that we were wrong, and you weren’t interested in seeing the tab, we eventually throw the uploaded layers away.
-\end{quote}
-
-Blog post does not report performance numbers.
-\end{frame}
-
-\begin{frame}
-\begin{center}
-\includegraphics[width=\textwidth]{images/L19-about-mozilla.png}
-\end{center}
-\end{frame}
-
-\begin{frame}
-\frametitle{Faster Firefox Step 1: Electrolysis}
-
-\Large
-Electrolysis (2017): multiple OS-level processes.\\
-(Think about threading models).
-
-\begin{center}
-\includegraphics[width=.9\textwidth]{images/L19-chrome-vs-firefox.png}
-\end{center}
-\end{frame}
-
-\begin{frame}
-\frametitle{Chrome vs Firefox}
-
-\Large
-Chrome: 1-process-per-tab.\\
-Firefox: 4 shared content processes.\\[1em]
-
-Firefox uses less memory (has less render state).
-
-Electrolysis challenges: \\
-\qquad internal architecture, and add-ons.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Electrolysis vs Flow}
-\large
-Two different Firefox projects:\\[1em]
-\begin{changemargin}{2em}
-Electrolysis = split across processes\\
-\begin{tabbing}
-Quantum Flow =~\=  leverage multithreading \\
-\> (using Rust's ``fearless concurrency''), \\
-\> plus other improvements.
-\end{tabbing}
-\end{changemargin}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Quantum Flow}
-\Large
-\begin{changemargin}{1cm}
-Steps:\\
-\begin{enumerate}
-\item Measure slowness \& prioritize
-\item Gather help
-\item Fix all (well, some of) the things!
-\end{enumerate}
-
-In 6 months:\\
-\qquad prioritized 895 bugs, fixed 369.\\
-Key tool: \\
-\qquad ``Quantum Flow Engineering Newsletter''.
-\end{changemargin}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{arewefastyet dot com}
-\includegraphics[width=.99\textwidth]{images/L19-arewefastyet.png}
-\end{frame}
-
-\begin{frame}
-\frametitle{about:telemetry}
-\includegraphics[width=.99\textwidth]{images/L19-about-telemetry.png}
-\end{frame}
-
-\begin{frame}
-\frametitle{About Telemetry}
-\Large
-Idea: Ask questions first, act second.
-
-Collect data about Firefox usage, then start hacking.
-
-100s of GBs of anonymous metrics/day, \\
-publicly available.
-
-Analogous to CPU profiling, but massively distributed.
-\begin{itemize}
-\item collected much less often than CPU profiling data,\\
-but at much broader scope.
-\end{itemize}
-\begin{center}
-\url{https://telemetry.mozilla.org/}
-\end{center}
-\end{frame}
-
-\begin{frame}
-\frametitle{Example Telemetry Questions}
-\Large
-\begin{itemize}
-\item Is Firefox the user's default browser? (69\% yes)
-\item Does e10s make startup faster? (no, slower)
-\item Which plugins tend to freeze the browser on load? (Silverlight and Flash)
-\end{itemize}
-Can also see evolution of data over time.
-\end{frame}
-
-\begin{frame}
-\frametitle{ama}
-\Large
-
-Devs can propose new probes;\\
-reviewed for data privacy plus normal code review.
-\end{frame}
-
-\begin{frame}
-\frametitle{ping!}
-
-\Large
-Firefox sends pings:
-\begin{itemize}
-\item ``main ping'' every 24 hours;
-\item upon shutdown;
-\item upon environment change;
-\item upon abnormal shutdown.
-\end{itemize}
-Presumably compressed JSON to Mozilla servers.
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{common ping structure}
-\begin{verbatim}
+int main(int argc, char ** argv)
 {
-  type: <string>, // "main", "activation", "optout", ...
-  id: <UUID>, // a UUID that identifies this ping
-  creationDate: <ISO date>, // the date the ping was generated
-  version: <number>, // the version of the ping format
+   // 1. Get a platform.
+   cl_platform_id platform;
+   clGetPlatformIDs(1, &platform, NULL);
+  \end{lstlisting}
 
-  application: {
-    architecture: <string>, // build architecture, e.g. x86
-    buildId: <string>, // "20141126041045"
-    // etc
-  },
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-  clientId: <UUID>, // optional
-  environment: { ... }, // optional, not all pings contain
-  payload: { ... }, // actual payload data for this ping type
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Explanation (1)}
+
+
+    Include the OpenCL header.\\[1em]
+
+    Request a platform (also known as a host).\\[1em]
+
+    A platform contains {\it compute devices}:
+      \begin{itemize}
+        \item GPUs or CPUs.
+      \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Simple Example (2)}
+
+
+
+  \begin{lstlisting}[language=C]
+   // 2. Find a gpu device.
+   cl_device_id device;
+   clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU,
+                  1,
+                  &device,
+                  NULL);
+
+   // 3. Create a context and command queue on that device.
+   cl_context context = clCreateContext(NULL,
+                                        1,
+                                        &device,
+                                        NULL, NULL, NULL);
+   cl_command_queue queue = clCreateCommandQueue(context,
+                                                 device,
+                                                 0, NULL);
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Explanation (2)}
+
+
+    Request a GPU device.\\[1em]
+
+    Request a OpenCL context (representing all of OpenCL's state).\\[1em]
+
+    Create a command-queue: \\
+ get OpenCL to do work by telling it to run
+      a kernel in a queue.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Simple Example (3)}
+
+
+  \begin{lstlisting}[language=C]
+   // 4. Perform runtime source compilation, and obtain
+   //    kernel entry point.
+   cl_program program = clCreateProgramWithSource(context,
+                                                  1,
+                                                  &source,
+                                                  NULL,
+                                                  NULL);
+   clBuildProgram(program, 1, &device, NULL, NULL, NULL);
+   cl_kernel kernel = clCreateKernel(program, "memset",
+                                     NULL);
+
+   // 5. Create a data buffer.
+   cl_mem buffer = clCreateBuffer(context,
+                                  CL_MEM_WRITE_ONLY,
+                                  NWITEMS * sizeof(cl_uint),
+                                  NULL, NULL);
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Explanation (3)}
+
+
+    We create an OpenCL ``program'' (runs on the compute unit):
+      \begin{itemize}
+        \item kernels;
+        \item functions; and
+        \item declarations.
+      \end{itemize}
+    In this case, we create a kernel called {\tt memset} from {\tt source}.\\
+    OpenCL may also create programs from binaries\\
+      (may~be~in~intermediate~representation).\\[1em]
+
+    Next, we need a {\it data buffer} (enables inter-device communication).\\[1em]
+
+    This program does not have any input, \\
+      so we don't put anything into
+      the buffer (just declare its size).
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Simple Example (4)}
+
+
+
+  \begin{lstlisting}[language=C]
+   // 6. Launch the kernel. Let OpenCL pick the local work
+   //    size.
+   size_t global_work_size = NWITEMS;
+   clSetKernelArg(kernel,0, sizeof(buffer), (void*)&buffer);
+   clEnqueueNDRangeKernel(queue,
+                          kernel,
+                          1,    // dimensions
+                          NULL, // initial offsets
+                          &global_work_size, // number of
+                                             // work-items
+                          NULL, // work-items per work-group
+                          0, NULL, NULL);  // events
+   clFinish(queue);
+
+   // 7. Look at the results via synchronous buffer map.
+   cl_uint *ptr;
+   ptr = (cl_uint *)clEnqueueMapBuffer(queue, buffer,
+                                       CL_TRUE, CL_MAP_READ,
+                                       0, NWITEMS *
+                                       sizeof(cl_uint),
+                                       0, NULL, NULL, NULL);
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Explanation (4)}
+
+
+    Set kernel arguments to {\tt buffer}.\\[.5em]
+    We launch the kernel, enqueuing the 1-dimensional index~space starting
+      at 0.\\[.5em]
+    We specify that the index space has {\tt NWITEMS} elements; \\and not to
+      subdivide the program into work-groups.\\[.5em]
+    There is also an event interface, which we do not use.\\[2em]
+
+    We copy the results back; call is blocking ({\tt CL\_TRUE});\\
+    \qquad hence we don't need an explicit {\tt clFinish()} call.\\[.5em]
+    We specify that we want to read the results back into buffer.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Simple Example (5)}
+
+
+
+  \begin{lstlisting}[language=C]
+   int i;
+   for(i=0; i < NWITEMS; i++)
+       printf("%d %d\n", i, ptr[i]);
+   return 0;
 }
-\end{verbatim}
-\end{frame}
+  \end{lstlisting}
 
+  \begin{itemize}
+    \item The program simply prints {\tt 0 0}, {\tt 1 1}, \ldots, {\tt 511 511}.
+    \item Note: I didn't clean up or include error handling\\ for any of the
+      OpenCL functions.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Another Example}
+\frame{\partpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Ping contents}
-\Large
+  \frametitle{C++ Bindings}
 
-\begin{enumerate}
-\item Scalars (counts, booleans, strings)
-\item Histograms = bucketed data (like grade distributions)
-\end{enumerate}
 
-Both scalars and histograms can be keyed, \\
-e.g. how often searches happen for which search engines.
+    If we use the C++ bindings, we'll get automatic \\ resource release and
+      exceptions.
+      \begin{itemize}
+        \item C++ likes to use the RAII style
+          (resource~allocation~is~initialization).
+      \end{itemize}~\\
+    Change the header to {\tt CL/cl.hpp} and define
+      {\tt \_\_CL\_ENABLE\_EXCEPTIONS}.\\[.5em]
+    We'd also like to store our kernel in a file instead of a string.\\[.5em]
+    The C API is not so nice to work with.
+
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\part{Laws of Performant Software}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Vector Addition Kernel}
 
+
+    Let's write a kernel that adds two vectors and stores the result.\\
+    This kernel will go in the file {\tt vector\_add\_kernel.cl}.
+
+  \begin{lstlisting}[language=C]
+__kernel void vector_add(__global const int *A,
+                         __global const int *B,
+                         __global int *C) {
+ 
+    // Get the index of the current element to be processed
+    int i = get_global_id(0);
+ 
+    // Do the operation
+    C[i] = A[i] + B[i];
+}
+  \end{lstlisting}
+
+    Other possible qualifiers: {\tt local}, {\tt constant} and {\tt private}.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Vector Addition (1)}
+
+
+  \begin{lstlisting}[language=C++]
+// Vector add example, C++ bindings (use these!)
+// source:
+//  http://www.thebigblob.com/getting-started-
+//        with-opencl-and-gpu-computing/
+
+#define __CL_ENABLE_EXCEPTIONS
+
+#include <CL/cl.hpp>
+
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <utility>
+#include <vector>
+ 
+int main() {
+    // Create the two input vectors
+    const int LIST_SIZE = 1000;
+    int *A = new int[LIST_SIZE]; 
+    int *B = new int[LIST_SIZE];
+    for(int i = 0; i < LIST_SIZE; i++) {
+        A[i] = i;
+        B[i] = LIST_SIZE - i;
+    }
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Vector Addition (2)}
+
+
+  \begin{lstlisting}[language=C++]
+    try { 
+        // Get available platforms
+        std::vector<cl::Platform> platforms;
+        cl::Platform::get(&platforms);
+
+        // Select the default platform and create a context
+        // using this platform and the GPU
+        cl_context_properties cps[3] = { 
+            CL_CONTEXT_PLATFORM, 
+            (cl_context_properties)(platforms[0])(), 
+            0 
+        };
+        cl::Context context(CL_DEVICE_TYPE_GPU, cps);
+ 
+        // Get a list of devices on this platform
+        std::vector<cl::Device> devices =
+            context.getInfo<CL_CONTEXT_DEVICES>();
+ 
+        // Create a command queue and use the first device
+        cl::CommandQueue queue = cl::CommandQueue(context,
+            devices[0]);
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\partpage
+  \frametitle{Explanation (2)}
+
+
+
+    You can define {\tt \_\_NO\_STD\_VECTOR} and use {\tt cl::vector}
+      (same with strings).\\[1em]
+    You can enable profiling by adding {\tt CL\_QUEUE\_PROFILING\_ENABLE}
+      as 3rd argument to {\tt queue}.
+
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Vector Addition (3)}
 
 
+
+  \begin{lstlisting}[language=C++]
+        // Read source file
+        std::ifstream sourceFile("vector_add_kernel.cl");
+        std::string sourceCode(
+            std::istreambuf_iterator<char>(sourceFile),
+            (std::istreambuf_iterator<char>())
+        );
+        cl::Program::Sources source(
+            1,
+            std::make_pair(sourceCode.c_str(),
+                           sourceCode.length()+1)
+        );
+ 
+        // Make program of the source code in the context
+        cl::Program program = cl::Program(context, source);
+ 
+        // Build program for these specific devices
+        program.build(devices);
+ 
+        // Make kernel
+        cl::Kernel kernel(program, "vector_add");
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Vector Addition (4)}
+
+
+  \begin{lstlisting}[language=C++]
+        // Create memory buffers
+        cl::Buffer bufferA = cl::Buffer(
+            context,
+            CL_MEM_READ_ONLY,
+            LIST_SIZE * sizeof(int)
+        );
+        cl::Buffer bufferB = cl::Buffer(
+            context,
+            CL_MEM_READ_ONLY,
+            LIST_SIZE * sizeof(int)
+        );
+        cl::Buffer bufferC = cl::Buffer(
+            context,
+            CL_MEM_WRITE_ONLY,
+            LIST_SIZE * sizeof(int)
+        );
+  \end{lstlisting}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Vector Addition (5)}
+
+  \begin{lstlisting}[language=C++]
+        // Copy lists A and B to the memory buffers
+        queue.enqueueWriteBuffer(
+            bufferA,
+            CL_TRUE,
+            0,
+            LIST_SIZE * sizeof(int),
+            A
+        );
+        queue.enqueueWriteBuffer(
+            bufferB,
+            CL_TRUE,
+            0,
+            LIST_SIZE * sizeof(int),
+            B
+        );
+ 
+        // Set arguments to kernel
+        kernel.setArg(0, bufferA);
+        kernel.setArg(1, bufferB);
+        kernel.setArg(2, bufferC);
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Laws of Performant Software}
+  \frametitle{Explanation (5)}
 
-Suppose you want to write fast programs...\\
-\quad And you like checklists and handy rules. 
 
-If so, you are in luck, because there is Crista's Five Laws of Performant Software!
+  {\tt enqueue*Buffer} arguments:
 
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/thelaw.png}
-\end{center}
+  \begin{itemize}
+    \item {\it buffer}
+    \item {\tt cl\_ bool} {\it blocking\_write}
+    \item {\tt ::size\_t} {\it offset}
+    \item {\tt ::size\_t} {\it size}
+    \item {\tt const void *} {\it ptr}
+  \end{itemize}
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Vector Addition (6)}
 
 
+  \begin{lstlisting}[language=C++]
+        // Run the kernel on specific ND range
+        cl::NDRange global(LIST_SIZE);
+        cl::NDRange local(1);
+        queue.enqueueNDRangeKernel(
+            kernel,
+            cl::NullRange,
+            global,
+            local
+        );
+ 
+        // Read buffer C into a local list
+        int* C = new int[LIST_SIZE];
+        queue.enqueueReadBuffer(
+             bufferC,
+             CL_TRUE,
+             0,
+             LIST_SIZE * sizeof(int),
+             C
+        );
+  \end{lstlisting}
 
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Vector Addition (7)}
+
+
+  \begin{lstlisting}[language=C++]
+        for(int i = 0; i < LIST_SIZE; i ++) {
+            std::cout << A[i] << " + " << B[i] << " = "
+                      << C[i] << std::endl;
+        }
+    } catch(cl::Error error) {
+        std::cout << error.what() << "(" << error.err()
+                  << ")" << std::endl;
+    }
+ 
+    return 0;
+}
+  \end{lstlisting}
+
+    This program just prints all the additions (equalling 1000).
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Rule 1: Knowledge is Power}
+  \frametitle{Other Improvements}
 
-\textbf{1. Programming language $<<$ Programmers' awareness of performance.}
 
-There is no programming language that is magic, whether good or evil. 
-
-All the major programming languages allow you to write programs that perform well or badly. 
-
-High level languages give you lots of options...\\
-\quad Do I use an array? A vector? A list? 
-
-What do they do behind the scenes?\\
-\quad Is there a better way?
+    The host memory is still unreleased.
+      \begin{itemize}
+        \item With the same number of lines, we could use the C++11
+          {\tt unique\_ptr}, which would free the memory for us.
+      \end{itemize}
+    You can use a vector instead of an array, \\ and use {\tt \&v[0]} instead
+      of {\tt <type>*}.
+      \begin{itemize}
+        \item Valid as long as the vector is not resized.
+      \end{itemize}
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Rule 1 Asterisk}
+  \frametitle{OpenCL Programming Summary}
 
-\begin{center}
-	\includegraphics[width=0.2\textwidth]{images/lambda.png}
-\end{center}
 
-Some languages lend themselves better to parallelization than others. 
+    Went through real OpenCL examples.\\
 
-A language may force a certain way of thinking, based on its rules (e.g., functional programming languages). 
+    Have the reference card for the API.\\[1em]
 
-But there is no reason why the way of thinking can't be applied in another language.
+    Saw a C++ template for setting up OpenCL.\\[1em]
 
+    \structure{Aside:} if you're serious about programming in C++, check
+      out {\bf Effective C++} by Scott Meyers (slightly dated with C++11, but
+      it still has some good stuff)
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Rule 2: Nonlinear Output}
-
-\textbf{2. $d(f^{\tau}(x), f^{\tau}(y)) > e^{\alpha\tau} d(x, y)$ or small details matter.}
-
-If two versions of the code are $x$ and $y$, the difference between the performance outcomes $f(x), f(y)$ is much larger than the difference between the code.
-
-Did you fix a memory leak? The addition of one \texttt{free()} call is a single line code change but can, in the long run, have a dramatic impact on performance. 
-
-Don't overlook the small stuff!
-
-\end{frame}
+  \frametitle{Overall summary}
 
 
+    {\bf First Half:} Brief overview of OpenCL and its programming model.\\[1em]
 
+    Many concepts are similar to plain parallel programming (more structure).\\[1em]
 
-\begin{frame}
-\frametitle{Rule 3: Establish Boundaries}
-
-\textbf{3. corr(performance degradation, unbounded resource usage) > 0.9.}
-
-There is a very high correlation between performance degradation and unbounded use of resources. 
-
-Often times we focus on functionality: the software must have the following 847~251 features! 
-
-But if you want a program that scales you need to think in terms of operation, not functionality.
+    {\bf Second Half:} Looked at an OpenCL implementation and how to organize it.\\[1em]
+    Need to write lots of boilerplate!
 
 \end{frame}
-
-
-
-\begin{frame}
-\frametitle{Rule 3: Establish Boundaries}
-
-Resources need to be limited. 
-
-If there aren't hard limits, eventually a resource will be exhausted. 
-
-If the program starts threads, use a thread pool and the thread pool should have a fixed size. 
-
-Is there a cache? It needs a maximum size. 
-
-If you need to read input, don't use a function that reads an entire line (of arbitrary length). 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Rule 3: Establish Boundaries}
-
-Furthermore your program needs design effort given to what happens when resources are exceeded. 
-
-So you decide to set a request queue size; once that queue is full, further requests are rejected in some well-understood manner. 
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Rule 4: Do Experiments}
-
-\begin{center}
-	\includegraphics[width=0.3\textwidth]{images/ndg.jpg}
-\end{center}
-
-If you want your code to be faster you have to know why it is slow. 
-
-It's okay not to know the answers, but not knowing how to find out is a problem. 
-
-Don't guess; measure.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Rule 5: You Can't Outrun the Fork}
-
-\textbf{5. N*bad != good.}
-
-No amount of nodes, cores, memory, etc, will save you from poorly-written code.
-
-Throwing more hardware at the problem is expensive and ineffective in the long term. 
-
-Bad code is still bad no matter how much hardware it runs on. 
-
-\end{frame}
-
-\part{Performance Tips}
-
-\begin{frame}
-\partpage
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Magnitude}
-
-\textbf{Understand the order of magnitude that matters.} 
-
-Perhaps you are writing code where 100 CPU cycles matters. 
-
-If so, a function that will acquire a lock through some sort of shared-memory interlocked instruction then this instruction is performance murder. 
-
-And it might be even worse if lock acquisition fails and you get blocked for 100~000 cycles trying to acquire the lock... 
-
-On the other hand, if you have a network intensive code then 100 cycles do not matter even the smallest bit because it is lost in the noise of the network.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Worst Case Scenario}
-
-Plan for the worst case scenario (not the nuclear apocalypse).
-
-You can end up paying many more orders of magnitude in cost than you expected under ordinary circumstances.
-
-No doubt you have seen these sorts of things as well and it is an awful user experience. 
-
-The spinning beach ball of death and the ``Not Responding'' added to the title bar are all symptoms of this situation. 
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Acknowledge Asynchrony}
-
-A lot of things are asynchronous without declaring themselves to be.
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/patientbear.jpg}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Acknowledge Asynchrony}
-
-Suppose that Jordan is writing code to return a list of fonts to be used in the UI. 
-
-The code checks a local font cache, and if that is already initialized, returns the fonts found in the cache in a List object. 
-
-If the cache is not initialized, however, the data needs to be loaded, perhaps from the printer. 
-
-Morgan intends to use this list of fonts in the UI of the program but is unaware that in certain circumstances this call will take much longer.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Acknowledge Asynchrony}
-
-Supposing that the API just returns a \texttt{List<Font>}, it is not obvious to Morgan where these come from. 
-
-And in local testing on the dev machine with nothing on it and nothing else doing and the printer is always turned on.
-
-Thus even if the cache is not initialized it is ``fast enough''. 
-
-But in the real world, of course, the printer will be down and unicorns are nowhere to be found and it runs up against some hard timeout of 20 seconds. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Acknowledge Asynchrony}
-
-If Jordan's API now has a return type of \texttt{Task<List>} then it is obvious to Morgan that there is something asynchronous going on here some of the time. 
-
-With this information in hand, the UI won't wait for this task. 
-
-We might even convince Jordan to give us partial results (so we can draw the UI elements as backing data arrives) or at the very least, a progress bar. 
-
-Users love progress bars. 
-
-They are wildly inaccurate and not super informative even if they are accurate, but at least they give the user the impression that something is happening.
-
-\end{frame}
-
-\part{Performance Culture}
-
-\begin{frame}
-\partpage
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Would you work for him?}
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/drevil.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Performance Problem Check}
-
-The author's recommendations of warning signs that performance culture is off the rails:
-
-\begin{itemize}
-\item Answering the question, ``how is the product doing on my key performance metrics,'' is difficult.
-\item Performance often regresses and team members either don't know, don't care, or find out too late to act.
-\item Blame is one of the most common responses to performance problems (either people, infrastructure, or both).
-\end{itemize}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Performance Problem Check}
-
-The author's recommendations of warning signs that performance culture is off the rails:
-
-\begin{itemize}
-
-\item Performance tests swing wildly, cannot be trusted, and are generally ignored by most of the team.
-\item Performance is something one, or a few, individuals are meant to keep an eye on, instead of the whole team.
-\item Performance issues in production are common, and require ugly scrambles to address (and/or cannot be reproduced).
-\end{itemize}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Human After All}
-
-
-As tempting as it is to say these are all technical issues, they are really human problems. 
-
-It would obviously be preferable to start with a good performance culture in the first place, but that is not always going to happen. 
-
-But suppose you are already in a hole. The usual course of action is to stop and say to yourself ``I appear to be in a hole... I know, I'll dig my way out!''. 
-
-The right thing to do would be stop digging, of course...
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Change Comes From Within}
-
-Change has to come from both the top down and the bottom up. 
-
-Management needs to make performance a priority: ask questions, demand rigour... 
-
-While at the same time, people doing the development need to understand the performance of what they write, making practice improvements. 
-
-Both sides need to have zero tolerance for regression.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Run, Run Away}
-
-\begin{center}
-	\includegraphics[width=0.6\textwidth]{images/wouldbegreat.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{There Can't Be One}
-
-If only one person is responsible for performance, this will not work. One person could not reasonably keep up with the rest of the team. 
-
-If the other developers don't have performance in mind when writing, it is a big waste of time for the performance person.
-
-If this isn't convincing, think about unit tests. 
-
-Could you really ``outsource'' the writing of all unit tests to one person? And would code quality be the same if you did?
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Management Matters}
-
-Managers need to budget time, reward the work, and encourage performance work. 
-
-Managers who don't understand performance culture are likely to be caught by surprise and blame things. 
-
-Consider the story of Managers A and B (see the notes).
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Startup}
-
-
-But this is a startup, you object, why does it matter, because we need the minimum viable product and we needed it yesterday.
-
-And also, VCs like features. 
-
-Well maybe, but architecture matters. 
-
-There's time to fix things later, maybe, but you can really cripple your startup by choosing the wrong things early on. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Performance Tests}
-
-After a discussion of the why and the what, it is time to think about how to make it systematic. 
-
-If it is not systematic, it will not get done and it will be dropped when in a time crunch. And development teams are always in a time crunch! 
-
-This is why best practices have automated unit tests that run on every commit. 
-
-If something has significantly regressed performance, the build failed and the commit is no good. 
-
-This obviously requires that the tests be meaningful, testing effectively and not overly noisy. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Performance Tests}
-
-Performance tests may be a bit too large and difficult to run for every commit or every build. 
-
-Although it would be nice to know exactly which commit is the cause of the problem, you may want a test that runs overnight to see the long term trends. 
-
-And thus a 12-hour test is probably unsuitable for this. 
-
-The solution is, obviously, levels of test. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Zero Tolerance}
-
-A zero tolerance rules advocated: anything that significantly regresses performance is reverted and re-worked. 
-
-No exceptions, no questions, no pleading one's case, etc. 
-
-If exceptions are allowed, exceptions quickly become the rule, and promises to fix something later are procrastinated endlessly.
-
-Obviously when code does more it should be expected to take longer, but then the test(s) should be adjusted as well.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Metrics}
-
-There are, roughly speaking, two categories of metrics:
-
-\begin{itemize}
-	\item \textit{Consumption}: measure resources consumed by running a test.
-	\item \textit{Observational}: measure the outcomes of running the test, from the view of outside the system.
-\end{itemize}
-
-
-\end{frame}
-
-
-
-
-\begin{frame}
-\frametitle{Observational Metrics}
-
-It might seem like observational metrics are all that we care about. 
-
-End users care about the amount of time it takes to complete their work, or management/sales/marketing/C-levels care about the throughput and that's it. 
-
-This matters, sure, but it's not enough to know the outcome; the consumption metrics are necessary to break down why the total time is what it is.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Observational Metrics}
-
-Suppose a change is committed and the tests run and the total time it takes increases by 10\%. 
-
-If that's all you know, you know things got worse but have no data as to why. 
-
-If you see that memory allocations are reported and you have now allocated more memory than before,  at least you have a theory to start with.
-
-It might not be that, it might be something else entirely, but it's a place to start. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Printf Debugging}
-
-Does this remind you of \texttt{printf} debugging? It's a little bit like that. 
-
-But then again, you want to use this sort of thing for long running tests anyway. 
-
-If the test is going to run for 4h it would be helpful to know where exactly in that four hours it went off the rails (on a crazy train!). 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Variability}
-
-There's one more consideration and that is the variability between runs. In the ideal situation, there is consistent performance every run. 
-
-That is probably too much to ask for and there will be some natural variation due to nondeterminism in computers. 
-
-But a change that causes a wild change in the variance is also no good. 
-
-A test that sometimes finishes in 0.5$x$ time and sometimes in 2$x$ time has a high variance and this will not be acceptable. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Dig Deep}
-
-Be ready to dig deep: suppose a developer has introduced a change that is slow under rare circumstances. 
-
-Those rare circumstances are not triggered until $n$ years later when a second developer introduces another change. 
-
-The second change will be identified, at least initially, as the ``problem''. 
-
-There's two ways to go about it; either fix the initial change or work around it.
-
-It's not about blame or not about fault; it's about improving the performance of the software.
-
-\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \end{document}
 
