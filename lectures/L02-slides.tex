@@ -213,6 +213,362 @@ Runtime and actual costs of collecting the garbage.
 \end{frame}
 
 
+\begin{frame}
+\frametitle{JRE \& Collection}
+
+The JRE does stuff at runtime -- its functionality is not free. 
+
+The Garbage Collector can run whenever it wants and take as long as it likes.
+
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/garbage.jpg}\\
+	Image Credit: Daria Shevtsova
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Klingon Programs Do Not Coddle the Weak}
+
+Garbage collection? Luxury! Klingons manage memory manually!
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/grumpyman.jpg}
+\end{center}
+
+It's hard to get C/\CPP right and all the extra work done to verify that code takes effort that could go elsewhere.
+
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{0wn3d}
+
+Rust has the concept of \textit{ownership}. 
+
+Rust uses ownership as a default memory management strategy.
+
+The compiler determines when allocated memory can be cleaned up.
+
+Memory  can be cleaned up when when nobody needs it anymore.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{f7u12}
+
+Ownership imposes certain restrictions on how you write your code.
+
+There will inevitably moments where you curse at the compiler for not letting you do what you want.
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/Rage.jpg}
+\end{center}
+
+The compiler is only trying to help. Promise.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Real-World Example: Discord}
+
+Let's take a look at a real-life example of Go vs Rust:
+
+\begin{center}
+\includegraphics[width=\textwidth]{images/golang-gc.png}
+\end{center}
+
+Go garbage collector does its work and it adds a big latency spike.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Real-World Example: Discord}
+
+Rust version performed better than the Go version on latency, CPU, and memory usage.
+
+See the following graphs that compare Rust (blue) to Go (purple): 
+\begin{center}
+\includegraphics[width=\textwidth]{images/rust-vs-go.png}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Rules}
+
+We talked about the why of ownership, but not the what.
+
+\begin{enumerate}
+	\item Every value has a variable that is its owner.
+	\item There can be only one owner at a time.
+	\item When the owner goes out of scope, the value is dropped.
+\end{enumerate}
+
+Note a distinction between the value itself and the variable that owns it.\\
+\quad \texttt{let x = 42;}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Out of Scope}
+
+Variable scope rules look like scope rules in other C-like languages.
+
+They are rigidly enforced by the compiler.
+
+\begin{lstlisting}[language=Rust]
+  fn foo() {
+    println!("start");
+    { // s does not exist
+      let s = "Hello World!";
+      println!("{}", s);
+    } // s goes out of scope and is dropped
+  }
+\end{lstlisting}
+
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/i-let-him-go.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Stack and Heap}
+
+The same principle applies in terms of heap allocated memory.
+
+
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    let s1 = String::from("hello");
+    println!("s1 = {}", s1);
+  }
+\end{lstlisting}
+
+A string has a stack part (left) and a heap part (right) that look like:
+\begin{center}
+\includegraphics[width=0.5\textwidth]{images/string.png} 
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Back to Rule 2}
+
+That covers rules one and three.
+
+But that second rule is interesting, because of the ``at a time'' at the end: it means that there exists the concept of transfer of ownership.
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{What's yours is mine}
+
+Move semantics have to do with transferring ownership from one variable to another.
+
+Some types use copy semantics instead, such as simple types.
+
+Copy semantics are great when copies are cheap and moving would be cumbersome. 
+
+\begin{lstlisting}[language=Rust]
+  fn main() {
+   	let x = 5;
+	let y = x;
+  }
+\end{lstlisting}
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Move instead}
+
+But simple types are the exception and not the rule. Let's look at what happens with types with a heap component:
+
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    let s1 = String::from("hello");
+    let s2 = s1;
+  }
+\end{lstlisting}
+
+
+Rust won't automatically create a copy if you don't ask explicitly. 
+
+(You ask explicitly by calling \texttt{clone()}).
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Move instead}
+
+Here's what actually happens:
+
+\begin{center}
+\includegraphics[width=0.35\textwidth]{images/string-rust.png}
+\end{center}
+
+If both \texttt{s1} and \texttt{s2} were pointing to the same heap memory, it would violate the second rule of ownership!
+
+\begin{center}
+	\includegraphics[width=0.35\textwidth]{images/highlander.jpeg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Not Allowed}
+
+An attempt to use \texttt{s1} will result in a compile-time error.
+
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    let x = 5;
+    let y = x;
+    dbg!(x, y); // Works as you would expect!
+
+    let x = Vec<u32>::new(); // similar to the std::vector type in C++
+    let y = x;
+    dbg!(x, y); // x has been moved, this is a compiler error!
+  }
+\end{lstlisting}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{This is Helpful}
+
+The compiler is even kind enough to tell you what went wrong and why:
+
+{\scriptsize
+\begin{verbatim}
+plam@amqui ~/c/p/l/l/L02> cargo run
+   Compiling move v0.1.0 (/home/plam/courses/p4p/lectures/live-coding/L02)
+error[E0382]: use of moved value: `x`
+ --> src/main.rs:8:10
+  |
+6 |     let x = Vec::<u32>::new(); // similar to the std::vector type in C++
+  |         - move occurs because `x` has type `std::vec::Vec<u32>`, which does 
+              not implement the `Copy` trait
+7 |     let y = x;
+  |             - value moved here
+8 |     dbg!(x, y); // x has been moved, this is a compiler error!
+  |          ^ value used here after move
+
+error: aborting due to previous error
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `move`.
+
+To learn more, run the command again with --verbose.
+\end{verbatim}
+}
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{It's Dangerous to Go Alone, Take This}
+
+Move semantics also make sense when returning a value from a function.
+
+\begin{lstlisting}[language=Rust]
+  fn make_string() -> String {
+    let s = String::from("hello");
+    return s;
+  }
+
+  fn main() {
+    let s1 = make_string();
+    println!("{}", s1);
+  }
+\end{lstlisting}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Wait, come back with that...}
+
+This works in the other direction, too: passing a variable as an argument to a function results in either a move or a copy (depending on the type).
+
+You can have them back when you're done only if the function in question explicitly returns it! 
+
+
+\begin{lstlisting}[language=Rust]
+  fn main() {
+    let s1 = String::from("world");
+	use_string( s1 ); // Transfers ownership to the function being called
+	// Can't use s1 anymore!
+  }
+  
+fn use_string(s: String) {
+    println!("{}", s); 
+    // String is no longer in scope - dropped
+}
+\end{lstlisting}
+
+This one is easy to fix... clone or return all the thing?
+
+Maybe we can let a function borrow it...
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{But Do the Rules Work?}
+
+Consider this from the perspective of things that can go wrong in a C program.
+
+\begin{itemize}
+	\item Memory leak (fail to deallocate memory)
+	\item Double-free
+	\item Use-after-free
+	\item Accessing uninitialized memory
+	\item Stack values going out of scope when a function ends
+\end{itemize}
+
+(We'll eventually learn to break rules in a future lecture)
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{A free lunch?}
+
+ Rust of course doesn't solve every problem in the world. 
+ 
+It does solve memory management well. 
+
+I wouldn't even say that it requires more of the programmer: it requires more of the programmer at compile-time, not at debug-time.
+
+Downsides: 
+
+\begin{itemize}
+	\item Static typing
+	\item Ecosystem
+	\item Compiler
+\end{itemize}
+
+
+\end{frame}
+
 
 
 \end{document}
