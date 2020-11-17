@@ -15,547 +15,554 @@
 
  \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Juicy Quotes}
-
-
-  \fbox{\includegraphics[width=.7\textwidth]{images/aio-linux.png}}\\
-{\scriptsize (mirrored at \url{compgeom.com/~piyush/teach/4531_06/project/hell.html})}
-   \\[3em]
-
-   ``Asynchronous I/O, for example, is often infuriating.''\\
---- Robert Love. {\em Linux System Programming, 2nd ed, } page 215.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Why non-blocking I/O?}
-  
-  Consider some I/O:
-
-
-\begin{minipage}{.5\textwidth}
-\begin{lstlisting}
-    fd = open(...);
-    read(...);
-    close(fd);
-  \end{lstlisting}
-\end{minipage}
-
-
-  Not very performant---under what conditions do we lose out?
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Mitigating I/O impact}
-
-    So far: can use threads to mitigate latency.\\
-
-    What are the disadvantages?
-    \only<2>{
-      \begin{itemize}
-        \item race conditions
-        \item overhead/max \# of thread limitations
-      \end{itemize}
-    }
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{An Alternative to Threads}
-
-    Asynchronous/nonblocking I/O.\\[2em]
-
-
-\begin{minipage}{.6\textwidth}
-\begin{lstlisting}
-    fd = open(..., O_NONBLOCK);
-    read(...); // returns instantly!
-    close(fd);
-  \end{lstlisting}
-\end{minipage}
-
+\frametitle{Dreams of Neo-Tokyo Tonight}
 
 \begin{center}
-~\\[1em]
-$\cdots$\\[2em]
-
-\includegraphics[width=.25\textwidth]{images/Easy_button.JPG}
-\end{center}
-\hfill {\scriptsize (credit: Yskyflyer, Wikimedia Commons)}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Not Quite So Easy}
-
-    Doesn't work on files---they're always ready. Only e.g. sockets.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Other Outstanding Problem with Nonblocking I/O}
-
-    How do you know when I/O is ready to be queried?
-
-    \only<2>{\begin{itemize} 
-      \item polling ({\tt select}, {\tt poll}, {\tt epoll})
-      \item interrupts (signals)
-      \end{itemize}
-    }
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Using {\tt epoll}}
-  
-    Key idea: give {\tt epoll} a bunch of file descriptors;\\
-     \hspace*{2em}wait for events to happen.\\[1em]
-
-\begin{center}
-	\includegraphics[width=0.2\textwidth]{images/waitforit.jpg}
+  \fbox{\includegraphics[width=\textwidth]{images/L05-tokio.png}}
 \end{center}
 
-     Steps:
-     \begin{enumerate}
-       \item create an instance ({\tt epoll\_create1});
-       \item populate it with file descriptors ({\tt epoll\_ctl});
-       \item wait for events ({\tt epoll\_wait}).
-     \end{enumerate}
-  
+\url{https://www.youtube.com/watch?v=Wu5TDEpAqwQ}
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Creating an {\tt epoll} instance}
-  
-    \begin{minipage}{.5\textwidth}
-    \begin{lstlisting}
-   int epfd = epoll_create1(0);
-    \end{lstlisting}
-    \end{minipage}
-
-    {\tt efpd} doesn't represent any files; use it to talk to {\tt epoll}.\\[1em]
-
-    0 represents the flags (only flag: {\tt EPOLL\_CLOEXEC}).
-    
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Populating the {\tt epoll} instance}
-  
-    To add {\tt fd} to the set of descriptors watched by {\tt epfd}:
-    \begin{lstlisting}
-   struct epoll_event event;
-   int ret;
-   event.data.fd = fd;
-   event.events = EPOLLIN | EPOLLOUT;
-   ret = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &event);
-    \end{lstlisting}
-
-    Can also modify and delete descriptors from {\tt epfd}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Waiting on an {\tt epoll} instance}
-  
-    Now we're ready to wait for events on any file descriptor in {\tt epfd}.
-    \begin{lstlisting}
-  #define MAX_EVENTS 64
-
-  struct epoll_event events[MAX_EVENTS];
-  int nr_events;
-
-  nr_events = epoll_wait(epfd, events, MAX_EVENTS, -1);
-    \end{lstlisting}
-
--1: wait potentially forever; otherwise, milliseconds to wait.\\[1em]
-
-Upon return from {\tt epoll\_wait}, we have {\tt nr\_events} events ready.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}[fragile]
-\frametitle{epoll Example}
+\frametitle{Why Non-Blocking I/O?}
 
-\begin{lstlisting}[language=C]
-#define MAX_EVENTS 10
-struct epoll_event ev, events[MAX_EVENTS];
-int listen_sock, conn_sock, nfds, epollfd;
-
-/* Code to set up listening socket, 'listen_sock',
-   (socket(), bind(), listen()) omitted */
-
-epollfd = epoll_create1(0);
-if (epollfd == -1) {
-    perror("epoll_create1");
-    exit(EXIT_FAILURE);
-}
-
-ev.events = EPOLLIN;
-ev.data.fd = listen_sock;
-if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listen_sock, &ev) == -1) {
-    perror("epoll_ctl: listen_sock");
-    exit(EXIT_FAILURE);
+\begin{lstlisting}[language=Rust]
+fn main() -> io::Result<()> {
+  let mut file = File::open("hello.txt")?;
+  let mut s = String::new();
+  file.read_to_string(&mut s)?;
+  Ok(()) 
 }
 \end{lstlisting}
 
 
+(The ? operator is an alternative to
+\texttt{try!} and \texttt{unwrap}.)
+
+
+The problem is that the {\tt read} call will \alert{block}.
+
+You don't get to use the CPU cycles while waiting.
 \end{frame}
 
+
+\begin{frame}
+\frametitle{Threads Insteads?}
+
+Threads can be fine if you have some other code running to do work.
+
+
+But maybe you would rather not use threads. Why not?
+
+\begin{itemize}
+\item potential race conditions;
+\item overhead due to per-thread stacks; or
+\item limitations due to maximum numbers of threads.
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Non-Blocking I/O}
+
+We're going to focus on low-level I/O from sockets in this part of the lecture,
+using the \texttt{mio} library from \texttt{tokio}. 
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/neotokyo.jpg}
+\end{center}
+
+(Sadly, not Neo-Tokyo. This is from \textit{Akira}.)
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Non-Blocking I/O}
+
+
+
+
+Async file I/O is
+also possible via \texttt{tokio::fs} and the ideas will carry over.
+
+
+One might often want to wrap the low-level I/O using higher-level
+abstractions, and the larger project \texttt{tokio.rs} is one way of
+doing that.
+
+
+There are two ways to find out whether I/O is ready to be queried:\\
+\quad Polling and Interrupts.
+
+\texttt{mio} uses polling.
+
+\end{frame}
+
+
 \begin{frame}[fragile]
-\frametitle{epoll Example}
+\frametitle{Using \texttt{mio}}
 
-\begin{lstlisting}[language=C]
-for (;;) {
-    nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
-    if (nfds == -1) {
-        perror("epoll_wait");
-        exit(EXIT_FAILURE);
-    }
+The key idea is to give {\tt mio} a bunch of event sources and
+wait for events to happen. 
 
-    for (n = 0; n < nfds; ++n) {
-        if (events[n].data.fd == listen_sock) {
-            conn_sock = accept(listen_sock, (struct sockaddr *) &addr, &addrlen);
-            if (conn_sock == -1) {
-                perror("accept");
-                exit(EXIT_FAILURE);
+\begin{itemize}
+       \item create a \texttt{Poll} instance;
+       \item populate it with event sources e.g. \texttt{TCPListener}s; and,
+       \item wait for events in an event loop ({\tt Poll::poll()}).
+\end{itemize}
+     
+\begin{lstlisting}[language=Rust]
+let poll = Poll::new()?;
+let events = Events::with_capacity(128);
+\end{lstlisting}
+
+We're going to proactively create \texttt{events}; this data structure is used by
+\texttt{Poll::poll} to stash the relevant \texttt{Event} objects.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Name a more iconic duo}
+
+Populating the {\tt Poll} instance: ``registering event source''. 
+
+This is a socket or file descriptor.
+
+\begin{lstlisting}[language=Rust]
+let mut listener = TcpListener::bind(address)?;
+const SERVER: Token = Token(0);
+poll.registry().register(&mut listener, SERVER, Interest::READABLE)?;
+\end{lstlisting}
+
+
+You're telling it to check for 
+when the \texttt{listener} indicates that something is available to read.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Waiting for Events}
+
+We're ready to wait for events on any registered listener.
+    \begin{lstlisting}[language=Rust]
+loop {
+    poll.poll(&mut events, Some(Duration::from_millis(100)))?;
+
+    for event in events.iter() {
+        match event.token() {
+            SERVER => loop {
+                match listener.accept() {
+                    Ok((connection, address)) => {
+                        println!("Got a connection from: {}", address);
+                    },
+                    Err(ref err) if would_block(err) => break,
+                    Err(err) => return Err(err),
+                }
             }
-            setnonblocking(conn_sock);
-            ev.events = EPOLLIN | EPOLLET;
-            ev.data.fd = conn_sock;
-            if (epoll_ctl(epollfd, EPOLL_CTL_ADD, conn_sock,
-                        &ev) == -1) {
-                perror("epoll_ctl: conn_sock");
-                exit(EXIT_FAILURE);
-            }
-        } else {
-            do_use_fd(events[n].data.fd);
         }
     }
 }
-\end{lstlisting}
 
+fn would_block(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::WouldBlock
+}    \end{lstlisting}
+
+\texttt{poll.poll} will populate \texttt{events}, and
+waits for at most 100 ms.
 
 \end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Nonblocking I/O with curl}
-  
-    Similar idea to {\tt epoll}:
-\begin{itemize}
-\item build up a set of descriptors;
-\item invoke the transfers and wait for them to finish;
-\item see how things went.
-\end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}[fragile]
-\frametitle{Classic, Blocking cURL Request}
+\frametitle{Network Programming}
+If all you want to do is request a web page in Rust, use
+the \texttt{reqwest} library.
 
-Here's a simple cURL program that we can look over:
+\begin{lstlisting}[language=Rust]
+let body = reqwest::get("https://www.rust-lang.org")
+    .await?
+    .text()
+    .await?;
 
-\begin{lstlisting}[language=C]
-#include <stdio.h>
-#include <curl/curl.h>
- 
-int main( int argc, char** argv ) {
-  CURL *curl;
-  CURLcode res;
- 
-  curl_global_init(CURL_GLOBAL_DEFAULT);
- 
-  curl = curl_easy_init();
-  if( curl ) {
-    curl_easy_setopt(curl, CURLOPT_URL, "https://example.com/" );
-    res = curl_easy_perform( curl );
-    
-  if( res != CURLE_OK ) {
-      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-    }
-    curl_easy_cleanup(curl);
-  }
- 
-  curl_global_cleanup();
-  return 0;
+println!("body = {:?}", body);
+\end{lstlisting}
+
+(If you are doing multiple requests,
+you should create your own \texttt{Client} and \texttt{get} from it instead of
+\texttt{reqwest::get}).
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Back to the Futures}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/bttf.jpg}
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Back to the Futures}
+
+The use of \texttt{await} is a bit tricky.
+
+The \texttt{get} function returns a \emph{future}. 
+
+What's that?  
+
+It's
+an object that will, at some point in the future, return a second
+object.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Plug-In Executors}
+
+There are many possible definitions of \texttt{async/await}, and the appropriate one depends on your context. 
+
+Rust allows you to specify a runtime
+which defines the meaning of \texttt{async/await} for your program.
+
+The simplest \texttt{await} just blocks and waits on the current
+thread for the result to be ready. 
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{I'll Just Wait}
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/ill-just-wait.jpg}
+\end{center}
+
+
+\begin{lstlisting}[language=Rust]
+use futures::executor::block_on;
+
+async fn hello_world() {
+  println!("hello");
+}
+
+fn main() {
+  let future = hello_world();
+  block_on(future);
 }
 \end{lstlisting}
 
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{More Options}
+
+\texttt{tokio} includes a more sophisticated executor as well. 
+
+When there are multiple active \texttt{await}s, \texttt{tokio} can multiplex them onto different threads. 
+
+You can specify the \texttt{tokio} executor (or others) with a
+tag above {\tt main()} and by declaring \texttt{main()} to be \texttt{async}
+
+\begin{lstlisting}[language=Rust]
+#[tokio::main]
+async fn main() {
+    // do async stuff
+}
+\end{lstlisting}
 
 \end{frame}
 
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{curl\_multi initialization}
+\frametitle{Using libcurl}
 
-  
-    curl\_multi: work with multiple resources at once.\\[1em]
-    
-    1. To use {\tt curl\_multi}, first create the individual requests \\ \hspace{2em} ({\tt curl\_easy\_init}).\\
-    ~~~(Set options as needed on each handle).\\[1em]
+libcurl is a C library for transferring files. 
 
-    2. Then, combine them with:
-    \begin{itemize}
-      \item {\tt curl\_multi\_init()};
-      \item {\tt curl\_multi\_add\_handle()}.
-    \end{itemize}
+First we'll start with the easy interface. 
 
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Open Fire!}
-
-Start reqs: \texttt{curl\_multi\_perform( CURLM* cm, int* still\_running )}
-
-\begin{center}
-\includegraphics[width=0.5\textwidth]{images/artillery.jpeg}
-\end{center}
-
-The second parameter is updated with the number of still-in-progress requests.
-
-Meantime, we can do other things!
+This is a synchronous interface
+that uses callbacks. 
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{I'm bored... So take a nap?}
+\frametitle{Your HTML. Give it to me.}
 
-Suppose we've run out of things to do and nothing is ready yet. Wait!
+\begin{lstlisting}[language=Rust]
+use std::io::{stdout, Write};
 
-\begin{lstlisting}[language=C]
-curl_multi_wait( CURLM *multi_handle, struct curl_waitfd extra_fds[], 
-unsigned int extra_nfds, int timeout_ms, int *numfds )
+use curl::easy::Easy;
+
+// Write the contents of rust-lang.org to stdout
+let mut easy = Easy::new();
+easy.url("https://www.rust-lang.org/").unwrap();
+easy.write_function(|data| {
+    stdout().write_all(data).unwrap();
+    Ok(data.len())
+}).unwrap();
+easy.perform().unwrap();
 \end{lstlisting}
+
+Note that we provide a lambda as a callback function. 
+
+This lambda is to be invoked
+when the library receives data from the network (i.e. \texttt{write\_function()}).
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Processing the Output}
+
+In the body of the lambda, we simply write the received data to \texttt{stdout}
+and return the number of bytes we processed (all of them, in this case).
+
+
+Looking at the original libcurl documentation, you'll see how the Rust bindings are a fairly straightforward translation.
+
+We call \texttt{easy.perform()} to, well, perform the request, blocking until it finishes, and using the callback to process the received data.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{M-m-m-multi-cURL}
+The real reason we're talking about libcurl is the asynchronous multi interface.
+
+Network communication is a great example of asynchronous I/O.
+
+
+You can start a network request and move on to creating more without waiting for the results of the first one. 
+
+For requests to different recipients, it certainly makes sense to do this.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The Multi Handle}
+
+The main tool here is the ``multi handle''.
+
+The structure for the new multi-handle type is \texttt{curl::multi::Multi}.
+
+The multi functions may return a \texttt{MultiError} rather than the easy \texttt{Error}.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Pack 'em In}
+
+Once we have a multi handle, we can add easy objects---however many we need---to the multi handle. 
+
+Creation of the easy object is the same as it is when being used alone.
+
+Then, we add the easy (or easy2) object to the multi handle with \texttt{add()} (or \texttt{add2()}). 
+
+The \texttt{add()} or \texttt{add2()} functions return an actual easy handle.
+\end{frame}
+
+
+\begin{frame}
+\frametitle{BOMBARDMENT!}
+
+\begin{center}
+	\includegraphics[width=0.9\textwidth]{images/bombardment.png}
+\end{center}
+
+Once we have finished putting all the easy handles into the multi handle, we can dispatch them all at once with \texttt{perform()}.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Repeat Performance}
+
+This function returns, on success, the number of easy handles in that multi handle that are still running. 
+
+If it's down to 0, then we know that they are all done.
+
+This does mean that we're going to call \texttt{perform()} more than once. 
+
+Doing so doesn't restart or interfere with anything that was already in progress.
+
+We can check often, but the intention is to do other stuff in the meantime.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{I'm boooooored}
+
+Suppose we've run out of things to do though. 
+
+We can wait, if we want, using \texttt{wait()}. 
 
 This function will block the current thread until something happens.
 
-Choose how long to wait and see how many events occurred.
+The first parameter to \texttt{wait()} is an array of extra file descriptors you can wait on (but we will always want this to be \texttt{\&mut []} in this course).
+
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{While You Were Sleeping}
+\frametitle{After Perform}
 
-While we are asleep or doing other things, callbacks still happen.
-
-The status of the cURL easy handle is updated.
-
-\end{frame}
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/events.jpg}
+\end{center}
 
 
+In the meantime though, the perform operations are happening, and so are whatever callbacks we have set up (if any).
 
+As the I/O operation moves through its life cycle, the state of the easy handle is updated appropriately. 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Knowing what happened after {\tt curl\_multi\_perform}}
-
-  
-    {\tt curl\_multi\_info\_read} will tell you.
-  
-\begin{lstlisting}
-  msg = curl_multi_info_read(multi_handle, &msgs_left);
-\end{lstlisting}
-  
-    and also how many messages are left.\\[1em]
-    {\tt msg->msg} can be {\tt CURLMSG\_DONE} or an error;\\
-    {\tt msg->easy\_handle} tells you who is done.\\[1em]
-  
-
-    Some gotchas (thanks Desiye Collier):
-    \begin{itemize}
-    \item Checking \verb+msg->msg == CURLMSG_DONE+ is not sufficient to ensure that a curl request actually happened. You also need to check {\tt data.result}.
-
-    \item (A1 hint:) To reset an individual handle in the {\tt multi\_handle}, you need to ``replace'' it. But you shouldn't use {\tt curl\_easy\_init()}.  In fact, you don't need a new handle at all.
-    \end{itemize}
-  
+Each easy handle has an associated status message as well as a return code.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{curl\_multi cleanup}
+\frametitle{Dude, What Happened?}
 
-  
-    Call {\tt curl\_multi\_cleanup} on the multi handle.\\[1em]
-    Then, call {\tt curl\_easy\_cleanup} on each easy handle.\\[2em]
-    If you replace {\tt curl\_easy\_init} by {\tt curl\_global\_init},\\
-    then call {\tt curl\_global\_cleanup} also.
-  
 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+We pass \texttt{messages()} a callback which finds out what happened and makes sure all is well.
 
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
+What we are looking for is that the callback's parameter \texttt{msg} has \texttt{result\_for} including \texttt{Some}---request completed. 
 
-	\begin{lstlisting}[language=C]
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <curl/multi.h>
+If not, this request is still in progress and we aren't ready to evaluate whether it was successful or not. 
 
-#define MAX_WAIT_MSECS 30*1000 /* Wait max. 30 seconds */
+If there are more handles to look at, we should go on to the next. If it is done, we should look at the result. 
 
-const char *urls[] = {
-  "http://www.microsoft.com",
-  "http://www.yahoo.com",
-  "http://www.wikipedia.org",
-  "http://slashdot.org"
-};
-#define CNT 4
-
-size_t cb(char *d, size_t n, size_t l, void *p) {
-  /* take care of the data here, ignored in this example */
-  return n*l;
-\end{lstlisting}
+If it is \texttt{Error} then there is an error. Else, everything succeeded.
 
 \end{frame}
 
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
 
-	\begin{lstlisting}[language=C]
-void init( CURLM *cm, int i ) {
-  CURL *eh = curl_easy_init();
-  curl_easy_setopt( eh, CURLOPT_WRITEFUNCTION, cb );
-  curl_easy_setopt( eh, CURLOPT_HEADER, 0L );
-  curl_easy_setopt( eh, CURLOPT_URL, urls[i] );
-  curl_easy_setopt( eh, CURLOPT_PRIVATE, urls[i]) ;
-  curl_easy_setopt( eh, CURLOPT_VERBOSE, 0L );
-  curl_multi_add_handle( cm, eh );
+\begin{frame}
+\frametitle{Tidying Up}
+
+When a handle has finished, you need to remove it from the multi handle.
+
+ Remove the handle you got back from \texttt{add/2} with \texttt{remove/2}. 
+ 
+ You don't have to cleanup the easy handle because Rust.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Longer Example}
+
+\begin{lstlisting}[language=Rust]
+const URLS:[&str; 4] = [
+  "https://www.microsoft.com",
+  "https://www.yahoo.com",
+  "https://www.wikipedia.org",
+  "https://slashdot.org" ];
+
+use curl::Error;
+use curl::easy::{Easy2, Handler, WriteError};
+use curl::multi::{Easy2Handle, Multi};
+use std::time::Duration;
+use std::io::{stdout, Write};
+
+struct Collector(Vec<u8>);
+impl Handler for Collector {
+    fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
+        self.0.extend_from_slice(data);
+	stdout().write_all(data).unwrap();
+        Ok(data.len())
+    }
 }
+fn init(multi:&Multi, url:&str) -> Result<Easy2Handle<Collector>, Error> {
+    let mut easy = Easy2::new(Collector(Vec::new()));
+    easy.url(url)?;
+    easy.verbose(false)?;
+    Ok(multi.add2(easy).unwrap())
+}
+\end{lstlisting}
 
-int main( int argc, char** argv ) {
-    CURLM *cm = NULL;
-    CURL *eh = NULL;
-    CURLMsg *msg = NULL;
-    CURLcode return_code = 0;
-    int still_running = 0; 
-    int msgs_left = 0;
-    int http_status_code;
-    const char *szUrl;
+\end{frame}
 
-    curl_global_init( CURL_GLOBAL_ALL );
-    cm = curl_multi_init( );
+
+\begin{frame}[fragile]
+\frametitle{Longer Example}
+
+\begin{lstlisting}[language=Rust]
+fn main() {
+    let mut easys : Vec<Easy2Handle<Collector>> = Vec::new();
+    let mut multi = Multi::new();
     
-    for ( int i = 0; i < CNT; ++i ) {
-        init( cm, i );
+    multi.pipelining(true, true).unwrap();
+    for u in URLS.iter() {
+	easys.push(init(&multi, u).unwrap());
     }
-\end{lstlisting}
-
-\end{frame}
-
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
-
-	\begin{lstlisting}[language=C]
-    curl_multi_perform( cm, &still_running );
-
-    do {
-        int numfds = 0;
-        int res = curl_multi_wait( cm, NULL, 0, MAX_WAIT_MSECS, &numfds );
-        if( res != CURLM_OK ) {
-            fprintf( stderr, "error: curl_multi_wait() returned %d\n", res );
-            return EXIT_FAILURE;
-        }
-        curl_multi_perform( cm, &still_running );
-
-    } while( still_running );
-\end{lstlisting}
-
-\end{frame}
-
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
-
-	\begin{lstlisting}[language=C]
-    while ( ( msg = curl_multi_info_read( cm, &msgs_left ) ) ) {
-        if ( msg->msg == CURLMSG_DONE ) {
-            eh = msg->easy_handle;
-            return_code = msg->data.result;
-            if ( return_code != CURLE_OK ) {
-                fprintf( stderr, "CURL error code: %d\n", msg->data.result );
-                curl_multi_remove_handle( cm, eh );
-                curl_easy_cleanup( eh );
-                continue;
-            }
-            http_status_code = 0; szUrl = NULL;
-            curl_easy_getinfo( eh, CURLINFO_RESPONSE_CODE, &http_status_code );
-            curl_easy_getinfo( eh, CURLINFO_PRIVATE, &szUrl );
-
-            if( http_status_code == 200 ) {
-                printf( "200 OK for %s\n", szUrl ) ;
-            } else {
-                fprintf( stderr, "GET of %s returned http status code %d\n",
-                     szUrl, http_status_code );
-            }
-            curl_multi_remove_handle( cm, eh );
-            curl_easy_cleanup( eh );
-        } else {
-            fprintf( stderr, "error: after curl_multi_info_read(), CURLMsg=%d\n", msg->msg );
-        }
+    while multi.perform().unwrap() > 0 {
+	// .messages() may have info for us here...
+        multi.wait(&mut [], Duration::from_secs(30)).unwrap();
     }
-\end{lstlisting}
 
-\end{frame}
-
-\begin{frame}[fragile]
-	\frametitle{cURL Multi Example}
-
-	\begin{lstlisting}[language=C]
-    curl_multi_cleanup( cm );
-    curl_global_cleanup();
-    return 0;
+    for eh in easys.drain(..) {
+    	let mut handler_after:Easy2<Collector> = multi.remove2(eh).unwrap();
+        println!("got response code {}", handler_after.response_code().unwrap());
+    }
 }
 \end{lstlisting}
 
+
 \end{frame}
 
+\begin{frame}
+	\frametitle{Recycle, Reduce, Reuse}
+
+	\begin{center}
+		\includegraphics[width=0.3\textwidth]{images/recycle.png}
+	\end{center}
+	\hfill Image Credit: Wikipedia user Krdan
+
+	Can we re-use an easy handle rather than destroy and create a new one?
+
+\end{frame}
+
+\begin{frame}
+	\frametitle{Recycle, Reduce, Reuse}
+
+	The official docs say that you can re-use one.
+
+	But you have to remove it from the multi handle and then re-add it.
+
+	... presumably after having changed anything that you want to change about that handle.
+
+\end{frame}
+
+
+\begin{frame}
+	\frametitle{Always Running}
+
+	You could have a situation where there are constantly handles in progress.
+
+	You might never be at a situation where there are no messages left.
+
+	And that is okay.
+
+\end{frame}
 
 \begin{frame}
 	\frametitle{Scaling This}
@@ -574,7 +581,6 @@ int main( int argc, char** argv ) {
 
 
 \end{frame}
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
@@ -671,6 +677,7 @@ int main( int argc, char** argv ) {
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
   \frametitle{Using Asynchronous I/O in Linux (select/poll)}
@@ -684,9 +691,11 @@ int main( int argc, char** argv ) {
      \item read the return value.
    \end{enumerate}
 
+See the ECE~252 notes if you want to learn about select/poll!
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 
 \end{document}
