@@ -9,23 +9,21 @@
 \hfill ``Is there any such thing as a free lunch?''
 
 Compiler optimizations really do feel like a free lunch.
-But what does it really mean when you say {\tt -O2}?
+But what do {\tt -O} or
+{\tt -C~opt-level=3} really mean?
 We'll see some representative compiler optimizations and discuss how
 they can improve program performance. Because we're talking about
 Programming for Performance, I'll point out cases that stop compilers
 from being able to optimize your code. In general, it's better if the
 compiler automatically does a performance-improving transformation
 rather than you doing it manually; it's probably a waste of time for
-you and it also makes your code less readable.
+you and it also makes your code less readable. Rust lets you force the compiler to do certain optimizations (inlining) even if it might otherwise think it's a bad idea, which is a good compromise when it works.
 
-Many pages on the Internet describe
-optimizations. Here's one that contains good examples:
-
-$\qquad \qquad$ \url{http://www.digitalmars.com/ctg/ctgOptimizer.html}
-
-You can find a full list of {\tt gcc} options here:
-
-$\qquad \qquad$ \url{http://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html}
+\paragraph{Enabling compiler optimization.} When you want fast binaries, you want to disable debug information and enable compiler optimization. Specify \texttt{cargo~-{}-release}. You also want link-time optimization (described below) by adding to your \texttt{Cargo.toml}:
+\begin{verbatim}
+    [profile.release]
+    lto = true
+\end{verbatim}
 
 \paragraph{About Compiler Optimizations.} First of all, ``optimization'' is
 a bit of a misnomer, since compilers generally do not generate ``optimal'' code.
@@ -35,26 +33,31 @@ Often, what happens is that the program you literally wrote is too slow. The
 contract of the compiler (working with the architecture) is to actually execute
 a program with the same behaviour as yours, but which runs faster.
 
-\paragraph{{\tt gcc} optimization levels.} Here's what {\tt -On} means for
-{\tt gcc}. Other compilers have similar (but not identical) optimization flags.
+I looked at \texttt{rustc} to confirm that apart from some vectorization, most of Rust's optimization takes place at the backend LLVM level; the \texttt{-C opt-level} option mostly sets inline limits and passes the requested optimization level to the backend. Here's what the optimization levels mean:
 
 \begin{itemize}[noitemsep]
-\item {\tt -O0} (default): Fastest compilation time. Debugging works as expected.
-\item {\tt -O1} ({\tt -O}): Reduce code size and execution time.
- No optimizations that increase compiliation time.
-\item {\tt -O2}: All optimizations except space vs. speed tradeoffs.
-\item {\tt -O3}: All optimizations.
-\item {\tt -Ofast}: All {\tt -O3} optimizations, plus non-standards compliant optimizations,
-      particularly {\tt -ffast-math}. (Like {\tt -fast} on the Solaris compiler.)\\[1em]
-  This flag turns off exact implementations of IEEE or ISO rules/specifications for math
-  functions. Generally, if you don't care about the exact result, you can use this for
-  a speedup.
+\item    0: no optimizations, also turns on cfg(debug\_assertions).
+\item    1: basic optimizations
+\item    2: some optimizations
+\item     3: all optimizations
+\item    "s": optimize for binary size
+\item    "z": optimize for binary size, but also turn off loop vectorization.
 \end{itemize}
 
+\paragraph{C/\CPP~Reference material.} Since Rust leverages LLVM optimizations, it's good to understand those. Many pages on the Internet describe
+optimizations. Here's one that contains good examples for C/\CPP; I've translated appropriate cases to Rust in this lecture.
+
+$\qquad \qquad$ \url{http://www.digitalmars.com/ctg/ctgOptimizer.html}
+
+If you happen to be working with C/\CPP~in the future, you can find a full list of {\tt gcc} options here:
+
+$\qquad \qquad$ \url{http://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html}
+
 \subsection*{Scalar Optimizations}
+General note: we can use \url{https://godbolt.org/} to investigate what the compiler does. It will be easier to understand if you specify \texttt{-C overflow-checks=n}.
+
 By scalar optimizations, I mean optimizations
-which affect scalar (non-array) operations. Here are some examples of scalar
-optimizations.
+which affect scalar (non-array) operations. Here are some examples.
 
 \paragraph{Constant folding.} Probably the simplest optimization one can think of.
 Tag line: ``Why do later something you can do now?'' We simply translate:
@@ -68,7 +71,7 @@ i = 1048576
 \end{tabular}
 \end{center}
 
-\noindent \emph{Enabled at all optimization levels.} The compiler will not emit
+\noindent \emph{Enabled always.} The compiler will not emit
 code that does the multiplication at runtime. It will simply use the
 computed value.
 
@@ -78,20 +81,19 @@ neither {\tt x} nor {\tt y} change between the two computations. In the
 below example, we need to compute {\tt c + d} only once.
 
 
-\begin{lstlisting}[language=C]
-   a = (c + d) * y;
-   b = (c + d) * z;
+\begin{lstlisting}[language=Rust]
+    pub fn add(c:i32, d: i32, y:i32, z:i32) -> (i32, i32, i32) {
+        let a = (c + d) * y;
+        let b = (c + d) * z;
+        let w = 3; let x = f(); let y = x;
+        let z = w + y;
+        return (a, b, z);
+    }
 
-   w = 3;
-   x = f(); y = x;
-   z = w + y;
-
+    pub fn f() -> i32 { return 5; }
 \end{lstlisting}
 
-
-\noindent \emph{Enabled at {\tt -O2}, {\tt -O3} or with {\tt -fgcse}.} 
-These flags actually enable a global (i.e. across-basic-blocks) CSE pass.
-This also enables global constant and copy propagation.
+\noindent \emph{Enabled at level 1.}
 
 \paragraph{Constant propagation.} Moves constant values from definition to
 use. The transformation is valid if there are no redefinitions of the
@@ -105,8 +107,8 @@ their use. This usually runs after CSE. Using it, we can replace the
 last statement with {\tt z = w + x}. If we run both constant and copy
 propagation together, we get {\tt z = 3 + x}.
 
-These scalar optimizations are more complicated in the presence
-of pointers, e.g. {\tt z = *w + y}. More next time.
+In C, these scalar optimizations are more complicated in the presence
+of pointers, e.g. {\tt z = *w + y}. Fortunately, we're not talking about C here.
 
 %\paragraph{Scalar Replacement of Aggregates.} Censored. Too many people misunderstood it last year.
 
@@ -119,15 +121,15 @@ For instance:
 \begin{center}
 \vspace*{-2em}
 \begin{minipage}{.3\textwidth}
-\begin{lstlisting}[language=C]
-  int f(int x) {
+\begin{lstlisting}[language=Rust]
+  pub fn f(x:i32) -> i32 {
     return x * 2;
   }
   \end{lstlisting}
   \end{minipage} \begin{minipage}{.3\textwidth}
-\begin{lstlisting}[language=C]
-  int g() {
-    if (f(5) % 2 == 0) {
+\begin{lstlisting}[language=Rust]
+  pub fn g() {
+    if f(5) % 2 == 0 {
       // do stuff...
     } else {
       // do other stuff
@@ -139,19 +141,16 @@ For instance:
 }
 We see that the then-branch in {\tt g()} is always going to execute, and the
 else-branch is never going to execute.
-
 The general problem, as with many other compiler problems, is undecidable. Let's not get too caught up in the semantics of the \textit{Entscheidungsproblem}, even if you do speak German and like to show it off by pronouncing that word correctly.
 
 \subsection*{Loop Optimizations}
-Loop optimizations are particularly profitable when loops execute
-often. This is often a win, because programs spend a lot of time looping.
-The trick is to find which loops are going to be the important ones.
+Loop optimizations are often a win, because programs spend a lot of time looping. They are particularly profitable for loops with high iteration counts.
+The trick is to find which loops those are.
 Profiling is helpful.
 
 A loop induction variable is a variable that varies on each iteration
-of the loop; the loop variable is definitely a loop induction variable,
-but there may be others. \emph{Induction variable elimination} gets
-rid of extra induction variables.
+of the loop; a \texttt{for} loop variable is definitely a loop induction variable,
+but there may be others, which may be functions computable from a primary induction variable. \emph{Induction variable elimination} finds and eliminates (of course!) extra induction variables.
 
 \emph{Scalar replacement} replaces an array read {\tt a[i]}
 occuring multiple times with a single read {\tt temp = a[i]} and references
@@ -160,74 +159,86 @@ between reads.
 
 Sane languages include array bounds checks, and loop optimizations
 can eliminate array bounds checks if they can prove that the loop
-never iterates past the array bounds.
+never iterates past the array bounds. This doesn't come up in
+idiomatic Rust because you would usually iterate on an
+\texttt{IntoIterator}. Language design for the win.
 
 \paragraph{Loop unrolling.} This optimization
 lets the processor run more code without having to branch
 as often. \emph{Software pipelining} is a synergistic optimization,
 which allows multiple iterations of a loop to proceed in parallel.
-This optimization is also useful for SIMD. Here's an example.
+This optimization is also useful for SIMD. Rust does this. Here's an example.
 \begin{center}
 \vspace*{-1em}
 \begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=C]
-for (int i = 0; i < 4; ++i)
-    f(i)
+  \begin{lstlisting}[language=Rust]
+    for i in &[1,2,3,4] {
+      f(*i);
+    }
   \end{lstlisting}
   \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
+  \begin{lstlisting}[language=Rust]
 f(0); f(1); f(2); f(3);
   \end{lstlisting}
   \end{minipage}
   \end{center}
-\noindent \emph{Enabled with {\tt -funroll-loops}.}
 
 \paragraph{Loop interchange.} This optimization can give big wins
 for caches (which are key); it changes the nesting of loops to
-coincide with the ordering of array elements in memory. For instance,
-in C:
+coincide with the ordering of array elements in memory. Although Rust
+supports 2-dimensional arrays, it looks like it can be idiomatic Rust to index
+manually (i.e. \texttt{[i*N+j]}) or to use a crate to do it for you, e.g.
+\texttt{ndarray}.
+For instance:
 \begin{center}
 \vspace*{-1em}
-\begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=C]
-for (int i = 0; i < N; ++i)
-    for (int j = 0; j < M; ++j)
-        a[j][i] = a[j][i] * c
+\begin{minipage}{.39\textwidth}
+  \begin{lstlisting}[language=Rust]
+pub fn mul(mut a: [[i32; 8]; 4], c: i32) {
+    for i in 0..7 {
+        for j in 0..3 {
+            a[i][j] = a[i][j] * c;
+        }
+    }
+}
   \end{lstlisting}
-  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
-for (int j = 0; j < M; ++j)
-    for (int i = 0; i < N; ++i)
-        a[j][i] = a[j][i] * c
+  \end{minipage} $\hspace*{2em} \Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=Rust]
+pub fn mul(mut a: [[i32; 8]; 4], c: i32) {
+    for j in 0..3 {
+        for i in 0..7 {
+            a[j][i] = a[j][i] * c;
+        }
+    }
+}
   \end{lstlisting}
   \end{minipage}
   \end{center}
-  since C is \emph{row-major} (meaning a[1][1] is beside a[1][2]),
-rather than \emph{column-major}.
+  A stackoverflow answer suggests that Rust is row-major
+  (a[1][1] is beside a[1][2]) but that this is not
+  guaranteed: {\scriptsize \url{https://stackoverflow.com/questions/37316336/is-rust-multi-dimensional-array-row-major-and-tightly-packed}}. OpenGL, on the other hand, is supposedly column-major.
 
-\noindent
-\emph{Enabled with {\tt -floop-interchange}.}
+Strangely enough, sometimes you want to do things the column-major way even though it's ``wrong''. If your two dimensional array is of an appropriate size then by intentionally hitting things in the ``wrong'' order, you'll trigger all your page faults up front and load all your pages into cache and then you can go wild. This was suggested as a way to make matrix multiplication faster for a sufficiently large matrix\ldots
 
-Strangely enough, sometimes you want to do things the column-major way even though it's ``wrong''. If your two dimensional array is of an appropriate size then by intentionally hitting things in the ``wrong'' order, you'll trigger all your page faults up front and load all your pages into cache and then you can go wild. This was suggested as a way to make matrix multiplication faster for a sufficiently large matrix...
-
-\paragraph{Loop fusion.} This optimization is like the OpenMP collapse
-construct; we transform
+\paragraph{Loop fusion.} Here, we transform
 \begin{center}
 \vspace*{-1em}
 \begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=C]
-for (int i = 0; i < 100; ++i)
-    a[i] = 4
+  \begin{lstlisting}[language=Rust]
+    for i in 0..100 {
+       a[i] = 4;
+    }
 
-for (int i = 0; i < 100; ++i)
-    b[i] = 7
+    for i in 0..100 {
+       b[i] = 7;
+    }
   \end{lstlisting}
   \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
-for (int i = 0; i < 100; ++i) {
-    a[i] = 4
-    b[i] = 7
-}
+  \begin{lstlisting}[language=Rust]
+    for i in 0..100 {
+       a[i] = 4;
+       b[i] = 7;
+    }
   \end{lstlisting}
   \end{minipage}
   \end{center}
@@ -235,21 +246,21 @@ There's a trade-off between data locality and loop overhead; hence,
 sometimes the inverse transformation, \emph{loop fission}, will
 improve performance.
 
-\paragraph{Loop-invariant code motion.} Also known as \emph{Loop hoisting},
+\paragraph{Loop-invariant code motion.} Also known as \emph{loop hoisting},
 this optimization moves calculations out of a loop. 
 \begin{center}
 \vspace*{-1em}
 \begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=C]
-for (int i = 0; i < 100; ++i) {
+  \begin{lstlisting}[language=Rust]
+for i in 0..100 {
     s = x * y;
     a[i] = s * i;
 }
   \end{lstlisting}
   \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
+  \begin{lstlisting}[language=Rust]
 s = x * y;
-for (int i = 0; i < 100; ++i) {
+for i in 0..100 {
     a[i] = s * i;
 }
   \end{lstlisting}
@@ -260,26 +271,21 @@ This reduces the amount of work we have to do for each iteration of the loop.
 
 
 \subsection*{Miscellaneous Low-Level Optimizations}
-Some optimizations affect low level code generation; here are two examples.
+Some optimizations affect low level code generation; here are the ones that
+{\tt rustc} can do.
 
-\paragraph{Branch Prediction.} {\tt gcc} attempts to guess the probability of each branch to
-best order the code. (For an {\tt if}, fall-through is most efficient. Why?)
+\paragraph{Cold.} I used to talk about likely/unlikely branch prediction hints,
+but Rust seems not keen to expose this. Rust does expose the \verb+#[cold]+
+attribute, which you can use to mark a method as unlikely to be called (e.g. \texttt{panic}).
 
-This isn't quite an optimization, but you can use {\tt
-  \_\_builtin\_expect(expr, value)} to help GCC, if you know the
-run-time characteristics of your program. An example, from the
-  Linux kernel:
-
-  \begin{lstlisting}[language=C]
-#define likely(x)       __builtin_expect((x),1)
-#define unlikely(x)     __builtin_expect((x),0)
-  \end{lstlisting}
-
-\paragraph{Architecture-Specific.} {\tt gcc} can also generate code tuned to particular
-processors and processor variants. You can specify this using {\tt
-  -march} and {\tt -mtune}. ({\tt -march} implies {\tt -mtune}).
+\paragraph{Architecture-Specific.} LLVM can generate code tuned to particular
+processors and processor variants (by using instructions available for certain processors,
+and by modifying the cost model). You can specify this using {\tt
+  -C target-cpu} and {\tt -C target-feature}.
 This will enable specific instructions that not all CPUs support (e.g. SSE4.2).
-For example, {\tt -march=corei7}.
+{\tt native} is a good target CPU if you're running where you compile.
+See~\cite{wilcox20:_target_featur_target_cpu_rust}
+for a more detailed discussion. 
 
 \noindent
 Good to use on your local machine or your cloud servers, not ideal for code you ship to others.
@@ -291,14 +297,17 @@ Good to use on your local machine or your cloud servers, not ideal for code you 
 In this context, does a
 whole-program optimization really improve your program?
 We'll start by first talking about some information that is critical for
-whole-program optimizations.
+whole-program optimizations. They are much less of an issue for Rust but
+you may well be programming in C or \CPP~someday soon.
 
 \subsection*{Alias and Pointer Analysis}
-As we've seen in the above analyses, compiler optimizations often need
-to know about what parts of memory each statement reads to.  This is
-easy when talking about scalar variables which are stored on the
-stack. This is much harder when talking about pointers or arrays
-(which can alias). \emph{Alias analysis} helps by declaring that a
+I made passing references above to the fact that compiler optimizations often need
+to know about what parts of memory each statement accesses---things like ``neither
+{\tt x} nor {\tt y} change''. This is
+easy to establish when talking about scalar variables which are stored on the
+stack. This is much harder in conventional languages when talking about pointers or arrays, which can alias. The whole borrowing thing primarily controls aliasing.
+
+\emph{Alias analysis} helps by declaring that a
 given variable {\tt p} does not alias another variable {\tt q}; that
 is, they point to different heap locations. \emph{Pointer analysis}
 abstractly tracks what regions of the heap each variable points to.
@@ -310,53 +319,62 @@ effects are independent, so it's correct to move things around.
 This also helps in reasoning about side effects and enabling reordering.
 
 We've talked about automatic parallelization previously in this course.
-At this point, I'll remind you that we used {\tt restrict} so that the
-compiler wouldn't have to do as much pointer analysis. Shape analysis
+In Rust, controlled aliasing makes automatic parallelization much more tractable.
+Shape analysis
 builds on pointer analysis to determine that data structures are indeed
 trees rather than lists.
+
+For a Rust-centric discussion: \url{https://doc.rust-lang.org/nomicon/aliasing.html}.
 
 \paragraph{Call Graphs.} Many interprocedural analyses require accurate
 call graphs. A call graph is a directed graph showing relationships between
 functions. It's easy to compute a call graph when you have C-style
 function calls. It's much harder when you have virtual methods, as in
-C++ or Java, or even C function pointers. In particular, you need pointer
-analysis information to construct the call graph.
+\CPP~or Java, or even C function pointers. In particular, you need pointer
+analysis information to construct the call graph. For Rust, indirect function
+calls (function pointers) and dynamic dispatch through traits are challenges
+to call graph construction\footnote{\url{https://blog.japaric.io/stack-analysis-2/}}.
 
 \paragraph{Devirtualization.} This optimization attempts to convert
 virtual function calls to direct calls.  Virtual method calls have the
 potential to be slow, because there is effectively a branch to
 predict. If the branch prediction goes well, then it doesn't impose
 more runtime cost. However, the branch prediction might go poorly.  (In
-general for C++, the program must read the object's vtable.) Plus, virtual
+general for both Rust and \CPP, the program must read the object's vtable.) Plus, virtual
 calls impede other optimizations. Compilers can help by doing
 sophisticated analyses to compute the call graph and by replacing
 virtual method calls with nonvirtual method calls.  Consider the
-following code:
-  \begin{lstlisting}[language=C]
-class A {
-  public:
-    virtual void m();
-};
+following code\footnote{Inspired by code in previous footnote.}:
+  \begin{lstlisting}[language=Rust]
+     fn flag() -> bool { true }
 
-class B : public A {
-  public:
-    virtual void m() {}
-};
+     fn main() {
+         let mut to: &dyn Foo = &Bar;
+         if flag() { to = &Baz; }
+         to.foo();
+     }
 
-int main(int argc, char *argv[]) {
-    std::unique_ptr<A> t(new B);
-    t->m();
-}
+     trait Foo { fn foo(&self) -> i32; }
+
+     struct Bar;
+     impl Foo for Bar {
+         fn foo(&self) -> i32 { println!("bar"); 0 }
+     }
+
+     struct Baz;
+     impl Foo for Baz {
+         fn foo(&self) -> i32 { println!("baz"); 1 }
+     }
   \end{lstlisting}
-Devirtualization could eliminate vtable access; instead, we could just call B's {\tt m} method
-directly. By the way, ``Rapid Type Analysis'' analyzes the entire program, observes that
-only {\tt B} objects are ever instantiated, and enables devirtualization
-of the {\tt b.m()} call.
-
-\noindent \emph{Enabled with {\tt -O2}, {\tt -O3}, or with {\tt -fdevirtualize}.}
+Devirtualization could eliminate vtable access; instead, we could just call {\tt Baz.foo()} 
+directly. By the way, ``Rapid Type Analysis'' (applied to \CPP, not sure if it's used in Rust)
+analyzes the entire program, could hypothetically observe that
+only {\tt Baz} objects are ever instantiated (not true here), and would in that case
+enable devirtualization
+of the {\tt to.foo()} call.
 
 \paragraph{Inlining.} We have seen the notion of inlining:
-  \begin{itemize}
+  \begin{itemize}[noitemsep]
     \item Instructs the compiler to just insert the function code in-place,
       instead of calling the function.
     \item Hence, no function call overhead!
@@ -364,26 +382,15 @@ of the {\tt b.m()} call.
       have done before.
   \end{itemize}
 
+In Rust, you can tell the compiler to inline a function using an annotation:
+\begin{itemize}[noitemsep]
+ \item \#[inline] hints the compiler to perform an inline expansion.
+ \item \#[inline(always)] asks the compiler to always perform an inline expansion.
+ \item \#[inline(never)] asks the compiler to never perform an inline expansion.
+\end{itemize}
+
 OK, so inlining removes overhead. Sounds like better performance! Let's inline everything!
-There are two ways of inlining in C++.
 
-Implicit Inlining (defining a function inside a class definition):
-  \begin{lstlisting}[language=C]
-class P {
-public:
-    int get_x() const { return x; }
-...
-private:
-    int x;
-};
-  \end{lstlisting}
-
-Explicit Inlining:
-  \begin{lstlisting}[language=C]
-inline max(const int& x, const int& y) {
-    return x < y ? y : x;
-}
-  \end{lstlisting}
 
 \paragraph{The Other Side of Inlining.}
 Inlining has one big downside:
@@ -391,19 +398,19 @@ Inlining has one big downside:
     \item Your program size is going to increase.
   \end{itemize}
    This is worse than you think:
-      \begin{itemize}
+      \begin{itemize}[noitemsep]
         \item Fewer cache hits.
         \item More trips to memory.
       \end{itemize}
-   Some inlines can grow very rapidly (C++ extended constructors).
+   Some inlines can grow very rapidly.
   Just from this your performance may go down easily.
 
   Note also that inlining is merely a suggestion to compilers~\cite{gcc:inlining}.
   They may ignore you.
-  For example:
-  \begin{itemize}
+  For C/\CPP:
+  \begin{itemize}[noitemsep]
     \item taking the address of an ``inline'' function and using it; or
-    \item virtual functions (in C++),
+    \item virtual functions (in \CPP),
   \end{itemize}
   will get you ignored quite fast.
 
@@ -414,7 +421,7 @@ First, debugging is more difficult (e.g. you can't set a breakpoint in a functio
  Some do, but typically it's more of a pain.
 
 Second, it can be a problem for library design:
-  \begin{itemize}
+  \begin{itemize}[noitemsep]
     \item If you change any inline function in your library, any users
       of that library have to {\bf recompile} their program if the
       library updates. (Congratulations, you made a non-binary-compatible change!)
@@ -422,50 +429,58 @@ Second, it can be a problem for library design:
 This would not be a problem for non-inlined functions---programs execute the new function
 dynamically at runtime.
 
-\noindent \emph{Enabled with {\tt -O2} and {\tt -O3}.}
-
 Obviously, inlining and devirtualization require call graphs. But so
 does any analysis that needs to know about the heap effects of
-functions that get called; for instance, consider this code:
+functions that get called; for instance, consider this obviously terrible Rust code:
 
 {\small
-\begin{lstlisting}[language=C]
-  int n;
+\begin{lstlisting}[language=Rust]
+    static mut N:i32 = 5;
 
-  int f() { /* opaque */ }
+    fn f() { }
 
-  int main() {
-    n = 5;
-    f();
-    printf("%d\n", n);
-  }
-\end{lstlisting}
+    fn main() {
+      unsafe { 
+        N = 2;
+        f();
+        println!("{}", N);  
+      }
+    }
+    \end{lstlisting}
 }
-We could propagate the constant value 5, as long as we know that {\tt
-  f()} does not write to {\tt n}.
+We could propagate the constant value 2 to the print statement,
+as long as we know that {\tt
+f()} does not write to {\tt N}. But idiomatic Rust helps us
+here. If \texttt{N} was instead some memory location $o$ with a unique
+pointer to it, then we would know whether or not \texttt{f()} has
+access to that unique pointer (and, in particular, there wouldn't exist some other
+pointer also pointing to $o$). For a shared object, we check whether the callee
+requests write permission to any object. In any case, we're less likely to have random
+state hanging around that may or may not be accessed by a function.
 
 \paragraph{Tail Recursion Elimination.} This optimization is mandatory
 in some functional languages; we replace a call by a {\tt goto} at the
-compiler level. Consider this example, courtesy of Wikipedia:
+compiler level. It is not mandatory in C/\CPP/Rust.
+Consider this example\footnote{\url{https://stackoverflow.com/questions/59257543/when-is-tail-recursion-guaranteed-in-rust}}:
 
 {\small
-\begin{lstlisting}[language=C]
-  int bar(int N) {
-    if (A(N))
-      return B(N);
-    else
-      return bar(N);
-  }
+\begin{lstlisting}[language=Rust]
+pub fn fibonacci(n: u64) -> u64 {
+    fn fibonacci_lr(n: u64, a: u64, b: u64) -> u64 {
+        match n {
+            0 => a,
+            _ => fibonacci_lr(n - 1, a + b, a),
+        }
+    }
+    fibonacci_lr(n, 1, 0)
+}
 \end{lstlisting}
 }
 
-For both calls, to {\tt B} and {\tt bar}, we don't need to return control
-to the calling {\tt bar()} before returning to its caller (because {\tt bar()}
-is done anyway). This avoids
+Here, \texttt{fibonacci\_lr} doesn't need to return control to its caller
+(because the recursive call is in tail position, i.e. the last thing that happens
+in the function). This avoids
 function call overhead and reduces call stack use.
-
-\noindent \emph{Enabled with {\tt -foptimize-sibling-calls}.} Also supports
-sibling calls as well as tail-recursive calls.
 
 \section*{Link-Time Optimizations}
 Next up: mechanics of interprocedural optimizations in modern open-source
@@ -522,7 +537,11 @@ avoiding unnecessary work.
 \end{itemize}
 As far as I can tell, today's gcc, with {\tt -flto}, does work and includes
 optimizations including constant propagation and function
-specialization.
+specialization. LLVM and Rust's use of it also include various flavours of LTO.
+I couldn't find much information about happens specifically for Rust; I'd expect the
+LLVM details below to apply. LLVM LTO can, however,
+optimize across source languages, i.e. if your program contains both C and Rust,
+the compiler and linker can optimize both using the intermediate representation.
 
 \paragraph{Impact.} gcc LTO appears to give 3--5\% improvements in performance, which compiler experts consider good.
 Like we discussed last time, this allows developers to shift their attention from 
