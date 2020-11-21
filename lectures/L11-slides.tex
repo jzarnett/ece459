@@ -74,174 +74,149 @@ Those should be the exception rather than the rule.
 \frametitle{Remember the Producer-Consumer Problem?}
 
 Short code example from the producer-consumer problem:
-
-\begin{lstlisting}[language=C]
-sem_t spaces;
-sem_t items;
-int counter;
-int* buffer;
-int pindex = 0;
-int cindex = 0;
-int ctotal = 0;
-pthread_mutex_t prod_mutex;
-pthread_mutex_t con_mutex;
-
-void consume( int to_consume );
-
-\end{lstlisting}
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Remember the Producer-Consumer Problem?}
-
-Single-threaded consumer code:
-
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( ctotal < MAX_ITEMS_CONSUMED ) {
-    sem_wait( &items );
-    consume( buffer[cindex] );
-    buffer[cindex] = -1;
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    sem_post( &spaces );
-  }
+\begin{lstlisting}[language=Rust]
+for _j in 0 .. NUM_THREADS {
+  // create consumers
+  let spaces = spaces.clone();
+  let items = items.clone();
+  let buffer = buffer.clone();
+  threads.push(
+    thread::spawn(move || {
+      for _k in 0 .. ITEMS_PER_THREAD {
+        let permit = block_on(items.acquire());
+        let mut buf = buffer.lock().unwrap();
+        let current_consume_space = buf.consumer_count;
+        let next_consume_space = (current_consume_space+1) % buf.buffer.len();
+        let to_consume = *buf.buffer.get(current_consume_space).unwrap();
+        buf.consumer_count = next_consume_space;
+        spaces.add_permits(1);
+        permit.forget();
+        consume_item(to_consume);
+      }
+    })
+  );
 }
+
 \end{lstlisting}
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Multiple Consumers}
-Must add mutual exclusion to allow multiple simultaneous consumers.
-
-Could allow exactly one consumer to run at a time. We can do better\ldots
-
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( ctotal < MAX_ITEMS_CONSUMED ) {
-    pthread_mutex_lock( &con_mutex );
-    sem_wait( &items );
-    consume( buffer[cindex] );
-    buffer[cindex] = -1;
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    sem_post( &spaces );
-    pthread_mutex_unlock( &con_mutex );
-  }
-}
-\end{lstlisting}
-
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Anything to Kick Out?}
+\frametitle{Previously, More Explicit}
 
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/kickout.png}
-\end{center}
+When we used locks in C (or similar), it was easier to identify what's in the critical section, because we had explicit lock and unlock statements. 
 
+The explicit unlock statement, especially, made it much clearer where it ends. 
 
-\end{frame}
+Now, we don't consider the critical section over until the \texttt{MutexGuard} (returned by \texttt{lock()}) goes out of scope. 
 
+And that happens here at the end of the iteration of the loop.
 
-
-\begin{frame}
-\frametitle{Anything to Kick Out?}
-
-At first glance it is probably not very obvious but the \texttt{consume} function takes a regular integer, any old integer, not a pointer of some sort. 
-
-So we could, inside the critical section, read the value of the buffer at the current index into a temp variable. 
-
-That temp variable then can be given to the \texttt{consume} function at any time\ldots outside of the critical section. 
-
-Everything else inside our lock and unlock statements seems to be shared data: operates on \texttt{cindex} or \texttt{ctotal}.
 
 
 \end{frame}
 
 
-\begin{frame}[fragile]
-\frametitle{Updated Code}
-
-\begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( ctotal < MAX_ITEMS_CONSUMED ) {
-    pthread_mutex_lock( &con_mutex );
-    sem_wait( &items );
-    int temp = buffer[cindex]; // store for now
-    buffer[cindex] = -1;
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    sem_post( &spaces );
-    pthread_mutex_unlock( &con_mutex );
-    consume( temp ); // consume outside mutex
-  }
-}
-\end{lstlisting}
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Did We Get Everything?}
-
-The while condition checks the value of \texttt{ctotal} and that is a read of shared data. 
-
-Now we maybe have a problem. How do we get that inside the critical section?
-
-One idea we might have is to read the value of ctotal into a temporary variable and use that, but it might cause some headaches with the timing\ldots
-
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Not Forgetting The Loop Condition}
-
- Instead what I'd recommend is to make the loop a while true loop and then have a test of the value to determine when we should break out of the loop.
- 
- \begin{lstlisting}[language=C]
-void* consumer( void* arg ) { 
-  while( 1 ) { 
-    pthread_mutex_lock( &con_mutex );  
-    if ( ctotal == MAX_ITEMS_CONSUMED ) {
-      pthread_mutex_unlock( &con_mutex );
-      break;
-    }   
-    sem_wait( &items );
-    int temp = buffer[cindex];
-    buffer[cindex] = -1; 
-    cindex = (cindex + 1) % BUFFER_SIZE;
-    ++ctotal;
-    pthread_mutex_unlock( &con_mutex );
-    sem_post( &spaces );
-    consume( temp );
-  }
-  pthread_exit( NULL );
-}
-\end{lstlisting}
-
-Are we done?
-
-\end{frame}
 
 
 \begin{frame}
 \frametitle{``Do you think you got him?''}
+
+What I always say is to analyze this closure one statement at a time and look into which of these access shared variables. 
 
 \begin{center}
 	\includegraphics[width=\textwidth]{images/gothim.png}
 \end{center}
 
 \end{frame}
+
+
+\begin{frame}
+\frametitle{Better to be Safe than Sorry}
+
+In a practical sense, the critical section needs to enclose anything that references \texttt{buf}.
+
+Looking at that code, how did we do?
+
+Rust is good about not letting you access shared data in an uncontrolled way.
+
+But not so good at making sure nothing extra is there.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Option 1: Manual Scoping}
+
+\begin{lstlisting}[language=Rust]
+for _j in 0 .. NUM_THREADS {
+ // create consumers
+ let spaces = spaces.clone();
+ let items = items.clone();
+ let buffer = buffer.clone();
+ threads.push(
+   thread::spawn(move || {
+     for _k in 0 .. ITEMS_PER_THREAD {
+       let permit = block_on(items.acquire());
+       let to_consume = {
+         let mut buf = buffer.lock().unwrap();
+         let current_consume_space = buf.consumer_count;
+         let next_consume_space = (current_consume_space+1)%buf.buffer.len();
+         let to_consume = *buf.buffer.get(current_consume_space).unwrap();
+         buf.consumer_count = next_consume_space;
+         to_consume
+       };
+       spaces.add_permits(1);
+       permit.forget();
+       consume_item(to_consume);
+     }
+   })
+ );
+}
+\end{lstlisting}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Option 2: Taking Out the Guard}
+
+The other approach to making the \texttt{MutexGuard} go out of scope is to actually call \texttt{drop()} on it. 
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/batty2.jpg}
+\end{center}
+
+This is effective in telling the compiler that it is time for this value to die. 
+
+Calling \texttt{drop()} moves ownership of the MutexGuard to the \texttt{drop} function where it will go out of scope and be removed. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Like for Like}
+I applied a similar change the producer code as we just discussed about the consumer. 
+ 
+I added some thread sleeps to the original and modified program so it appears that consuming or producing an item actually takes meaningful work. 
+
+Benchmarks are created with \texttt{hyperfine --warmup 1 -m 5 "cargo run --release"}.
+ 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Test Results}
+
+Unoptimized version: 2.8 seconds
+
+
+Optimized version: 1.1 seconds
+
+
+\end{frame}
+
 
 
 
@@ -427,25 +402,19 @@ As an example of consistent ordering:
 \begin{center}
 \begin{tabular}{ll}
 \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=C]
-void f1() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&l1);    
-}
+  \begin{lstlisting}[language=Rust]
+let mut thing1 = l1.lock().unwrap()
+let mut thing2 = l2.lock().unwrap()
+// protected code
+// locks dropped when going out of scope
 \end{lstlisting}
 \end{minipage}&
 \begin{minipage}{.4\textwidth}
-\begin{lstlisting}[language=C]
-void f2() {
-    lock(&l1);
-    lock(&l2);
-    // protected code
-    unlock(&l2);
-    unlock(&l1);    
-}
+\begin{lstlisting}[language=Rust]
+let mut thing1 = l1.lock().unwrap()
+let mut thing2 = l2.lock().unwrap()
+// protected code
+// locks dropped when going out of scope
   \end{lstlisting}
 \end{minipage}
 \end{tabular}
@@ -464,20 +433,21 @@ Recall that Pthreads' {\tt trylock} returns 0 if it gets the lock.
 
 But if it doesn't, your thread doesn't get blocked. 
 
-\begin{lstlisting}[language=C]
-void f1() {
-    lock(&l1);
-    while (trylock(&l2) != 0) {
-        unlock(&l1);
-        // wait
-        lock(&l1);
+  \begin{lstlisting}[language=Rust]
+    loop {
+        let mut m1 = l1.lock().unwrap();
+        let m2 = l2.try_lock();
+        if m2.is_ok() {
+            *m1 += amount;
+            *m2.unwrap() -= amount;
+            break;
+        } else {
+            println!("try_lock failed");
+            // Go around the loop again and try again
+        }
     }
-    // protected code
-    unlock(&l2);
-    unlock(&ll);    
-}
-\end{lstlisting}
-
+  \end{lstlisting}
+  
 This prevents the hold and wait condition.
 
 \end{frame}
@@ -758,77 +728,6 @@ Either way, if the code is not reentrant we will run into problems.
 
 \end{frame}
 
-\begin{frame}
-\frametitle{Thread Safe vs. Reentrant}
-
-Let us also draw a distinction between thread safe code and reentrant code. 
-
-A thread safe operation is one that can be performed from more than one thread at the same time. 
-
-On the other hand, a reentrant operation can be invoked while the operation is already in progress, possibly from within the same thread. 
-
-Or it can be re-started without affecting the outcome. 
-
-If a function is not reentrant, it may not be possible to make it thread safe. 
-
-And furthermore, a reentrant function cannot call a non-reentrant one (and maintain its status as reentrant).
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Thread Safe Non-Reentrant Example}
-{\scriptsize
-\begin{lstlisting}[language=C]
-int length = 0;
-char *s = NULL;
-
-// Note: Since strings end with a 0, if we want to
-// add a 0, we encode it as "\0", and encode a
-// backslash as "\\".
-
-
-// WARNING! This code is buggy - do not use!
-void AddToString(int ch)
-{
-  EnterCriticalSection(&someCriticalSection);
-  // +1 for the character we're about to add
-  // +1 for the null terminator
-  char *newString = realloc(s, (length+1) * sizeof(char));
-  if (newString) {
-    if (ch == '\0' || ch == '\\') {
-      AddToString('\\'); // escape prefix
-    }
-    newString[length++] = ch;
-    newString[length] = '\0';
-    s = newString;
-  }
-  LeaveCriticalSection(&someCriticalSection);
-}
-\end{lstlisting}
-}
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Analysis of This Example}
-
-Is it thread safe? Sure---there is a critical section protected by the mutex \texttt{someCriticalSection}. 
-
-But is is re-entrant? Nope. 
-
-The internal call to \texttt{AddToString} causes a problem because the attempt to use \texttt{realloc} will use a pointer to \texttt{s}.
-
-That is no longer valid because it got stomped by the earlier call to \texttt{realloc}.
-
-
-\end{frame}
-
-
 
 \begin{frame}
 \frametitle{Functional Programming}
@@ -991,74 +890,6 @@ a = 2, b = 1, c = 4, d = 3, t = UNDEFINED
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Reentrancy vs Thread-Safety (1)}
-
-  
-  \begin{itemize}
-    \item Re-entrant does not always mean thread-safe (as we saw)
-      \begin{itemize}
-        \item But, for most sane implementations, it is thread-safe
-      \end{itemize}
-  \end{itemize}~\\[1em]
-
-  Ok, but are {\bf thread-safe} functions reentrant?
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Reentrancy vs Thread-Safety (2)}
-
-  
-  Are {\bf thread-safe} functions reentrant? \alert{Nope.} Consider:
-
-  \begin{lstlisting}[language=C]
-int f() {
-    lock();
-    // protected code
-    unlock();
-}
-  \end{lstlisting}
-
-  Recall: {\bf Reentrant functions can be suspended in the middle of execution
-    and called again before the previous execution completes.}\\[1em]
-
-  {\tt f()} obviously isn't reentrant. Plus, it will deadlock.\\[1em]
-
-  Interrupt handling is more for systems programming, so the topic of reentrancy may or may not come
-  up again.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Summary of Reentrancy vs Thread-Safety}
-
-  
-  Difference between reentrant and thread-safe functions:\\[1em]
-
-  {\bf Reentrancy}
-  \begin{itemize}
-    \item Has nothing to do with threads---assumes a {\bf single thread}.
-    \item Reentrant means the execution can context switch at any point in
-      in a function, call the {\bf same function}, and {\bf complete} before
-      returning to the original function call.
-    \item Function's result does not depend on where the context switch happens.
-  \end{itemize}
-  \vfill
-  {\bf Thread-safety}
-  \begin{itemize}
-    \item Result does not depend on any interleaving of threads from
-      concurrency or parallelism.
-    \item No unexpected results from multiple concurrent executions of the function.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
@@ -1075,35 +906,17 @@ int f() {
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Past Example of an Exam Question}
 
-  
+\begin{frame}
+\frametitle{Functional Rust?}
 
-  \begin{lstlisting}[language=C]
-void swap(int *x, int *y) {
-    int t;
-    t = *x;
-    *x = *y;
-    *y = t;
-}  
-  \end{lstlisting}
-  \vfill
-  \begin{itemize}
-    \item Is the above code thread-safe?
-    \vfill
-    \item Write some expected results for running two calls in parallel.
-    \vfill
-    \item Argue these expected results always hold, or show an example where
-      they do not.
-  \end{itemize}
-  
+Rust does not force a functional style upon your program.
+
+It discourages mutability of data, which is sort of functional-is.
+
+Internal mutability is a thing, but discouraged.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
 
 
 
