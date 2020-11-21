@@ -442,6 +442,84 @@ Let the operating system decide how many workers there should be, to figure out 
 \end{frame}
 
 
+\begin{frame}[fragile]
+\frametitle{Rust Thread Pool}
+
+\begin{lstlisting}[language=Rust]
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use threadpool::ThreadPool;
+use std::thread;
+
+fn main() {
+    let pool = ThreadPool::new(8);
+    let queue = Arc::new(Mutex::new(VecDeque::new()));
+    println!("main thread has id {}", thread_id::get());
+
+    for j in 0 .. 4000 {
+        queue.lock().unwrap().push_back(j);
+    }
+    queue.lock().unwrap().push_back(-1);
+\end{lstlisting}
+
+
+\end{frame}
+\begin{frame}[fragile]
+\frametitle{Rust Thread Pool}
+
+\begin{lstlisting}[language=Rust]
+    for i in 0 .. 4 {
+        let queue_in_thread = queue.clone();
+        pool.execute(move || {
+            loop {
+                let mut q = queue_in_thread.lock().unwrap();
+                if !q.is_empty() {
+                    let val = q.pop_front().unwrap();
+                    if val == -1 {
+                        q.push_back(-1);
+                        println!("Thread {} got the signal to exit.", thread_id::get());
+                        return;
+                    }
+                    println!("Thread {} got: {}!", thread_id::get(), val);
+                }
+            }
+        });
+    }
+    pool.join();
+}
+\end{lstlisting}
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Thread Pool Output}
+
+
+\begin{verbatim}
+main thread has id 4455538112
+Thread 123145474433024 got: 0!
+Thread 123145474433024 got: 1!
+Thread 123145474433024 got: 2!
+
+...
+
+Thread 123145478651904 got: 3997!
+Thread 123145478651904 got: 3998!
+Thread 123145478651904 got: 3999!
+Thread 123145476542464 got the signal to exit.
+Thread 123145484980224 got the signal to exit.
+Thread 123145474433024 got the signal to exit.
+Thread 123145478651904 got the signal to exit.
+\end{verbatim}
+
+
+\end{frame}
+
+
+
+
 \part{Threads vs Processes}
 \begin{frame}
 \partpage
