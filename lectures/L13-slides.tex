@@ -69,31 +69,140 @@ Must install package $X$ before running package $Y$.
 
 \end{frame}
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (1)}
+
+Can we run these lines in parallel? \\ ~~~(initially vec[0] and vec[1] are 1)
+\begin{lstlisting}[language=Rust]
+let mut vec = vec![1; 32];
+    /* */
+vec[4] = vec[0] + 1;
+vec[5] = vec[0] + 2;
+\end{lstlisting}
+\pause
+\structure{Yes.}\\[1em]
+\begin{itemize}
+\item There are no dependencies between these lines.
+\item However, this is not how we normally use arrays\ldots
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Loop-carried Dependencies (2)}
+
+What about this? (all elements initially 1)
+\begin{lstlisting}[language=Rust]
+for i in 1 .. vec.len() {
+    vec[i] = vec[i-1] + 1;
+}
+\end{lstlisting}
+
+\pause
+\alert{No, a[2] = 3 or a[2] = 2.}\\[1em]
+\begin{itemize}
+\item Statements depend on previous loop iterations.
+\item An example of a \structure{loop-carried dependency}.
+\end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Larger example: Loop-carried Dependencies}
+{\small
+\begin{lstlisting}[language=Rust]
+// Repeatedly square input, return number of iterations before
+// absolute value exceeds 4, or 1000, whichever is smaller.
+fn mandelbrot(x0: f64, y0: f64) -> i32 {
+    let mut iterations = 0;
+    let mut x = x0;
+    let mut y = y0;
+    let mut x_squared = x * x;
+    let mut y_squared = y * y;
+    while (x_squared + y_squared < 4f64) && (iterations < 1000) {
+        y = 2f64 * x * y + y0;
+        x = x_squared - y_squared + x0;
+        x_squared = x * x;
+        y_squared = y * y;
+        iterations += 1;
+    }
+    return iterations;
+}
+\end{lstlisting}
+}
+How can we parallelize this? \\
+\pause
+\begin{itemize}
+\item Run {\tt mandelbrot} sequentially for each point, but parallelize
+different point computations.
+\end{itemize}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}[fragile]
+\frametitle{Stride}
+
+ Now consider this example---is it parallelizable? (Again, all elements initially 1.)
+
+\begin{lstlisting}[language=C]
+for i in 4 .. vec.len() {
+    vec[i] = vec[i-4] + 1;
+}
+\end{lstlisting}
+
+\pause
+
+Yes, to a degree. We can execute 4 statements in parallel at a time:
+\begin{itemize}
+  \item \texttt{vec[4] = vec[0] + 1, vec[8] = vec[4] + 1}
+  \item \texttt{vec[5] = vec[1] + 1, vec[9] = vec[5] + 1}
+  \item \texttt{vec[6] = vec[2] + 1, vec[10] = vec[6] + 1}
+  \item \texttt{vec[7] = vec[3] + 1, vec[11] = vec[7] + 1}
+\end{itemize}  
+We can say that the array accesses have stride 4
+
+\end{frame}
+
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
 \frametitle{Memory-carried Dependencies}
 
 Dependencies limit the amount of parallelization.
-\vfill
-Can we execute these 2 lines in parallel?
-\begin{lstlisting}[language=C]
-x = 42
-x = x + 1  
+
+\begin{lstlisting}[language=Rust]
+let mut acct: Account = Account {
+    balance: 0.0f32
+};
+f(&mut acct);
+g(&mut acct);
+
+/* */
+
+fn f (a: &mut Account) {
+    a.balance += 50.0f32;
+}
+fn g (a: &mut Account) {
+    a.balance *= 1.01f32;
+}
 \end{lstlisting}
-\pause
-\alert{No.}\\[1em]
-\begin{itemize}
-\item Assume x initially 1. What are possible outcomes?
-\pause \newline \structure{~~~x = 43 or x = 42 or x = 2}\\[1em]
 
-\end{itemize}
-
-Next, we'll classify dependencies.
-
+What are the possible outcomes after executing {\tt g()} and {\tt f()}
 
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -116,99 +225,6 @@ Well, turns out our memory-carried dependencies are the hazards:
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Loop-carried Dependencies (1)}
-
-Can we run these lines in parallel? \\ ~~~(initially a[0] and a[1] are 1)
-\begin{lstlisting}[language=C]
-a[4] = a[0] + 1
-a[5] = a[1] + 2
-\end{lstlisting}
-\pause
-\structure{Yes.}\\[1em]
-\begin{itemize}
-\item There are no dependencies between these lines.
-\item However, this is not how we normally use arrays\ldots
-\end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Loop-carried Dependencies (2)}
-
-What about this? (all elements initially 1)
-\begin{lstlisting}[language=C]
-for (int i = 1; i < 12; ++i)
-    a[i] = a[i-1] + 1
-\end{lstlisting}
-\pause
-\alert{No, a[2] = 3 or a[2] = 2.}\\[1em]
-\begin{itemize}
-\item Statements depend on previous loop iterations.
-\item An example of a \structure{loop-carried dependency}.
-\end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Loop-carried Dependencies (3)}
-
-Can we parallelize this? (again, all elements initially 1)
-\begin{lstlisting}[language=C]
-for (int i = 4; i < 12; ++i)
-    a[i] = a[i-4] + 1
-\end{lstlisting}
-\pause
-\structure{Yes, to a degree.}\\[1em]
-\begin{itemize}
-\item We can execute 4 statements in parallel:
-\begin{itemize}
-  \item a[4] = a[0] + 1, a[8] = a[4] + 1
-  \item a[5] = a[1] + 1, a[9] = a[5] + 1
-  \item a[6] = a[2] + 1, a[10] = a[6] + 1
-  \item a[7] = a[3] + 1, a[11] = a[7] + 1
-\end{itemize}  
-\end{itemize}
-
-\pause
-\structure{Always consider dependencies between iterations.}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Larger example: Loop-carried Dependencies}
-{\small \begin{lstlisting}[language=C]
-  // Repeatedly square input, return number of iterations before 
-  // absolute value exceeds 4, or 1000, whichever is smaller.
-  int inMandelbrot(double x0, double y0) {
-    int iterations = 0;
-    double x = x0, y = y0, x2 = x*x, y2 = y*y;
-    while ((x2+y2 < 4) && (iterations < 1000)) {
-      y = 2*x*y + y0;
-      x = x2 - y2 + x0;
-      x2 = x*x; y2 = y*y;
-      iterations++;
-    }
-    return iterations;
-  }
-\end{lstlisting} 
-}
-How can we parallelize this? \\
-\pause
-\begin{itemize}
-\item Run {\tt inMandelbrot} sequentially for each point, but parallelize
-different point computations.
-\end{itemize}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
@@ -262,6 +278,21 @@ different point computations.
 Roll the dice and see how we do!
 
 \end{frame}
+
+
+\begin{frame}
+\frametitle{Coffee Analogy}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/tims.jpg}
+\end{center}
+
+If you're a regular, can they guess your order?
+
+And how much time would they save?
+
+\end{frame}
+
   
 
 \begin{frame}
@@ -278,6 +309,8 @@ Two ways: \alert{speculative execution} and
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
   \frametitle{Speculative Execution: Example}
@@ -285,17 +318,15 @@ Two ways: \alert{speculative execution} and
   
 Consider the following code:
   
-  \begin{lstlisting}[language=C]
-void doWork(int x, int y) {
-    int value = longCalculation(x, y);
-    if (value > threshold) {
-      return value + secondLongCalculation(x, y);
+\begin{lstlisting}[language=Rust]
+fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
+    let val = long_calculation(x, y);
+    if val > threshold {
+        return val + second_long_calculation(x, y);
     }
-    else {
-      return value;
-    }
+    return val;
 }
-  \end{lstlisting}
+\end{lstlisting}
 
   Will we need to run {\tt secondLongCalculation}?
   \vfill  
@@ -314,37 +345,59 @@ void doWork(int x, int y) {
   
   Yes, we could parallelize them. Consider this code:
     
-    \begin{lstlisting}[language=C]
-  void doWork(int x, int y) {
-    thread_t t1, t2;
-    point p(x,y);
-    int v1, v2;
-    thread_create(&t1, NULL, &longCalculation, &p);
-    thread_create(&t2, NULL, &secondLongCalculation, &p);
-    thread_join(t1, &v1);
-    thread_join(t2, &v2);
-    if (v1 > threshold) {
-      return v1 + v2;
-    } else {
-      return v1;
+\begin{lstlisting}[language=Rust]
+fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
+    let t1 = thread::spawn(move || {
+        return long_calculation(x, y);
+    });
+    let t2 = thread::spawn(move || {
+        return second_long_calculation(x, y);
+    });
+    let val = t1.join().unwrap();
+    let v2 = t2.join().unwrap();
+    if val > threshold {
+        return val + v2;
     }
-  }
-    \end{lstlisting}
+    return val;
+}
+\end{lstlisting}
 
   We do both the calculations in parallel and return the same result as before.
-
-  \begin{itemize}
+  
+    \begin{itemize}
     \item What are we assuming about {\tt longCalculation} and
 {\tt secondLongCalculation}?
   \end{itemize}
-  
+
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Can We Improve?}
+
+The current thread is a valid thread for doing work and we don't have to create two threads and join two threads. 
+
+We can create one and maybe have less overhead.
+
+\begin{lstlisting}[language=Rust]
+fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
+    let t1 = thread::spawn(move || {
+        return second_long_calculation(x, y);
+    });
+    let val = long_calculation(x, y);
+    let v2 = t1.join().unwrap();
+    if val > threshold {
+        return val + v2;
+    }
+    return val;
+}
+\end{lstlisting}
+
+
+\end{frame}
+
 \begin{frame}
-  \frametitle{Estimating Impact of Speculative Execution}
-
+\frametitle{Check Assumptions}
   
   $T_1$: time to run {\tt longCalculation}.
 
@@ -372,12 +425,12 @@ void doWork(int x, int y) {
   
   Consider the following code:
   
-  \begin{lstlisting}[language=C]
-void doWork(int x, int y) {
-    int value = longCalculation(x, y);
-    return secondLongCalculation(value);
+\begin{lstlisting}[language=Rust]
+fn do_other_work(x: i32, y: i32) -> i32 {
+    let val = long_calculation(x, y);
+    return second_long_calculation(val);
 }
-  \end{lstlisting}
+\end{lstlisting}
 
   Now we have a true dependency; can't use speculative~execution.\\[1em]
 
@@ -392,29 +445,23 @@ void doWork(int x, int y) {
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
   \frametitle{Value Speculation Implementation}
+  
+  This code does value speculation:
 
-% note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
-  
-  This Pthread code does value speculation:
-  
-  \begin{lstlisting}[language=C]
-void doWork(int x, int y) {
-    thread_t t1, t2;
-    point p(x,y);
-    int v1, v2, last_value;
-    thread_create(&t1, NULL, &longCalculation, &p);
-    thread_create(&t2, NULL, &secondLongCalculation,
-                  &last_value);
-    thread_join(t1, &v1);
-    thread_join(t2, &v2);
-    if (v1 == last_value) {
-      return v2;
-    } else {
-      last_value = v1;
-      return secondLongCalculation(v1);
+\begin{lstlisting}[language=Rust]
+fn do_other_work(x: i32, y: i32, last_value: i32) -> i32 {
+    let t = thread::spawn(move || {
+        return second_long_calculation(last_value);
+    });
+    let val = long_calculation(x, y);
+    let v2 = t.join().unwrap();
+    if val == last_value {
+        return v2;
     }
+    return second_long_calculation(val);
 }
-  \end{lstlisting}
+\end{lstlisting}
+
 
   Note: this is like memoization (plus parallelization).
   
@@ -554,30 +601,47 @@ Others are side effects which may be avoidable if we can help it, like modifying
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+\begin{frame}[fragile]
+\frametitle{STM Example}
+
+Set up a transaction with an atomic block:
+
+\begin{lstlisting}[language=Rust]
+let x = atomically(|trans| {
+    var.write(trans, 42)?; // Pass failure to parent.
+    var.read(trans) // Return the value saved in var.
+});
+\end{lstlisting}
+
+
+\end{frame}
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
   \frametitle{STM: Implementing a Motivating Example}
 
 
-  \begin{lstlisting}[language=C]
-transfer_funds(Account* sender, Account* receiver,
-               double amount) {
-  atomic {
-    sender->funds -= amount;
-    receiver->funds += amount;
-  }
+\begin{lstlisting}[language=Rust]
+struct Account {
+    balance: TVar<f32>,
 }
-  \end{lstlisting}
-  [Note: bank transfers aren't actually atomic!]\\[1em]
 
-    With locks we have two main options:
-      \begin{itemize}
-        \item Lock everything to do with modifying accounts \\ 
-\qquad (slow; may forget to use lock).
-        \item Have a lock for every account \\ 
-\qquad (deadlocks; may forget to use lock).
-      \end{itemize}
-    With STM, we do not have to worry about remembering to acquire locks,
+fn transfer_funds(sender: &mut Account, receiver: &mut Account, amount: f32) {
+    atomically(|tx| {
+        let sender_balance = sender.balance.read(tx)?;
+        let receiver_balance = receiver.balance.read(tx)?;
+        sender.balance.write(tx, sender_balance - amount)?;
+        receiver.balance.write(tx, receiver_balance + amount)?;
+        Ok(0)
+    });
+}
+\end{lstlisting}
+
+[Note: bank transfers aren't actually atomic!]\\[1em]
+
+With STM, we do not have to worry about remembering to acquire locks,
       or about deadlocks.
 
 \end{frame}
@@ -629,19 +693,34 @@ transfer_funds(Account* sender, Account* receiver,
     Since you don't protect against dataraces (just rollback),\\
       a datarace may trigger a fatal error in your program.
 
-  \begin{lstlisting}[language=C]
-atomic {
-  x++;
-  y++;
+\begin{tabular}{r|l}
+\begin{minipage}{.46\textwidth}
+\begin{lstlisting}[language=Rust]
+fn what_could_go_wrong(x: TVar<i32>, y: TVar<i32>) {
+    atomically(|t| {
+        let old_x = x.read(t)?;
+        let old_y = y.read(t)?;
+        x.write(t, old_x + 1);
+        y.write(t, old_y + 1);
+        Ok(0)
+    });
 }
-  \end{lstlisting}
-
-  \begin{lstlisting}[language=C]
-atomic {
-  if (x != y)
-     while (true) { }
+\end{lstlisting}
+\end{minipage}
+&
+\begin{minipage}{.52\textwidth}
+\begin{lstlisting}[language=Rust]
+fn oh_no(x: TVar<i32>, y: TVar<i32>) {
+    atomically(|transaction| {
+        if x.read(transaction)? != y.read(transaction)? {
+            loop { /* Cursed Thread */}
+        }
+        Ok(0)
+    });
 }
-  \end{lstlisting}
+\end{lstlisting}
+\end{minipage}
+\end{tabular}
 
  In this silly example, assume initially {\tt x = y}. You may think the
       code will not go into an infinite loop, but it can.
@@ -649,41 +728,18 @@ atomic {
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{STM Implementations}
-
-
-
-  Note: Typically STM performance is no worse than twice as slow as
-  fine-grained locks.
-
-  \begin{itemize}
-    \item Toward.Boost.STM (C++)
-
-    \item SXM (Microsoft, C\#)
-
-    \item Built-in to the language (Clojure, Haskell)
-
-    \item AtomJava (Java)
-
-    \item Durus (Python)
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
   \frametitle{STM Summary}
 
 
-     Software Transactional Memory provides a more natural approach to
-      parallel programming: \\ \qquad no need to deal with locks and their associated problems.\\[1em]
+     Software Transactional Memory gives another approach to
+      parallelism: \\ \qquad no need to deal with locks and their associated problems.
 
-     Currently slow,\\ \qquad but a lot of research is going into improving it. (futile?)\\[1em]
+     Currently slow, but a lot of research is going into improving it. (futile?)
 
-     Operates by either completing an atomic block,\\ or retrying (by rolling
+     Operates by either completing an atomic block, or retrying (by rolling
       back) until it successfully completes.
 
 \end{frame}
