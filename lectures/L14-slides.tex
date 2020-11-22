@@ -1,27 +1,5 @@
 \input{configuration}
 
-% Custom packages
-\usepackage{xcolor}
-\definecolor{solarizedBase03}{HTML}{FFFFFF}
-\definecolor{solarizedBase02}{HTML}{000000}
-\definecolor{solarizedBase00}{HTML}{657B83}
-\definecolor{solarizedBase0}{HTML}{000000}
-\definecolor{solarizedBase1}{HTML}{93A1A1}
-\definecolor{solarizedBase3}{HTML}{FDF6E3}
-
-
-\usepackage[listings]{tcolorbox}
-\newtcbinputlisting{\codelisting}[2][]{
-    listing file={#2},
-    colback=solarizedBase03,
-    colframe=solarizedBase02,
-    colupper=solarizedBase0,
-    fonttitle=\bfseries\color{solarizedBase1},
-    listing options={basicstyle=\ttfamily\footnotesize},
-    listing only,
-    #1
-}
-\newtheorem{defn}{Definition}
 
 \title{Lecture 14 --- Early Termination, Reduced-Resource Computation }
 
@@ -74,13 +52,13 @@ Your program might support only one.
 
 
 
-  We've seen barriers before.\\
+  We've seen barriers before.
 
   No thread may proceed past a barrier until all of the threads
-reach the barrier.\\[1em]
+reach the barrier.
 
   This may slow down the program: maybe one of the threads is horribly
-  slow.\\[1em]
+  slow.
 
   Solution: kill the slowest thread.
 
@@ -92,7 +70,10 @@ reach the barrier.\\[1em]
 \begin{frame}
   \frametitle{Early Phase Termination: Objection}
 
-\Huge
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/ohno.jpg}
+\end{center}
+
 \begin{center}
 ``Oh no, that's going to change the meaning of the program!''
 \end{center}
@@ -151,6 +132,16 @@ Well, what this strategy presupposes is: don't.
 Imagine the travelling salesperson problem, just for the sake of an example. 
 
 There are $n$ points to visit and you want to minimize the amount of travel time. 
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/bugsbunny.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Route Sucks}
 
 The only way to know if a solution is best is to consider every possible route.
 
@@ -279,7 +270,7 @@ Let's play around with \url{https://rubiks-cube-solver.com/}
 
 We do more with less! 
 
-Well, you can use \texttt{float} instead of \texttt{double}. 
+Well, you can use \texttt{float/f32} instead of \texttt{double/f64}. 
 
 But you can also work with integers to represent floating point numbers.
 
@@ -431,7 +422,6 @@ When calculating the forces: centre of mass for faraway bins; individual particl
 
 \end{frame}
 
-
 \begin{frame}
 \frametitle{This used to be an assignment... }
 
@@ -447,38 +437,35 @@ To increase the speed, what should we do?
 
 
 \begin{frame}[fragile]
-\frametitle{Compute Centre of Mass}
+\frametitle{Define Your Types}
 
-Compute all of the masses in parallel: create one thread per bin, and add a point's
-position if it belongs to the bin:
-
-\begin{lstlisting}
-    int xbin, ybin, zbin; // initialize with bin coordinates
-    int b;
-    for (i = 0; i < POINTS; i++) {
-        if (pts[i] in bin coordinates) {
-            cm[b].x += pts[i].x; // y, z too
-            cm[b].w += 1.0f;
-        }
-    }
-    cm[b].x /= cm[b].w; // etc
+\begin{lstlisting}[language=Rust]
+struct Point {
+    x: f32,
+    y: f32,
+    z: f32,
+    mass: f32,
+}
 \end{lstlisting}
 
-Note that this parallelizes with the number of bins.
 
+We are going to improve this by adding a \texttt{bin} property to each point.
+
+This tells us if something is close by.
 
 \end{frame}
 
 
-\begin{frame}
-\frametitle{Map Points}
 
-For the next step, the program needs to keep track of the points in
-each bin. 
+\begin{frame}[fragile]
+\frametitle{Compute Centre of Mass}
 
- In a second phase,
-iterate over all bins again, this time putting coordinates into the
-proper element of {\tt binPts}, a two-dimensional array.
+Compute all of the masses in parallel: create one thread per bin, and add a point's
+position if it belongs to the bin.
+
+
+Note that this parallelizes with the number of bins.
+
 
 \end{frame}
 
@@ -507,18 +494,19 @@ This does mean there is overhead for each kernel, meaning the total amount of ov
 
 Is it worth it? 
 
-With 500*64 points:
+With 50~000 points:
 \begin{itemize}
-\item    OpenCL, no approximations (1 kernel): 0.182s
-\item    OpenCL, with approximations (3 kernels): 0.168s
+\item    No approximations: 39 seconds
+\item    With approximations: 37 seconds.
 \end{itemize}
 
-With 5000*64 points:
+With 100~000 points:
 \begin{itemize}
-\item    OpenCL, no approximations (1 kernel): 6.131s
-\item    OpenCL, with approximations (3 kernels): 3.506s
+\item    No approximations: 162 seconds
+\item    With approximations: 147 seconds.
 \end{itemize}
 
+Of course, parallelizing this helps even more... 
 
 \end{frame}
 
@@ -536,7 +524,7 @@ With 5000*64 points:
   \qquad throw away data that's not actually useful.
 
   \begin{lstlisting}
-for (i = 0; i < n; ++i) sum += numbers[i];
+for i in 0 .. n { sum += numbers.get(i).unwrap(); }
   \end{lstlisting}
 
   \begin{center}
@@ -544,7 +532,7 @@ for (i = 0; i < n; ++i) sum += numbers[i];
   \end{center}
 
   \begin{lstlisting}
-for (i = 0; i < n; i += 2) sum += numbers[i];
+for i in (0 .. n).step_by(2) { sum += numbers.get(i).unwrap(); }
 sum *= 2;
   \end{lstlisting}
 
@@ -577,29 +565,6 @@ sum *= 2;
  \item bitrate increase of 18.47\%;
  \item visually indistinguishable results.
 \end{itemize}
-
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Video Encoding Skeleton Code}
-
-
-\begin{lstlisting}
-min = DBL_MAX;
-index = 0;
-for (i = 0; i < m; i++) {
-  sum = 0;
-  for (j = 0; j < n; j++) sum += numbers[i][j];
-  if (min < sum) {
-    min = sum;
-    index = i;
-  }
-}
-\end{lstlisting}
-The optimization changes the loop increments and then compensates. 
 
 \end{frame}
 
