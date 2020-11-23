@@ -12,369 +12,147 @@
 
 \begin{frame}
   \titlepage
-
  \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
+ 
+\begin{frame}
+\frametitle{Previously...}
+
+When we introduced atomics, we said to always use sequential consistency.
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/robocop.jpg}\\
+	\hfill ``Stay out of trouble.'' - Robocop, 2043.
+\end{center}
+
+There are other options, but we need to discuss reordering.
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Compiler Reordering}
+The compiler can change the order of certain events. 
+
+The compiler will be aware of things like load-delay slots and can swap the order of instructions to make use of those slots more effectively.
+
+\begin{multicols}{2}
+\begin{lstlisting}[language=Rust]
+let x = thing.y;
+println!("x = {}", x);
+z = z + 1;
+a = b + c;
+\end{lstlisting}
+\columnbreak
+\begin{lstlisting}[language=Rust]
+let x = thing.y;
+z = z + 1;
+a = b + c;
+println!("x = {}", x);
+\end{lstlisting}
+\end{multicols}
+
+We'll talk about other compiler optimizations soon, but we don't want to get away from the topic of reordering. 
+
+\end{frame}
+
 
 \begin{frame}
-  \frametitle{OpenMP Memory Model}
+\frametitle{Hardware Reordering}
 
-  \begin{changemargin}{1cm}
-\large
+In addition to the compiler reordering, the hardware can do some reordering of its own.
 
-  \begin{itemize}
-    \item All threads share a single store called
-      \structure{memory}.\\ ~~(may not actually represent RAM)\\[1em]
-    \item Each thread has its own {\it temporary} view of memory.\\[1em]
-    \item A thread's {\it temporary} view of memory\\ is not required to be
-      consistent with memory.
-  \end{itemize}~\\
+There is another possibility we have to consider, and it is updates from other threads.
 
-  We'll talk more about memory models later.
-  \end{changemargin}
-  
+We need a bit more reassurance that the value we're seeing is the latest one...
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Preventing Simultaneous Execution?}
-
-  \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1) // [1]                atomic(a = 1) // [3]
-atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{lstlisting}
 
 
-\large
- Does this code actually prevent simultaneous execution?
+\begin{frame}
+\frametitle{It's a Feature}
 
-  
+Different hardware provides different guarantees about what reorderings it won't do.
+
+ ARM is getting pretty popular, so we do have to care about hardware reorderings, unfortunately.
+ 
+ \begin{center}
+	\includegraphics[width=0.4\textwidth]{images/apple-m1.jpg}
+\end{center}
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Not seeing the problem...?}
 
-  \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
+\begin{frame}
+\frametitle{I have a cunning plan...}
 
-atomic(b = 1) // [1]                atomic(a = 1) // [3]
-atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{lstlisting}
+In an obvious case, if the lines of code are \texttt{ z *= 2 } and \texttt {z += 1} then neither the compiler nor hardware will reorder those.
 
-  \begin{center}
-  \begin{tabular}{r r r r | r r}
-    \multicolumn{4}{c|}{Order} & t1 tmp & t2 tmp\\
-    \hline
-    1 & 2 & 3 & 4 & 0 & 1\\
-    1 & 3 & 2 & 4 & 1 & 1\\
-    1 & 3 & 4 & 2 & 1 & 1\\
-    3 & 4 & 1 & 2 & 1 & 0\\
-    3 & 1 & 2 & 4 & 1 & 1\\
-    3 & 1 & 4 & 2 & 1 & 1\\
-  \end{tabular}
-  \end{center}
+It knows that it would change the outcome and produce the wrong answer. 
 
-  
-
-\large
-    Looks like it (at least intuitively).
+There's a clear data dependency there, so the reordering won't happen. 
 
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}[fragile]
-  \frametitle{The Memory Model Contains Gotchas}
+\frametitle{Reordering Gone Wrong}
 
-  \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
+But what if there's no such clear dependency? Consider something like this pseudocode:
 
-atomic(b = 1) // [1]                atomic(a = 1) // [3]
-atomic(tmp = a) // [2]              atomic(tmp = b) // [4]
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{lstlisting}
+\begin{multicols}{2}
+\begin{verbatim}
+lock mutex for point
+point.x = 42;
+point.y = -42;
+point.z = 0;
+unlock mutex for point
+\end{verbatim}
+\columnbreak
+\begin{verbatim}
+lock mutex for point
+point.x = 42;
+point.y = -42;
+unlock mutex for point
+point.z = 0;
+\end{verbatim}
+\end{multicols}
 
+What we need is a way to tell the compiler (and hardware) that this is not okay.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Sequential Consistency}
+
+ 
+  Sequential program: statements execute in order.
+
+  Your expectation for concurrency: sequential consistency.
   
-
-\large
-    Sorry! With OpenMP's memory model, no guarantees:\\
-    the update from one thread may not be seen by the other.
-    
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/oab.jpg}
+\begin{lstlisting}
+    T1: x = 1; r1 = y;
+    T2: y = 1; r2 = x;
+\end{lstlisting}
 \end{center}
 
 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Flush Ensures Consistent Views of Memory}
-\large
-  \begin{center}
-    {\tt \#pragma omp }{\bf flush} {\it[(list)]}
-  \end{center}
-
-    Makes the thread's temporary view of memory consistent with main
-      memory.
-    
-    It enforces an order on memory operations of variables.
-    
-    The variables in the list are called the \alert{flush-set}.
-    
-    If no variables given, compiler determines them for you.
- 
+    \begin{itemize}
+      \item each thread induces an \emph{execution trace}.
+      \item always: program has executed some prefix of each thread's
+        trace.
+    \end{itemize}
   
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
 \begin{frame}
-  \frametitle{Flush: Before is Before, After is After}
+\frametitle{Sequential Consistency}
 
-  
-\large
-  Enforcing an order on the memory operations means:
-
-  \begin{itemize}
-    \item All read/write operations on the {\it flush-set} which happen
-      before the {\bf flush} complete before the flush executes.
-    \item All read/write operations on the {\it flush-set} which happen
-      after the {\bf flush} complete after the flush executes.
-    \item Flushes with overlapping {\it flush-sets} can not be reordered.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Flush Correctness}
-  
-  To show a consistent value for a variable between two threads, 
-  OpenMP must run statements in this order:
-
-  \begin{enumerate}
-    \item $t_1$ writes the value to $v$;
-    \item $t_1$ flushes $v$; 
-    \item $t_2$ flushes $v$ also;
-    \item $t_2$ reads the consistent value from $v$.
-  \end{enumerate}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Take 2: Same Example, now improved with Flush}
-
-  \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1)                       atomic(a = 1)
-flush(b)                            flush(a)
-flush(a)                            flush(b)
-atomic(tmp = a)                     atomic(tmp = b)
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{lstlisting}
-
-\Large
-Will this now prevent simultaneous access?
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{No Luck Yet: Flush Fails}
-
-  
-
-  \begin{center}
-    \alert{\LARGE No.}
-  \end{center}
-
-  \begin{itemize}
-    \item The compiler can reorder the {\tt flush(b)} in thread~1 or
-      {\tt flush(a)} in thread~2.
-
-    \item If {\tt flush(b)} gets reordered to after the protected
-      section, we will not get our intended operation.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Should you use flush?}
-
-  
-  \Large
-  Probably not, but now you know what it does.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Proper Use of Flush}
-
-  \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
-                    a = b = 0
-/* thread 1 */                      /* thread 2 */
-
-atomic(b = 1)                       atomic(a = 1)
-flush(a, b)                         flush(a, b)
-atomic(tmp = a)                     atomic(tmp = b)
-if (tmp == 0) then                  if (tmp == 0) then
-    // protected section                // protected section
-end if                              end if
-  \end{lstlisting}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{OpenMP Directives Where Flush Is Implied}
-
-\large
-  \begin{itemize}
-    \item {\tt omp barrier}
-    \item at entry to, and exit from, {\bf omp critical};
-    \item at exit from {\bf omp parallel}; 
-    \item at exit from {\bf omp for};
-    \item at exit from {\bf omp sections};
-    \item at exit from {\bf omp single}.
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame} 
-  \frametitle{OpenMP Directives Where Flush Isn't Implied}
-
-\large
-  \begin{itemize}
-    \item at entry to {\bf for};
-    \item at entry to, or exit from, {\bf master};
-    \item at entry to {\bf sections}; 
-    \item at entry to {\bf single};
-    \item at exit from {\bf for}, {\bf single} or {\bf sections} with a {\bf nowait}
-      \begin{itemize}
-        \item {\bf nowait} removes implicit flush\\
- along with the implicit barrier
-      \end{itemize}
-  \end{itemize}
-
-  This is not true for OpenMP versions before 2.5,\\
- so be careful.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Why Your Code is Slow}
-
-  \large
-  Want it to run faster? Avoid these pitfalls:\\
-  \begin{enumerate}
-    \item Unnecessary flush directives.
-    \item Using critical sections or locks instead of atomic.
-    \item Unnecessary concurrent-memory-writing protection:
-      \begin{itemize}
-        \item No need to protect local thread variables.
-        \item No need to protect if only accessed in {\bf single} or
-          {\bf master}.
-      \end{itemize}
-    \item Too much work in a critical section.
-    \item Too many entries into critical sections.
-  \end{enumerate}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Example: Reducing Too Many Entries into Critical Sections}
-
-  \large
-  \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
-#pragma omp parallel for
-for (i = 0; i < N; ++i) { 
-    #pragma omp critical
-    {
-        if (arr[i] > max) max = arr[i];
-    } 
-}
-  \end{lstlisting}
-
-would be better as:
-
-  \begin{lstlisting}[language=C,morekeywords={foreach,pragma,omp,parallel,single,nowait,task,untied,barrier,taskyield,mergeable,final,taskwait,critical}]
-#pragma omp parallel for
-for (i = 0 ; i < N; ++i) { 
-    #pragma omp flush(max)
-    if (arr[i] > max) {
-          #pragma omp critical
-          {
-                if (arr[i] > max) max = arr[i];
-          }
-    }
-}
-  \end{lstlisting}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{OpenMP Wrap-up}
-
-\Large
-    Key points:\\
-  \begin{itemize}
-    \item How to use OpenMP {\bf tasks} to\\ \hspace*{2em} parallelize unstructured problems.
-    \item How to use {\bf flush} correctly.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\begin{frame}
-  \frametitle{Memory Models}
-
-  
-
-  Sequential program: statements execute in order.\\
-
-  Your expectation for concurrency: sequential consistency.
 
 \begin{quote}
 ``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
@@ -385,25 +163,12 @@ for (i = 0 ; i < N; ++i) {
   \item interleave the threads' executions.
   \end{enumerate}~\\
 
-  No one has it: too expensive; recall the worked example for {\bf flush} last time.
 
 \end{frame}
 
 
 
-\begin{frame}
-  \frametitle{Memory Models: Sequential Consistency}
 
-  
-    Another view of sequential consistency:
-
-    \begin{itemize}
-      \item each thread induces an \emph{execution trace}.
-      \item always: program has executed some prefix of each thread's
-        trace.
-    \end{itemize}
-  
-\end{frame}
 
 \begin{frame}
 \frametitle{The Blind Men and Elephant}
@@ -441,115 +206,66 @@ But unfortunately, threads have their own view of the world.
 \begin{frame}
   \frametitle{Memory Consistency Models}
 
-  
-    Sequential consistency:
-      \begin{itemize}
-        \item No reordering of loads/stores.
-      \end{itemize}
-    Sequential consistency for datarace-free programs:
-      \begin{itemize}
-        \item If your program
-  has no data races, then sequential consistency.
-      \end{itemize}
-    Relaxed consistency (only some types of reorderings):
-      \begin{itemize}
-        \item Loads can be reordered after loads/stores; and
-        \item Stores can be reordered after loads/stores.
-      \end{itemize}
-    Weak consistency:
-      \begin{itemize}
-        \item Any reordering is possible.
-      \end{itemize}
+Rust uses the same memory consistency models as \CPP.
 
-  Still, {\bf reorderings} only allowed if they look safe in current context
-  (i.e. independent; different memory addresses).
-  
+It's the best attempt we have at modelling atomics because it is a very difficult subject
+
+We need way of talking about the \alert{causality} of the program...
+
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{2011 Final Exam Question}
+\begin{frame}
+\frametitle{Causality?}
 
-  
-  \begin{lstlisting}[language=C]
-                       x = y = 0
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/causality-loop.png}
+\end{center}
 
-/* thread 1 */                    /* thread 2 */
-x = 1;                            y = x;
-r1 = y;                           r2 = x;
-  \end{lstlisting}
 
-  Assume architecture not sequentially consistent\\ \hspace*{3em} (weak~consistency).
 
-  Show me all possible (intermediate and final) memory values and how they arise.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{2011 Final Exam Question: Solution}
-
-  
-    Must include every permutation of lines (since they can be in
-      any order);\\
-    then iterate over all the values.\\[1em]
-
-    Probably too long, but shows how memory reorderings
-      complicate things.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{The Compiler Reorders Memory Accesses}
-
-  
-  When it can prove safety, the {\bf compiler} may reorder instructions (not just the hardware).\\[1em]
-
-  {\bf Example:} want thread 1 to print value set in thread 2.
-
-  \begin{lstlisting}[language=C]
-                            f = 0
-
-/* thread 1 */                          /* thread 2 */
-while (f == 0) /* spin */;              x = 42;
-printf("%d", x);                        f = 1;
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item If thread 2 reorders its instructions, will we get our intended
-      result?\\[1em]
-    \only<2-> \alert{~~~~~No.}
-  \end{itemize}
+Establishing relationships between events such as ``event A happens before event B''. 
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}
-\frametitle{KEEP OUT}
+\frametitle{Our new Toolkit}
 
-\begin{center}
-	\includegraphics[width=0.7\textwidth]{images/No_trespassing.jpg}
-\end{center}
-\hfill Image Credit: MB298
+We can use a semaphore to ensure that one thing happens before another. 
 
+The idea is the same, but our toolkit is a little bit different: it's the \alert{memory barrier} or
+\alert{fence}. 
+
+This type of barrier prevents reordering, or,
+equivalently, ensures that memory operations become visible in the
+right order.
 
 \end{frame}
 
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{What have we got?}
+
+The x86 architecture defines the following types of memory 
+barriers:
+
+\begin{itemize}
+\item {\tt mfence}
+\item {\tt sfence}
+\item {\tt lfence}
+\end{itemize}
+
+\end{frame}
+
+
 \begin{frame}[fragile]
-  \frametitle{Preventing Memory Reordering}
+\frametitle{Build Fences in the Right Place}
 
-  
-     A {\bf memory fence} prevents memory operations from crossing the
-      fence (also known as a {\bf memory barrier}).
-
+Consider the example again:
   \begin{lstlisting}[language=C]
                          f = 0
 
@@ -558,222 +274,91 @@ while (f == 0) /* spin */;         x = 42;
 // memory fence                    // memory fence
 printf("%d", x);                   f = 1;
   \end{lstlisting}
+This now prevents reordering, and we get the expected result.
 
-  \begin{itemize}
-    \item Now prevents reordering; get expected result.
-  \end{itemize}
-  
+Memory fences are costly in performance.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Preventing Memory Reordering in Programs}
-
-  
-     Step 1: Don't use volatile on C/C++ variables~\footnote{\tiny \url{http://stackoverflow.com/questions/78172/using-c-pthreads-do-shared-variables-need-to-be-volatile}.}.
-     
-     Syntax depends on the compiler.
-
-\begin{itemize}
-  \item Microsoft Visual Studio C++ Compiler:
-  \begin{lstlisting}[language=C]
-_ReadWriteBarrier()
-  \end{lstlisting}
-  \item Intel Compiler:
-  \begin{lstlisting}[language=C]
-    __memory_barrier()
-  \end{lstlisting}
-  \item GNU Compiler:
-  \begin{lstlisting}[language=C]
-__asm__ __volatile__ ("" ::: "memory");
-  \end{lstlisting}
-\end{itemize}
-
-  The compiler also shouldn't reorder across e.g. pthreads mutex calls.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Aside: {\tt gcc} Inline Assembly}
-
-  
-
-  Just as an aside, here's {\tt gcc}'s inline assembly format
-
-  \begin{lstlisting}[language=C]
-__asm__ ( assembler template 
-       : output operands                  /* optional */
-       : input operands                   /* optional */
-       : list of clobbered registers      /* optional */
-       );
-  \end{lstlisting}
-  \vfill
-  Last slide used {\bf \_\_volatile\_\_} with  \_\_asm\_\_. This isn't the same as the normal C volatile. It means:
-
-  \begin{itemize}
-    \item The compiler may not reorder this assembly code\\ and put it somewhere
-      else in the program.
-  \end{itemize}
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Memory Fences: Preventing HW Memory Reordering}
-
-
-Memory barrier: no access after the barrier becomes visible to the
-system (i.e. takes effect) until after all accesses before the barrier
-become visible.\\[1em]
-
-  {\bf Note:} these are all x86 {\tt asm} instructions.\\[1em]
-  {\tt mfence}:
-  \begin{itemize}
-    \item All loads and stores before the fence finish before any more loads or stores execute.
-  \end{itemize}
-  {\tt sfence}:
-  \begin{itemize}
-    \item All stores before the fence finish before any more stores execute.
-  \end{itemize}
-  {\tt lfence}:
-  \begin{itemize}
-    \item All loads before the fence finish before any more loads execute.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Preventing Hardware Memory Reordering (Option 2)}
-
-  
-  Some compilers also support preventing hardware reordering:
-
-\begin{itemize}
-  \item Microsoft Visual Studio C++ Compiler:
-  \begin{lstlisting}[language=C]
-MemoryBarrier();
-  \end{lstlisting}
-
-  \item Solaris Studio (Oracle) Compiler:
-  \begin{lstlisting}[language=C]
-__machine_r_barrier();
-__machine_w_barrier();
-__machine_rw_barrier();
-  \end{lstlisting}
-
-  \item GNU Compiler:
-  \begin{lstlisting}[language=C]
-__sync_synchronize();
-  \end{lstlisting}
-\end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-  
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Memory Barriers and OpenMP}
-
-  
-    Fortunately, an OpenMP {\bf flush} (or, better yet, mutexes) also preserve the order of variable accesses.\\[1em]
-    Stops reordering from both the compiler and hardware.\\[1em]
-    For GNU, flush is implemented as
-      {\tt \_\_sync\_synchronize();}\\[1em]
-
-  {\bf Note:} proper use of memory fences makes {\tt volatile} not very
-  useful (again, {\tt volatile} is not meant to help with threading, and will
-  have a different behaviour for threading on different compilers/hardware).
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}
-\frametitle{Atomic Operations}
+\frametitle{Here Be Dragons}
+The \CPP~standard includes a few other orderings that don't appear in this section because they aren't in Rust. 
+
+But we'll cover Acquire-Release and Relaxed briefly. 
+
+Neither comes with a recommendation to use it, but if you can prove that your use of it is correct, then you can do it. 
+
+It may give a slight performance edge.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Acquire and Release}
+
+Acquire and Release make a good team! 
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/atomic.png}
+	\includegraphics[width=0.4\textwidth]{images/acqrel.jpg}
 \end{center}
 
-\url{https://commons.wikimedia.org/w/index.php?curid=1675352}
+By placing acquire at the start of a section and release after, anything in there is ``trapped'' and can't get out.
+
+That makes them the perfect combination for a critical section.
 
 \end{frame}
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+\frametitle{Acquire/Release Spinlock}
+
+\begin{lstlisting}[language=Rust]
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+
+fn main() {
+    let lock = Arc::new(AtomicBool::new(false)); // value answers "am I locked?"
+
+    // ... distribute lock to threads somehow ...
+
+    // Try to acquire the lock by setting it to true
+    while lock.compare_and_swap(false, true, Ordering::Acquire) { }
+    // broke out of the loop, so we successfully acquired the lock!
+
+    // ... scary data accesses ...
+
+    // ok we're done, release the lock
+    lock.store(false, Ordering::Release);
+}
+\end{lstlisting}
+
+
+\end{frame}
+
+
 \begin{frame}
-  \frametitle{Atomic Operations}
+\frametitle{Relaxed?}
 
-  
+Relaxed really does mean the compiler will take it easy, and all reorderings are possible.
 
- We saw the {\bf atomic} directive in OpenMP, plus C++11 atomics.
-
- Most OpenMP atomic expressions map to atomic hardware instructions.
-
- Other atomic instructions exist.
-  
+A counter that simply adds and you aren't using the counter to synchronize any action.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Compare and Swap}
 
-  
-  Also called {\bf compare and exchange} ({\tt cmpxchg} instruction).
+\begin{frame}
+\frametitle{Matter, Order Does}
 
-  \begin{lstlisting}[language=C]
-int compare_and_swap (int* reg, int oldval, int newval) {
-  int old_reg_val = *reg;
-  if (old_reg_val == oldval) 
-     *reg = newval;
-  return old_reg_val;
-}
-  \end{lstlisting}
+There have been a few reminders to use sequential consistency because atomics are hard to reason about and it's easy to get it wrong.
 
-  \begin{itemize}
-    \item Afterwards, you can check if it returned {\tt oldval}.
-    \item If it did, you know you changed it.
-  \end{itemize}
-  
+Consider an inconsistent state in a lock-free-queue structure...
+
+We can actually look at the fix applied in the code.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Implementing a Spinlock}
-
-  
-  Use compare-and-swap to implement spinlock:
-  \begin{lstlisting}[language=C]
-void spinlock_init(int* lock) { *lock = 0; }
-
-void spinlock_lock(int* lock) {
-    while(compare_and_swap(lock, 0, 1) != 0) {}
-    __asm__ ("mfence");
-}
-
-void spinlock_unlock(int* lock) {
-    __asm__ ("mfence");
-    *lock = 0;  
-}
-  \end{lstlisting}
-  You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \end{document}
