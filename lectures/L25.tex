@@ -6,7 +6,7 @@
 
 \section*{Profiling}
 
-Think back to the beginning of the course when we did a quiz on what operations are fast and what operations are not. The important takeaway was not that we needed to focus on how to micro-optimize this abstraction or that hash function, but that our intuition about what is fast and what is slow is often wrong. Not just at a macro level, but at a micro level. You may be able to narrow down that this computation of $x$ is slow, but if you examine it carefully... what parts of it are slow?
+Think back to the beginning of the course when we did a quiz on what operations are fast and what operations are not. The important takeaway was not that we needed to focus on how to micro-optimize this abstraction or that hash function, but that our intuition about what is fast and what is slow is often wrong. Not just at a macro level, but at a micro level. You may be able to narrow down that this computation of $x$ is slow, but if you examine it carefully\ldots what parts of it are slow?
 
 If you don't use tools, then you end up guessing. You just make some assumptions about what you think is likely to be slow and try to change it. You've probably heard the famous quotation before, but here it is in its full form:
 
@@ -15,31 +15,34 @@ If you don't use tools, then you end up guessing. You just make some assumptions
 \end{quote}
 	\hfill -- Donald Knuth
 
-So going about this blindly is probably a waste of time. You might be fortunate and optimize a slow part\footnote{There is a saying that even a blind squirrel sometimes finds a nut.} but we should really follow one of my favourite rules: ``don't guess, measure!''\footnote{Now I am certain you are sick of hearing that.} So, to make your programs or systems fast, you need to find out what is currently slow and improve it (duh!). Up until now in the course it's mostly been about ``let's speed this up'', but we did not take much time to decide what we should speed up (though you maybe did this on an assignment...?).
+So going about this blindly is probably a waste of time. You might be fortunate and optimize a slow part\footnote{There is a saying that even a blind squirrel sometimes finds a nut.} but we should really follow one of my favourite rules: ``don't guess, measure!''\footnote{Now I am certain you are sick of hearing that.} So, to make your programs or systems fast, you need to find out what is currently slow and improve it (duh!). Up until now in the course it's mostly been about ``let's speed this up'', but we did not take much time to decide what we should speed up (though you maybe did this on an assignment\ldots?).
 
-The general idea is, collect some data on what parts of the code are taking up the majority of the time. This can be broken down into looking at what functions get called, or how long functions take, or what's using memory...
+The general idea is, collect some data on what parts of the code are taking up the majority of the time. This can be broken down into looking at what functions get called, or how long functions take, or what's using memory\ldots
 
-There is always the ``informal'' way of doing this; it sort of works but it's not exactly the best plan. You probably know that when developing a program you can ``debug'' it without using any tools (e.g., \texttt{gdb}) by inserting a lot of print statements to the console or the log file. So when you enter function \texttt{foo} you print a nice little line on the console that say something like ``entering function foo'', associated with a timestamp and then when you're ready to return, a corresponding print function that says ``exiting'' appears, also with a timestamp.
+There is always the ``informal'' or ``ad-hoc'' way of doing this; it works but it's often not the best plan. You probably know that when developing a program you can ``debug'' it without using any tools (e.g., \texttt{gdb}) by inserting print statements to the console or the log file. So when you enter function \texttt{foo} you print a nice little line on the console that say something like ``entering function foo'', associated with a timestamp and then when you're ready to return, a corresponding print function that says ``exiting'' appears, also with a timestamp.
 
-This approach kind of works, and I've used it myself to figure out what blocks of a single large function are taking a long time (such as a time when I found out that updating exchange rates was slow.). But this approach is not necessarily a good one.  It's an example of ``invasive'' profiling -- we are going in and changing the source code of the program in question -- to add instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half-hour range and I could see that the save operation was taking twelve minutes. Not kidding. 
+I've used this approach myself to figure out what blocks of a single large function are taking a long time (such as a time when I found out that updating exchange rates was slow.). But this approach is not necessarily a good one.  It's an example of ``invasive'' profiling---we are going in and changing the source code of the program in question---to add (slow!) instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half-hour range and I could see that the save operation was taking twelve minutes. Not kidding.
 
-(Also like debugging, if you get to be a wizard you can maybe do it by code inspection, but that technique of speculative execution inside your head is a lot harder to apply to performance problems than it is to debugging.)
+Nicholas Nethercote wrote the ``counts'' tool\footnote{\url{https://github.com/nnethercote/counts}} to process ad-hoc debug output and shows an example of using it to profile the size of heap allocations in Firefox. In the example in the README, he reports that while most allocations are small, most memory is allocated as part of a large allocation. He provides a number of other examples where ad-hoc profiling is useful: how often are certain paths executed? how many times does a loop iterate? how many elements are in a hash table at a given location? And more! It's hard to write a general-purpose tool for these ad-hoc queries.
+
+(Also like debugging, if you get to be a wizard you can maybe do it by code inspection, but that technique of speculative execution inside your head is a lot harder to apply to performance problems than it is to debugging. Trained professionals like Nicholas Nethercote use profilers, so you can too.)
 
 So we should all agree, we want to use tools and do this in a methodical way.
 
 Now that we agree on that, let's think about how profiling tools work\:
 
-\begin{itemize}
+\begin{itemize}[noitemsep]
 \item sampling-based (traditional): every so often (e.g. 100ms for gprof), stop the system and ask it what it's doing (query the system state); or,
 \item instrumentation-based, or probe-based/predicate-based
   (sometimes, too expensive): query system state under certain
   conditions; like conditional breakpoints.
 \end{itemize}
-We'll talk about both per-process profiling and system-wide profiling.
+We'll talk about both per-process profiling and system-wide profiling. You can read more about profiling in Chapter 5 (Profiling) of The Rust Performance Book~\cite{nethercote20:_rust_perfor_book}; it discusses heap profiling in much more detail than we do (or don't,
+more accurately).
 
 If you need your system to run fast, you need to start profiling
 and benchmarking as soon as you can run the system. Benefits:
-\begin{itemize}
+\begin{itemize}[noitemsep]
 \item establishes a baseline performance for the system;
 \item allows you to measure impacts of changes and further system development;
 \item allows you to re-design the system before it's too late;
@@ -49,7 +52,7 @@ that spray is often made of ``unobtainium''\footnote{\url{http://en.wikipedia.or
 
 \paragraph{Tips for Leveraging Profiling.}
 When writing large software projects:
-  \begin{itemize}
+  \begin{itemize}[noitemsep]
     \item First, write clear and concise code. Don't do any premature optimizations---focus on correctness. Still, there are choices you can make that support performance at this stage, like using an efficient search or sort algorithm, if you know it's better and won't take additional effort.
     \item Once it's working, profile to get a baseline of your performance: it allows you to easily track any performance changes and to re-design your program before it's too late.
   \end{itemize}
@@ -57,7 +60,7 @@ Focus your optimization efforts on the code that matters.
 
 Look for abnormalities; in particular, you're looking for
 deviations from the following rules:
-\begin{itemize}
+\begin{itemize}[noitemsep]
 \item time is spent in the right part of the system/program;
 \item time is not spent in error-handling, noncritical code, or exceptional cases; and
 \item time is not unnecessarily spent in the operating system.
