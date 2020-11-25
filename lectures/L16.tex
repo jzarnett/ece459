@@ -110,7 +110,7 @@ And look how much simpler the consumer is:
 Certainly that's a lot simpler and cleaner, but is it faster? Testing says yes! Hyperfine says the original producer-consumer-opt version takes 372 ms to run for 10000 items consumed per thread, and the version with the channel takes 232. 
 
 \paragraph{Try Again Later.}
-Another small thing that Crossbeam enables is an exponential backoff. When attempting to access some resource, we acknowledge that it might not be available right now. If that's the case, an error is  to necessarily fatal and the client might want to retry. However, it's very unhelpful to have a tight loop that simply retries as fast as possible. What you should do instead is an exponential backoff: wait a little bit and try again, and if the error occurs, next time wait a little longer.
+Another small thing that Crossbeam enables is an exponential backoff. When attempting to access some resource, we acknowledge that it might not be available right now. If that's the case, an error is not necessarily fatal and the client might want to retry. However, it's very unhelpful to have a tight loop that simply retries as fast as possible. What you should do instead is an exponential backoff: wait a little bit and try again, and if the error occurs, next time wait a little longer.
 
 The idea is that if the resource is not available, repeatedly retrying doesn't help. If it's down for maintenance, it could be quite a while before it's back and calling the endpoint 5 or 10 times every second doesn't make it come back faster and just wastes effort. Or, if the resource is overloaded right now, the reaction of requesting it more will make it even more overloaded and makes the problem worse! And the more failures have occurred, the longer the wait, which gives the service a chance to recover.
 
@@ -136,7 +136,7 @@ fn fetch_mul(a: &AtomicUsize, b: usize) -> usize {
 }
 \end{lstlisting}
 
-If what we actually need is to wait for another thread to take its turn before we go, we don't want to spin, we want to ``snooze''. This means we'll be waiting longer for the thread 
+If what we actually need is to wait for another thread to take its turn before we go, we don't want to spin, we want to ``snooze''. This means we'll be waiting longer for the thread to awaken.
 
 \begin{lstlisting}[language=Rust]
 fn spin_wait(ready: &AtomicBool) {
@@ -198,11 +198,11 @@ diff live-coding/L14/nbody-bins/src/main.rs live-coding/L14/nbody-bins-parallel/
 \end{verbatim}
 }
 
-Why does the ease of doing this matter? Every change we introduce has the possibility of introducing a nonzero number of bugs. If I were to rewrite a lot of code, there would be more opportunities for bugs to appear. This change is minimal and easier for a reviewer to verify that it's correct than a big rearchitecting. And it's faster -- I can easily drop this in here and then move on to optimizing the next thing. Bugs slow you down.
+Why does the ease of doing this matter? Every change we introduce has the possibility of introducing a nonzero number of bugs. If I were to rewrite a lot of code, there would be more opportunities for bugs to appear. This change is minimal and easier for a reviewer to verify that it's correct than a big rearchitecting. And it's faster in terms of dev time -- I can easily drop this in here and then move on to optimizing the next thing. Bugs slow you down.
 
 It is important to note that the iterators do things in parallel, meaning the behaviour of the program can change a bit. If you are printing to the console or writing to a file or something, they can happen out of order when the loop is parallelized, just as they would if you wrote it so that different threads execute.
 
-By that same token, the automatic parallelization doesn't prevent all race conditions. If you are trying to find the largest item in an array, we still have to use atomic types or a mutex or similar to ensure that the correct answer is returned. See a quick example below:
+By that same token, the automatic parallelization doesn't mean there can be no race conditions; thus you still have to satisfy the compiler that your code is correct. If you are trying to find the largest item in an array, we still have to use atomic types or a mutex or similar to ensure that the correct answer is returned. See a quick example below:
 
 \begin{lstlisting}[language=Rust]
 use rayon::prelude::*;
