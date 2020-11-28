@@ -1,0 +1,323 @@
+\input{configuration}
+
+
+\title{Lecture 19 --- Optimizing the Compiler}
+
+\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\institute{Department of Electrical and Computer Engineering \\
+  University of Waterloo}
+\date{\today}
+
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{The Reverse?}
+
+Last time, we talked about optimizations that the compiler can do.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/bender-brain.jpeg}
+\end{center}
+
+This time, we'll switch our focus to optimizing the compiler itself.
+
+Dr. Nicholas Nethercote (author of Valgrind and of its associated PhD thesis) has written a serious of blog posts describing how to improve the compiler itself.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Good News Everyone!}
+
+An observation back from 2016:
+\begin{quote}
+Any time you throw a new profiler at any large codebase that hasn't been heavily optimized there's a good chance you'll be able to make some sizeable improvements.
+\end{quote}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{No PhD in Compilerology Required}
+
+Nicholas Nethercote is a self-described non-rustc expert. 
+
+Good news for you: you, too, can improve the performance of systems that you didn't design and don't maintain. 
+
+His approach has been to use a benchmark suite (\texttt{rustc-perf)}
+and profilers to find and eliminate hotspots.
+
+The benchmark suite is run on the \url{https://perf.rust-lang.org/} machine, which is a continuous integration server that publishes runtimes.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Hurry up and wait...}
+
+The feedback loop through the remote server is too slow. 
+
+You will have a better experience if you run your benchmarks locally on a
+fast computer.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/loop.png}
+\end{center}
+
+Make a potential change, benchmark it. Did it improve anything? 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Rust Improvements?}
+
+Altogether, between January 2019 and July 2019, the Rust compiler reduced
+its running times by from 20\% to 40\% on the tested benchmarks.
+
+From November 2017,
+the number is from 20\% to 60\%. 
+
+Note that a 75\% time reduction means that the compiler is four times as fast.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Benchmark Selection}
+
+It's also important to have representative benchmarks. 
+
+There are three categories:\\
+\begin{itemize}
+	\item ``Real programs that are important'' 
+	\item ``Real programs that stress the compiler''
+	\item ``Artificial stress tests''
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{See Runtimes}
+You can see the benchmark runtimes for the most recent run at \url{https://perf.rust-lang.org/status.html}.
+
+\begin{quote}
+The test harness is very thorough. For each benchmark, it measures Debug, Opt, and Check (no code generation) invocations. Furthermore, within each of those categories, it does five or more runs, including a normal build and various kinds of incremental builds. A full benchmarking run measures over 400 invocations of rustc.
+\end{quote}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Data Collection}
+
+The main event uses \texttt{perf-stat} to measure compiler runtimes.
+
+As we know, this tool produces various outputs (wall-clock time, CPU
+instructions, etc) and the site can display them.
+
+We'll be talking about some profiling tools again soon!
+
+\texttt{println!} debugging is a valid option too. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Case Studies}
+
+Let's look at a couple of micro-optimizations. 
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/microopt.jpg}
+\end{center}
+
+Each of these is an example of looking through
+the profiler data, finding a hotspot, making a change, and testing it. 
+
+We'll talk
+about what we learn from each specific case as well.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Do less Work: memcpy}
+
+Do less work: reduced the size of hot structures below 128 bytes, at which point the LLVM backend will emit inline code rather than a call to \texttt{memcpy}.
+
+
+Fewer bytes to move, and one less function call.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Type Sizing}
+Reducing the size types take up can lead to meaningful speedup:
+
+\begin{itemize}
+\item ObligationCauseCode, 56 bytes to 32 bytes: speedup up to 2.6\%.
+\item SubregionOrigin, 120 bytes to 32 bytes speedup less than 1\%.
+\item Nonterminal, 240 bytes to 40 bytes: speedup up to 2\%.
+\end{itemize}
+
+Interesting question: what is the perf tradeoff involved with boxing?
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Compiler, I Command Thee}
+
+ Manually specifying inlining, specialization, and factoring out common expressions:
+\begin{itemize}
+	\item Manually inline a hot function: up to 2\%.
+	\item Factor repeated expressions, use iterators: up to 1.7\%.
+	\item Specialize a function for a hot calling pattern: up to 2\%.
+	\item Inline functions on metadata: 1-5\% improvement.
+\end{itemize}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Who Wrote This?}
+
+Sometimes addition by subtraction: removing a bad API helps too!
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/bad-api.jpg}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Do Less Work}
+
+Some ways in which work was removed:
+
+\begin{itemize}
+	\item Change a hot assertion to run in debug builds: 20\% on one workload.
+	\item Is it a keyword? Up to 7\%.
+	\item Prefix and suffix matching improvement: up to 3\%.
+	\item Only generate one of the bitcode and object code.
+\end{itemize}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Not Everything Works}
+
+Some ideas that failed:
+
+\begin{itemize}
+	\item `I tried drain\_filter in compress. It was slower.''
+	\item Invasive changes in data representation.
+	\item Change to u8to64\_le function -- simpler but slower.
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Architecture Level Changes}
+These are small items so far -- a few percent improvement.
+
+Let's talk about a couple of larger-scale changes. 
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/architect.jpeg}
+\end{center}
+
+One of them works
+and the other one doesn't.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Pipelined Compilation}
+
+We discussed the idea previously of pipelining for completing tasks.
+
+Here we are talking about compiling multi-crate Rust projects. 
+
+There is a dependency graph, and \texttt{cargo} already launches a dependency after all its requisites are met.
+
+What's important here is that there is a certain point before the end at which \texttt{rustc}
+finishing emitting
+metadata for dependencies.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Pipelining}
+
+ Here's a picture without pipelining:
+{\scriptsize
+\begin{verbatim}
+                   metadata            metadata
+          [-libA----|--------][-libB----|--------][-binary-----------]
+          0s        5s       10s       15s       20s                30s
+\end{verbatim}
+}
+and with:
+{\scriptsize
+\begin{verbatim}
+          [-libA----|--------]
+                    [-libB----|--------]
+                                       [-binary-----------]
+          0s        5s       10s       15s                25s
+\end{verbatim}
+}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Pipelining Success}
+
+The authors were not sure if this would work. But:
+
+\begin{itemize}
+\item No reproducible regression
+\item    ``Build speeds can get up to almost 2x faster in some cases''
+\item    ``Across the board there's an average 10\% reduction in build times.\end{itemize}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Linking}
+
+``I found that using LLD as the linker when building rustc itself
+reduced the time taken for linking from about 93 seconds to about 41
+seconds.'' 
+
+But that change is blocked by not-\texttt{rustc} design problems...
+
+A useful tip for these two optimizations just
+above: ``Don't have tunnel vision''.
+
+\end{frame}
+
+
+\end{document}
+
