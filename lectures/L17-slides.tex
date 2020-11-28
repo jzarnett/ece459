@@ -58,6 +58,10 @@ Can we limit the size of the integer? Is 65,535 enough?
 
 The other hidden cost is that of course things that were simple like \texttt{array[i] += 1} is more complicated. 
 
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/hex.jpg}
+\end{center}
+
 What do we do now?
 
 \end{frame}
@@ -128,6 +132,10 @@ What we've got here is a poor-person version of Single Instruction Multiple Data
 SIMD provides an advantage by using a single control unit to command multiple processing units.
 
 
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/simd.png}
+\end{center}
+
 Example: consider I ask people to erase boards in class...
 
 Only works if we all do the same thing!
@@ -159,24 +167,17 @@ pub fn foo(a: &[f64], b: &[f64], c: &mut [f64]) {
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly without SIMD}
+  \frametitle{SIMD Example---Assembly}
 
-  
-If we compile this without SIMD instructions on a 32-bit x86, (flags {\tt -m32 -march=i386 -S}) we might get this:
+We can compile with \texttt{rustc} defaults
+and get something like this as core loop contents:
+\begin{verbatim}
+  movsd   xmm0, qword ptr [rcx]
+  addsd   xmm0, qword ptr [rdx]
+  movsd   qword ptr [rax], xmm0
+\end{verbatim}
 
-  \begin{lstlisting}
-loop:
-  fldl  (%edx)
-  faddl (%ecx)
-  fstpl (%edx)
-  addl  8, %edx
-  addl  8, %ecx
-  addl  1, %esi
-  cmp   %eax, %esi
-  jle   loop
-  \end{lstlisting}
-
-   Just loads, adds, writes and increments.
+This uses the SSE and SSE2 instructions
   
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -184,54 +185,117 @@ loop:
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly with SIMD}
+  \frametitle{SIMD Example---Assembly}
 
-  
- Instead, compiling to SIMD instructions\\ ({\tt -m32 -mfpmath=sse -march=prescott}) gives:
+  If you additionally specify \texttt{-O}, the compiler generates a number of variants, including this middle one:
+\begin{verbatim}
+  movupd  xmm0, xmmword ptr [rdi + 8*rcx]
+  movupd  xmm1, xmmword ptr [rdi + 8*rcx + 16]
+  movupd  xmm2, xmmword ptr [rdx + 8*rcx]
+  addpd   xmm2, xmm0
+  movupd  xmm0, xmmword ptr [rdx + 8*rcx + 16]
+  addpd   xmm0, xmm1
+  movupd  xmmword ptr [r8 + 8*rcx], xmm2
+  movupd  xmmword ptr [r8 + 8*rcx + 16], xmm0
+\end{verbatim}
 
-  \begin{lstlisting}
-loop:
-  movupd (%edx),%xmm0
-  movupd (%ecx),%xmm1
-  addpd  %xmm1,%xmm0
-  movpd  %xmm0,(%edx)
-  addl   16,%edx
-  addl   16,%ecx
-  addl   2,%esi
-  cmp    %eax,%esi
-  jle    loop
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item Now processing two elements at a time on the same core.
-    \item Also, no need for stack-based x87 code.
-  \end{itemize}
-  
+The \emph{packed} operations ({\tt p}) operate on multiple data
+elements at a time.
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{SIMD}
+
+The compiler uses SIMD instructions if the target architecture supports it.
+
+We can explicitly invoke the instructions, or use libraries
+
+It is complementary to using threads, and good for cases where loops operate over vectors of data.
+
+SIMD instructions also work well on small data sets, where thread startup
+cost is too high.
+
+\end{frame}
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{SIMD Overview}
+  \frametitle{SIMD Pros and Cons}
 
-  
-  \begin{itemize}
-    \item Operations \emph{packed}: operate on multiple data elements 
-      at~the~same~time.
-    \vfill
-    \item On modern 64-bit CPUs, SSE has 16 128-bit registers.
-    \vfill
-    \item Very good if your data can be \emph{vectorized} and performs math.
-    \vfill
-    \item Usual application: image/video processing.
-    \vfill
-    \item We'll see more SIMD as we get into GPU programming: GPUs excel
-       at these types of applications.
-  \end{itemize}
+A more efficient (= less CPU resources) way to parallelize code than threads.
+
+Data must be 16-byte aligned when loading to/storing from 128-bit registers.\\
+\quad Not required in SSE4.2... if your CPU supports it.
   
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Alignment}
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/superhero-alignment.png}
+\end{center}
+
+Oh. Not this kind of alignment.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Forcing Alignment}
+
+Rust will generally align primitives to their sizes. 
+
+Under the default representation, Rust promises nothing else about alignment.
+
+You can use the \texttt{repr(packed(N)} or \texttt{repr(align(N)} directives to express constraints on alignment.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Worked SIMD Example}
+
+\begin{lstlisting}[language=Rust]
+use simdeez::*;
+use simdeez::scalar::*;
+use simdeez::sse2::*;
+use simdeez::sse41::*;
+use simdeez::avx2::*;
+simd_runtime_generate!(
+// assumes that the input sizes are evenly divisible by VF32_WIDTH
+pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
+  let len = a.len();
+  let mut result: Vec<f32> = Vec::with_capacity(len);
+  result.set_len(len);
+  for i in (0..len).step_by(S::VF32_WIDTH) {
+    let a0 = S::loadu_ps(&a[i]);
+    let b0 = S::loadu_ps(&b[i]);
+    S::storeu_ps(&mut result[0], S::add_ps(a0, b0));
+  }
+  result
+});
+
+fn main() {
+  let a : [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+  let b : [f32; 4] = [5.0, 6.0, 7.0, 8.0];
+  unsafe {
+    println!("{:?}", add_sse2(&a, &b))
+  }
+}
+\end{lstlisting}
+
+
+
+\end{frame}
+
 
 
 \begin{frame}
@@ -249,7 +313,7 @@ loop:
 \begin{frame}
 \frametitle{Single-Thread Performance}
 
-\begin{changemargin}{2cm}
+
 Performance improvements to date have \\
 used parallelism
 to improve throughput. 
@@ -260,7 +324,7 @@ tweaks.
 
 Today: one example of decreasing latency: \\
 \hspace*{2em} Stream VByte.
-\end{changemargin}
+
 
 \end{frame}
 
@@ -269,7 +333,7 @@ Today: one example of decreasing latency: \\
 \frametitle{I have a cunning plan...}
 
 
-\begin{changemargin}{2cm}
+
 Even Stream VByte uses parallelism:\\
 \hspace*{2em}vector instructions. 
 
@@ -277,14 +341,14 @@ But there
 are sequential improvements, \\
 e.g. Stream VByte takes care to be predictable
 for the branch predictor.
-\end{changemargin}
+
 
 \end{frame}
 \begin{frame}
 \frametitle{Inverted Indexes (like it's CS 137 again!)}
 
 
-\begin{changemargin}{1cm}
+
 \vspace*{-1em}
 Abstractly: store a sequence of small integers.
 
@@ -294,13 +358,13 @@ Why Inverted indexes?
 \hspace*{1cm}allow fast lookups by term;\\
 \hspace*{1cm}support boolean queries combining terms.
 
-\end{changemargin}
+
 
 \end{frame}
 \begin{frame}
 \frametitle{Dogs, cats, cows, goats. In ur documents.}
 
-\begin{changemargin}{2cm}
+
 \begin{center}
 \begin{tabular}{r|l}
 docid & terms \\ \hline
@@ -310,7 +374,7 @@ docid & terms \\ \hline
 4 & cow, cat, goat\\
 \end{tabular}
 \end{center}
-\end{changemargin}
+
 
 \end{frame}
 
@@ -318,7 +382,7 @@ docid & terms \\ \hline
 \begin{frame}
 \frametitle{Inverting the Index}
 
-\begin{changemargin}{2cm}
+
 Here's the index and the inverted index:
 \begin{center}
 \begin{tabular}{r|l}
@@ -340,7 +404,7 @@ goat & 3, 4
 Inverted indexes contain many small integers.
 
 Deltas typically small if doc ids are sorted.
-\end{changemargin}
+
 
 \end{frame}
 
@@ -348,7 +412,7 @@ Deltas typically small if doc ids are sorted.
 \begin{frame}
 \frametitle{Storing inverted index lists: VByte}
 
-\begin{changemargin}{2cm}
+
 \vspace*{-2em}
 VByte uses a variable number of bytes\\
 to store integers.  
@@ -356,14 +420,14 @@ to store integers.
 Why? Most integers are
 small,\\
 especially on today's 64-bit processors.
-\end{changemargin}
+
 \end{frame}
 
 
 \begin{frame}
 \frametitle{How VByte Works}
 
-\begin{changemargin}{1cm}
+
 VByte works like this:
 
 \begin{itemize}
@@ -379,7 +443,7 @@ VByte works like this:
 Control bit, or high-order bit, is:\\
 \hspace*{2em}0 once done representing the int,\\
 \hspace*{2em}1 if more bits remain.
-\end{changemargin}
+
 
 \end{frame}
 
@@ -388,7 +452,7 @@ Control bit, or high-order bit, is:\\
 \begin{frame}
 \frametitle{Why VByte Helps}
 
-\begin{changemargin}{2cm}
+
 Isn't dealing with variable-byte integers harder?\\
 \hspace*{2em} $\bullet$~ Yup!
 
@@ -402,13 +466,13 @@ Storing and reading 0s isn't good use of resources.
 
 However, a naive algorithm to decode VByte \\
 gives branch mispredicts.
-\end{changemargin}
+
 \end{frame}
 
 \begin{frame}
 \frametitle{Stream VByte}
 \vspace*{-2em}
-\begin{changemargin}{2cm}
+
 Stream VByte: a variant of VByte using SIMD.
 
 
@@ -418,14 +482,14 @@ Stream VByte builds on earlier work---\\
 
 Innovation in Stream VByte:\\
 \hspace*{2em}\emph{store the control and data streams separately}.
-\end{changemargin}
+
 
 \end{frame}
 
 \begin{frame}
 \frametitle{Control Stream}
 \vspace*{-4em}
-\begin{changemargin}{2cm}
+
 Stream VByte's control stream uses two bits per integer to represent the size of the integer:
 \begin{center}
 \vspace*{-3em}
@@ -434,7 +498,7 @@ Stream VByte's control stream uses two bits per integer to represent the size of
 01 & 2 bytes & 11 & 4 bytes
 \end{tabular}
 \end{center}
-\end{changemargin}
+
 
 \end{frame}
 
@@ -442,7 +506,7 @@ Stream VByte's control stream uses two bits per integer to represent the size of
 \begin{frame}
 \frametitle{Decoding Stream VByte}
 
-\begin{changemargin}{2cm}
+
 Per decode iteration:\\
 \hspace*{2em} reads 1 byte from the control stream,\\
 \hspace*{2em} and 16 bytes of data.
@@ -457,7 +521,7 @@ SIMD instructions: \\
 Unlike VByte, \\
 Stream VByte uses all 8 bits
 of data bytes as data.
-\end{changemargin}
+
 
 \end{frame}
 
@@ -466,7 +530,7 @@ of data bytes as data.
 \begin{frame}
 \frametitle{Stream VByte Example}
 
-\begin{changemargin}{2cm}
+
 Say control stream contains $0b1000~1100$. \\
 Then the data stream
 contains the following sequence of integer sizes: $3, 1, 4, 1$. 
@@ -481,13 +545,13 @@ The SIMD
 
 Pad the first 3-byte integer with 1 byte, then
 the next 1-byte integer with 3 bytes, etc. 
-\end{changemargin}
+
 \end{frame}
 
 \begin{frame}
 \frametitle{Stream VByte: Shuffling the Bits}
 \vspace*{-1em}
-\begin{changemargin}{1cm}
+
 Say the data input is:\\
 {\tt 0xf823~e127~2524~9748~1b..~....~....~....}. 
 
@@ -498,14 +562,14 @@ between outputs.
 
 Shuffle mask is precomputed and
 read from an array.
-\end{changemargin}
+
 \end{frame}
 
 \begin{frame}[fragile]
 \frametitle{SIMD Instructions}
 
 \vspace*{-1em}
-\begin{changemargin}{1cm}
+
 The core of the implementation uses\\
 three SIMD instructions:
 \begin{lstlisting}[language=C]
@@ -515,7 +579,7 @@ three SIMD instructions:
   Data = _mm_shuffle_epi8(Data, Shuf);
   databytes += C; control++;
 \end{lstlisting}
-\end{changemargin}
+
 \end{frame}
 
 
@@ -523,7 +587,7 @@ three SIMD instructions:
 \frametitle{But Does It Work?!}
 
 \vspace*{-1em}
-\begin{changemargin}{1cm}
+
 Stream VByte performs better than previous techniques on a realistic input.
 
 
@@ -543,10 +607,7 @@ its location is predictable;
 \& data;\\
 \hspace*{1em}no conditional jumps).
 \end{itemize}
-\end{changemargin}
 \end{frame}
-
-
 
 
 \end{document}
