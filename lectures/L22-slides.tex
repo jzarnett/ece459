@@ -22,9 +22,9 @@
     #1
 }
 
-\title{Lecture 22 --- GPU Programming / OpenCL }
+\title{Lecture 22 --- GPU Programming }
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\author{Patrick Lam and Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -39,25 +39,22 @@
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\part{OpenCL concepts}
-\frame{\partpage}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
   \frametitle{Introduction}
 
 
-     \structure{OpenCL}: coding on a heterogeneous architecture.
-      \begin{itemize}
-        \item No longer just programming the CPU;\\ will also leverage the GPU.
-      \end{itemize}
-      OpenCL = Open Computing Language.\\
-      Usable on both NVIDIA and AMD GPUs.
+     \structure{CUDA}: coding on a heterogeneous architecture.
+        No longer just programming the CPU; will also leverage the GPU.
+        
+      CUDA = Compute Unified Device Architecture.\\
+      Usable on NVIDIA GPUs.
       
     \begin{center}
 	\includegraphics[width=0.5\textwidth]{images/gpu.jpg}
 	\end{center}
+	
+	Note: RTX 3080 not available at the time of writing.\\
+	People probably sell pictures of them on eBay.
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -87,12 +84,14 @@
 
 \begin{itemize}
 \item PlayStation 3 Cell\\
-\item CUDA
+\item OpenCL
 \end{itemize}
-~\\[1em]
-[PS4: back to a regular CPU/GPU system, albeit on one chip.]
+
 
 See \url{https://www.youtube.com/watch?v=zW3XawAsaeU} for details on why it was hard to program for the PS3!
+
+[PS4: back to a regular CPU/GPU system, albeit on one chip.]
+
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -156,6 +155,53 @@ See \url{https://www.youtube.com/watch?v=zW3XawAsaeU} for details on why it was 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+\begin{frame}
+\frametitle{Drive or Fly?}
+
+It makes sense to hand it over to the GPU because there are a lot of cores.
+
+\texttt{ecetesla2}: 4 core 3.6 GHz CPU; 1920 CUDA cores that run at about 1.8 GHz. 
+
+So, half the speed, but 480 times the workers. 
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/units.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Drive or Fly?}
+
+There's significant runtime overhead but the GPU is fast once started.
+
+This is like driving vs flying. 
+
+\begin{center}
+	\includegraphics[width=0.45\textwidth]{images/ott-mtl.png}
+\end{center}
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/waterloo-sfo.png}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{CUDA Parallelism}
+
+CUDA includes both task parallelism and data parallelism, as we've
+discussed earlier in this course.
+
+\emph{Data parallelism} is the central feature. 
+
+\end{frame}
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
   \frametitle{Data Parallelism}
@@ -178,8 +224,8 @@ See \url{https://www.youtube.com/watch?v=zW3XawAsaeU} for details on why it was 
     \item Each point corresponds to a {\bf work-item}.
   \end{itemize}~\\[1em]
 
-  Note: OpenCL also supports {\it task parallelism} (using different kernels),
-  but documentation is sparse.
+  Note: CUDA also supports {\it task parallelism} (using different kernels),
+  but we won't focus on that in this course.
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -189,10 +235,9 @@ See \url{https://www.youtube.com/watch?v=zW3XawAsaeU} for details on why it was 
   \frametitle{Work-Items}
 
 
-    \structure{Work-item}: the fundamental unit of work in OpenCL.\\
-    Stored in an {\it n}-dimensional grid (ND-Range); 2D on previous slide.\\[1em]
-
-    OpenCL spawns a bunch of threads to handle work-items.
+    \structure{Work-item}: the fundamental unit of work in CUDA.
+    
+ These work-items live on an $n$-dimensional grid (ND-Range).
     
     \begin{center}
 	\includegraphics[width=0.2\textwidth]{images/peon.jpeg}\\
@@ -204,30 +249,13 @@ See \url{https://www.youtube.com/watch?v=zW3XawAsaeU} for details on why it was 
 \begin{frame}
 \frametitle{Work-Items}
     
-    When executing, the range is divided into {\bf work-groups}, which
-      execute on the same compute unit.\\[1em]
+You get your choice about block size. 
 
-    The set of compute units (or cores) is called something different
-          depending on the manufacturer.
-          \begin{itemize}
-            \item NVIDIA - {\it warp}
-            \item AMD/ATI - {\it wavefront}
-          \end{itemize}
+Usually, we say let the system decide. 
 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+However, for some computations it's better to specify.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Work-Items: Three more details}
-
-
-  One thread per work item, each with a different thread ID.\\[1em]
-
-  You can say how to divide the ND-Range into work-groups, \\
-  or the system can do it for you.\\[1em]
-
-  Scheduler assigns work-items to warps/wavefronts until no more left.
+Ff you do, however, you want to make best use of the hardware and use a multiple of the size of the \textit{warp}.
 
 
 \end{frame}
@@ -242,83 +270,216 @@ See \url{https://www.youtube.com/watch?v=zW3XawAsaeU} for details on why it was 
 
 
 \begin{itemize}
-\item private memory
-\item local memory
-\item global memory
-\item constant memory
+\item private
+\item local
+\item global
+\item constant
+\item texture
 \end{itemize}
+
+Choosing what kind of memory to use is important!
 
 There is also host memory (normal memory);\\ usually contains app data.
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}[fragile]
-  \frametitle{Example Kernel}
+\frametitle{A kernel of my very own...}
 
+Here's the \CPP~ code we start with:
 
-    Here's some traditional code to evaluate $C_i = A_iB_i$:
-
-\begin{lstlisting}[language=C]
-  void traditional_mul(int n, 
-                       const float *a, 
-                       const float *b, 
-                       float *c) {
-    int i;
-    for (i = 0; i < n; i++) c[i] = a[i] * b[i];
-  }
+\begin{lstlisting}[language=C++]
+void vector_add(int n, const float *a, const float *b, float *c) {
+  for (int i = 0; i < n; i++) {
+    c[i] = a[i] + b[i];
+}
 \end{lstlisting}
 
 
-And as a kernel:
-\begin{lstlisting}[language=C]
-  kernel void opencl_mul(global const float *a, 
-                         global const float *b,
-                         global float *c) {
-    int id = get_global_id(0);  // dimension 0
-    c[id] = a[id] * b[id];
-  }
+The same code looks like this as a kernel:
+\begin{lstlisting}[language=C++]
+__global__ void vector_add(float* A, float* B, float* C)
+{
+    int i = threadIdx.x;
+    C[i] = A[i] + B[i];
+}
 \end{lstlisting}
 
+The loop became implicit!
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Restrictions when writing kernels in OpenCL}
+\frametitle{Going Backwards?}
+
+You can write kernels in a variant of \CPP.
 
 
-  It's mostly C, but:
-  \begin{itemize}
-    \item No function pointers.
-    \item No bit-fields.
-    \item No variable-length arrays.
-    \item No recursion.
-    \item No standard headers.
-  \end{itemize}
+A large number of features of more recent versions of the language are supported.
+
+How much will vary based on your release of the kernel compiler (\text{nvcc}).
+
+It's unlikely that we'll be doing too many things that are exotic enough to be forbidden by the compiler.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{OpenCL's Additions to C in Kernels}
+\frametitle{The Compiled Kernel}
 
+The kernel is compiled into PTX -- Parallel Thread eXecution -- instructions.
 
-In kernels, you can also use:
-  \begin{itemize}
-    \item Work-items.
-    \item Work-groups.
-    \item Vectors.
-    \item Synchronization.
-    \item Declarations of memory type.
-    \item Kernel-specific library.
-  \end{itemize}
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/hieroglyphics.jpg}
+\end{center}
+
+Can we write our own? Yes. Will we? No.
+
+Use the \texttt{nvcc} compiler.
+
+Recompile if you change machines!
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Running \texttt{nvcc}}
+
+The \texttt{nvcc} compiler has specific requirements for the underlying compiler it relies upon. 
+
+For example, on \texttt{ecetesla2} at the time of writing, \texttt{nvcc} fails without specifying \texttt{gcc} version 6 instead of the default. 
+
+With the command \texttt{nvcc --compiler-bindir /usr/bin/gcc-6 -ptx nbody.cu}, it will compile. 
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Danger! Danger!}
+
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/unsafe.png}
+\end{center}
+
+The kernel has none of the safety guarantees that we normally get in Rust! 
+
+We can easily read off the end of an array, forget to initialize a variable, allocate memory that we forget to deallocate...
+
+So, just because it compiles, doesn't mean it will work.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{I broke it...}
+
+Here's something I got in testing:
+{\tiny
+\begin{verbatim}
+thread 'main' panicked at 'Failed to deallocate CUDA Device memory.: IllegalAddress', 
+/home/jzarnett/.cargo/registry/src/github.com-1ecc6299db9ec823/rustacuda-0.1.2/src/memory/device/device_buffer.rs:259:32
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+thread 'main' panicked at 'Failed to deallocate CUDA Device memory.: IllegalAddress', 
+/home/jzarnett/.cargo/registry/src/github.com-1ecc6299db9ec823/rustacuda-0.1.2/src/memory/device/device_buffer.rs:259:32
+stack backtrace:
+\end{verbatim}
+}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{N-Body Problem Kernel}
+
+Let's take a look at a kernel for the N-Body problem!
+
+We'll also use that when we examine how to launch a CUDA program.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Practice Makes Perfect}
+Let's think about how to write the kernel well.
+
+We need to decide what sort of work belongs in the kernel to begin with.
+
+Loops good, as long as they're not sequential (some coordination is okay).
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Two-Dimensions?}
+
+What if we wanted to make the N-Body kernel a two-dimensional problem? 
+
+We could instead treat each pair of points $(i, j)$ as a point in the space, making it a two-dimensional problem. 
+
+Then you could think of it as a matrix rather than an array and provide it to CUDA like that. This might increase the parallelism! 
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Sounds Good, Doesn't Work}
+
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/soundsgood.jpg}
+\end{center}
+
+The calculation of body-body interaction for just one pair of points is a very small amount of work, tiny even. 
+
+Having one work-item for each such calculation means there's a lot of overhead to complete the calculation and it doesn't make sense. 
+
+But if the calculation of the interaction were more complex, then this transformation might be an improvement!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{MORE DIMENSIONS!}
+
+You can have a three-dimensional problem, but no more.
+
+If you want something more than a three-dimensional, you have to have some loops in your code.
+
+The limit to three dimensions is probably because graphics cards were designed for rendering images in 3-D so it seems logical?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Go the other way?}
+
+Of course, you can sometimes flatten the dimensions of your problem a bit. 
+
+A rectangular array in C/\CPP~is really stored as a linear array and the \texttt{[x][y]} is just notational convenience so you could easily just treat it as a linear array.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Brute Force a Password?}
+
+Consider something like brute-forcing a password of 6 characters (easy, but just for the purpose of an example).
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/hackerman2.png}
+\end{center}
+
+A one-dimensional approach: generate all possibilities in host code.
+
+Generate possibilities in kernel code
+
+
+\end{frame}
+
 
 
 \begin{frame}
@@ -336,10 +497,18 @@ The hardware will execute \emph{all} branches that any thread in a warp
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
+\begin{frame}[fragile]
   \frametitle{Branches in kernels}
 
-  \codelisting{images/branch.cpp}
+    \begin{lstlisting}
+__global__ void contains_branch(float *a, float *b) {
+    if (condition()) {
+        a[blockIdx.x] += 5.0;
+    } else {
+        b[blockIdx.x] += 5.0;
+    }
+}
+\end{lstlisting}
 
     
     In other words: an {\tt if} statement will cause each thread to execute
@@ -350,661 +519,81 @@ The hardware will execute \emph{all} branches that any thread in a warp
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
+\begin{frame}[fragile]
   \frametitle{Loops in kernels}
 
-  \codelisting{images/loop.cpp}
 
-      
+    \begin{lstlisting}
+__device__ void foo(int *p1, int *p2) {
+  for (int i = 0; i < 12; ++i) {
+    p1[i] += p2[i]*2;
+  }
+}
+    \end{lstlisting}
+
+
     A loop will cause the workgroup to wait for the maximum number of
       iterations of the loop in any work-item.\\[1em]
 
-  Note: when you set up work-groups, best to arrange for all work-items in
-  a workgroup to execute the same branches \& loops.
+The compiler will try to unroll loops if it can.
 
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Synchronization}
+\frametitle{Atomics}
 
+Race conditions can still occur. 
 
+This means that if you want to, say, concurrently add to the same location, you need to use atomic functions. 
 
-Different workgroups execute independently.\\
-You can only put barriers and memory fences between work-items in the
-      same workgroup.\\[1em]
+The atomic operations are usable on the standard primitive types.
 
-OpenCL supports:
-  \begin{itemize}
-    \item Memory fences (load and store).
-    \item Barriers.
-    \item {\tt volatile} (beware!)
-  \end{itemize}
+There are the usual operations: add, sub, min, inc, dec, compare-and-swap, bitwise.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\part{Programming with OpenCL}
-\frame{\partpage}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Introduction}
-
-
-
-  Today, we'll see how to program with OpenCL.
-
-  \begin{itemize}
-    \item We're using OpenCL 1.1.
-    \item There is a lot of initialization and querying.
-    \item When you compile your program, include {\tt -lOpenCL}.
-  \end{itemize}~\\[1em]
-
-  You can find the official documentation here:
-
-  \qquad \url{http://www.khronos.org/opencl/}
-
-  More specifically:\\
-  \quad {\scriptsize \url{http://www.khronos.org/registry/cl/sdk/1.1/docs/man/xhtml/}}
-  \vfill
-  Let's just dive into an example.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{First, reminders}
-
-
-  \begin{itemize}
-    \item All data belongs to an {\bf NDRange}.
-    \item The range can be divided into {\bf work-groups}. (in software)
-    \item The work-groups run on {\bf wavefronts/warps}. (in hardware)
-    \item Each wavefront/warp executes {\bf work-items}.
-  \end{itemize}~\\[1em]
-
-  \alert{All} branches in a wavefront/warp should execute the same path.~\\[1em]
-
-  If an iteration of a loop takes {\tt t}:\\ when one work-item executes 100
-    iterations,\\ the total time to complete the wavefront/warp is {\tt 100t.}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\part{Simple Example}
-\frame{\partpage}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Simple Example (1)}
+\frametitle{Atomic Example}
 
+\begin{lstlisting}[language=C++]
+__device__ double atomicAdd(double* address, double val) {
+    unsigned long long int* address_as_ull =
+                              (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
 
-\begin{lstlisting}[language=C]
-// Note by PL: don't use this example as a template;
-// it uses the C bindings! Instead, use the C++ bindings.
-// source: pages 1-9 through 1-11,
-// http://developer.amd.com/wordpress/media/2013/07/
-//     AMD_Accelerated_Parallel_Processing_OpenCL_
-//     Programming_Guide-rev-2.7.pdf
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed,
+                        __double_as_longlong(val +
+                               __longlong_as_double(assumed)));
 
-#include <CL/cl.h>
-#include <stdio.h>
+    // Note: uses integer comparison to avoid hang in case of NaN (since NaN != NaN)
+    } while (assumed != old);
 
-#define NWITEMS 512
-
-// A simple memset kernel
-const char *source =
-"__kernel void memset( __global uint *dst )             \n"
-"{                                                      \n"
-"   dst[get_global_id(0)] = get_global_id(0);           \n"
-"}                                                      \n";
-
-int main(int argc, char ** argv)
-{
-   // 1. Get a platform.
-   cl_platform_id platform;
-   clGetPlatformIDs(1, &platform, NULL);
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Explanation (1)}
-
-
-    Include the OpenCL header.\\[1em]
-
-    Request a platform (also known as a host).\\[1em]
-
-    A platform contains {\it compute devices}:
-      \begin{itemize}
-        \item GPUs or CPUs.
-      \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Simple Example (2)}
-
-
-
-  \begin{lstlisting}[language=C]
-   // 2. Find a gpu device.
-   cl_device_id device;
-   clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU,
-                  1,
-                  &device,
-                  NULL);
-
-   // 3. Create a context and command queue on that device.
-   cl_context context = clCreateContext(NULL,
-                                        1,
-                                        &device,
-                                        NULL, NULL, NULL);
-   cl_command_queue queue = clCreateCommandQueue(context,
-                                                 device,
-                                                 0, NULL);
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Explanation (2)}
-
-
-    Request a GPU device.\\[1em]
-
-    Request a OpenCL context (representing all of OpenCL's state).\\[1em]
-
-    Create a command-queue: \\
- get OpenCL to do work by telling it to run
-      a kernel in a queue.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Simple Example (3)}
-
-
-  \begin{lstlisting}[language=C]
-   // 4. Perform runtime source compilation, and obtain
-   //    kernel entry point.
-   cl_program program = clCreateProgramWithSource(context,
-                                                  1,
-                                                  &source,
-                                                  NULL,
-                                                  NULL);
-   clBuildProgram(program, 1, &device, NULL, NULL, NULL);
-   cl_kernel kernel = clCreateKernel(program, "memset",
-                                     NULL);
-
-   // 5. Create a data buffer.
-   cl_mem buffer = clCreateBuffer(context,
-                                  CL_MEM_WRITE_ONLY,
-                                  NWITEMS * sizeof(cl_uint),
-                                  NULL, NULL);
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Explanation (3)}
-
-
-    We create an OpenCL ``program'' (runs on the compute unit):
-      \begin{itemize}
-        \item kernels;
-        \item functions; and
-        \item declarations.
-      \end{itemize}
-    In this case, we create a kernel called {\tt memset} from {\tt source}.\\
-    OpenCL may also create programs from binaries\\
-      (may~be~in~intermediate~representation).\\[1em]
-
-    Next, we need a {\it data buffer} (enables inter-device communication).\\[1em]
-
-    This program does not have any input, \\
-      so we don't put anything into
-      the buffer (just declare its size).
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Simple Example (4)}
-
-
-
-  \begin{lstlisting}[language=C]
-   // 6. Launch the kernel. Let OpenCL pick the local work
-   //    size.
-   size_t global_work_size = NWITEMS;
-   clSetKernelArg(kernel,0, sizeof(buffer), (void*)&buffer);
-   clEnqueueNDRangeKernel(queue,
-                          kernel,
-                          1,    // dimensions
-                          NULL, // initial offsets
-                          &global_work_size, // number of
-                                             // work-items
-                          NULL, // work-items per work-group
-                          0, NULL, NULL);  // events
-   clFinish(queue);
-
-   // 7. Look at the results via synchronous buffer map.
-   cl_uint *ptr;
-   ptr = (cl_uint *)clEnqueueMapBuffer(queue, buffer,
-                                       CL_TRUE, CL_MAP_READ,
-                                       0, NWITEMS *
-                                       sizeof(cl_uint),
-                                       0, NULL, NULL, NULL);
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Explanation (4)}
-
-
-    Set kernel arguments to {\tt buffer}.\\[.5em]
-    We launch the kernel, enqueuing the 1-dimensional index~space starting
-      at 0.\\[.5em]
-    We specify that the index space has {\tt NWITEMS} elements; \\and not to
-      subdivide the program into work-groups.\\[.5em]
-    There is also an event interface, which we do not use.\\[2em]
-
-    We copy the results back; call is blocking ({\tt CL\_TRUE});\\
-    \qquad hence we don't need an explicit {\tt clFinish()} call.\\[.5em]
-    We specify that we want to read the results back into buffer.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Simple Example (5)}
-
-
-
-  \begin{lstlisting}[language=C]
-   int i;
-   for(i=0; i < NWITEMS; i++)
-       printf("%d %d\n", i, ptr[i]);
-   return 0;
+    return __longlong_as_double(old);
 }
-  \end{lstlisting}
-
-  \begin{itemize}
-    \item The program simply prints {\tt 0 0}, {\tt 1 1}, \ldots, {\tt 511 511}.
-    \item Note: I didn't clean up or include error handling\\ for any of the
-      OpenCL functions.
-  \end{itemize}
+\end{lstlisting}
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\part{Another Example}
-\frame{\partpage}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
-  \frametitle{C++ Bindings}
+\frametitle{Launch?}
 
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/launch.jpg}
+\end{center}
 
-    If we use the C++ bindings, we'll get automatic \\ resource release and
-      exceptions.
-      \begin{itemize}
-        \item C++ likes to use the RAII style
-          (resource~allocation~is~initialization).
-      \end{itemize}~\\
-    Change the header to {\tt CL/cl.hpp} and define
-      {\tt \_\_CL\_ENABLE\_EXCEPTIONS}.\\[.5em]
-    We'd also like to store our kernel in a file instead of a string.\\[.5em]
-    The C API is not so nice to work with.
+So far, all we have covered is the theory and then how to write a kernel. 
+
+To make use of it, we'll have to look at the host code. That's our next topic. 
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Vector Addition Kernel}
-
-
-    Let's write a kernel that adds two vectors and stores the result.\\
-    This kernel will go in the file {\tt vector\_add\_kernel.cl}.
-
-  \begin{lstlisting}[language=C]
-__kernel void vector_add(__global const int *A,
-                         __global const int *B,
-                         __global int *C) {
- 
-    // Get the index of the current element to be processed
-    int i = get_global_id(0);
- 
-    // Do the operation
-    C[i] = A[i] + B[i];
-}
-  \end{lstlisting}
-
-    Other possible qualifiers: {\tt local}, {\tt constant} and {\tt private}.
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Vector Addition (1)}
-
-
-  \begin{lstlisting}[language=C++]
-// Vector add example, C++ bindings (use these!)
-// source:
-//  http://www.thebigblob.com/getting-started-
-//        with-opencl-and-gpu-computing/
-
-#define __CL_ENABLE_EXCEPTIONS
-
-#include <CL/cl.hpp>
-
-#include <iostream>
-#include <fstream>
-#include <string>
-#include <utility>
-#include <vector>
- 
-int main() {
-    // Create the two input vectors
-    const int LIST_SIZE = 1000;
-    int *A = new int[LIST_SIZE]; 
-    int *B = new int[LIST_SIZE];
-    for(int i = 0; i < LIST_SIZE; i++) {
-        A[i] = i;
-        B[i] = LIST_SIZE - i;
-    }
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Vector Addition (2)}
-
-
-  \begin{lstlisting}[language=C++]
-    try { 
-        // Get available platforms
-        std::vector<cl::Platform> platforms;
-        cl::Platform::get(&platforms);
-
-        // Select the default platform and create a context
-        // using this platform and the GPU
-        cl_context_properties cps[3] = { 
-            CL_CONTEXT_PLATFORM, 
-            (cl_context_properties)(platforms[0])(), 
-            0 
-        };
-        cl::Context context(CL_DEVICE_TYPE_GPU, cps);
- 
-        // Get a list of devices on this platform
-        std::vector<cl::Device> devices =
-            context.getInfo<CL_CONTEXT_DEVICES>();
- 
-        // Create a command queue and use the first device
-        cl::CommandQueue queue = cl::CommandQueue(context,
-            devices[0]);
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Explanation (2)}
-
-
-
-    You can define {\tt \_\_NO\_STD\_VECTOR} and use {\tt cl::vector}
-      (same with strings).\\[1em]
-    You can enable profiling by adding {\tt CL\_QUEUE\_PROFILING\_ENABLE}
-      as 3rd argument to {\tt queue}.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Vector Addition (3)}
-
-
-
-  \begin{lstlisting}[language=C++]
-        // Read source file
-        std::ifstream sourceFile("vector_add_kernel.cl");
-        std::string sourceCode(
-            std::istreambuf_iterator<char>(sourceFile),
-            (std::istreambuf_iterator<char>())
-        );
-        cl::Program::Sources source(
-            1,
-            std::make_pair(sourceCode.c_str(),
-                           sourceCode.length()+1)
-        );
- 
-        // Make program of the source code in the context
-        cl::Program program = cl::Program(context, source);
- 
-        // Build program for these specific devices
-        program.build(devices);
- 
-        // Make kernel
-        cl::Kernel kernel(program, "vector_add");
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Vector Addition (4)}
-
-
-  \begin{lstlisting}[language=C++]
-        // Create memory buffers
-        cl::Buffer bufferA = cl::Buffer(
-            context,
-            CL_MEM_READ_ONLY,
-            LIST_SIZE * sizeof(int)
-        );
-        cl::Buffer bufferB = cl::Buffer(
-            context,
-            CL_MEM_READ_ONLY,
-            LIST_SIZE * sizeof(int)
-        );
-        cl::Buffer bufferC = cl::Buffer(
-            context,
-            CL_MEM_WRITE_ONLY,
-            LIST_SIZE * sizeof(int)
-        );
-  \end{lstlisting}
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Vector Addition (5)}
-
-  \begin{lstlisting}[language=C++]
-        // Copy lists A and B to the memory buffers
-        queue.enqueueWriteBuffer(
-            bufferA,
-            CL_TRUE,
-            0,
-            LIST_SIZE * sizeof(int),
-            A
-        );
-        queue.enqueueWriteBuffer(
-            bufferB,
-            CL_TRUE,
-            0,
-            LIST_SIZE * sizeof(int),
-            B
-        );
- 
-        // Set arguments to kernel
-        kernel.setArg(0, bufferA);
-        kernel.setArg(1, bufferB);
-        kernel.setArg(2, bufferC);
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Explanation (5)}
-
-
-  {\tt enqueue*Buffer} arguments:
-
-  \begin{itemize}
-    \item {\it buffer}
-    \item {\tt cl\_ bool} {\it blocking\_write}
-    \item {\tt ::size\_t} {\it offset}
-    \item {\tt ::size\_t} {\it size}
-    \item {\tt const void *} {\it ptr}
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Vector Addition (6)}
-
-
-  \begin{lstlisting}[language=C++]
-        // Run the kernel on specific ND range
-        cl::NDRange global(LIST_SIZE);
-        cl::NDRange local(1);
-        queue.enqueueNDRangeKernel(
-            kernel,
-            cl::NullRange,
-            global,
-            local
-        );
- 
-        // Read buffer C into a local list
-        int* C = new int[LIST_SIZE];
-        queue.enqueueReadBuffer(
-             bufferC,
-             CL_TRUE,
-             0,
-             LIST_SIZE * sizeof(int),
-             C
-        );
-  \end{lstlisting}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Vector Addition (7)}
-
-
-  \begin{lstlisting}[language=C++]
-        for(int i = 0; i < LIST_SIZE; i ++) {
-            std::cout << A[i] << " + " << B[i] << " = "
-                      << C[i] << std::endl;
-        }
-    } catch(cl::Error error) {
-        std::cout << error.what() << "(" << error.err()
-                  << ")" << std::endl;
-    }
- 
-    return 0;
-}
-  \end{lstlisting}
-
-    This program just prints all the additions (equalling 1000).
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Other Improvements}
-
-
-    The host memory is still unreleased.
-      \begin{itemize}
-        \item With the same number of lines, we could use the C++11
-          {\tt unique\_ptr}, which would free the memory for us.
-      \end{itemize}
-    You can use a vector instead of an array, \\ and use {\tt \&v[0]} instead
-      of {\tt <type>*}.
-      \begin{itemize}
-        \item Valid as long as the vector is not resized.
-      \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{OpenCL Programming Summary}
-
-
-    Went through real OpenCL examples.\\
-
-    Have the reference card for the API.\\[1em]
-
-    Saw a C++ template for setting up OpenCL.\\[1em]
-
-    \structure{Aside:} if you're serious about programming in C++, check
-      out {\bf Effective C++} by Scott Meyers (slightly dated with C++11, but
-      it still has some good stuff)
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Overall summary}
-
-
-    {\bf First Half:} Brief overview of OpenCL and its programming model.\\[1em]
-
-    Many concepts are similar to plain parallel programming (more structure).\\[1em]
-
-    {\bf Second Half:} Looked at an OpenCL implementation and how to organize it.\\[1em]
-    Need to write lots of boilerplate!
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \end{document}
 
