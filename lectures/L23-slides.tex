@@ -2,7 +2,7 @@
 
 \title{Lecture 23 --- GPU Programming Continued }
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -13,8 +13,282 @@
 \begin{frame}
   \titlepage
 
- \end{frame}
+\end{frame}
 
+
+\begin{frame}
+\frametitle{The Host Code}
+
+We've learned about how a kernel works and a bit about how to write one. 
+
+The next part is the host code.
+
+Now, fortunately, we don't have to write the whole program in \CPP~ or C, even though the kernel has to be written in the CUDA variant. 
+
+We're going to use the Rustacuda library!
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Rust Host Code Example}
+\begin{lstlisting}[language=Rust]
+#[macro_use]
+extern crate rustacuda;
+
+use rustacuda::prelude::*;
+use std::error::Error;
+use std::ffi::CString;
+
+fn main() -> Result<(), Box<dyn Error>> {
+    // Set up the context, load the module, and create a stream to run kernels in.
+    rustacuda::init(CudaFlags::empty())?;
+    let device = Device::get_device(0)?;
+    let _ctx = Context::create_and_push(ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, device)?;
+
+    let ptx = CString::new(include_str!("../resources/add.ptx"))?;
+    let module = Module::load_from_string(&ptx)?;
+    let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
+    
+    // Create buffers for data
+    let mut in_x = DeviceBuffer::from_slice(&[1.0f32; 10])?;
+    let mut in_y = DeviceBuffer::from_slice(&[2.0f32; 10])?;
+    let mut out_1 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
+    let mut out_2 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
+\end{lstlisting}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Rust Host Code Example}
+\begin{lstlisting}[language=Rust]
+    // This kernel adds each element in `in_x` and `in_y` and writes the result into `out`.
+    unsafe {
+        // Launch the kernel with one block of one thread, no dynamic shared memory on `stream`.
+        let result = launch!(module.sum<<<1, 1, 0, stream>>>(
+            in_x.as_device_ptr(),
+            in_y.as_device_ptr(),
+            out_1.as_device_ptr(),
+            out_1.len()
+        ));
+        result?;
+    }
+
+    // Kernel launches are asynchronous, so we wait for the kernels to finish executing.
+    stream.synchronize()?;
+\end{lstlisting}
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/launch-sw.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Rust Host Code Example}
+\begin{lstlisting}[language=Rust]
+
+    // Copy the results back to host memory
+    let mut out_host = [0.0f32; 20];
+    out_1.copy_to(&mut out_host[0..10])?;
+    out_2.copy_to(&mut out_host[10..20])?;
+
+    for x in out_host.iter() {
+        assert_eq!(3.0 as u32, *x as u32);
+    }
+
+    println!("Launched kernel successfully.");
+    Ok(())
+}
+\end{lstlisting}
+\vspace{-1em}
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/vader-rogue-one.png}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Corresponding Kernel}
+
+\begin{lstlisting}[language=C]
+extern "C" __constant__ int my_constant = 314;
+
+extern "C" __global__ void sum(const float* x, const float* y, float* out, int count) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < count; i += blockDim.x * gridDim.x) {
+        out[i] = x[i] + y[i];
+    }
+}
+\end{lstlisting}
+
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/tantive-iv.png}
+\end{center}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{N-Body Problem}
+
+Let's take a look at the N-Body Problem code in the repo.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Results}
+
+That's great, but how much does it speed up? 
+
+I ran this on ecetesla1.
+
+With 100~000 points:
+\begin{itemize}
+	\item \texttt{nbody} (sequential, no approximations): 40.3 seconds
+	\item \texttt{nbody-parallel} (parallel, no approximations): 5.3 seconds
+	\item \texttt{nbody-cuda} (parallel, no approximations): 9.5 seconds
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Wait a Minute}
+
+\begin{center}
+	\includegraphics[width=0.9\textwidth]{images/chosenone.png}
+\end{center}
+
+ That's worse than the CPU version. 
+ 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Kylo Ren is very Meme-Able}
+
+Theory: 100~000 points is not enough to overcome the overhead of setup and transferring data to and from the device. 
+  
+\begin{center}
+	\includegraphics[width=0.9\textwidth]{images/more.png}
+\end{center}
+  
+\end{frame}
+
+\begin{frame}
+\frametitle{Sequel Memes!}
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/wrong.png}
+\end{center}
+
+This turned out to be incorrect.
+
+Most of the time was going to the kernel execution of the \texttt{calculate\_forces} -- as expected?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Was Important}
+
+\begin{center}
+	\includegraphics[width=0.45\textwidth]{images/grid-of-thread-blocks.png}
+\end{center}
+
+The documentation isn't super great about how grids and blocks work.
+
+A lot of the guidance on the internet says is ``experiment and try''. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Grid Guidance}
+
+ The initial approach that I wrote had each work-item be its own grid. 
+ 
+ That's inefficient, because we're not taking advantage of all the hardware that's available (the warp hardware). 
+ 
+ The advice that I can find says the number of threads per block should always be a multiple of 32 with a maximum of 512 (or perhaps 1024). 
+ 
+ The second guidance I can find is that numbers like 256 and 128 are good ones to start with, and you can tweak it as you need. 
+ 
+ Then you have to adjust the grid size: divide the number of points by the threads per block to give the number of grids.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Change the Launch}
+
+\begin{lstlisting}[language=Rust]
+        let result = launch!(module.calculate_forces<<<(NUM_POINTS/256) + 1, 256, 0, stream>>>(
+            points.as_device_ptr(),
+            accel.as_device_ptr(),
+            points.len()
+        ));
+        result?;
+\end{lstlisting}
+
+I did have to add a +1 to the number of grids, because 100~000 does not divide evenly by 256.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Kernel Crash}
+
+ But just running it as-is didn't work (and led to the kernel crashing. Why? 
+ 
+ Because the indexing strategy that I used contained only the reference to the block index \texttt{blockIdx.x}. 
+ 
+ That's fine in the scenario where every work-item gets its own block, but that's no longer the case now: 256 work-items (points) now share each block.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Updated Kernel}
+
+\begin{lstlisting}[language=C++]
+extern "C" __global__ void calculate_forces(const float4* positions, float3* accelerations, int num_points) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    float4 current = positions[idx];
+    float3 acc = accelerations[idx];
+
+    for (int i = 0; i < num_points; i++) {
+        body_body_interaction(current, positions[i], &acc);
+    }
+    accelerations[idx] = acc;
+}
+\end{lstlisting}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Did it work?}
+
+With 100~000 points:
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/power.png}
+\end{center}
+
+\begin{itemize}
+	\item \texttt{nbody} (sequential, no approximations): 40.3 seconds
+	\item \texttt{nbody-parallel} (parallel, no approximations): 5.3 seconds
+	\item \texttt{nbody-cuda} (parallel, no approximations): 9.5 seconds
+	\item \textbf{\texttt{nbody-cuda-grid} (parallel, no approx., grid): 1.65 seconds}
+\end{itemize}
+
+ Now that's a lot better!
+
+\end{frame}
 
 \end{document}
 
