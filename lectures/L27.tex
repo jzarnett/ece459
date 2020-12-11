@@ -4,187 +4,31 @@
 
 \lecture{27 --- Liar, Liar}{\term}{Patrick Lam \& Jeff Zarnett}
 
-\section*{Lies about Calling Context}
+I was thinking today about how humans are quite adept at building and
+using tools (though not
+unique\footnote{https://www.rnz.co.nz/news/national/366747/clever-kea-using-tools-to-raid-traps}). Profilers
+are useful tools, but they can mislead you.  If you understand how
+profilers work, you can avoid being misled.
 
-Let's open with a video that illustrates one of the problems with sampling-based profiling:
+As we've been saying this week, there are sampling-based and instrumentation-based profilers.
+The tl;dr is that a sampling-based profiler can miss things, while an instrumentation-based
+profiler distorts the system under observation.
 
+Visually, sampling-based profiling can do this:
 \begin{center}
 	\url{https://www.youtube.com/watch?v=jQDjJRYmeWg}
 \end{center}
 
 The video's not fake; it's a real helicopter and it's really flying. What's happening, however, is that the camera is taking images at some multiple of the frequency of the blade rotation speed so it gives the illusion that the blades are not spinning at all. This is a sampling problem, and you see the same problem in car commercials on TV where it looks like the wheels are spinning backwards. They're not, but the sampling effect of the camera can make it look that way.
 
-Some profiler results are real.  Other results are interpolated, and
-perhaps wrong. Who can we trust? We'll start by talking about gprof and callgrind/KCacheGrind. The reference for this part of the lecture is a blog post by Yossi Kreinin~\cite{lies}.
-
-\paragraph{Running Example.} Consider the following code.
-
-\begin{lstlisting}
-void work(int n) {
-  volatile int i=0; //don't optimize away
-  while(i++ < n);
-}
-void easy() { work(1000); }
-void hard() { work(1000*1000*1000); }
-int main() { easy(); hard(); }
-\end{lstlisting}
-
-We see that there is a worker function whose runtime depends on its input.
-Function {\tt easy} calls the worker function with a small input, and {\tt hard} calls
-it with a large input. So we expect most of the time should be spent in the \texttt{hard} function, right? 
-Profiling yields:
-\begin{verbatim}
-[plam@lynch L27]\$ gprof ./try gmon.out
-Flat profile:
-
-Each sample counts as 0.01 seconds.
-  \%   cumulative   self              self     total           
- time   seconds   seconds    calls  ms/call  ms/call  name    
-101.30      1.68     1.68        2   840.78   840.78  work
-  0.00      1.68     0.00        1     0.00  {840.78}  easy
-  0.00      1.68     0.00        1     0.00  {840.78}  hard
-\end{verbatim}
-%$
-Most of the profiler output is just fine. But there are lies in the
-``total ms/call'' column. The call to {\tt easy} takes about 0 seconds,
-while that to {\tt hard} takes 1.68s. Less importantly, the total ms/call for
-{\tt work} is indeed an average, but that hides the variance between runtimes.
-
-\paragraph{Why?} To make any sense of the lies, we need to understand how {\tt gprof} works.
-It uses two standard-library functions: {\bf profil()} and {\bf mcount()}.
-
-\begin{itemize}
-\item {\bf profil()}: asks glibc to record which instruction 
-  is currently executing (100$\times$/second).
-\item {\bf mcount()}: records call graph edges; called by {\tt -pg} instrumentation.
-\end{itemize}
-
-Hence, {\bf profil} information is statistical, while {\bf mcount}
-information is exact.  Bringing that information back to the profiler
-output columns, we can see that the ``calls'' column is reliable; the
-``self seconds'' column is sampled, but reasonably accurate here; and
-the ``total ms/call'' is interpolated, and we deceived it in this
-contrived example. How is that?
-
-gprof sees:
-\begin{itemize}
-    \item a total of 1.68s in {\tt work};
-    \item 1 call to {\tt work} from {\tt easy}; and
-    \item 1 call to {\tt work} from {\tt hard}.
-\end{itemize}
-All of these numbers are reliable. However, gprof draws the unreliable inference that
-both {\tt easy}, {\tt hard} cause 840ms of {\tt work} time. How did we get here? Well, gprof used some correct data: 3.84 seconds spent in \texttt{work}, divides it between \texttt{easy} and \texttt{hard}, each of which \texttt{mcount} reported was called once, and gets 1.92. So we got a bogus result using correct 
-
-This is wrong. {\tt work} takes 1000000$\times$ longer when called from {\tt hard}!
-
-
-The following results from gprof are suspect:
-\begin{itemize}
-  \item contribution of children to parents;
-  \item total runtime spent in self+children;
-  \item etc.
-\end{itemize}
-
-\paragraph{When are call graph edges right?}
-Two cases:
-    \begin{itemize}
-    \item functions with only one caller
-      (e.g. {\tt f()} only called by {\tt g()}); or,
-    \item functions which always take the same time to complete
-      (e.g. {\tt rand()}).
-    \end{itemize}
-
-On the other hand, results for any function whose running time depends on its inputs,
-and which is called from multiple contexts, are sketchy.
-
-\subsection*{callgrind/KCacheGrind}
-Next, we'll talk about callgrind/KCacheGrind. Like our old friends memcheck, hell grind, and cachegrind, callgrind is part of valgrind, and runs the program under an x86 JIT.  KCacheGrind is a frontend to callgrind. callgrind gives better information, but imposes
-more overhead.
-
-\newpage
-KCacheGrind works properly on the earlier running example:
-
-\begin{center}
-  \includegraphics[width=.4\textwidth]{images/kcachegrind}
-\end{center}
-
-It properly reports that {\tt hard} takes all the time.
-But we can still deceive it.
-
-\paragraph{More Complex Example.} Let's look at this example.
-
-\begin{minipage}{.4\textwidth}
-\begin{lstlisting}[basicstyle=\scriptsize]
-void worker1(int n) {
-  volatile int i=0;
-  while(i++<n);
-}
-void worker2(int n) {
-  volatile int i=0;
-  while(i++<n);
-}
-void manager(int n1, int n2) {
-  worker1(n1);
-  worker2(n2);
-}
-\end{lstlisting}
-\end{minipage}
-\begin{minipage}{.4\textwidth}
-\begin{lstlisting}[basicstyle=\scriptsize]
-void project1() {
-  manager(1000, 1000000);
-}
-void project2() {
-  manager(1000000, 1000);
-}
-int main() {
-  project1();
-  project2();
-}
-\end{lstlisting}
-\end{minipage}
-
-Now, {\tt worker2} takes all the time in {\tt project1},
-and {\tt worker1} takes all the time in {\tt project2}.
-
-Let's see how KCacheGrind does on this example.
-
-\begin{center}
-  \includegraphics[width=.25\textwidth]{images/kcachegrind2}
-\end{center}
-
-
-The call graph, on the bottom, shows that 
-{\tt worker1} and {\tt worker2} do each take about 50\% of time.
-So do {\tt project2} and {\tt project1}. This is fine.
-(I think gprof would correctly interpolate that too.)
-
-However, KCacheGrind also lies, in the report on top. It is saying
-that {\tt worker1} and {\tt worker2} doing half the work in each
-project.  That's not what the code says. Why is it lying?
-
-\begin{itemize}
-\item gprof reports time spent in {\tt f()} and {\tt g()},
-and how many times {\tt f()} calls {\tt g()}.
-\item callgrind also reports 
-time spent  in {\tt g()} when called from {\tt f()}, i.e. some calling-context information.
-\item callgrind does \emph{not} report time spent in {\tt g()} when
-     called from {\tt f()} when called from {\tt h()}.
-     We don't get the {\tt project1} to {\tt manager} to {\tt worker1} link.
-     (We have Edges but need Edge-Pairs).
-\end{itemize}
-
-\paragraph{Summary.} We've seen that some profiler results are exact;
-some results are sampled; and some results are interpolated. If you understand the tool, you understand where it can go
-wrong. 
-
-Understand your tools!
+The main assumptions underlying sampling are that samples are ``random'' and that the sample distribution approximates the actual time-spent distribution\footnote{Lifted from ``Profilers are Lying Hobbitses'', \url{https://www.infoq.com/presentations/profilers-hotspots-bottlenecks/}, which talks about profiling for JVMs.}.
 
 \section*{Lies from Metrics}
 While app-specific metrics can lie too, mostly we'll talk about CPU
 perf counters today.
+In particular, we're going to look at two types of sampling-based lies.
 
-The reference here is a blog post by Paul Khuong~\cite{metrics}.
+The reference for the first type of lie is a blog post by Paul Khuong~\cite{metrics}.
 
 This goes back to {\tt mfence}, which we've seen before. It is used, for instance, in
 spinlock implementations. Khuong found that his profiles said that spinlocking didn't take much time.
@@ -193,6 +37,8 @@ But empirically: eliminating spinlocks = better than expected! Hmm.
 The next step is (as we do in this course) to create microbenchmarks to better understand what's
 going on. The microbenchmark contained memory accesses to uncached locations, or computations,
 surrounded by store pairs/mfence/locks. He used perf to evaluate the impact of mfence vs lock.
+You'll recall that perf is sampling-based and records how often the CPU is found executing each
+instruction.
 
 {\scriptsize
 \begin{lstlisting}
@@ -273,18 +119,21 @@ Profilers, even using CPU expense counts, drastically underestimate the impact o
 and overestimate the impact of locks.
 
 This is because mfence causes a pipeline flush, and the resulting 
-costs get attributed to instructions being flushed, not to the mfence itself.
+costs get attributed to instructions being flushed, not to the mfence itself. In other
+words, mfence makes other instructions run more slowly, which camouflages its own effect
+on the overall performance.
 
 
 \section*{The Long Tail}
 
+The other type of lie that sampling can hide is the one where infrequent long tails are hidden in averages.
 Our source here is the blog post by Dan Luu~\cite{perf-tracing}. Suppose we have a task that's going to get distributed over multiple computers (like a search). If we look at the latency distribution, the problem is mostly that we see a long tail of events and when we are doing a computation or search where we need all the results, we can only go as the slowest step. Let's take a look at a histogram of disk read latencies, where we are performing a 64 kB read, also from that source:
 
 \begin{center}
-	\includegraphics[width=0.65\textwidth]{images/disk_tail.png}
+	\includegraphics[width=0.5\textwidth]{images/disk_tail.png}
 \end{center}
 
-Let's break it down. Peak 1 corresponds to something cached in RAM---best case scenario. Peak 2 is at around 3ms, which is too fast for spinning and seeking magnetic hard disks, but it's fast enough for reading something from the disk cache via the PCI-Express interface. Peak 3 is obviously disk seek and read times, somewhere around 25ms. 
+Let's break it down. Peak 1 corresponds to something cached in RAM---best case scenario. Peak 2 is at around 3ms, which is too fast for spinning and seeking magnetic hard disks, but it's fast enough for reading something from the disk cache via the PCI-Express interface. Peak 3 is obviously disk seek and read times, around 25ms. 
 
 These numbers don't look terrible, except for the fact that we have peaks at 250, 500, 750, and 1000 ms and the 99th percentile is some 696ms which is a very, very long time. Sampling profilers are not very good at finding these things, because they throw everything into various buckets and therefore we get averages. The averages are misleading, though, because we have these weird outliers that take dramatically longer. Averages are nice as long as our data is also reasonably ``nice''.
 
@@ -293,25 +142,94 @@ So what actually happened? Well, from~\cite{perf-tracing}: The investigator foun
 Further limitations of sampling profilers emerge, as demonstrated in this graph, also from~\cite{perf-tracing}, showing the data we get out of our sampling profiler if we take a look at Lucene (a search indexer):
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/perf-sample.png}
+	\includegraphics[width=0.3\textwidth]{images/perf-sample.png}
 \end{center}
 
 So at the default sampling interval for perf we see\ldots nothing interesting whatsoever. If we bump up to the max sampling frequency of perf, we get a moderately more interesting graph, but not much. If we use a different tool and can sample at a dramatically higher rate, then we end up with something way more useful. So we're left to wonder why does perf sample so infrequently, and how does SHIM get around this?
 
-Well, for one thing, perf samples are done with interrupts. Processing interrupts takes a fair amount of time and if you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work. SHIM gets around this by being more invasive---it adds some periodically executed code that puts information out whenever there is an appropriate event (e.g., function return). This produces a bunch of data which can be dealt with later to produce something useful.
+Well, for one thing, perf samples are done with interrupts. Processing interrupts takes a fair amount of time and if you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work. So sampling tools usually don't interrupt the program too often. SHIM gets around this by being more invasive---it instruments the program, adding some periodically executed code that puts information out whenever there is an appropriate event (e.g., function return). This produces a bunch of data which can be dealt with later to produce something useful.
 
-  \paragraph{Algorithmic profiling.} Coppa et al~\cite{coppa2014input} have proposed another profiling tool,
-  {\tt aprof}.
-  \url{https://code.google.com/p/aprof/}
-{
-  \begin{quote}
-  aprof is a Valgrind tool for performance profiling designed to help developers discover hidden asymptotic inefficiencies in the code. From one or more runs of a program, aprof measures how the performance of individual routines scales as a function of the input size, yielding clues to its growth rate and to the "big-O" of the program.
-  \end{quote}
-  }
+This instrumentation-based approach is more expensive in general, but note that DTrace\footnote{Note also the comment in the blog post: ``Yes, that includes dtrace, which I'm calling out in particular because any time you have one of these discussions, a dtrace troll will come along to say that dtrace has supported that for years. It's like the common lisp of trace tools, in terms of community trolling.''} and Nethercote's counts tool (discussed in L25) also enable custom instrumentation of select events. 
 
-\paragraph{Summary} We saw a bunch of lies today: calling-context lies and perf attribution
+\section*{Lies from Counters}
+This is fairly niche, but Rust compile hackers were trying to include
+support for hardware performance counters (what perf reports) because
+{\tt -Z self-profile} data was too noisy\footnote{Full story, in gory
+detail,
+at \url{https://hackmd.io/sH315lO2RuicY-SEt7ynGA?view}.}. Counters
+are, for instance, faster than measuring time and way (i.e. 5 orders of magnitude) more deterministic.
+
+To make counters as deterministic as possible:
+\begin{itemize}[noitemsep]
+\item disable Address Space Layout Randomization (randomized pointer addresses affect hash layouts);
+\item subtract time spent processing interrupts (IRQs);
+\item profile one thread only (if you can, in your context).
+\end{itemize}
+Fun fact. We talked about Spectre back in Lecture 7. Speculative execution comes up here too in terms of
+counters being wrong. AMD speculates past atomics and then rolls back, but doesn't roll back perf counters.
+Post-Spectre, there's a hidden model-specific register (``SpecLockMap'') that disables speculating past atomics, the kind of thing you would
+want around to protect you against future things in that vein that someone might discover. Or, in better words than mine\footnote{\url{https://twitter.com/eddyb_r/status/1323587371703668742}}:
+
+\begin{center}
+\includegraphics{images/L27-eb-tweet.png}
+\end{center}
+
+\section*{Lies about Calling Context}
+This part is somewhat outdated now, as it's a pretty specific technical problem that especially arises under the {\tt gprof} tool. It's still a good example of lying tools, though,
+so I'll include a condensed version. Yossi Kreinin~\cite{lies} writes about it in more detail.
+
+gprof uses two C standard-library functions: {\bf profil()} and {\bf mcount()}.
+
+\vspace*{-1em}
+\begin{itemize}[noitemsep]
+\item {\bf profil()}: asks glibc to record which instruction 
+  is currently executing (100$\times$/second).
+\item {\bf mcount()}: records call graph edges; called by {\tt -pg} instrumentation.
+\end{itemize}
+\vspace*{-1em}
+
+Hence, {\bf profil} information is statistical, while {\bf mcount}
+information is exact.  gprof can draw unreliable inferences. If you have a method \texttt{easy} and a method \texttt{hard}, each of which is called once, and \texttt{hard} takes up almost all the CPU time,
+gprof might divide total time by 2 and report bogus results.
+
+The following results from gprof are suspect (among others):
+\vspace*{-1em}
+\begin{itemize}[noitemsep]
+  \item contribution of children to parents;
+  \item total runtime spent in self+children;
+\end{itemize}
+\vspace*{-1em}
+
+\paragraph{When are call graph edges right?}
+Two cases:
+\vspace*{-1em}
+    \begin{itemize}[noitemsep]
+    \item functions with only one caller
+      (e.g. {\tt f()} only called by {\tt g()}); or,
+    \item functions which always take the same time to complete
+      (e.g. {\tt rand()}).
+    \end{itemize}
+\vspace*{-1em}
+
+On the other hand, results for any function whose running time depends on its inputs,
+and which is called from multiple contexts, are sketchy.
+
+
+Next, we'll talk about callgrind/KCacheGrind. Like our old friends memcheck, helgrind, and cachegrind, callgrind is part of valgrind, and runs the program under an x86 JIT.  KCacheGrind is a frontend to callgrind. callgrind gives better information, but imposes
+more overhead.
+KCacheGrind works properly on the earlier running example, but we can still deceive it with more complicated examples.
+
+%% \paragraph{Summary.} We've seen that some profiler results are exact;
+%% some results are sampled; and some results are interpolated. If you understand the tool, you understand where it can go
+%% wrong. 
+
+%% Understand your tools!
+
+
+\paragraph{Overall summary.} We saw a bunch of lies today: calling-context lies and perf attribution
 lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
 and understand how your tools work.
+
 
 
 \input{bibliography.tex}
