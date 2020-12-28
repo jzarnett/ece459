@@ -2,14 +2,14 @@ use rand::Rng;
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
-use crossbeam_channel::unbounded;
+use crossbeam_channel::{unbounded, bounded};
 
 const CHANNEL_CAPACITY: usize = 100;
 const NUM_THREADS: usize = 4;
 const ITEMS_PER_THREAD: usize = 10000;
 
 fn main() {
-    let (send_end, receive_end) = unbounded();
+    let (send_end, receive_end) = bounded(CHANNEL_CAPACITY);
 
     let mut threads = vec![];
     for _i in 0 .. NUM_THREADS {

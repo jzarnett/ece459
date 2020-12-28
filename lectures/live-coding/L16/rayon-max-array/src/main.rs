@@ -8,14 +8,19 @@ const VEC_SIZE: usize = 10000000;
 
 fn main() {
     let vec = init_vector();
-    let mut max = MIN;
-    vec.iter().for_each(|n| {
-        if *n > max {
-            max = *n;
+    let max = AtomicI64::new(MIN);
+    vec.par_iter().for_each(|n| {
+        let mut previous_value = max.load(Ordering::SeqCst);
+        if *n > previous_value {
+            while max.compare_and_swap(previous_value, *n, Ordering::SeqCst) != previous_value {
+                println!("Compare and swap was unsuccessful; retrying");
+                previous_value = max.load(Ordering::SeqCst);
+            }
         }
     });
-    println!("Max value in the array is {}", max);
-    if max == MAX {
+    let final_max = max.load(Ordering::SeqCst);
+    println!("Max value in the array is {}", final_max);
+    if final_max == MAX {
         println!("This is the max value for an i64.")
     }
 }
