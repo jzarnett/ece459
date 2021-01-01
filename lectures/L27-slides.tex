@@ -40,335 +40,31 @@ Is this fake?
 
 \end{frame}
 
-\part{Lies about Calling Context}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \partpage
+\frametitle{Assumptions}
+
+The main assumptions underlying sampling are that:
+
+Samples are ``random''; and 
+
+The sample distribution approximates the actual time-spent distribution.
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{gprof and KCacheGrind}
+  \frametitle{In the Criminal Justice System...}
   
   
     Who can we trust?\\[1em]
-
-    Some profiler results are real. \\
-    Other results are interpolated, and perhaps wrong.
     
     \begin{center}
 	\includegraphics[width=0.6\textwidth]{images/lawandorder.jpg}
 	\end{center}
-  
-
-  \begin{center}
-    Reference: Yossi Kreinin,\\
-  \tiny
-  \url{http://www.yosefk.com/blog/how-profilers-lie-the-cases-of-gprof-and-kcachegrind.html}
-  \end{center}
-
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Running Example}
-
-  \begin{center}
-  \begin{minipage}{.7\textwidth}
-\begin{lstlisting}
-void work(int n) {
-  volatile int i=0; //don't optimize away
-  while(i++ < n);
-}
-void easy() { work(1000); }
-void hard() { work(1000*1000*1000); }
-int main() { easy(); hard(); }
-\end{lstlisting}
-  \end{minipage}
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Running the Running Example}
-
-{\scriptsize
-\begin{verbatim}
-[plam@lynch L27]$ gprof ./try gmon.out
-Flat profile:
-
-Each sample counts as 0.01 seconds.
-  %   cumulative   self              self     total           
- time   seconds   seconds    calls  ms/call  ms/call  name    
-101.30      1.68     1.68        2   840.78   840.78  work
-  0.00      1.68     0.00        1     0.00   840.78  easy
-  0.00      1.68     0.00        1     0.00   840.78  hard
-\end{verbatim}
-}
-
-  That's not right! \\
-  {\tt easy} takes $\approx$ 0s, {\tt hard} takes 1.68s.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{What's Wrong?}
-
-  
-    Need to understand how {\tt gprof} works.\\[1em]
-    \begin{itemize}
-    \item
-      \begin{tabbing}
-      {\bf profil()}: \= asks glibc to record which instruction \\
-      \> is currently executing
-      (100$\times$/second).
-      \end{tabbing}
-    \item
-      \begin{tabbing}
-        {\bf mcount()}: \= records call graph edges;\\
-        \> called by {\tt -pg} instrumentation.
-      \end{tabbing}
-    \end{itemize}
-~\\
-    {\bf profil} information is statistical; \\
-    {\bf mcount} information is exact.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Those Numbers Again}
-
-{\scriptsize
-\begin{verbatim}
-[plam@lynch L27]$ gprof ./try gmon.out
-Flat profile:
-
-Each sample counts as 0.01 seconds.
-  %   cumulative   self              self     total           
- time   seconds   seconds    calls  ms/call  ms/call  name    
-101.30      1.68     1.68        2   840.78   840.78  work
-  0.00      1.68     0.00        1     0.00  *840.78* easy
-  0.00      1.68     0.00        1     0.00  *840.78* hard
-\end{verbatim}
-}
-
-
-  \begin{itemize}
-  \item calls: reliable;
-  \item self seconds: sampled, but OK here;
-    \item total ms/call: interpolated!
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{total ms/call}
-
-  gprof sees:
-  \begin{itemize}
-    \item total of 1.68s in {\tt work},\\
-    \item 1 call to {\tt work} from {\tt easy};
-    \item 1 call to {\tt work} from {\tt hard}.
-  \end{itemize}
-  All of these numbers are reliable.\\[1em]
-  gprof's unreliable conclusion: \\ {\tt easy}, {\tt hard} 
-  both cause 840ms of {\tt work} time.\\[1em]
-  
-  \alert{Wrong}: {\tt work} takes 1000000$\times$ longer when called from {\tt hard}!
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Where gprof guesses: Call graph edges}
-  
-    \begin{itemize}
-  \item contribution of children to parents;
-  \item total runtime spent in self+children;
-  \item etc.
-    \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{When are call graph edges right?}
-
-    Two cases:
-    \begin{itemize}
-    \item functions with only one caller\\
-      (e.g. {\tt f()} only called by {\tt g()}); or,
-    \item functions which always take the same time to complete\\
-      (e.g. {\tt rand()}).
-    \end{itemize}
-    ~\\
-    What's sketchy:\\
-    Any function whose running time depends on its inputs,\\
-    and which is called from multiple contexts.
-    
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{KCacheGrind}
-  
-    KCacheGrind is a frontend to callgrind.\\[1em]
-    callgrind is part of valgrind,\\
-    and runs the program under an x86 JIT.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{KCacheGrind example}
-  \begin{center}
-    \includegraphics[width=.5\textwidth]{images/kcachegrind}
-  \end{center}
-  
-    Yes, {\tt hard} takes all the time.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{More Complex Example}
-
-  \begin{center}
-  \begin{minipage}{.7\textwidth}
-\begin{lstlisting}
-void worker1(int n) {
-  volatile int i=0;
-  while(i++<n);
-}
-void worker2(int n) {
-  volatile int i=0;
-  while(i++<n);
-}
-void manager(int n1, int n2) {
-  worker1(n1);
-  worker2(n2);
-}
-void project1() {
-  manager(1000, 1000000);
-}
-void project2() {
-  manager(1000000, 1000);
-}
-int main() {
-  project1();
-  project2();
-}
-\end{lstlisting}
-  \end{minipage}
-  \end{center}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Example explained in 2 lines}
-  
-    Now {\tt worker2} takes all the time in {\tt project1},\\
-    and {\tt worker1} takes all the time in {\tt project2}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{What about KCacheGrind now?}
-  \begin{center}
-    \includegraphics[width=.5\textwidth]{images/kcachegrind2}
-  \end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{KCacheGrind Truths}
-  \begin{center}
-    \includegraphics[width=.5\textwidth]{images/kcachegrind2-bottom}
-  \end{center}
-  
-    This is the call graph.\\
-    {\tt worker1} and {\tt worker2} do each take about 50\% of time.\\
-    So do {\tt project2} and {\tt project1}.\\[1em]
-    (gprof would interpolate that too.)
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{KCacheGrind Lies}
-  \begin{center}
-    \includegraphics[width=.5\textwidth]{images/kcachegrind2-top}
-  \end{center}
-  
-    KCacheGrind is reporting:
-    \begin{itemize}
-    \item {\tt worker1} and {\tt worker2} doing \\
-      half the work in each project.
-    \end{itemize}
-    That's not what the code says.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Why KCacheGrind Lies}
-
-  \begin{itemize}
-  \item gprof reports time spent in {\tt f()} and {\tt g()},\\
-    and how many times {\tt f()} calls {\tt g()}.
-  \item callgrind also reports \\
-     time spent  in {\tt g()}
-     when called from {\tt f()}, \\
-     i.e. some calling-context information.\\[1em]
-   \item callgrind does \emph{not} report time spent in {\tt g()} \\
-     when
-     called from {\tt f()} when called from {\tt h()}.\\[1em]
-     We don't get the {\tt project1} to {\tt manager} to {\tt worker1} link.\\[1em]
-     \item (We have Edges but need Edge-Pairs).
-     \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{gprof/KCacheGrind summary}
-  
-    Some results are exact;\\
-    some results are sampled;\\
-    some results are interpolated.\\[1em]
-
-    If you understand the tool, \\
-    you understand where it can go wrong.\\[1em]
-
-    Understand your tools!
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \part{Lies from Metrics}
 
@@ -559,6 +255,11 @@ $ perf annotate -s cache_misses
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+\part{The Long Tail}
+
+\begin{frame}
+\partpage
+\end{frame}
 
 
 
@@ -639,6 +340,157 @@ SHIM gets around this by being more invasive.
 This produces a bunch of data which can be dealt with later.
 
 \end{frame}
+
+\part{Lies from Counters}
+
+\begin{frame}
+\partpage
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Counter This}
+
+Rust compiler hackers were trying to include
+support for hardware performance counters (what perf reports).
+
+To make counters as deterministic as possible:
+\begin{itemize}
+\item disable Address Space Layout Randomization (randomized pointer addresses affect hash layouts);
+\item subtract time spent processing interrupts (IRQs);
+\item profile one thread only (if you can, in your context).
+\end{itemize}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Problem?}
+
+\begin{center}
+\includegraphics{images/L27-eb-tweet.png}
+\end{center}
+
+
+\end{frame}
+
+
+
+\part{Lies about Calling Context}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \partpage
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Profilers, Lying?}
+
+This part is somewhat outdated now, as it's a pretty specific technical problem that especially arises under the {\tt gprof} tool. 
+
+It's still a good example of lying tools, though.
+
+  \begin{center}
+    Reference: Yossi Kreinin,\\
+  \tiny
+  \url{http://www.yosefk.com/blog/how-profilers-lie-the-cases-of-gprof-and-kcachegrind.html}
+  \end{center}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+\frametitle{gprof said what?}
+
+gprof uses two C standard-library functions: {\bf profil()} and {\bf mcount()}.
+
+\begin{itemize}
+\item {\bf profil()}: asks glibc to record which instruction 
+  is currently executing (100$\times$/second).
+\item {\bf mcount()}: records call graph edges; called by {\tt -pg} instrumentation.
+\end{itemize}
+
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Getting it Wrong}
+
+Hence, {\bf profil} information is statistical, while {\bf mcount}
+information is exact.  
+
+gprof can draw unreliable inferences. 
+
+If you have a method \texttt{easy} and a method \texttt{hard}, each of which is called once, and \texttt{hard} takes up almost all the CPU time...
+
+
+gprof might divide total time by 2 and report bogus results.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{What's Wrong?}
+
+The following results from gprof are suspect (among others):
+
+\begin{itemize}
+  \item contribution of children to parents;
+  \item total runtime spent in self+children;
+\end{itemize}
+
+
+When are call graph edges right?
+Two cases:
+
+    \begin{itemize}
+    \item functions with only one caller
+      (e.g. {\tt f()} only called by {\tt g()}); or,
+    \item functions which always take the same time to complete
+      (e.g. {\tt rand()}).
+    \end{itemize}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Other Tools}
+
+Next, we'll talk about callgrind/KCacheGrind.
+
+KCacheGrind is a frontend to callgrind. callgrind gives better information, but imposes more overhead.
+
+
+KCacheGrind works properly on the earlier hard/easy example, but we can still deceive it with more complicated examples.
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Lies  summary}
+  
+    Some results are exact;\\
+    some results are sampled;\\
+    some results are interpolated.\\[1em]
+
+    If you understand the tool, \\
+    you understand where it can go wrong.\\[1em]
+
+    Understand your tools!
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \end{document}
