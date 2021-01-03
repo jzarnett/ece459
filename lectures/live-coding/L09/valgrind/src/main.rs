@@ -4,8 +4,8 @@ use std::time::Duration;
 fn main() {
 
     let handle = thread::spawn(|| {
-        let v = 42;
         for i in 1..10 {
+            let v = Box::new(42);
             println!("hi number {} from the spawned thread!", i);
             thread::sleep(Duration::from_millis(1));
             std::mem::forget(v)
