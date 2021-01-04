@@ -25,7 +25,7 @@
 \frametitle{\st{Memory Profiling} Return to Asgard}
 
 \large
-\begin{changemargin}{2cm}
+
 So far: CPU profiling. 
 
 Memory profiling is also a thing; \\
@@ -33,7 +33,7 @@ Memory profiling is also a thing; \\
 
 ``Still Reachable'': not freed \& still have pointers, \\
 \qquad but should have been freed?
-\end{changemargin}
+
 
 \end{frame}
 
@@ -43,7 +43,7 @@ Memory profiling is also a thing; \\
 \frametitle{\st{Memory Profiling} Return to Asgard}
 
 \large
-\begin{changemargin}{2cm}
+
 As with queueing theory:\\
 \qquad allocs $>$ frees $\Longrightarrow$ usage $\rightarrow \infty$
 
@@ -52,9 +52,67 @@ At least more paging, maybe total out-of-memory.
 But! Memory isn't really lost: we could free it.
 
 Our tool for this comes from the Valgrind tool suite.
-\end{changemargin}
+
 
 \end{frame}
+
+
+\begin{frame}
+\frametitle{DHAT}
+DHAT tracks allocation points and what happens to them over a program's execution. 
+
+An allocation point is a point in the program which allocates memory.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Leaf Node}
+
+{\scriptsize
+\begin{verbatim}
+AP 1.1.1.1/2 {
+  Total:     31,460,928 bytes (2.32%, 1,565.9/Minstr) in 262,171 blocks (4.41%, 13.05/Minstr), 
+     avg size 120 bytes, avg lifetime 986,406,885.05 instrs (4.91% of program duration)
+  Max:       16,779,136 bytes in 65,543 blocks, avg size 256 bytes
+  At t-gmax: 0 bytes (0%) in 0 blocks (0%), avg size 0 bytes
+  At t-end:  0 bytes (0%) in 0 blocks (0%), avg size 0 bytes
+  Reads:     5,964,704 bytes (0.11%, 296.88/Minstr), 0.19/byte
+  Writes:    10,487,200 bytes (0.51%, 521.98/Minstr), 0.33/byte
+  Allocated at {
+    ^1: 0x95CACC9: alloc (alloc.rs:72)
+      [omitted]
+    ^7: 0x95CACC9: parse_token_trees_until_close_delim (tokentrees.rs:27)
+    ^8: 0x95CACC9: syntax::parse::lexer::tokentrees::<impl syntax::parse::lexer::
+                          StringReader<'a>>::parse_token_tree (tokentrees.rs:81)
+    ^9: 0x95CAC39: parse_token_trees_until_close_delim (tokentrees.rs:26)
+    ^10: 0x95CAC39: syntax::parse::lexer::tokentrees::<impl syntax::parse::lexer::
+                          StringReader<'a>>::parse_token_tree (tokentrees.rs:81)
+    #11: 0x95CAC39: parse_token_trees_until_close_delim (tokentrees.rs:26)
+    #12: 0x95CAC39: syntax::parse::lexer::tokentrees::<impl syntax::parse::lexer::
+                          StringReader<'a>>::parse_token_tree (tokentrees.rs:81)
+  }
+}
+\end{verbatim}
+}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Parents}
+ Going up the tree, DHAT tells you about all of the allocation points that share a call-stack
+prefix. 
+
+The \texttt{\^} before the number indicates that the line is copied from the parent.
+
+A \# indicates that the line is unique to that node.
+
+A sibling of the example above would diverge at the call on line 10.
+
+\end{frame}
+
 
 
 \begin{frame}
@@ -72,7 +130,7 @@ Our tool for this comes from the Valgrind tool suite.
 \frametitle{Using Massif}
 
 \Large
-\begin{changemargin}{2cm}
+
 What does Massif do? 
 
 \begin{itemize}
@@ -82,67 +140,54 @@ What does Massif do?
 
 Next up: example from Massif docs.
 
-\end{changemargin}
+
 
 \end{frame}
 
 \begin{frame}[fragile]
 \frametitle{Example Allocation Program}
 
-{\scriptsize
-\begin{verbatim}
-#include <stdlib.h>
 
-void g ( void ) {
-    malloc( 4000 );
+\begin{lstlisting}[language=Rust]
+fn g() {
+    let a = Vec::<u8>::with_capacity(4000);
+    std::mem::forget(a)
 }
 
-void f ( void ) {
-    malloc( 2000 );
-    g();
+fn f() {
+    let a = Vec::<u8>::with_capacity(2000);
+    std::mem::forget(a);
+    g()
 }
 
-int main ( void ) {
-    int i;
-    int* a[10];
+fn main() {
 
-    for ( i = 0; i < 10; i++ ) {
-        a[i] = malloc( 1000 );
+    let mut a = Vec::with_capacity(10);
+    for _i in 0..10 {
+	a.push(Box::new([0;1000]))
     }
     f();
     g();
-
-    for ( i = 0; i < 10; i++ ) {
-        free( a[i] );
-    }
-    return 0;
 }
-\end{verbatim}
-}
-
+\end{lstlisting}
 
 \end{frame}
 
 \begin{frame}[fragile]
 \frametitle{Send in Sif}
 
-\Large
-\begin{changemargin}{2cm}
-After we compile (remember \texttt{-g} for debug symbols), run the command:
-\end{changemargin}
-\vspace*{-4em}
+After we compile, run the command:
 {\scriptsize
 \begin{verbatim}
-jz@Loki:~/ece459$ valgrind --tool=massif ./massif
-==25187== Massif, a heap profiler
-==25187== Copyright (C) 2003-2013, and GNU GPL'd, by Nicholas Nethercote
-==25187== Using Valgrind-3.10.1 and LibVEX; rerun with -h for copyright info
-==25187== Command: ./massif
-==25187== 
-==25187== 
+plam@amqui ~/c/p/l/l/L/alloc> valgrind --tool=massif target/debug/alloc
+==406569== Massif, a heap profiler
+==406569== Copyright (C) 2003-2017, and GNU GPL'd, by Nicholas Nethercote
+==406569== Using Valgrind-3.16.1 and LibVEX; rerun with -h for copyright info
+==406569== Command: target/debug/alloc
+==406569== 
+==406569== 
 \end{verbatim}
 }
-
 \end{frame}
 
 
@@ -150,7 +195,7 @@ jz@Loki:~/ece459$ valgrind --tool=massif ./massif
 \frametitle{That Was Useful!!!}
 
 \large
-\begin{changemargin}{2cm}
+
 What happened? 
 
 \begin{enumerate}
@@ -161,7 +206,7 @@ What happened?
 \end{enumerate}
 
 Weird. What we got instead was the file \texttt{massif.out.[PID]}.
-\end{changemargin}
+
 
 \end{frame}
 
@@ -170,14 +215,14 @@ Weird. What we got instead was the file \texttt{massif.out.[PID]}.
 \frametitle{Post-Processing}
 
 \Large
-\begin{changemargin}{2cm}
+
 \texttt{massif.out.[PID]}:\\
 \hspace*{2cm} plain text, sort of readable.
 
 Better: \texttt{ms\_print}.
 
 Which has nothing whatsoever to do with Microsoft. Promise.
-\end{changemargin}
+
 
 \end{frame}
 
@@ -219,7 +264,7 @@ Which has nothing whatsoever to do with Microsoft. Promise.
 \frametitle{User Friendly, But Not Useful}
 
 \Large
-\begin{changemargin}{2cm}
+
 For a long time, nothing happens, then\ldots kaboom! 
 
 Why? We gave it a trivial program.
@@ -229,239 +274,7 @@ about bytes than CPU cycles,\\
 with \verb+--time-unit=B+.
 
 Let's try that.
-\end{changemargin}
 
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{ASCII Art ( \texttt{telnet towel.blinkenlights.nl} )}
-
-{\scriptsize
-\begin{verbatim}
-
-    KB
-19.71^                                               ### <- peak                
-     |                                               #                        
-     |                                               #  ::                    
-     |                                               #  : ::: <- normal         
-     |                                      :::::::::#  : :  ::               
-     |                                      :        #  : :  : ::             
-     |                                      :        #  : :  : : :::          
-     |                                      :        #  : :  : : :  ::        
-     |               detailed     :::::::::::        #  : :  : : :  : :::     
-     |                     |      :         :        #  : :  : : :  : :  ::   
-     |                     v  :::::         :        #  : :  : : :  : :  : :: 
-     |                     @@@:   :         :        #  : :  : : :  : :  : : @
-     |                   ::@  :   :         :        #  : :  : : :  : :  : : @
-     |                :::: @  :   :         :        #  : :  : : :  : :  : : @
-     |              :::  : @  :   :         :        #  : :  : : :  : :  : : @
-     |            ::: :  : @  :   :         :        #  : :  : : :  : :  : : @
-     |         :::: : :  : @  :   :         :        #  : :  : : :  : :  : : @
-     |       :::  : : :  : @  :   :         :        #  : :  : : :  : :  : : @
-     |    :::: :  : : :  : @  :   :         :        #  : :  : : :  : :  : : @
-     |  :::  : :  : : :  : @  :   :         :        #  : :  : : :  : :  : : @
-   0 +----------------------------------------------------------------------->KB
-     0                                                                   29.63
-
-\end{verbatim}
-}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Analyze the Art}
-
-\Large
-\begin{changemargin}{2cm}
-OK! Massif took 25 snapshots.
-
-\begin{itemize}
-\item whenever there are appropriate allocation and deallocation statements, up to a configurable maximum. 
-\end{itemize}
-
-Long running program:\\ will toss some old data if necessary. 
-\end{changemargin}
-\end{frame}
-
-
-
-%% \begin{frame}
-%% \frametitle{Decode the Symbols}
-
-%% \begin{itemize}
-%% \item Normal: :
-
-%% \item Detailed: @
-
-%% \item Peak: \#
-%% \end{itemize}
-
-%% Peaks can be slightly inaccurate as they are recorded only at deallocation (and to speed up operations in general).
-
-%% \end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Normal Snapshots}
-
-{\scriptsize
-\begin{verbatim}
---------------------------------------------------------------------------------
-  n        time(B)         total(B)   useful-heap(B) extra-heap(B)    stacks(B)
---------------------------------------------------------------------------------
-  0              0                0                0             0            0
-  1          1,016            1,016            1,000            16            0
-  2          2,032            2,032            2,000            32            0
-  3          3,048            3,048            3,000            48            0
-  4          4,064            4,064            4,000            64            0
-  5          5,080            5,080            5,000            80            0
-  6          6,096            6,096            6,000            96            0
-  7          7,112            7,112            7,000           112            0
-  8          8,128            8,128            8,000           128            0
-\end{verbatim}
-}
-
-\large
-\begin{changemargin}{2cm}
-time(B) column = time measured in allocations\\
-(our choice of time unit on cmdline).
-
-extra-heap(B) = internal fragmentation.
-
-(Why are stacks all shown as 0?)
-\end{changemargin}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Detailed Snapshots}
-
-{\scriptsize
-\begin{verbatim}
---------------------------------------------------------------------------------
-  n        time(B)         total(B)   useful-heap(B) extra-heap(B)    stacks(B)
---------------------------------------------------------------------------------
-  9          9,144            9,144            9,000           144            0
-98.43% (9,000B) (heap allocation functions) malloc/new/new[], --alloc-fns, etc.
-->98.43% (9,000B) 0x4005BB: main (massif.c:17)
-\end{verbatim}
-}
-
-\large
-\begin{changemargin}{2cm}
-Now: where did heap allocations take place?
-
-So far, all the allocations took place on line 17,\\
- which was \texttt{  a[i] = malloc( 1000 ); } \\
-inside that for loop.
-\end{changemargin}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Peak Snapshot (Trimmed)}
-
-
-{\scriptsize
-\begin{verbatim}
---------------------------------------------------------------------------------
-  n        time(B)         total(B)   useful-heap(B) extra-heap(B)    stacks(B)
---------------------------------------------------------------------------------
- 14         20,184           20,184           20,000           184            0
-99.09% (20,000B) (heap allocation functions) malloc/new/new[], --alloc-fns, etc.
-->49.54% (10,000B) 0x4005BB: main (massif.c:17)
-| 
-->39.64% (8,000B) 0x400589: g (massif.c:4)
-| ->19.82% (4,000B) 0x40059E: f (massif.c:9)
-| | ->19.82% (4,000B) 0x4005D7: main (massif.c:20)
-| |   
-| ->19.82% (4,000B) 0x4005DC: main (massif.c:22)
-|   
-->09.91% (2,000B) 0x400599: f (massif.c:8)
-  ->09.91% (2,000B) 0x4005D7: main (massif.c:20)
-
-\end{verbatim}
-}
-
-\large
-\begin{changemargin}{2cm}
-Massif found  all  allocations  and \\ distilled them to a tree structure.
-
-We see not just where the \texttt{malloc} call happened, but also how we got there.
-\end{changemargin}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{``Is he dead?'' ``Terminated.''}
-
-\large
-\begin{changemargin}{2cm}
-Termination gives a final output of what blocks remains allocated and where they come from. 
-
-These point to memory leaks, incidentally, and Memcheck would not be amused.
-\end{changemargin}
-{\scriptsize
-\begin{verbatim}
- 24         30,344           10,024           10,000            24            0
-99.76% (10,000B) (heap allocation functions) malloc/new/new[], --alloc-fns, etc.
-->79.81% (8,000B) 0x400589: g (massif.c:4)
-| ->39.90% (4,000B) 0x40059E: f (massif.c:9)
-| | ->39.90% (4,000B) 0x4005D7: main (massif.c:20)
-| |   
-| ->39.90% (4,000B) 0x4005DC: main (massif.c:22)
-|   
-->19.95% (2,000B) 0x400599: f (massif.c:8)
-| ->19.95% (2,000B) 0x4005D7: main (massif.c:20)
-|   
-->00.00% (0B) in 1+ places, all below ms_print's threshold (01.00%)
-\end{verbatim}
-}
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Trust, but Verify}
-
-\large
-\begin{changemargin}{2cm}
-Here's what Memcheck thinks:
-\end{changemargin}
-
-{\scriptsize
-\begin{verbatim}
-jz@Loki:~/ece459$ valgrind ./massif
-==25775== Memcheck, a memory error detector
-==25775== Copyright (C) 2002-2013, and GNU GPL'd, by Julian Seward et al.
-==25775== Using Valgrind-3.10.1 and LibVEX; rerun with -h for copyright info
-==25775== Command: ./massif
-==25775== 
-==25775== 
-==25775== HEAP SUMMARY:
-==25775==     in use at exit: 10,000 bytes in 3 blocks
-==25775==   total heap usage: 13 allocs, 10 frees, 20,000 bytes allocated
-==25775== 
-==25775== LEAK SUMMARY:
-==25775==    definitely lost: 10,000 bytes in 3 blocks
-==25775==    indirectly lost: 0 bytes in 0 blocks
-==25775==      possibly lost: 0 bytes in 0 blocks
-==25775==    still reachable: 0 bytes in 0 blocks
-==25775==         suppressed: 0 bytes in 0 blocks
-==25775== Rerun with --leak-check=full to see details of leaked memory
-==25775== 
-==25775== For counts of detected and suppressed errors, rerun with: -v
-==25775== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
-\end{verbatim}
-}
 
 
 \end{frame}
@@ -470,8 +283,7 @@ jz@Loki:~/ece459$ valgrind ./massif
 \begin{frame}
 \frametitle{Valgrind (Memcheck) First}
 
-\large
-\begin{changemargin}{2cm}
+
 Run valgrind (Memcheck) first and make it happy \\
 before we go into figuring out where heap blocks are going with Massif. 
 
@@ -483,7 +295,7 @@ Easy!
 
 \item You can probably identify some cases where memory is hanging around unnecessarily. 
 \end{itemize}
-\end{changemargin}
+
 
 
 \end{frame}
@@ -493,11 +305,9 @@ Easy!
 \frametitle{Places to Look with Massif}
 
 \large
-\begin{changemargin}{2cm}
 Memory usage climbing over a long period of time, perhaps slowly, but never decreasing---memory filling with junk? 
 
 Large spikes in the graph---why so much allocation and deallocation in a short period?
-\end{changemargin}
 \end{frame}
 
 
@@ -506,13 +316,11 @@ Large spikes in the graph---why so much allocation and deallocation in a short p
 \frametitle{Other Massif-ly Useful Things}
 
 \large
-\begin{changemargin}{2cm}
 \begin{itemize}
 	\item stack allocation (\verb+--stacks=yes+).
 	\item children of a process \\ (anything split off with \texttt{fork}) if desired.
 	\item low level stuff: if going beyond \texttt{malloc}, \texttt{calloc}, \texttt{new}, etc. and using \texttt{mmap} or \texttt{brk} that is usually missed, can do profiling at page level (\verb+--pages-as-heap=yes+).
 \end{itemize}
-\end{changemargin}
 
 \end{frame}
 
@@ -523,12 +331,12 @@ Large spikes in the graph---why so much allocation and deallocation in a short p
 \frametitle{Live Demos}
 
 \large
-\begin{changemargin}{2cm}
+
 As is often the case, \\ we have examined the tool on a trivial program. 
 
 Let's see if we can do some\\
  live demos of Massif at work.
-\end{changemargin}
+
 \end{frame}
 
 \part{Cachegrind}
@@ -670,7 +478,9 @@ Is this an overall win for the code? Yes.
 
 In some cases it's not so clear cut, and we could do a small calculation. 
 
-If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400. This is a decrease of 11~400 cycles.
+If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles?
+
+It went from 908~800 wasted cycles to 897~400. A decrease of 11~400 cycles.
 
   Repeat for each of the measures and sum them up to determine if things got better overall and by how much.
 
