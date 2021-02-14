@@ -150,7 +150,7 @@ fn initialize_accelerations() -> Vec<Acceleration> {
 }
 
 fn is_adjacent(bin1: i32, bin2: i32) -> bool {
-    //let ADJACENCY_VECTOR: [i32; 27] = [00, 01, 11, 10, 9, -01, -11, -10, -9, 100, 101, 111, 110, 109, -101, -111, -110, -109, -100, -99, -89, -90, -91, -101, -111, -110, -109];
+    //let ADJACENCY_VECTOR: [i32; 27] = [00, 01, 11, 10, 9, -01, -11, -10, -9, 100, 101, 111, 110, 109, -101, -111, -110, -109, -100, -99, -89, -90, -91, 99, 89, 90, 91];
     // Okay, so you're wondering what's up with this horrifying if-condition with all the OR
     // operators. I don't blame you! Originally, I wrote this to use the ADJACENCY_VECTOR that is
     // commented out above, and iterate over that array and add the current index to bin2 and then
@@ -158,7 +158,6 @@ fn is_adjacent(bin1: i32, bin2: i32) -> bool {
     // running this program with the profiler, and the profiler told me that lots of time was being
     // spent in the code that generates the slice for this comparison.
     if bin1 == bin2 ||
-        bin1 == (bin2 + 1) ||
         bin1 == (bin2 + 1) ||
         bin1 == (bin2 + 11) ||
         bin1 == (bin2 + 10) ||
@@ -181,10 +180,10 @@ fn is_adjacent(bin1: i32, bin2: i32) -> bool {
         bin1 == (bin2 + -89) ||
         bin1 == (bin2 + -90) ||
         bin1 == (bin2 + -91) ||
-        bin1 == (bin2 + -101) ||
-        bin1 == (bin2 + -111) ||
-        bin1 == (bin2 + -110) ||
-        bin1 == (bin2 + -109)
+        bin1 == (bin2 + 99) ||
+        bin1 == (bin2 + 89) ||
+        bin1 == (bin2 + 90) ||
+        bin1 == (bin2 + 91)
     {
         return true;
     }
