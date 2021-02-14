@@ -10,13 +10,16 @@ fn main() {
     let vec = init_vector();
     let max = AtomicI64::new(MIN);
     vec.par_iter().for_each(|n| {
+	// this code is wrong! can you see why?
         let mut previous_value = max.load(Ordering::SeqCst);
         if *n > previous_value {
+	    // wrong!
             while max.compare_and_swap(previous_value, *n, Ordering::SeqCst) != previous_value {
                 println!("Compare and swap was unsuccessful; retrying");
                 previous_value = max.load(Ordering::SeqCst);
             }
         }
+	// L16 video describes it, lecture notes PDF has correct code
     });
     let final_max = max.load(Ordering::SeqCst);
     println!("Max value in the array is {}", final_max);
