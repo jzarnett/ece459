@@ -19,6 +19,9 @@ __device__ void body_body_interaction(float4 point1, float4 point2, float3 *acce
 }
 
 extern "C" __global__ void calculate_forces(const float4* positions, float3* accelerations, int num_points) {
+    if (blockIdx.x >= num_points) {
+        return;
+    }
     float4 current = positions[blockIdx.x];
     float3 acc = accelerations[blockIdx.x];
 
