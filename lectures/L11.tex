@@ -6,9 +6,9 @@
 
 \section*{Appropriate Use of Locking}
 
-In previous courses you learned about locking and how it all works, then we did a quick recap of what you need to know about it. And perhaps you were given some guidance in the use of locks, but probably in earlier scenarios it was sufficient to just avoid all the bad stuff (data races, deadlock, starvation). That's important, but is no longer enough. Now we need to use locking and other synchronization techniques in a way that reduces their impact on performance. 
+In previous courses you learned about locking and how it all works, then we did a quick recap of what you need to know about it. And perhaps you were given some guidance in the use of locks, but probably in earlier scenarios it was sufficient to just avoid all the bad stuff (data races, deadlock, starvation). That's important, but is no longer enough. Now we need to use locking and other synchronization techniques in a way that reduces their impact on performance.
 
-I like to say that critical sections should be as large as they need to be but no larger. That is to say, if we have some shared data that needs to be protected by some mutual exclusion constructs, we need to consider carefully where to place the statements. They should be placed such that the critical section contains all of the shared accesses, both reads \textit{and} writes, but also does not contain any extraneous statements. The ones that don't need to be there are those that don't operate on shared data. 
+I like to say that critical sections should be as large as they need to be but no larger. That is to say, if we have some shared data that needs to be protected by some mutual exclusion constructs, we need to consider carefully where to place the statements. They should be placed such that the critical section contains all of the shared accesses, both reads \textit{and} writes, but also does not contain any extraneous statements. The ones that don't need to be there are those that don't operate on shared data.
 
 If you are rewriting code from sequential to parallel, this can mean that a block of code or contents of a function need to be re-arranged to move some statements up or down so they are no longer in the critical section. Sometimes control flow or other very short statements might get swept into the critical section being created to make sure all goes as planned, so the rule is not absolute. However, such statements should be there rarely and only if the alternatives are worse.
 
@@ -74,11 +74,11 @@ How do we end the critical section? We need to make our acquisition of the mutex
     }
 \end{lstlisting}
 
-You'll notice that we return the value \texttt{to\_consume} out of the block, because it's needed outside the block and would otherwise not be in scope when passed to the function that consumes it. The whole purpose of this is to get the value outside of the block. Because it's a simple type, we'll copy it, but a more complex type would just have ownership transferred, so there isn't a large performance penalty here. 
+You'll notice that we return the value \texttt{to\_consume} out of the block, because it's needed outside the block and would otherwise not be in scope when passed to the function that consumes it. The whole purpose of this is to get the value outside of the block. Because it's a simple type, we'll copy it, but a more complex type would just have ownership transferred, so there isn't a large performance penalty here.
 
-The other approach to making the \texttt{MutexGuard} go out of scope is to actually call \texttt{drop()} on it, which is effective in telling the compiler that it is time for this value to die. Calling \texttt{drop()} moves ownership of the MutexGuard to the \texttt{drop} function where it will go out of scope and be removed. Convenient! But manual scoping is nice too. 
+The other approach to making the \texttt{MutexGuard} go out of scope is to actually call \texttt{drop()} on it, which is effective in telling the compiler that it is time for this value to die. Calling \texttt{drop()} moves ownership of the MutexGuard to the \texttt{drop} function where it will go out of scope and be removed. Convenient! But manual scoping is nice too.
 
-Let's see if it works! I applied a similar change the producer code as we just discussed about the consumer. And for the purposes of the test, I added some thread sleeps to the original and modified program so it appears that consuming or producing an item actually takes meaningful work. As usual, benchmarks are created with \texttt{hyperfine --warmup 1 -m 5 "cargo run --release"}. The un-optimized program takes about 2.8 seconds to run and the optimized program takes about 1.1 seconds. Certainly worth doing. 
+Let's see if it works! I applied a similar change the producer code as we just discussed about the consumer. And for the purposes of the test, I added some thread sleeps to the original and modified program so it appears that consuming or producing an item actually takes meaningful work. As usual, benchmarks are created with \texttt{hyperfine --warmup 1 -m 5 "cargo run --release"}. The un-optimized program takes about 2.8 seconds to run and the optimized program takes about 1.1 seconds. Certainly worth doing.
 
 Remember, though, that keeping the critical section as small as possible is important because it speeds up performance (reduces the serial portion of your program). But that's not the only reason. The lock is a resource, and contention for that resource is itself expensive.
 
@@ -88,7 +88,7 @@ The producer-consumer example was a very specific instance of \textit{lock granu
 
 \textit{Coarse-grained} locking is easier to write and harder to mess up, but it can significantly reduce opportunities for parallelism. \textit{
 Fine-grained locking} requires more careful design,
-increases locking overhead and is more prone to bugs (deadlock etc).  
+increases locking overhead and is more prone to bugs (deadlock etc).
 Locks' extents constitute their {\it granularity}. In coarse-grained locking, you
 lock large sections of your program with a big lock; in fine-grained
 locking, you divide the locks and protect smaller sections with multiple smaller locks.
@@ -99,7 +99,7 @@ We'll discuss three major concerns when using locks:
     \item contention; and
     \item deadlocks.
   \end{itemize}
-We aren't even talking about under-locking (i.e., remaining race conditions). We'll assume there are adequate locks and that data accesses are protected. 
+We aren't even talking about under-locking (i.e., remaining race conditions). We'll assume there are adequate locks and that data accesses are protected.
 
 \paragraph{Lock Overhead.}
   Using a lock isn't free. You pay:
@@ -146,7 +146,7 @@ Consider, for instance, two processors trying to get two locks.
       \verb+Release Lock 2+
 
       \verb+Release Lock 1+
-\end{minipage} & 
+\end{minipage} &
 \begin{minipage}{.4\textwidth}
       {\bf Thread 2}
 
@@ -193,7 +193,7 @@ This code will not deadlock: you can only get {\bf l2} if you have
 {\bf l1}. Of course, it's harder to ensure a consistent deadlock when lock
 identity is not statically visible. That is, if they don't always have the same names everywhere.
 
-If we give a standard example from a textbook, we call the threads $P$ and $Q$ and they are attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious. 
+If we give a standard example from a textbook, we call the threads $P$ and $Q$ and they are attempting to acquire \texttt{a} and \texttt{b}. Thread $Q$ requests \texttt{b} first and then \texttt{a}, while $P$ does the reverse. The deadlock would not take place if both threads requested these two resources in the same order, whether \texttt{a} then \texttt{b} or \texttt{b} then \texttt{a}. Of course, when they have names like this, a natural ordering (alphabetical, or perhaps reverse alphabetical) is obvious.
 
 We can certainly prove that consistent ordering does work and it's a proof by contradiction. If the set of all resources in the system is $R = \{R_{0}, R_{1}, R_{2}, ... R_{m}\}$, we assign to each resource $R_{k}$ a unique integer value. Let us define this function as $f(R_{i})$, that maps a resource to an integer value. This integer value is used to compare two resources: if a process has been assigned resource $R_{i}$, that process may request $R_{j}$ only if $f(R_{j}) > f(R_{i})$. Note that this is a strictly greater-than relationship; if the process needs more than one of $R_{i}$ then the request for all of these must be made at once (in a single request). To get $R_{i}$ when already in possession of a resource $R_{j}$ where $f(R_{j}) > f(R_{i})$, the process must release any resources $R_{k}$ where $f(R_{k}) \geq f(R_{i})$. If these two protocols are followed, then a circular-wait condition cannot hold~\cite{osc}.
 
@@ -218,7 +218,7 @@ returns 0 if it gets the lock. But if it doesn't, your thread doesn't get blocke
     }
   \end{lstlisting}
   (Incidentaly, using trylocks can also help you measure lock contention.)
-  
+
 This prevents the hold and wait condition, which was one of the four conditions. A process attempts to lock a group of resources at once, and if it does not get everything it needs, it releases the locks it received and tries again. Thus a process does not wait while holding resources.
 
 \subsection*{Coarse-Grained Locking}
@@ -265,10 +265,10 @@ However, it also comes with a number of disadvantages:
     Databases may lock fields / records / tables. (fine-grained $\rightarrow$ coarse-grained).
 
     You can also lock individual objects (but beware: sometimes you need transactional guarantees.)
-    
+
 \section*{Reentrancy}
 
-Recall from a bit earlier the idea of a side effect of a function call. 
+Recall from a bit earlier the idea of a side effect of a function call.
 
 The trivial example of a non-reentrant C function:
 \begin{lstlisting}[language=C]
@@ -287,7 +287,7 @@ Doing it wrong is highly discouraged by Rust as a language, because it doesn't w
 
 Remember that in things like interrupt subroutines (ISRs) having the code be reentrant is very important. Interrupts can get interrupted by higher priority interrupts and when that happens the ISR may simply be restarted (or we're going to break off handling what we're doing and call the same ISR in the middle of the current one). Either way, if the code is not reentrant we will run into problems. Rust's ownership capabilities make it difficult for you to modify something that you should not modify with signal handlers, like calling some function that is not reentrant.
 
-Side effects are and sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's what we want. We don't want to call print reentrantly; interleaved print calls would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
+Side effects are sort of undesirable, but not necessarily bad. Printing to console is unavoidably making use of a side effect, but it's what we want. We don't want to call print reentrantly; interleaved print calls would result in jumbled output. Or alternatively, restarting the print routine might result in some doubled characters on the screen.
 
 The notion of purity is related to side effects. A function is pure if it has no side effects and if its outputs depend solely on its inputs. (The use of the word pure shouldn't imply any sort of moral judgement on the code). Pure functions should also be implemented to be thread-safe and reentrant.
 
@@ -301,7 +301,7 @@ Interestingly, functional programming languages (by which I do NOT mean procedur
 
 This assumes of course that there is no data dependency between functions. Obviously, if we need a computation result, then we have to wait.  But the key is to write your code like mathematical functions: $f(x, y, z) \rightarrow (a, b, c)$
 
-Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods or those with no return type. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things. 
+Object oriented programming kind of gives us some bad habits in this regard: we tend to make a lot of \texttt{void} methods or those with no return type. In functional programming these don't really make sense, because if it's purely functional, then there are some inputs and some outputs. If a function returns nothing, what does it do? For the most part it can only have side effects which we would generally prefer to avoid if we can, if the goal is to parallelize things.
 
 Rust does encourage the some things that help point you towards functional-style programming. For one thing, it discourages mutability of data, which points you more towards making the arguments to functions be either immutable references (and therefore not changed by the function they are passed to) or ownership transfer (meaning no concurrency). Internal mutability is a thing, but is somewhat discouraged.
 
