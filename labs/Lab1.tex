@@ -1,0 +1,410 @@
+\documentclass[12pt]{article}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{latexsym}
+\usepackage{amsfonts}
+\usepackage[normalem]{ulem}
+\usepackage{soul}
+\usepackage{array}
+\usepackage{amssymb}
+\usepackage{extarrows}
+\usepackage{graphicx}
+\usepackage[backend=biber,
+style=numeric,
+sorting=none,
+isbn=false,
+doi=false,
+url=false,
+]{biblatex}\addbibresource{bibliography.bib}
+
+\usepackage{subfig}
+\usepackage{wrapfig}
+\usepackage{wasysym}
+\usepackage{enumitem}
+\usepackage{adjustbox}
+\usepackage{ragged2e}
+\usepackage[svgnames,table]{xcolor}
+\usepackage{tikz}
+\usepackage{longtable}
+\usepackage{changepage}
+\usepackage{setspace}
+\usepackage{hhline}
+\usepackage{multicol}
+\usepackage{tabto}
+\usepackage{float}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{fancyhdr}
+\usepackage[toc,page]{appendix}
+\usepackage[hidelinks]{hyperref}
+\usetikzlibrary{shapes.symbols,shapes.geometric,shadows,arrows.meta}
+\tikzset{>={Latex[width=1.5mm,length=2mm]}}
+\usepackage{flowchart}
+\usepackage[paperheight=11.0in,paperwidth=8.5in,left=0.86in,right=0.86in,top=0.71in,bottom=1in,headheight=1in]{geometry}
+\usepackage{XCharter}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\TabPositions{0.5in,1.0in,1.5in,2.0in,2.5in,3.0in,3.5in,4.0in,4.5in,5.0in,5.5in,6.0in,6.5in,}
+
+\urlstyle{same}
+
+\renewcommand{\_}{\kern-1.5pt\textunderscore\kern-1.5pt}
+
+\setlength{\topsep}{0pt}\setlength{\parindent}{0pt}
+
+%%%%%%%%%%%%%%%%%%%% Document code starts here %%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{document}
+\begin{center}
+{\Large ECE 459: Programming for Performance}\\
+{\Large Lab 1---Package Management\footnote{v5, 19Jan22}}\\[1em]
+Created by Patrick Lam \& Jeff Zarnett\\
+Due: January 28, 2022 at 23:59 Eastern Time
+\end{center}
+
+
+\vspace{1em}
+In this lab, you will write a program that computes dependencies for software packages, and also performs network requests using non-blocking I/O.
+
+\section*{Learning Objectives:}
+\begin{itemize}
+	\item Become familiar with Rust and its idioms.
+	\item Learn how to use non-blocking I/O to increase performance.
+\end{itemize}
+
+\paragraph*{Random tips.} My implementation is slow enough and the input is big enough that I have to test with \verb+cargo run --release+; the debug build is too slow. Also, be aware of the Rust version on the server vs on your machine and be sure to make sure your code works on the version on the server.
+
+
+\paragraph*{Package Management Background.}
+I [PL] was recently trying to record a video for a class and I was having a really bad IT day. The first solution to having a bad IT day is to reboot. That didn't help. So, instead, I reinstalled everything on one of my old laptops. (That did help). I was inspired, in my dealings with the package manager, to have you familiarize yourself with Rust by writing some parts of a package manager. \par
+
+\vspace{1em}
+Package managers are everywhere: your phones and computers all have multiple package managers. A package manager tracks packages. A package is a bunch of files (the data) along with a name, version number, and a set of dependencies (metadata). Rust itself has the cargo package manager. For this assignment, we'll be working with a Debian-style package manager. \par
+
+\vspace{1em}
+When installing a package, a package manager needs to make sure that the package's dependencies also get installed. For instance, Unix program \texttt{xeyes}\footnote{Try it!} belongs to package \texttt{x11-apps}, which can't be installed without package \texttt{libxft2} (and many others) also being installed. In fact, the package manager will construct a dependency graph. \par
+
+\vspace{1em}
+There are two complications here. 1) The package manager may have a choice of packages when satisfying a dependency. This is indicated by a vertical bar \texttt{|} between alternatives; for instance, Debian package \texttt{abcde} depends on \texttt{cdparanoia | icedax}, along with other dependencies. Any of the choices is valid. 2) A dependency may be versioned; back to \texttt{x11-apps}, it requires that \texttt{libxft2} have version strictly greater\footnote{I've implemented version comparison for you. You're welcome!} than 2.1.1.\par
+
+\section*{Part 1: Manage That Package}
+
+Your task is to implement three groups of functions: parsing, direct queries, and transitive queries.
+
+\subsection*{Parsing: \texttt{parsers.rs} (15)}
+
+The first order of business is to parse package data. 
+
+{\small
+\begin{verbatim}
+$ load-packages data/mirror.csclub.uwaterloo.ca_debian_dists_sid_main_binary-amd64_Packages
+$ load-installed data/installed-packages
+\end{verbatim}
+}
+
+\vspace{1em}
+You can also use abbreviations \texttt{lp} and \texttt{li}, or convenience command \texttt{load-defaults (ld)} 
+to load the supplied files listed above, once you have everything working.\par
+
+\vspace{1em}
+This package data comes in text files. For our purposes, it'll work if we consider each line of a text file to be of colon-separated form \verb+Key: Value+. I've provided a regular expression \texttt{KEYVAL\_REGEX} that you can use to parse the line, as follows.\par
+
+\begin{verbatim}
+    let kv_regexp = Regex::new(KEYVAL_REGEX).unwrap();
+    match kv_regexp.captures(&line) {
+        None => (),
+        Some(caps) => {
+            let (key, value) = (caps.name("key").unwrap().as_str(), 
+                                caps.name("value").unwrap().as_str());
+            // ...
+\end{verbatim}
+
+\vspace{1em}
+There are two files to parse: the list of available packages, and the list of installed packages. 
+
+\paragraph{Installed packages (5)} Installed packages is easier. Implement function \texttt{parse\_installed()}.
+You need to recognize two keys: \texttt{Package} and \texttt{Version}. For a \texttt{Package} line, call 
+the function \verb+self.get_package_num_inserting(&value)+ and remember the returned value for later. For a \texttt{Version} line,
+parse the version number with
+\begin{verbatim}
+    let debver = value.trim().parse::<debversion::DebianVersionNum>().unwrap();
+\end{verbatim}
+and call \texttt{self.installed\_debvers.insert()} with the memorized package number and the \texttt{debver} you just computed.\par
+
+I should point out that method \texttt{get\_package\_num} converts a package name to an \texttt{i32} while
+\texttt{get\_package\_name} goes the other way.
+
+\paragraph{Available packages (10)} This is pretty similar to installed packages, but there are more keys. 
+The \texttt{MD5sum} and \texttt{Version} keys are nothing new, but insert into maps \texttt{self.md5sums} and \texttt{self.available\_debvers} instead.\par
+
+\vspace{1em}
+However, you also have to parse the dependencies, which are at key \texttt{Depends}. Your goal is to produce a \verb+Vec<Dependency>+.
+Each \texttt{Dependency} is itself a \verb+Vec<RelVersionedPackageNum>+. The separator between
+\texttt{Dependency}s is a comma (,), while the separator between alternatives within a \texttt{Dependency} is
+the vertical bar (\texttt{|}). I recommend the use of \texttt{split} to get individual alternatives.\par
+
+\vspace{1em}
+Example: parse the dependency $A, B | C, D$ as the \verb+Vec<Dependency>+ containing $[[A], [B, C], [D]]$. At the top level, you have the list of dependencies, all of which must be satisfied. Each dependency in the list of dependencies consists of a list of alternatives.
+
+\vspace{1em}
+Once you have an alternative (e.g. \texttt{libxft (>> 2.1.1)}), I have provided you with the regex \texttt{PKGNAME\_AND\_VERSION\_REGEX} 
+to parse it.
+You can request \texttt{pkg}, \texttt{op}, and \texttt{ver} from a match of the regex, and you can futher parse \texttt{op}
+and \texttt{ver} with
+{\small
+\begin{verbatim}
+(op.as_str().parse::<debversion::VersionRelation>().unwrap(), ver.as_str().to_string())
+\end{verbatim}
+}
+All you have to do is to put it in a \texttt{RelVersionedPackageNum} struct.
+
+\subsection*{Simple dependency calculations: \texttt{deps\_available.rs} (25)}
+Now that you've implemented parsing for dependencies, you can use the \texttt{info} command to print out all loaded
+information about a package.\par
+
+\vspace{1em}
+Let's now combine the available and installed data. You are going to implement \texttt{deps\_available},
+which checks the declared dependencies of a package and prints out whether they are satisfied or not.
+(Please stick to the provided output format for the TAs' sake; I've provided the necessary \texttt{println!} 
+statements).
+
+\begin{verbatim}
+$ deps-available 4g8
+Package 4g8:
+- dependency "libc6 (>= 2.4)"
++ libc6 satisfied by installed version 2.33-1
+- dependency "libnet1 (>= 1.1.2.1)"
+-> not satisfied
+- dependency "libpcap0.8 (>= 0.9.8)"
++ libpcap0.8 satisfied by installed version 1.10.1-4
+\end{verbatim}
+I'd recommend iterating over the \texttt{dependencies} and using a helper function \texttt{dep\_is\_satisfied}
+for each \texttt{Dependency}. A dependency is satisfied if the relevant package is installed (i.e. installed-version
+is set) and meets the stated version constraints. 
+
+\vspace{1em}
+I've provided helper functions: you can call 
+\begin{verbatim}
+  v.parse::<debversion::DebianVersionNum>().unwrap();
+\end{verbatim}
+to convert string \texttt{v} into a \texttt{DebianVersionNum}, and 
+\begin{verbatim}
+  debversion::cmp_debversion_with_op(op, iv, &v)
+\end{verbatim}
+to see whether \texttt{iv} and \texttt{v} satisfy relation \texttt{op}.
+
+\vspace{1em}
+I also recommend that you implement method \texttt{dep\_satisfied\_by\_wrong\_version} for use below.
+It returns the \texttt{Vec} of dependencies that would be satisfied, but have the wrong version installed.
+
+\subsection*{Solvers: \texttt{solvers.rs} (40)}
+
+Finally, we'll wrap up this part with two commands, \texttt{transitive-dep-solution} and \texttt{how-to-install},
+which do more sophisticated reasoning on collections of packages.
+
+\vspace{1em}
+I recommend the use of \emph{worklist} algorithms here, which you should have seen previously.
+The idea is that the main loop of the algorithm picks an item from the worklist, does work on that
+item, and puts new work that results from that item back onto the worklist. It iterates until there
+is no more work to be done.
+
+\paragraph{Transitive dep solution (10)}
+\begin{verbatim}
+$ transitive-dep-solution libzydis-dev
+"libzydis-dev" transitive dependency solution: "libzycore-dev, libzydis3.2, 
+libzycore1.1, libc6, libgcc-s1, gcc-11-base"
+\end{verbatim}
+This command computes one transitive solution to a package's dependencies, i.e. it includes all 
+dependencies of dependencies. It's implemented by function 
+
+\begin{verbatim}
+    pub fn transitive_dep_solution(&self, package_name: &str) -> Vec<i32>
+\end{verbatim}
+
+The key here is whenever this algorithm has a choice (alternatives), it chooses the first
+alternative. You may assume that this alternative is installable.
+
+\vspace{1em}
+To implement this solver, use a dependency set \texttt{Vec}. Populate
+it with the first alternatives of \texttt{package\_name}. Iterate
+through the dependency set and add all dependencies of packages
+already in the dependency set (again, resolving alternatives by
+picking the first one). Stop if an iteration didn't add any new
+dependencies.
+
+
+%% which puts the dependencies of \texttt{package\_name} in the worklist to begin.
+%% Then, it loops over the worklist. If the dependency has alternatives, it picks the
+%% first alternative. It then puts it back into the worklist and iterates until there are
+%% no further dependencies to add. This command is insensitive to version numbers.
+
+\paragraph{Computing how to install (30)}
+
+The first part of the lab culminates in this method.
+{\scriptsize
+\begin{verbatim}
+$ how-to-install 3depict
+Package 3depict:
+"3depict" to install: "libftgl2, libgsl27, libmgl7.6.0, libgslcblas0, libhdf4-0, libhpdf-2.3.0, libmgl-data"
+\end{verbatim}
+}
+
+This time, you implement method
+\begin{verbatim}
+    pub fn compute_how_to_install(&self, package_name: &str) -> Vec<i32>
+\end{verbatim}
+The differences here are:
+\begin{itemize}
+\item filter out dependencies that are already satisfied (you have \texttt{dep\_is\_satisfied});
+\item when there is an choice (dependency \texttt{A|B}), and one of the choices is already installed, but the wrong version, then install that choice;
+\item when choosing between options (either because none is installed, or because multiple wrong versions are installed), go ahead and compare apples and oranges: install the higher version number.
+\end{itemize}
+Again, you may assume that all packages that are mentioned are also installable (though it doesn't hurt to check).
+
+\vspace{1em}
+Clarification: I meant that choices here would optimistically assume that the thing that you pick will satisfy the dependency requirement, which is not necessarily true. You can either make that assumption, or you can check that a choice satisfies the requirement before considering it, and panic if there are no valid choices.
+
+%* uses dep_satisfied_by_wrong_version
+
+
+\vspace{\baselineskip}
+\section*{Part 2: Nonblocking I/O }\par
+
+In this part, you will implement handling for the \texttt{verify} command in the program. Every package that is published has an associated md5 hash. The hash is computed by looking at the package itself. In principle, this hash can be used to check whether the package has been tampered with, or if there was an error in transferring it somehow, or if the dodgy 10 year old USB key you stored your package on isn't to be trusted\footnote{For the purposes of this assignment, we aren't actually going to compute the local md5 hash for packages, so that you don't have to have a bunch of packages around to test your assignment. Use your imagination.}.\par
+
+\vspace{1em}
+We have provided a little web server that can be used to retrieve the correct md5 hash, given a package name and version. This web server will be running at \texttt{ece459.patricklam.ca} on port \texttt{4590}. If the server is down, overloaded, or otherwise unavailable, you can run the server yourself for the purposes of your own development/testing: \url{https://github.com/jzarnett/package-verifier}. 
+
+\vspace{1em}
+You can use the \texttt{set-server} command on your local solution to set the provided \texttt{server} state element in \texttt{AsyncState}; it points to \texttt{ece459.patricklam.ca:4590} by default, but you can point it to \texttt{localhost:4590} to run locally, for instance, which would work provided that you are running your own copy of the package verifier. \par 
+
+\vspace{1em}
+The server has one REST endpoint: 
+\begin{verbatim}
+    GET /rest/v1/checksums/{package_name}/{version}
+\end{verbatim}
+
+For clarity, this endpoint takes two path parameters: \texttt{package\_name} and \texttt{version}; replace those with the actual package name and its version that you would like to query.\par
+
+\vspace{1em}
+The server will check its registry and if it finds a matching combination of name and version, it returns HTTP 200 with the body of the response being the hash for that package. If the server cannot find a corresponding combination of name and version, it will return a HTTP 404. Other invalid requests may result in HTTP 400 or other error codes. \par
+
+\vspace{1em}
+Usage example:
+
+\begin{verbatim}
+    curl 127.0.0.1:4590/rest/v1/checksums/example/1.0
+
+    0e0e8016d5f8b57eb13777efbb2893c9
+\end{verbatim}
+
+You then compare the md5 hash received from the server against the md5 hash you have locally for the package. They should all be a match; if not, something is wrong.
+
+\subsection*{Implementing the Verifier}
+
+\vspace{1em}
+The verifier will use a library called ``curl'' . The curl library uses \textit{callbacks}. If you are not familiar with callbacks, the idea is pretty simple. You call curl's \texttt{perform()} function to do some work (i.e. interact with a web service), and it calls functions (which you provide) while carrying out that work. When the work is complete, curl returns from your call to \texttt{perform()}. Basically you are saying to curl ``perform this task, and let me know when you need me to provide some data to you or if you have some data to give to me'' .\par
+
+\vspace{1em}
+To get a recap on curl, check the lecture notes; for a deeper dive into the topic, consult the ECE~252 material (even if it is in C).\par
+
+\vspace{1em}
+Your job is to implement the verification logic so that it uses non-blocking I/O, that is, the curl ``multi'' interface. Your solution should \textit{not} use threading.  \par
+
+\vspace{1em}
+The way the program will work is as follows. At the user's leisure, as they are using the package manager, they can request a verification of a package. This causes the package manager to enqueue a non-blocking curl request to the server, storing a handle for this request. Later, the user can execute the queue. At that point, the package manager does a blocking wait until all the answers come in, and prints out the requested verification results. When the user quits the package manager, the package manager will also execute any remaining requests.\par
+
+\begin{verbatim}
+$ load-csv data/packages.csv
+Packages available: 63846
+$ enq-verify bash
+queueing request http://ece459.patricklam.ca:4590/rest/v1/checksums/bash/5.1-6
+$ enq-verify 0ad
+queueing request http://ece459.patricklam.ca:4590/rest/v1/checksums/0ad/0.0.25b-1.1
+$ enq-verify libc6 28
+queueing request http://ece459.patricklam.ca:4590/rest/v1/checksums/libc6/28
+$ quit
+verifying bash, matches: true
+verifying 0ad, matches: true
+got error 404 on request for package libc6 version 28
+\end{verbatim}
+
+\vspace{1em}
+For this part of the lab, you need to implement 2 functions in file \texttt{src/packages/async\_fns.rs}: \texttt{enq\_verify\_with\_version} and \texttt{execute}. You can also add any necessary fields to the struct \texttt{AsyncState}, and initialize them in \texttt{new}.
+
+\vspace{1em}
+\begin{verbatim}
+    pub fn enq_verify_with_version(&mut self, pkg:&str, version:&str)
+\end{verbatim}
+This function prepares a request for pkg's md5sum (passing its name and version number) and adds a
+corresponding handle to the queue (actually a \texttt{Vec}). It must
+return right away.
+
+\paragraph{Hints.} You can use the \texttt{format!} macro and \texttt{urlencoding::encode} to URL-encode the version number. You probably want to do something like in \texttt{mod.rs} with the packages, but this time using your own \texttt{EASYKEY\_COUNTER} and using your index to find the parts of the state you need to keep (you can't index on an Easy2Handle). Think about what data you'll need to do the verification.
+
+\vspace{1em}
+\begin{verbatim}
+    pub fn execute(&mut self)
+\end{verbatim}
+This function asks curl to perform work until there's no more work to be done. You can ignore any errors that curl may raise while it's performing work. Once all the work is done, drain the set of keys to handles. For each handle: if you got a response code of 200, then compare the md5sums that came back with the md5sums that you have stored locally, and print the result of the comparison. For response codes $\ge 400$, print out an error message. {\bf Please match the provided format to enable TAs to automate some of the grading.}
+
+\paragraph{Note.} You can do this async I/O part independently from the first part, by using command
+\texttt{load-csv data/packages.csv}. Once you've implemented the parsers, you can also
+use the normal way of loading data to get the md5sums.
+
+\section*{Benchmarking}
+
+You can measure how long your program takes to execute by using the hyperfine command on Linux. When you build your program, the executable is placed in target/release/rpkg, so here's a typical sequence:\par
+
+\begin{verbatim}
+> cargo build --release
+> hyperfine -i "target/release/rpkg < [commands]"
+\end{verbatim}
+
+\vspace{1em}
+The -i option to hyperfine tells it to ignore any error status returned from your program. The starter code does not explicitly return an error status from main(), so without the -i option you will find that hyperfine aborts without giving you useful output.\par
+
+\vspace{1em}
+The \verb+<+ operator redirects input from file \texttt{commands} to \texttt{rpkg}. You can put your test scripts in files and run \texttt{rpkg} with those files using redirection.
+
+
+
+\section*{Rubric}
+The general principle is that correct solutions earn full marks. However, it is your responsibility to demonstrate to the TA that your solution is correct. Well-designed, clean solutions are more likely to be recognized as correct. Solutions that do not compile will earn at most 39$\%$  of the available marks for that part. Solutions that compile but crash earn at most 49$\%$. Grading is done by building your code, running it, checking the output, and inspecting the code. For this lab, we are not grading performance. \par
+
+\subsection*{Part 1: Managing the Packages (80 marks) } Your code needs to correctly implement the package management functionality as described above. 15 marks for parsing, 25 for simple dependency calculations, 40 marks for solvers. \par
+
+\subsection*{Part 2: Nonblocking I/O (20 marks) } Your code must properly use curl's ``multi''  features. \par % and use the correct number of concurrent connections. 
+
+
+\section*{Clarifications}
+\begin{itemize}
+\item \emph{What about compilation warnings?} We encourage your code to be free of warnings but we won't dock marks if there is no underlying issue. You can also fix linter errors in the provided code.
+\item \emph{What about error handling?} You can pretend that failures never happen (famous last words), i.e. you need not implement code to retry after failures. If you do notice an error, print a message and exit. You can also assume that the inputs are correctly-formatted and solveable.
+  \item \emph{What can we change in the provided code?} Go ahead and change it as you like. You can add extra optional command-line arguments and commands if you'd like, but don't make them mandatory (i.e. the TA should be able to plug-and-play your code just like all the other solutions.) 
+\item Tell me more about the \texttt{how-to-install} algorithm.
+
+\vspace{1em} Here's an example (thanks to Alexander Kursell). $A$ depends on $[B, C]$; $B$ depends on $D \mid E$; and $C$ depends on $E \mid F$. Let's say the rules resolve $B$'s dependency to $D$ and $C$'s dependency to $E$.
+
+\vspace{1em} Proceed using an operational worklist-based definition. 
+\begin{enumerate}[noitemsep]
+\item Put $A$ in the worklist.
+\item Pull out $A$ and get its dependency on $[B, C]$. Push $B$ and $C$ onto the worklist.
+\item Pull out $B$ and get $D \mid E$. Put $D$ on the worklist.
+\item Pull out $C$ and get $E \mid F$. Put $E$ on the worklist.
+\item Pull $D$ and $E$ from the worklist.
+\end{enumerate}
+You end up with install set $[A, B, C, D, E]$.
+\end{itemize}
+
+\paragraph{version 3 update:} fixed incorrect output for 3depict in v2 of this writeup, add note about redirection.
+
+\paragraph{version 4 update:} change font size for how-to-install output.
+
+\paragraph{version 5 update:} clarify in \texttt{how-to-install} about not having to check that alternatives satisfy requirements (though it's also allowed to do that check).
+
+\end{document}
+
+% note for next year: we should define a testing api and call those methods from the print methods, saving the necessity to format properly
