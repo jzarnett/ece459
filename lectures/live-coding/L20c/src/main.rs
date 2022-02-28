@@ -114,11 +114,11 @@ fn main() {
     fs::write("src/main.rs", new_lines).expect("can't write output");
 
     // recompile
-    // Command::new("cargo")
-    //         .arg("build")
-    //         .arg("--release")
-    //         .output()
-    //         .expect("failed to execute process");
+    Command::new("cargo")
+            .arg("build")
+            .arg("--release")
+            .output()
+            .expect("failed to execute process");
 }
 
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
