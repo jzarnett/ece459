@@ -94,7 +94,7 @@ fn main() {
 
     // modify main.rs line "const INITIAL_CAPACITY:usize = 1";
 
-    let target_line_start = "const INITIAL_CAPACITY:usize = ";
+    let target_line_start = "const INITIAL_CAPACITY:usize =";
     let new_target_line = format!("{} {};\n", target_line_start, max_length);
 
     let mut new_lines: String = "".to_owned();
@@ -107,6 +107,7 @@ fn main() {
                 } else {
                     new_lines.push_str(&ip);
                 }
+                new_lines.push_str("\n");
             }
         }
     }
