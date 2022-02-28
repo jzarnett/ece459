@@ -56,8 +56,8 @@ fn generate_action(rng:&mut ThreadRng) -> Action {
 
 const OUTER:i32 = 200;
 const INITIAL_CAPACITY:usize = 5000000;
-//const FIXED_INITIAL_VEC_SIZE:i32 = 5000000;
-const FIXED_INITIAL_VEC_SIZE:i32 = 5;
+const FIXED_INITIAL_VEC_SIZE:i32 = 5000000;
+//const FIXED_INITIAL_VEC_SIZE:i32 = 5;
 const N:i32 = 100;
 fn main() {
     let mut max_length = 0;
