@@ -85,7 +85,7 @@ First thing we have to do is initialize the API. This has to happen at the start
 
 Then we get a \textit{device}. The device is your graphics card or any other hardware that does the work. It's obviously possible to have more than one compute device, but we'll just take the first one. 
 
-Next, in step 3, we request a \emph{context}. The context is described by the documents as analogous to a process. When we launch something within that context, it executes in there and has its own address space, and when the context is destroyed, all its resources are cleaned up. Each host thread may have one context. The call shown is ``create and push'' because a host thread has a stack of current contexts. We don't actually need the context for any of the later steps, but we just need to be in possession of one. In this simple example, stays in scope because everything happens in \texttt{main}. If you want more structure to your program, then you do have to ensure it doesn't go out of scope and get dropped, because it has to exist for the other functions to work. When it does get dropped, some cleanup actions take place, of course.
+Next, in step 3, we request a \emph{context}. The context is described by the documents as analogous to a process. When we launch something within that context, it executes in there and has its own address space, and when the context is destroyed, all its resources are cleaned up. Each host thread may have one context. The call shown is ``create and push'' because a host thread has a stack of current contexts. We don't actually need the context for any of the later steps, but we just need to be in possession of one. In this simple example, it stays in scope because everything happens in \texttt{main}. If you want more structure to your program, then you do have to ensure it doesn't go out of scope and get dropped, because it has to exist for the other functions to work. When it does get dropped, some cleanup actions take place, of course.
 
 The next step is to create our \textit{module}. A module is technically a package of code and data to run on the device, but in this case it just really means our kernel. What we do here is read the compiled PTX code into a C-String, then create the module from that string. It's also possible to load from a file directly. 
 
@@ -226,7 +226,7 @@ We mentioned last time that in the kernel we can use vector types like \texttt{f
 
 The other thing worth noting is that the calculation of forces kernel is invoked with a grid size of \texttt{NUM\_POINTS} and one thread per block. That is to say, there are \texttt{NUM\_POINTS} (100~000) chunks of work, and each chunk has one thread. If you get this wrong, the code doesn't work as expected: if you put in 1 and 1 for both of these values, then only the first acceleration will be calculated, because we said there's one chunk of work and it's one thread. But what we actually have asked for is to have \texttt{NUM\_POINTS} chunks and that will get it done.
 
-When done, we copy the data out and print it and we're done! Below that, you an also see there's a little change to how the initial values are created in that we have to set the content of the \texttt{CudaFloat3/4} through parameter 0. 
+When done, we copy the data out and print it and we're done! Below that, you can also see there's a little change to how the initial values are created in that we have to set the content of the \texttt{CudaFloat3/4} through parameter 0. 
 
 \paragraph{Putting it to the test.}
 That's great, but how much does it speed up? I ran this on ecetesla1 (because my laptop does not have the correct graphics card for this purpose), so I reran all the CPU benchmarks to have a fair comparison for what happens on the same machine. With 100~000 points:
@@ -238,7 +238,7 @@ That's great, but how much does it speed up? I ran this on ecetesla1 (because my
 
 Hey, wait a minute. That's worse than the CPU version. Uh, what's wrong here? My first theory was that 100~000 points is not enough to overcome the overhead of setup and transferring data to and from the device. This turned out to be incorrect (and it was painful to try the sequential version with more points). 
 
-Eventually, I used a profiler (we'll come back to profiling shortly) and it told me that most of the time was going to the kernel execution of the \texttt{calculate\_forces} function. This convinced me that the problem was that I wasn't getting the most out of the GPU as I could be. I don't think there was anything terrible about the kernel itself, but I really wanted to go back to the question of the grids and blocks Here's a (sadly terrible quality) image from the CUDA docs that explains it~\cite{cuda}:
+Eventually, I used a profiler (we'll come back to profiling shortly) and it told me that most of the time was going to the kernel execution of the \texttt{calculate\_forces} function. This convinced me that the problem was that I wasn't getting the most out of the GPU as I could be. I don't think there was anything terrible about the kernel itself, but I really wanted to go back to the question of the grids and blocks. Here's a (sadly terrible quality) image from the CUDA docs that explains it~\cite{cuda}:
 \begin{center}
 	\includegraphics[width=0.5\textwidth]{images/grid-of-thread-blocks.png}
 \end{center}
@@ -254,7 +254,7 @@ The documentation isn't super great about how grids and blocks work, unfortunate
         result?;
 \end{lstlisting}
 
-I did have to add a +1 to the number of blocks, because 100~000 does not divide evenly by 256, and if you forget that then the last few of the accelerations are all zeros. But just running it as-is didn't work (and led to the kernel crashing. Why? Because the indexing strategy that I used contained only the reference to the block index \texttt{blockIdx.x}. That's fine in the scenario where every work-item gets its own block, but that's no longer the case now: 256 work-items (points) now share each block. Here's the adjusted kernel the calculates the correct index. 
+I did have to add a +1 to the number of blocks, because 100~000 does not divide evenly by 256, and if you forget that then the last few of the accelerations are all zeros. But just running it as-is didn't work (and led to the kernel crashing). Why? Because the indexing strategy that I used contained only the reference to the block index \texttt{blockIdx.x}. That's fine in the scenario where every work-item gets its own block, but that's no longer the case now: 256 work-items (points) now share each block. Here's the adjusted kernel the calculates the correct index. 
 
 \begin{lstlisting}[language=C++]
 extern "C" __global__ void calculate_forces(const float4* positions, float3* accelerations, int num_points) {

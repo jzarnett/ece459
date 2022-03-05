@@ -93,7 +93,7 @@ memory available to you:
 \begin{itemize}
 \item private memory: available to a single work-item;
 \item local memory (aka ``shared memory''): shared between work-items
-  belonging to the same work-group; like a user-managed cache;
+  belonging to the same work-group; created by the compiler and includes values spilled from registers and small arrays declared inside kernels~\cite{micikevicius11:_local_memor_regis_spill}
 \item global memory: shared between all work-items as well as the host;
 \item constant memory: resides on the GPU, and cached. Does not change.
 \item texture memory: this is global memory too, also cached, and it provides potentially a very slight speedup over using global memory. The GPU has texture memory and caches that it uses for rendering and interpolating textures, and it's available for the GPU's general-purpose operations if your use case is a match. 
@@ -117,7 +117,7 @@ The same code looks like this as a kernel~\cite{cuda}:
 \begin{lstlisting}[language=C++]
 __global__ void vector_add(float* A, float* B, float* C)
 {
-    int i = threadIdx.x;
+    int i = blockIdx.x;
     C[i] = A[i] + B[i];
 }
 \end{lstlisting}
@@ -128,9 +128,10 @@ You can write kernels in a variant of \CPP, and it looks mostly like the languag
 
 The kernel itself is compiled into a form called PTX -- Parallel Thread eXecution -- instructions. It's possible to write those directly, but we won't; we'll just let the compiler do it. In theory, as with assembly instructions, it might be possible for an expert to produce better PTX instructions than the compiler does, but let's assume we're not. Also, using the \texttt{nvcc} compiler makes it so your kernel will run on whatever hardware you have. Just as you would when compiling in another language, it's advised to recompile if you change machines (e.g., uploading to ECE servers from your laptop, or switching from one ECE server to another).
 
-The \texttt{nvcc} compiler has specific requirements for the underlying compiler it relies. For example, on \texttt{ecetesla2} at the time of writing, \texttt{nvcc} fails without specifying \texttt{gcc} version 6 instead of the default. With the command \texttt{nvcc --compiler-bindir /usr/bin/gcc-6 -ptx nbody.cu}, it will compile. 
+The \texttt{nvcc} compiler has specific requirements for the underlying compiler it relies. At the time of writing, the default \texttt{gcc} works on \texttt{ecetesla[01234]}, so that you can use the command \texttt{nvcc -ptx nbody.cu}.
+%For example, on \texttt{ecetesla2} at the time of writing, \texttt{nvcc} fails without specifying \texttt{gcc} version 6 instead of the default. With the command \texttt{nvcc --compiler-bindir /usr/bin/gcc-6 -ptx nbody.cu}, it will compile. 
 
-Remember that the kernel has none of the safety guarantees that we normally get in Rust! We can easily read off the end of an array, forget to initialize a variable, allocate memory that we forget to deallocate, or have race conditions, amongst other things. So not only can you encounter runtime errors in your kernel, but also that it's wise to check that your output matches expectations rather than just assume it's fine. So, just because it compiles, doesn't mean it will work.
+Remember that the kernel has none of the safety guarantees that we normally get in Rust! We can easily read off the end of an array, forget to initialize a variable, allocate memory that we forget to deallocate, or have race conditions, amongst other things. All things that Rust normally prevents. So, not only can you encounter runtime errors in your kernel, but also, it's wise to check that your output matches expectations rather than just assume it's fine. It's even more true here that, just because it compiles, there are no guarantees that it will work.
 
 If you want a quick example of what can go wrong with the kernel at runtime, here's something I got in testing:
 {\scriptsize
@@ -144,7 +145,7 @@ stack backtrace:
 \end{verbatim}
 }
 
-\paragraph{More complex kernel example.} Here's a kernel we wrote for the N-body problem that we saw earlier. It is the version without the approximations optimization; just the straightforward brute-force approach: 
+\paragraph{More complex kernel example.} Here's a kernel we wrote for an N-body problem. It is just a straightforward brute-force approach (we could approximate to make it go faster, and that was a previous Lab 4):
 
 \begin{lstlisting}[language=C++]
 __device__ void body_body_interaction(float4 point1, float4 point2, float3 *acceleration) {
