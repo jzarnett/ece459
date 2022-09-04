@@ -26,14 +26,6 @@ Your results will need to be reproducible. Remember that good programming practi
 
 \section*{Characterizing Performance \& Scalability Problems}
 
-Now that we have some principles, let's get to the application of these principles. It is desirable to characterize problems, in quantitative terms, so that we can solve it. We will use an example from~\cite{swps}. The application is deployed on two systems -- one application server and one database server. The data is stored on an external SAN with RAID0 configuration. A Java\footnote{Quit snickering... Java isn't THAT slow... anymore...} program ran to simulate object creation with 15 threads. The performance metric is objects created per second. Let's take a look at the results, also from~\cite{swps}:
-
-\begin{center}
-	\includegraphics[width=0.85\textwidth]{images/batch-job-scalability.png}
-\end{center}
-
-This is, to use the technical term, ``not good''. The throughput deteriorates rapidly from about 45 objects per second down to 9 objects per second, with about 45~000 objects created at the end of the test. This is not the trend we want so see. What if we need to create 500~000 objects? 5~000~000? We have a problem. So we had best find out what's going wrong... and why.
-
 \begin{quote}
 \textit{It is a capital mistake to theorize before one has data. Insensibly one begins to twist facts to suit theories, instead of theories to suit facts.}
 \end{quote}
@@ -49,13 +41,13 @@ Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before rea
 
 These are, obviously, more categories than specific causes, but they are starting points for further investigation. They are listed in some numerical order, but there is no reason why one would have to investigate them in the order defined there.
 
-CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that donates its free CPU cycles to world community grid (I'm singlehandedly saving the world, you see.):
+CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that used to donate its free CPU cycles to world community grid (I'm singlehandedly saving the world, you see.):
 
 \begin{verbatim}
 top - 07:28:19 up 151 days, 23:38,  8 users,  load average: 0.87, 0.92, 0.91
 \end{verbatim}
 
-Those last three numbers are the one, five, and fifteen minute averages of CPU load, respectively. Lower numbers mean less CPU usage and a less busy machine. \footnote{Why is the uptime so low? I had to shut down and restart the box in September because I moved offices.} A small guide on how to interpret this, from~\cite{scout}.
+Those last three numbers are the one, five, and fifteen minute averages of CPU load, respectively. Lower numbers mean less CPU usage and a less busy machine. A small guide on how to interpret this, from~\cite{scout}.
 
 Picture a single core of a CPU as a lane of traffic. You are a bridge operator and so you need to monitor how many cars are waiting to cross that bridge. If no cars are waiting, traffic is good and drivers are happy. If there is a backup of cars, then there will be delays. Our numbering scheme corresponds to this:
 
@@ -75,8 +67,6 @@ Being at or above 1.00 isn't necessarily bad, but you should be concerned if the
 
 Now this is for a single CPU -- if you have a load of 3.00 and a quad core CPU, this is okay. You have, in the traffic analogy, four lanes of traffic, of which 3 are being used to capacity. So we have a fourth lane free and it's as if we're at 75\% utilization on a single CPU.
 
-
-Back to our example. Is it CPU? The Application Server CPU utilization, on average, was about 10\% and on the database server, about 36\%. So that is probably not the cause. 
 
 Next on the list is memory. One way to tell if memory is the limiting factor is actually to look at disk utilization. If there is not enough RAM in the box, there will be swapping and then performance goes out the window and scalability goes with. That is of course, the worst case. You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
 
@@ -135,24 +125,6 @@ Avg: 2.95 kBit/s
 Min: 1.02 kBit/s
 Max: 12.60 kBit/s
 Ttl: 39.76 GByte                                                                                       \end{verbatim}
-
-
-So, back to the original question. The book contains the full story, which is maybe interesting to you if you wanted to dig into the specifics about Oracle 10g and SQL query syntax. I speculate that you do not care about the details, but 96.4\% of the total database call time was attributed to database CPU, so let's look at the database queries themselves. Sure enough, the ``top 5'' queries were taking up a huge amount of time and they all look something like:
-
-\begin{verbatim}
-SELECT documentId, classId, dataGroupId, consistencyId FROM objectTable WHERE objectID = <value>;
-\end{verbatim}
-
-Why does performance of this stink? Well, because we're doing a lot of reads from the database. The reads themselves don't necessarily go to disk (cache/buffers/etc may save us here) but we're still doing a lot of reads of data. To speed this up, what we need is to add an additional index for each of these tables. 
-
-This is one of the strategies we've talked about before -- ``be prepared''. If we know that the operation like the one above is going to be a common one, then we can tell the SQL server this and have it be prepared for that by defining an index. Some additional work is done to prepare the index and to maintain it when the data in the table is modified, but it makes the query a lot faster when it does come. 
-
-And sure enough, we can see the result~\cite{swps}:
-
-\begin{center}
-	\includegraphics[width=0.85\textwidth]{images/adding-indexes.png}
-\end{center}
-
 
 \input{bibliography.tex}
 
