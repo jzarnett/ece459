@@ -45,7 +45,7 @@ fn main() {
                         buf.producer_count = next_produce_space;
                     }
                     items.add_permits(1);
-                    permit.forget();
+                    permit.expect("Permit Exists").forget();
                 }
             })
         );
@@ -69,7 +69,7 @@ fn main() {
                         to_consume
                     };
                     spaces.add_permits(1);
-                    permit.forget();
+                    permit.expect("Permit Exists").forget();
                     consume_item(to_consume);
                 }
             })
