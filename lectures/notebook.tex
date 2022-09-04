@@ -74,7 +74,7 @@
 \addtolength{\parskip}{\baselineskip}
 \setlength{\parindent}{0in}
 \renewcommand{\baselinestretch}{1.5}
-\newcommand{\term}{Winter 2021}
+\newcommand{\term}{Winter 2023}
 
 \singlespace
 
@@ -1070,7 +1070,7 @@ You can also use raw pointers when you need to write to a particular memory addr
 
 You might need this if you are calling into a C library or function. The Rust universe of packages (``crates'') is getting larger all the time, but sometimes you'll have to interact with a library in C\ldots or write a part of your application in Rust that is called from C. There is a crate for cURL, but it might be interesting to learn what one would have to do to use the C library for it\ldots
 
-\paragraph{Rust vs... } Now that you know all about Rust, you can see a discussion of the \CPP~equivalents here: \url{https://reberhardt.com/cs110l/spring-2020/slides/lecture-18.pdf#page=27}. Basically everything in Rust also exists in \CPP, but \CPP~doesn't make you use these things in a safe way.
+\paragraph{Rust vs \CPP.} Now that you know all about Rust, you can see a discussion of the \CPP~equivalents here: \url{https://reberhardt.com/cs110l/spring-2020/slides/lecture-18.pdf#page=27}. Basically everything in Rust also exists in \CPP, but \CPP~doesn't make you use these things in a safe way.
 
 
 
@@ -2360,135 +2360,6 @@ Execution time graph showing 5x speedup by ``wasting'' some space~\cite{falsesha
 At separation size 51 there is a huge drop in execution time because now we are certainly putting the two arrays in two locations that do not have the false sharing problem. Is wasting a little space worth it? Yes!
 
 P.S. putting these arrays in a struct and padding the struct can also help with enabling future updates to the struct.
-
-
-
-
-
-
-
-
-
-\chapter*{9 --- Of Asgard \& Hel}
-
-\addcontentsline{toc}{chapter}{9 --- Of Asgard \& Hel}
-
-\section*{Norse Mythology}
-Everything came into creation in the gap between fire and ice, and the World Tree (Yggdrasil) connects the nine worlds. Asgard is the home of the \AE sir, the Norse gods. Helheim, or simply Hel, is the underworld where the dead go upon their death. In Hel or Asgard (it's not entirely clear), there is Valhalla, hall of the honoured dead. Those who die in battle and are judged worthy will be carried to Valhalla by the Valkyries. There they will reside until they are called upon to aid in Odin's fight with the wolf Fenrir in Ragnar\"ok\footnote{German: G\"otterd\"ammerung - ``Twilight of the gods''}, the doom of the gods\footnote{Spoiler alert: this isn't going to end well for Odin.}. For the curious, humans live in the ``middle realm'', Midg\aa rd, surrounded by the serpent Jormungand, who will fight against Thor in  Ragnar\"ok. Thor will kill the serpent, but the serpent's poison will also finish off Thor\footnote{Sorry if I've just spoiled the plot of a Marvel movie.}.
-
-Aside from my obvious passion about the subject, why are we talking about Norse Mythology? We're going to examine some very useful tools for programming called Valgrind and Helgrind (also Cachegrind). Note that the -grind endings on those are pronounced like ``grinned''. Where do they take their names from? Valgrind is the gateway to Valhalla; a gate that only the worthy can pass. Helgrind is the gateway to, well, Hel. Which despite being the source of the English word ``Hell'', is not the place where sinners go. It's just the place where the dead go.
-
-But all of these, in program form, are analysis tools for your programs. Running your program with one of these tools is something like 100$\times$ slower than normal execution, but they are wonderful for finding errors in your program. To use them you will start the tool of your choice and instruct it to invoke your program. The target program then runs under the ``supervision'' of the tool. This results in running dramatically slower than normal, but you get additional checks and monitoring of the program. It's important to enable debugging symbols in your compile if you want stack traces to be useful.
-
-
-\subsection*{Valgrind (or Memcheck) }
-Valgrind is the base name of the project and by default it runs the memcheck tool. The purpose of memcheck is to look into all memory reads, writes, and to intercept and analyze every call to allocate and free memory. Thus, memcheck will check all memory accesses and allocations/deallocations, and can find problems like:
-\begin{itemize}
-	\item Accessing uninitialized memory
-	\item Reading off the end of an array
-	\item Memory leaks (failing to free allocated memory)
-	\item Incorrect freeing of memory (double free calls or a mismatch)
-	\item Incorrect use of C standard functions like \texttt{memcpy}
-	\item Using memory after it's been freed.
-	\item Asking for an invalid number of bytes in an allocation (negative?)
-\end{itemize}
-
-These errors will be reported to the console when they occur. Ideally, this will help you find the source of the problem. Now you might be thinking that these problems cannot occur in Rust! Well, not quite. Here are some ways that you can end up with memory leaks in Rust:
-
-\begin{itemize}
-	\item Explicitly calling the \texttt{leak} and \texttt{forget} functions 
-	\item Unsafe code and calling functions from other languages 
-	\item Reference-count cycles
-\end{itemize}
-
-
-So bad things can still happen. Ideally, you're going to see this:
-\begin{verbatim}
-==4209== HEAP SUMMARY:
-==4209==     in use at exit: 0 bytes in 0 blocks
-==4209==   total heap usage: 19 allocs, 19 frees, 3,457 bytes allocated
-==4209== 
-==4209== All heap blocks were freed -- no leaks are possible
-\end{verbatim}
-
-Okay, everything going perfectly is unlikely in anything other than a small program. 
-
-
-If you take the program's suggestion to use \verb+--leak-check=full+ then you end up with a bit more detail about where memory was allocated. It can't tell you where the call to \texttt{free} should go, only where the memory that isn't freed was allocated.
-
-From the Valgrind FAQ, how to read the leak summary:
-\begin{itemize}
-	\item \textbf{Definitely lost}: a clear memory leak. Fix it.
-	\item \textbf{Indirectly lost}: a problem with a pointer based structure (e.g., you've lost the head of the linked list, but the rest of the list is indirectly lost.) Generally, fixing the definitely lost items should be enough to clear up the indirectly lost stuff.
-	\item \textbf{Possibly lost}: the program is leaking memory unless weird things are going on with pointers where you're pointing them to the middle of an allocated block.
-	\item \textbf{Still reachable}: this is memory that was still allocated that might otherwise have been freed, but references to it exist so it at least wasn't lost.
-	\item \textbf{Suppressed}: you can configure the tool to ignore things and those will appear in the suppressed category.
-\end{itemize}
-
-Still, it's also important to learn what to ignore (or what's out of our hands). The stack trace that we see will point us at the cause of the problem. Sometimes, though, we end up with something where there's very little involvement of our own program: it's thread creation or a library or similar. What do we do?
-
-Well---we have to consider carefully if there's anything we can do about it. In a library, there might be an associated cleanup call that we have forgotten to use. Or maybe not, and the problem is beyond our ability to fix. You will have to consider carefully and use your judgement! Sorry. I know it's much better when there's a clear yes or no, but software is complex.
-
-We'll take some time to do some examples that show the kind of error that Valgrind reports; both those we can do something with and those that are outside our control.
-
-\subsection*{Helgrind}
-The purpose of Helgrind is to detect errors in the use of threads. In a way, Helgrind is a pretty neat tool for improving performance, even though it doesn't actually directly speed anything up. When we take a single-threaded program and split it off into a multithreaded program, we may introduce a lot of errors (or at least, introduce the possibility of a lot of errors). Truthfully, humans are not very good at parallel thinking; we are very much sequential. But a program that is fast and wrong is probably less useful than one that is slow and correct. Can we make it faster and still have it be correct? That's the goal of Helgrind: after you parallelize your code, it will do some automatic checking of the code to determine where, if anywhere, there are concurrency problems. It can't prove that your program is correct (if only) but it can at least catch some of the common problems you might introduce when writing a parallel program. Helgrind classifies errors into three basic categories:
-
-\begin{enumerate}[noitemsep]
-	\item Misuses of the API;
-	\item Lock ordering problems; and
-	\item Data races.
-\end{enumerate}
-
-The first category does not require much explanation. These are just some programming errors related to the pthread API calls. Some examples from~\cite{helgrind}:
-
-\begin{itemize}[noitemsep]
-	\item Unlocking a mutex that is unlocked;
-	\item Deallocation of memory with a locked mutex in it; or
-	\item Thread exit while holding a lock.
-\end{itemize}
-\ldots and many more.
-
-
-The second category of errors should be familiar to you from earlier as a source of potential deadlock.
-
-\begin{multicols}{2}
-	\textbf{Thread P}\vspace{-2em}
-	\begin{verbatim}
-	 1. wait( a ) 
-	 2. wait( b )
-	 3. [critical section]
-	 4. signal( a )
-	 5. signal( b )
-  \end{verbatim}
-	\columnbreak
-	\textbf{Thread Q}\vspace{-2em}
-	\begin{verbatim}
-	 1. wait( b ) 
-	 2. wait( a )
-	 3. [critical section]
-	 4. signal( b )
-	 5. signal( a )
-  \end{verbatim}
-\end{multicols}
-\vspace{-2em}
-
-In this case, if the interleaving of these happens to work out in a couple of particular ways, then we get deadlock because thread P holds mutex \texttt{a} and thread Q holds mutex \texttt{b} and each waits for the mutex that the other one has. The example is slightly silly, of course, because it's super easy to see.
-
-Helgrind builds a directed graph of lock acquisitions. When a thread acquires a lock, Helgrind checks to see whether a cycle exists. If so, then there is potential for a deadlock~\cite{helgrind}. Helgrind will report as an error the initial order (the first order seen is the one viewed as ``correct'') and the ``incorrect'' order that is the source of the potential problem. Really, though, all that matters is consistency---following the same order. You may change either of the acquisition orders to match the other. 
-
-How does Helgrind work? It examines the use of the standard threading primitives---lock, unlock, signal/post, wait, etc. Anything that implies there might be an ordering between events is taken and added to a directed acyclic graph that represents these dependencies. If memory is accessed from two different threads and there is no path through this directed acyclic graph that indicates an ordering, then Helgrind reports a race~\cite{helgrind}. Obviously, at least one of these accesses must be a write. (Recall: there is no read after read dependency).
-
-Also cool: you can ask Helgrind to try to tell you about variable names (if it can) with the command line option \texttt{--read-var-info=yes}. Then it will tell you something interesting like:
-
-\begin{lstlisting}
-==10454== Location 0x60104c is 0 bytes inside global var "var"
-==10454== declared at datarace.c:3
-\end{lstlisting}
-
-These will give you indications of where you need to introduce synchronization of some kind (semaphore, mutex, condition variable, etc). The authors of Helgrind assume that if it tells you where the problem is, you will figure out what variables are affected and how to properly prevent data races. You might find this frustrating, in the sense of a serial complainer who thinks that he or she can just moan about what's wrong without bringing forward any suggestions about how to fix the problems.
-
-We'll again take some time to examine some examples of each category of problem (as time allows). 
 
 
 
@@ -6899,6 +6770,64 @@ There is always the ``informal'' or ``ad-hoc'' way of doing this; it works but i
 
 I've used this approach myself to figure out what blocks of a single large function are taking a long time (such as a time when I found out that updating exchange rates was slow.). But this approach is not necessarily a good one.  It's an example of ``invasive'' profiling---we are going in and changing the source code of the program in question---to add (slow!) instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half-hour range and I could see that the save operation was taking twelve minutes. Not kidding.
 
+I also mentioned earlier that I used the profiling tool for CUDA to find out what was wrong with my N-Body program. I ran the command \texttt{nvprof target/release/nbody-cuda}, and in addition to the regular program output I got the following, which showed that the time was going to the kernel and I wasn't losing a lot in overhead:
+
+{\scriptsize
+\begin{verbatim}
+==20734== Profiling application: target/release/nbody-cuda
+==20734== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:  100.00%  10.7599s         1  10.7599s  10.7599s  10.7599s  calculate_forces
+                    0.00%  234.72us         2  117.36us  100.80us  133.92us  [CUDA memcpy HtoD]
+                    0.00%  94.241us         1  94.241us  94.241us  94.241us  [CUDA memcpy DtoH]
+      API calls:   97.48%  10.7599s         1  10.7599s  10.7599s  10.7599s  cuStreamSynchronize
+                    1.92%  211.87ms         1  211.87ms  211.87ms  211.87ms  cuCtxCreate
+                    0.54%  59.648ms         1  59.648ms  59.648ms  59.648ms  cuCtxDestroy
+                    0.04%  4.8704ms         1  4.8704ms  4.8704ms  4.8704ms  cuModuleLoadData
+                    0.00%  404.72us         2  202.36us  194.51us  210.21us  cuMemAlloc
+                    0.00%  400.58us         2  200.29us  158.08us  242.50us  cuMemcpyHtoD
+                    0.00%  299.30us         2  149.65us  121.42us  177.88us  cuMemFree
+                    0.00%  243.86us         1  243.86us  243.86us  243.86us  cuMemcpyDtoH
+                    0.00%  85.000us         1  85.000us  85.000us  85.000us  cuModuleUnload
+                    0.00%  41.356us         1  41.356us  41.356us  41.356us  cuLaunchKernel
+                    0.00%  18.483us         1  18.483us  18.483us  18.483us  cuStreamCreateWithPriority
+                    0.00%  9.0780us         1  9.0780us  9.0780us  9.0780us  cuStreamDestroy
+                    0.00%  2.2080us         2  1.1040us     215ns  1.9930us  cuDeviceGetCount
+                    0.00%  1.4600us         1  1.4600us  1.4600us  1.4600us  cuModuleGetFunction
+                    0.00%  1.1810us         2     590ns     214ns     967ns  cuDeviceGet
+                    0.00%     929ns         3     309ns     230ns     469ns  cuDeviceGetAttribute
+\end{verbatim}
+}
+
+Oh, and for comparison, here's the one where I make much better use of the GPU's capabilities (with better grid and block settings):
+
+{\scriptsize
+\begin{verbatim}
+=22619== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   99.92%  417.53ms         1  417.53ms  417.53ms  417.53ms  calculate_forces
+                    0.06%  236.03us         2  118.02us  101.44us  134.59us  [CUDA memcpy HtoD]
+                    0.02%  93.057us         1  93.057us  93.057us  93.057us  [CUDA memcpy DtoH]
+      API calls:   52.09%  417.54ms         1  417.54ms  417.54ms  417.54ms  cuStreamSynchronize
+                   26.70%  214.00ms         1  214.00ms  214.00ms  214.00ms  cuCtxCreate
+                   13.63%  109.26ms         1  109.26ms  109.26ms  109.26ms  cuModuleLoadData
+                    7.42%  59.502ms         1  59.502ms  59.502ms  59.502ms  cuCtxDestroy
+                    0.05%  364.08us         2  182.04us  147.65us  216.42us  cuMemcpyHtoD
+                    0.04%  306.48us         2  153.24us  134.10us  172.37us  cuMemAlloc
+                    0.04%  285.73us         2  142.86us  122.90us  162.83us  cuMemFree
+                    0.03%  246.37us         1  246.37us  246.37us  246.37us  cuMemcpyDtoH
+                    0.01%  61.916us         1  61.916us  61.916us  61.916us  cuModuleUnload
+                    0.00%  26.218us         1  26.218us  26.218us  26.218us  cuLaunchKernel
+                    0.00%  15.902us         1  15.902us  15.902us  15.902us  cuStreamCreateWithPriority
+                    0.00%  9.0760us         1  9.0760us  9.0760us  9.0760us  cuStreamDestroy
+                    0.00%  1.6720us         2     836ns     203ns  1.4690us  cuDeviceGetCount
+                    0.00%  1.0950us         1  1.0950us  1.0950us  1.0950us  cuModuleGetFunction
+                    0.00%     888ns         3     296ns     222ns     442ns  cuDeviceGetAttribute
+                    0.00%     712ns         2     356ns     212ns     500ns  cuDeviceGet
+\end{verbatim}
+}
+
+
 Nicholas Nethercote wrote the ``counts'' tool\footnote{\url{https://github.com/nnethercote/counts}} to process ad-hoc debug output and shows an example of using it to profile the size of heap allocations in Firefox. In the example in the README, he reports that while most allocations are small, most memory is allocated as part of a large allocation. He provides a number of other examples where ad-hoc profiling is useful: how often are certain paths executed? how many times does a loop iterate? how many elements are in a hash table at a given location? And more! It's hard to write a general-purpose tool for these ad-hoc queries.
 
 (Also like debugging, if you get to be a wizard you can maybe do it by code inspection, but that technique of speculative execution inside your head is a lot harder to apply to performance problems than it is to debugging. Trained professionals like Nicholas Nethercote use profilers, so you can too.)
@@ -6999,291 +6928,6 @@ The basic plan is to run the program using \texttt{perf record}, which will samp
 
 
 \paragraph{CLion.} While we've seen how to use \texttt{perf}, it's not the only way. During development of some of the code exercises, I used the CLion built-in profiler for this purpose. It generates a flamegraph for you too, and I'll show that for how to create the flamegraph as well.
-
-
-
-
-
-
-
-
-
-\chapter*{26 --- Profilers, Profiler Guided Optimization}
-
-\addcontentsline{toc}{chapter}{26 --- Profilers, Profiler Guided Optimization}
-
-      \section*{Profilers}
-Most profiling tools can gather more data than we've seen in the previous
-topic. Your tools are typically aware of the whole
-system, but may focus on one application, and may have both
-per-process and system-wide modes. Frequently, though, you will find you can
-use only the per-process mode if you're not a system administrator. That's not
-super surprising, though, for security reasons. And for the same reason, in 
-per-process mode you can usually see that the kernel was called, but no
-details about what's going on inside. 
-
-We'll discuss a couple more of these tools here, highlighting conceptual differences between these applications. They're all slightly different in how they work, but they get the job done.
-
-\paragraph{Solaris Studio Performance Analyzer.} This 
-tool\footnote{You can find a high-level description at
-  \url{http://www.oracle.com/technetwork/server-storage/solarisstudio/documentation/oss-performance-tools-183986.pdf}}
-supports {\tt gprof}-style profiling (``clock-based profiling'') as
-well as kernel-level profiling through DTrace (described later). At
-process level, it collects more process-level data than {\tt gprof},
-including page fault times and wait times. It also can read CPU
-performance counters (e.g. the number of executed floating point adds
-and multiplies).  As a Sun application, it also works with Java
-programs.
-
-Since locks and concurrency are important, modern tools, including the
-Studio Performance Analyzer, can track the amount of time spent
-waiting for locks, as well as statistics about MPI message
-passing. More on lock waits below, when we talk about WAIT.
-
-\paragraph{VTune.} Intel and AMD both provide profiling
-tools; Intel's VTune tool costs money, while AMD's CodeAnalyst tool is
-free software.
-
-Intel uses the term ``event-based sampling'' to refer to sampling 
-which fires after a certain number of CPU events occur, and ``time-based
-sampling'' to refer to the {\tt gprof}-style sampling (e.g. every 100ms).
-VTune can also correlate the behaviour of the counters with other
-system events (like disk workload). Both of these sampling modes
-also include the behaviour of the operating system and I/O in their
-counts.
-
-VTune also supports an instrumentation-based profiling approach,
-which measures time spent in each procedure (same type of
-data as {\tt gprof}, but using a different collection scheme).
-
-VTune will also tell you what it thinks the top problems with your
-software are. However, if you want to understand what it's saying,
-you do actually need to understand the architecture.
-
-\paragraph{CodeAnalyst.} AMD also provides a profiling tool. Unlike Intel's tool, AMD's tool is
-free software (the Linux version is released under the GPL), so that,
-for instance, Mozilla suggests that people include CodeAnalyst
-profiling data when reporting Firefox performance
-problems~\footnote{\url{https://developer.mozilla.org/Profiling_with_AMD_CodeAnalyst}}.
-
-CodeAnalyst is a system-wide profiler. It supports drilling down into
-particular programs and libraries; the only disadvantage of being
-system-wide is that the process you're interested in has to execute
-often enough to show up in the profile. It also uses debug symbols to
-provide meaningful names; these symbols are potentially supplied over
-the Internet.
-
-Like all profilers, it includes a sampling mode, which it calls ``Time-based
-profiling'' (TBP). This mode works on all processors. The other modes are 
-``Event-based profiling'' (EBP) and ``Instruction-based sampling'' (IBS);
-these modes use hardware performance counters.
-
-AMD's CodeAnalyst documentation points out that your sampling interval
-needs to be sufficiently high to capture useful data, and that you need to 
-take samples for enough time. The default sampling rate is once every
-millisecond, and they suggest that programs should run for at least 15 seconds
-to get meaningful data.
-
-The EBP mode works like VTune's event-based sampling: after a certain
-number of CPU events occur, the profiler records the system state.
-That way, it knows where e.g. all the cache misses are occuring.
-A caveat, though, is that EBP can't exactly identify the guilty statement,
-because of ``skid'': in the presence of out-of-order execution, guilt
-gets spread to the adjacent instructions.
-
-To improve the accuracy of the profile information, CodeAnalyst uses
-AMD hardware features to watch specific x86 instructions and ``ops'',
-their associated backend instructions. This is the IBS mode\footnote{Available
-on AMD processors as of the K10 family---typically manufactured in 2007+; see \url{http://developer.amd.com/assets/AMD_IBS_paper_EN.pdf}. Thanks to Jonathan Thomas for pointing this out.} of
-CodeAnalyst.  AMD provides an
-example\footnote{\url{http://developer.amd.com/cpu/CodeAnalyst/assets/ISPASS2010_IBS_CA_abstract.pdf}}
-where IBS tracks down the exact instruction responsible for data
-translation lookaside buffer (DTLB) misses, while EBP indicates four
-potential guilty instructions.
-
-
-
-
-\paragraph{DTrace.} 
-DTrace~\cite{Cantrill:2004:DIP:1247415.1247417} is an instrumentation-based
-system-wide profiling tool designed to be used on production
-systems. It supports custom queries about system behaviour: when you
-are debugging system performance, you can collect all sorts of data
-about what the system is doing. The two primary design goals were in
-support of use in production: 1) avoid overhead when not tracing and
-2) guarantee safety (i.e. DTrace can never cause crashes).
-
-DTrace runs on Solaris and some BSDs. There is a Linux port, which should be installed
-on the \texttt{ecetesla} and \texttt{eceubuntu} machines.
-
-\paragraph{Probe effect.} ``Wait! Don't `instrumentation-based' 
-and `production systems' not go together?'' For instance, Valgrind incurs a 100$\times$
-slowdown. Ouch.
-
-Nope! DTrace was designed to have zero overhead when inactive. It does
-this by dynamically rewriting the code to insert instrumentation when
-requested. So, if you want to instrument all calls to the {\tt open}
-system call, then DTrace is going to replace the instruction at the
-beginning of {\tt open} with an unconditional branch to the
-instrumentation code, execute the profiling code, then return to your
-code. Otherwise, the code runs exactly as if you weren't looking.
-
-\paragraph{Safety.} As I've mentioned before, crashing a production
-system is a big no-no. DTrace is therefore designed to never cause a
-system crash. How? The instrumentation you write for DTrace 
-must conform to fairly strict constraints.
-
-\paragraph{DTrace system design.} The DTrace framework supports instrumentation
-\emph{providers}, which make \emph{probes} (i.e.  instrumentation
-points) available; and \emph{consumers}, which enable probes as
-appropriate. Examples of probes include system calls, arbitrary kernel
-functions, and locking actions. Typically, probes apply at function entry or exit points.
-DTrace also supports typical
-sampling-based profiling in the form of timer-based probes; that is,
-it executes instrumentation every 100ms. This is tantamount to
-sampling.
-
-You can specify a DTrace clause using probes, predicates, and a set of
-action statements. The action statements execute when the condition
-specified by the probe holds and the predicate evaluates to true. D
-programs consist of a sequence of clauses.
-
-\paragraph{Example.} Here's an example of a DTrace query from~\cite{Cantrill:2004:DIP:1247415.1247417}.
-
-{ \begin{verbatim}
-    syscall::read:entry {
-            self->t = timestamp;
-    }
-
-    syscall::read:return
-    /self->t/ {
-            printf("%d/%d spent %d nsecs in read\n",
-                pid, tid, timestamp - self->t);
-    }
-    \end{verbatim}
-}
-
-The first clause instruments all entries to the system call {\tt read}
-and sets a thread-local variable {\tt t} to the current time. The
-second clause instruments returns from {\tt read} where the
-thread-local variable {\tt t} is non-zero, calling {\tt printf} to print out
-the relevant data.
-
-The D (DTrace clause language) design ensures that clauses cannot loop indefinitely
-(since they can't loop at all), nor can they execute unsafe code;
-providers are responsible for providing safety guarantees. Probes
-might be unsafe because they might interrupt the system at a critical
-time. Or, action statements could perform illegal writes. DTrace won't 
-execute unsafe code.
-
-\paragraph{Workflow.} Both the USENIX article~\cite{Cantrill:2004:DIP:1247415.1247417} and the
-ACM Queue article~\cite{300ps} referenced above contain example usages of DTrace.
-In high-level terms: first identify a problem; then, use
-standard system monitoring tools, plus custom DTrace queries,
-to collect data about the problem (and resolve it).
-
-\section*{WAIT}
-Another approach which recently appeared in the research literature is
-the WAIT tool out of IBM. Unfortunately, this tool is not free and not
-generally available. Let's talk about it anyways.
-
-Like DTrace, WAIT is suitable for use in production environments. It
-uses hooks built into modern Java Virtual Machines (JVMs) to analyze
-their idle time. It performs a sampling-based analysis of the
-behaviour of the Java VM. Note that its samples are quite infrequent;
-they suggest that taking samples once or twice a minute is enough.  At
-each sample, WAIT records the state of each of the threads, which
-includes its call stack and participation in system locks. This data
-enables WAIT to compute (using expert rules) an abstract ``wait
-state''.  The wait state indicates what the process is currently doing
-or waiting on, e.g. ``disk'', ``GC'', ``network'', or ``blocked''.
-
-\paragraph{Workflow.} You run your application, collect data (using a
-script or manually), and upload the data to the server. The server provides
-a report which you use to fix the performance problems.
-The report indicates processor utilization (idle, your application, GC, 
-etc); runnable threads; waiting threads (and why they are waiting); 
-thread states; and a stack viewer.
-
-The paper presents six case studies where WAIT helped solve performance
-problems, including deadlocks, server underloads, memory leaks, database
-bottlenecks, and excess filesystem activity.
-
-\paragraph{Algorithmic profiling.} Coppa et al~\cite{coppa2014input} have proposed another profiling tool,
-  {\tt aprof}.
-  \url{https://code.google.com/p/aprof/}
-{
-  \begin{quote}
-  aprof is a Valgrind tool for performance profiling designed to help developers discover hidden asymptotic inefficiencies in the code. From one or more runs of a program, aprof measures how the performance of individual routines scales as a function of the input size, yielding clues to its growth rate and to the "big-O" of the program.
-  \end{quote}
-  }
-
-\paragraph*{Other Applications of Profiling.} 
-Here's a short tangent. Many of the concepts that we've seen for code
-also apply to web pages. Google's Page Speed
-tool\footnote{\url{http://code.google.com/speed/page-speed/}}, in
-conjunction with Firebug, helps profile web pages, and provides
-suggestions on how to make your web pages faster. Note that Page Speed
-includes improvements for the web page's design, e.g. not requiring
-multiple DNS lookups; leveraging browser caching; or combining images;
-as well as traditional profiling for the JavaScript on your pages.
-
-I also mentioned earlier that I used the profiling tool for CUDA to find out what was wrong with my N-Body program. I ran the command \texttt{nvprof target/release/nbody-cuda}, and in addition to the regular program output I got the following, which showed that the time was going to the kernel and I wasn't losing a lot in overhead:
-
-{\scriptsize
-\begin{verbatim}
-==20734== Profiling application: target/release/nbody-cuda
-==20734== Profiling result:
-            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
- GPU activities:  100.00%  10.7599s         1  10.7599s  10.7599s  10.7599s  calculate_forces
-                    0.00%  234.72us         2  117.36us  100.80us  133.92us  [CUDA memcpy HtoD]
-                    0.00%  94.241us         1  94.241us  94.241us  94.241us  [CUDA memcpy DtoH]
-      API calls:   97.48%  10.7599s         1  10.7599s  10.7599s  10.7599s  cuStreamSynchronize
-                    1.92%  211.87ms         1  211.87ms  211.87ms  211.87ms  cuCtxCreate
-                    0.54%  59.648ms         1  59.648ms  59.648ms  59.648ms  cuCtxDestroy
-                    0.04%  4.8704ms         1  4.8704ms  4.8704ms  4.8704ms  cuModuleLoadData
-                    0.00%  404.72us         2  202.36us  194.51us  210.21us  cuMemAlloc
-                    0.00%  400.58us         2  200.29us  158.08us  242.50us  cuMemcpyHtoD
-                    0.00%  299.30us         2  149.65us  121.42us  177.88us  cuMemFree
-                    0.00%  243.86us         1  243.86us  243.86us  243.86us  cuMemcpyDtoH
-                    0.00%  85.000us         1  85.000us  85.000us  85.000us  cuModuleUnload
-                    0.00%  41.356us         1  41.356us  41.356us  41.356us  cuLaunchKernel
-                    0.00%  18.483us         1  18.483us  18.483us  18.483us  cuStreamCreateWithPriority
-                    0.00%  9.0780us         1  9.0780us  9.0780us  9.0780us  cuStreamDestroy
-                    0.00%  2.2080us         2  1.1040us     215ns  1.9930us  cuDeviceGetCount
-                    0.00%  1.4600us         1  1.4600us  1.4600us  1.4600us  cuModuleGetFunction
-                    0.00%  1.1810us         2     590ns     214ns     967ns  cuDeviceGet
-                    0.00%     929ns         3     309ns     230ns     469ns  cuDeviceGetAttribute
-\end{verbatim}
-}
-
-Oh, and for comparison, here's the one where I make much better use of the GPU's capabilities (with better grid and block settings):
-
-{\scriptsize
-\begin{verbatim}
-=22619== Profiling result:
-            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
- GPU activities:   99.92%  417.53ms         1  417.53ms  417.53ms  417.53ms  calculate_forces
-                    0.06%  236.03us         2  118.02us  101.44us  134.59us  [CUDA memcpy HtoD]
-                    0.02%  93.057us         1  93.057us  93.057us  93.057us  [CUDA memcpy DtoH]
-      API calls:   52.09%  417.54ms         1  417.54ms  417.54ms  417.54ms  cuStreamSynchronize
-                   26.70%  214.00ms         1  214.00ms  214.00ms  214.00ms  cuCtxCreate
-                   13.63%  109.26ms         1  109.26ms  109.26ms  109.26ms  cuModuleLoadData
-                    7.42%  59.502ms         1  59.502ms  59.502ms  59.502ms  cuCtxDestroy
-                    0.05%  364.08us         2  182.04us  147.65us  216.42us  cuMemcpyHtoD
-                    0.04%  306.48us         2  153.24us  134.10us  172.37us  cuMemAlloc
-                    0.04%  285.73us         2  142.86us  122.90us  162.83us  cuMemFree
-                    0.03%  246.37us         1  246.37us  246.37us  246.37us  cuMemcpyDtoH
-                    0.01%  61.916us         1  61.916us  61.916us  61.916us  cuModuleUnload
-                    0.00%  26.218us         1  26.218us  26.218us  26.218us  cuLaunchKernel
-                    0.00%  15.902us         1  15.902us  15.902us  15.902us  cuStreamCreateWithPriority
-                    0.00%  9.0760us         1  9.0760us  9.0760us  9.0760us  cuStreamDestroy
-                    0.00%  1.6720us         2     836ns     203ns  1.4690us  cuDeviceGetCount
-                    0.00%  1.0950us         1  1.0950us  1.0950us  1.0950us  cuModuleGetFunction
-                    0.00%     888ns         3     296ns     222ns     442ns  cuDeviceGetAttribute
-                    0.00%     712ns         2     356ns     212ns     500ns  cuDeviceGet
-\end{verbatim}
-}
 
 \section*{Profiler Guided Optimization (POGO)}
 
@@ -7483,9 +7127,10 @@ There are more details in the source as to how many functions are used in a typi
 
 
 
-\chapter*{27 --- Liar, Liar}
 
-\addcontentsline{toc}{chapter}{27 --- Liar, Liar}
+\chapter*{27 --- Liar, Liar and Memory Profiling}
+
+\addcontentsline{toc}{chapter}{27 --- Liar, Liar and Memory Profiling}
 
 I was thinking today about how humans are quite adept at building and
 using tools (though not
@@ -7713,22 +7358,6 @@ KCacheGrind works properly on the earlier running example, but we can still dece
 lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
 and understand how your tools work.
 
-
-
-
-
-
-
-
-
-
-
-\chapter*{28 --- Memory Profiling, Cachegrind}
-
-\addcontentsline{toc}{chapter}{28 --- Memory Profiling, Cachegrind}
-
-% DHAT
-
 \section*{Memory Profiling}
 
 Thus far we have focused on CPU profiling. Other kinds of profiling got some mention, but they're not the only kind of profiling we can do. Memory profiling is also a thing, and specifically we're going to focus on heap profiling.
@@ -7795,7 +7424,7 @@ A sibling of the example above would diverge at the call on line 10, not calling
 reports results for that node and all of its children.
 
 \subsection*{\st{Memory Profiling} Return to Asgard}
-JZ generally found a way to talk about Valgrind previously. But now, we're going to use its Massif tool. This is, obviously, a joke on ``massive'', combined with the name Sif, a Norse goddess associated with the earth (and in the Marvel movies, Shieldmaiden to Thor). While we're on the subject, Sif has an axe (shield?) to grind with Loki, because at some point he cut off her golden hair (and in the Marvel films, it grew back in dark). That Loki---what a trickster! Right, we're digressing\ldots what do you mean the course isn't ECE 459: Norse Mythology?!
+JZ generally found a way to talk about Valgrind in previous courses. But now, we're going to use its Massif tool. This is, obviously, a joke on ``massive'', combined with the name Sif, a Norse goddess associated with the earth (and in the Marvel movies, Shieldmaiden to Thor).
 
 So what does Massif do? It will tell you about how much heap memory your program is using, and also how the situation got to be that way. So let's start with the example program from the documentation, badly translated by yours truly to non-idiomatic Rust~\cite{massif}:
 
@@ -8013,118 +7642,6 @@ Other cool things we can do with Massif~\cite{massif}:
 As is often the case, we have examined how the tool works on a trivial program. As a live demo, well, tune in and be surprised!
 %let's see what happens when we take the program complexity up a little bit by (1) looking at the search program we saw in the earlier talk about valgrind; and (2) looking at the original (unmodified) paster.c file from assignment 1 (and then perhaps fixing it and going on). Depending on time available, we may look at some more complex programs.
 
-\subsection*{Cachegrind}
-
-Cachegrind is another tool in the package and this one is much more performance oriented than the other two tools. Yes, Valgrind's memcheck and Helgrind look for errors in your program that are likely to lead to slowdowns (memory leaks) or make it easier to parallelize (spawn threads) without introducing errors. Cachegrind, however, does a simulation of how your program interacts with cache and evaluates how your program does on branch prediction. As we discussed earlier, cache misses and branch mispredicts have a huge impact on performance.
-
-Recall that a miss from the fastest cache results in a small penalty (perhaps, 10 cycles); a miss that requires going to memory requires about 200 cycles. A mispredicted branch costs somewhere between 10-30 cycles. All figures \& estimates from the cachegrind manual~\cite{cachegrind}.
-
-Cachegrind reports data about:
-\begin{itemize}[noitemsep]
-	\item The First Level Instruction Cache (I1) [L1 Instruction Cache]
-	\item The First Level Data Cache (D1) [L1 Data Cache]
-	\item The Last Level Cache (LL) [L3 Cache].
-\end{itemize}
-
-Unlike for normal Valgrind operation, you probably want to turn optimizations on (\texttt{-O2} or perhaps \texttt{-O3} in \texttt{gcc}). You still want debugging symbols, of course, but enabling optimizations will tell you more about what is going to happen in the released version of your program.
-
-In the \texttt{live-coding/L28} directory you will find \texttt{search.c} from ECE 254. Using the \texttt{--branch-sim=yes} option because by default it won't show it:
-
-\begin{verbatim}
-jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
-==16559== Cachegrind, a cache and branch-prediction profiler
-==16559== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
-==16559== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
-==16559== Command: ./search
-==16559== 
---16559-- warning: L3 cache found, using its data for the LL simulation.
-Found at 11 by thread 1 
-Found at 22 by thread 3 
-==16559== 
-==16559== I   refs:      310,670
-==16559== I1  misses:      1,700
-==16559== LLi misses:      1,292
-==16559== I1  miss rate:    0.54%
-==16559== LLi miss rate:    0.41%
-==16559== 
-==16559== D   refs:      114,078  (77,789 rd   + 36,289 wr)
-==16559== D1  misses:      4,398  ( 3,360 rd   +  1,038 wr)
-==16559== LLd misses:      3,252  ( 2,337 rd   +    915 wr)
-==16559== D1  miss rate:     3.8% (   4.3%     +    2.8%  )
-==16559== LLd miss rate:     2.8% (   3.0%     +    2.5%  )
-==16559== 
-==16559== LL refs:         6,098  ( 5,060 rd   +  1,038 wr)
-==16559== LL misses:       4,544  ( 3,629 rd   +    915 wr)
-==16559== LL miss rate:      1.0% (   0.9%     +    2.5%  )
-==16559== 
-==16559== Branches:       66,622  (65,097 cond +  1,525 ind)
-==16559== Mispredicts:     7,202  ( 6,699 cond +    503 ind)
-==16559== Mispred rate:     10.8% (  10.2%     +   32.9%   )
-
-\end{verbatim}
-
-So we see a breakdown of the instruction accesses, data accesses, and how well the last level of cache (L3 here) does. 
-
-Why did I say enable optimization? Well, here's the output of the search program if I compile with the \texttt{-O2} option:
-
-\begin{verbatim}
-jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
-==16618== Cachegrind, a cache and branch-prediction profiler
-==16618== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
-==16618== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
-==16618== Command: ./search
-==16618== 
---16618-- warning: L3 cache found, using its data for the LL simulation.
-Found at 11 by thread 1 
-Found at 22 by thread 3 
-==16618== 
-==16618== I   refs:      306,169
-==16618== I1  misses:      1,652
-==16618== LLi misses:      1,286
-==16618== I1  miss rate:    0.53%
-==16618== LLi miss rate:    0.42%
-==16618== 
-==16618== D   refs:      112,015  (76,522 rd   + 35,493 wr)
-==16618== D1  misses:      4,328  ( 3,353 rd   +    975 wr)
-==16618== LLd misses:      3,201  ( 2,337 rd   +    864 wr)
-==16618== D1  miss rate:     3.8% (   4.3%     +    2.7%  )
-==16618== LLd miss rate:     2.8% (   3.0%     +    2.4%  )
-==16618== 
-==16618== LL refs:         5,980  ( 5,005 rd   +    975 wr)
-==16618== LL misses:       4,487  ( 3,623 rd   +    864 wr)
-==16618== LL miss rate:      1.0% (   0.9%     +    2.4%  )
-==16618== 
-==16618== Branches:       65,827  (64,352 cond +  1,475 ind)
-==16618== Mispredicts:     7,109  ( 6,596 cond +    513 ind)
-==16618== Mispred rate:     10.7% (  10.2%     +   34.7%   )
-\end{verbatim}
-
-Interesting results: our data and instruction miss rates went down marginally but the branch mispredict rates went up! Well, sort of---there were fewer branches and thus fewer we got wrong as well as fewer we got right. So the total cycles lost to mispredicts went down. Is this an overall win for the code? Yes. 
-
-In some cases it's not so clear cut, and we could do a small calculation. If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400; a decrease of 11~400 cycles. Repeat for each of the measures and sum them up to determine if things got better overall and by how much. Also be sure that you're reasoning about a realistic workload.
-
-Cachegrind also produces a more detailed output file, titled cachegrind.out.<pid> (the PID in the example is 16618). This file is not especially human-readable, but we can ask the associated tool \texttt{cg\_annotate} to break it down for us, and if we have the source code available, so much the better, because it will give you line by line information. That's way too much to show even in the notes, so it's the sort of thing I can show in class (or you can create for yourself) but here's a small excerpt from the \texttt{search.c} example:
-
-
-
-{\scriptsize
-\begin{verbatim}
---------------------------------------------------------------------------------
--- Auto-annotated source: /home/jz/ece254/search.c
---------------------------------------------------------------------------------
- Ir I1mr ILmr Dr D1mr DLmr Dw D1mw DLmw Bc Bcm Bi Bim 
-127    1    1 96    3    0  4    0    0 23  11  0   0      for ( int i = arg->startIndex; i < arg->endIndex; ++i ) {
-147    0    0 84    3    2  0    0    0 21   9  0   0          if ( array[i] == arg->searchValue ) {
-  6    0    0  4    0    0  2    0    0  0   0  0   0              *result = i;
-  2    0    0  0    0    0  0    0    0  0   0  0   0              break;
-  .    .    .  .    .    .  .    .    .  .   .  .   .          }
-  .    .    .  .    .    .  .    .    .  .   .  .   .      }
-\end{verbatim}
-}
-
-Cachegrind is very\ldots verbose\ldots and it can be very hard to come up with useful changes based on what you see\ldots assuming your eyes don't glaze over when you see the numbers. Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). They have the highest penalty. You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints about what the likelihood of branch prediction is~\cite{cachegrind}. Of course, to learn more about how Cachegrind actually does what it does and how it runs the simulation, the manual is worth reading. Not that anybody reads manuals anymore\ldots Just give it a shot, when you get stuck, google the problem, click the first stack overflow link result\ldots
-
-
 
 
 
@@ -8159,14 +7676,6 @@ Your results will need to be reproducible. Remember that good programming practi
 
 \section*{Characterizing Performance \& Scalability Problems}
 
-Now that we have some principles, let's get to the application of these principles. It is desirable to characterize problems, in quantitative terms, so that we can solve it. We will use an example from~\cite{swps}. The application is deployed on two systems -- one application server and one database server. The data is stored on an external SAN with RAID0 configuration. A Java\footnote{Quit snickering... Java isn't THAT slow... anymore...} program ran to simulate object creation with 15 threads. The performance metric is objects created per second. Let's take a look at the results, also from~\cite{swps}:
-
-\begin{center}
-	\includegraphics[width=0.85\textwidth]{images/batch-job-scalability.png}
-\end{center}
-
-This is, to use the technical term, ``not good''. The throughput deteriorates rapidly from about 45 objects per second down to 9 objects per second, with about 45~000 objects created at the end of the test. This is not the trend we want so see. What if we need to create 500~000 objects? 5~000~000? We have a problem. So we had best find out what's going wrong... and why.
-
 \begin{quote}
 \textit{It is a capital mistake to theorize before one has data. Insensibly one begins to twist facts to suit theories, instead of theories to suit facts.}
 \end{quote}
@@ -8182,13 +7691,13 @@ Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before rea
 
 These are, obviously, more categories than specific causes, but they are starting points for further investigation. They are listed in some numerical order, but there is no reason why one would have to investigate them in the order defined there.
 
-CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that donates its free CPU cycles to world community grid (I'm singlehandedly saving the world, you see.):
+CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that used to donate its free CPU cycles to world community grid (I'm singlehandedly saving the world, you see.):
 
 \begin{verbatim}
 top - 07:28:19 up 151 days, 23:38,  8 users,  load average: 0.87, 0.92, 0.91
 \end{verbatim}
 
-Those last three numbers are the one, five, and fifteen minute averages of CPU load, respectively. Lower numbers mean less CPU usage and a less busy machine. \footnote{Why is the uptime so low? I had to shut down and restart the box in September because I moved offices.} A small guide on how to interpret this, from~\cite{scout}.
+Those last three numbers are the one, five, and fifteen minute averages of CPU load, respectively. Lower numbers mean less CPU usage and a less busy machine. A small guide on how to interpret this, from~\cite{scout}.
 
 Picture a single core of a CPU as a lane of traffic. You are a bridge operator and so you need to monitor how many cars are waiting to cross that bridge. If no cars are waiting, traffic is good and drivers are happy. If there is a backup of cars, then there will be delays. Our numbering scheme corresponds to this:
 
@@ -8208,8 +7717,6 @@ Being at or above 1.00 isn't necessarily bad, but you should be concerned if the
 
 Now this is for a single CPU -- if you have a load of 3.00 and a quad core CPU, this is okay. You have, in the traffic analogy, four lanes of traffic, of which 3 are being used to capacity. So we have a fourth lane free and it's as if we're at 75\% utilization on a single CPU.
 
-
-Back to our example. Is it CPU? The Application Server CPU utilization, on average, was about 10\% and on the database server, about 36\%. So that is probably not the cause. 
 
 Next on the list is memory. One way to tell if memory is the limiting factor is actually to look at disk utilization. If there is not enough RAM in the box, there will be swapping and then performance goes out the window and scalability goes with. That is of course, the worst case. You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
 
@@ -8268,24 +7775,6 @@ Avg: 2.95 kBit/s
 Min: 1.02 kBit/s
 Max: 12.60 kBit/s
 Ttl: 39.76 GByte                                                                                       \end{verbatim}
-
-
-So, back to the original question. The book contains the full story, which is maybe interesting to you if you wanted to dig into the specifics about Oracle 10g and SQL query syntax. I speculate that you do not care about the details, but 96.4\% of the total database call time was attributed to database CPU, so let's look at the database queries themselves. Sure enough, the ``top 5'' queries were taking up a huge amount of time and they all look something like:
-
-\begin{verbatim}
-SELECT documentId, classId, dataGroupId, consistencyId FROM objectTable WHERE objectID = <value>;
-\end{verbatim}
-
-Why does performance of this stink? Well, because we're doing a lot of reads from the database. The reads themselves don't necessarily go to disk (cache/buffers/etc may save us here) but we're still doing a lot of reads of data. To speed this up, what we need is to add an additional index for each of these tables. 
-
-This is one of the strategies we've talked about before -- ``be prepared''. If we know that the operation like the one above is going to be a common one, then we can tell the SQL server this and have it be prepared for that by defining an index. Some additional work is done to prepare the index and to maintain it when the data in the table is modified, but it makes the query a lot faster when it does come. 
-
-And sure enough, we can see the result~\cite{swps}:
-
-\begin{center}
-	\includegraphics[width=0.85\textwidth]{images/adding-indexes.png}
-\end{center}
-
 
 
 
@@ -8640,100 +8129,9 @@ practical queueing theory:  https://www.youtube.com/watch?v=IPxBKxU8GIQ
 
 
 
-\chapter*{32 --- Probability, Convergence, \& Ergodicity}
+\chapter*{32 --- Convergence \& Ergodicity}
 
-\addcontentsline{toc}{chapter}{32 --- Probability, Convergence, \& Ergodicity}
-
-\section*{A Comically Short Review of Probability}
-
-So as a quick preface -- to understand some of this material you would be well served to have some familiarity with this subject. I imagine you took a course on probability earlier, but perhaps this material is not exactly fresh in your mind. That being the case, a review of the subject by reading, say~\cite{swps,pmd} will help. But let's go over some of it, in brief. 
-
-Suppose we are doing an experiment like rolling dice (a favourite of statistics profs everywhere). We associate the outcomes of these experiments with is called a random variable. A random variable $X$ has many instances, each with some probability; if you roll a fair die $X$ can have instances of ${1, 2, 3, 4, 5, 6}$, each with a probability of $1/6$ (because we defined this die to be perfectly fair). In a die roll, the events (values of the roll) are discrete - you can't roll 2.1 or 5.5. Time is generally modelled as continuous, but in reality there are limits to how accurately we can measure time on a computer. The resolution depends on the hardware. 
-
-Building on this, we can think of the outcome of an experiment as an ``event''. Probability theory loves to talk about events. We can ask ourselves all kinds of questions like: what is the probability of rolling four 1s on a 20-sided-die in a row\footnote{I played a dwarf warrior in D\&D, although truthfully Shadowrun was always much more my style. Elven decker!}? Looking at this from the perspective of application programmers, we say the number of users at time $t$ can be represented by a random variable $U$ and then we can ask ourselves what is the probability of $U$ being greater than 1000?
-
-Probability is usually defined as some sort of experiment with a sample space $\Omega$ and some subset of this $E$ is an \textit{event}. A standard example: you have a perfectly fair coin. Possible outcomes are heads, tails, and very rarely, edge (look, it could happen). Each outcome is an event with a certain probability -- i.e., chance of happening -- usually written $P\{E_{n}\}$.
-
-If the coin coming up heads is an event $E_{1}$ and it coming up tails $E_{2}$ are these independent? No, they are not. They are mutually exclusive - if the coin comes up heads it cannot possibly also come up tails. Events are sets and we can do unions and intersections and such. The formal definition of mutual exclusivity is $E_{1} \cap E_{2} = \emptyset$. Independence, on the other hand, means the probability of $E_{1}$ does not change if event $E_{2}$ has occurred.
-
-Conditional probability is also important: what is the probability of event $E$ given that event $F$ has occurred? The notation is $P\{ E~|~F \}$ and it has a definition (as long as $P\{F\}$ is not zero): 
-
-\begin{center}
-	$P\{E~|~F\} = \dfrac{P\{E \cap F\}}{P\{F\}}$
-\end{center}
-
-If events $E$ and $F$ are independent, then $P\{E \cap F\}$ is equal to $P\{E\} \cdot P\{F\}$. That is, the probability of $E$ is not affected by the occurrence of $F$. Suppose you flip a coin four times and it comes up heads each time (event $F$). What is the probability that the next coin flip will be tails (event $E$)? Sadly, a lot of people think that after four heads, now tails is ``due'' and the chance of it being tails is higher than the usual 50-50 (minus the edge case). This is not true -- the next coin flip is independent of all the coin flips that went before it.
-
-A statistics professor would probably come knock down my door and give me a savage beating if I also did not mention Bayes Law. If we want $P\{ F~|~E \}$, but have $P\{ E~|~F \}$ can we get it? Yes, if we know $P\{F\}$ and $P\{E\}$. Bayes law is:
-
-\begin{center}
-	$P\{F~|~E\} = \dfrac{P\{E~|~F\} \cdot P\{F\}}{P\{E\}}$
-\end{center}
-
-For now let us focus on discrete random variables (i.e., those with a countable number of values). For a random variable $X$ we can define a probability mass function (p.m.f.);
-
-\begin{center}
-	$p_{x}(a) = P \{ X = a \},$ where $\sum\limits_{x}^{~} p_{x}(x) = 1$
-\end{center}
-	and the cumulative distribution function is:
-\begin{center}
-	$F_{x}(a) = P \{ X \leq a \} = \sum\limits_{x \leq a} p_{x}(x)$
-\end{center}
-
-There are five distributions we want to discuss: Bernoulli, Binomial, Geometric, Poisson, and Exponential. The Poisson distribution is the one to focus on, but let's not overlook anything important.
-
-Bernoulli represents a coin flip: so the coin has a probability $p$ of coming up heads and $1-p$ of coming up tails. So the random variable $X$ associated evaluates to 1 (heads) with probability $p$ and 0 (tails) with probability $1-p$. Thus the p.m.f. is $p_{x}(1) = p$ and $p_{x}(0) = 1 - p$. 
-
-The Binomial distribution builds upon the Bernoulli distribution. A coin with probability $p$ of coming up heads flipped $n$ times (assuming coin flips are independent). The random variable $X$ if it's Binomial, represents the number of heads when flipping a Bernoulli coin $n$ times. So $X$ can take on values of $\{0, 1, \ldots, n\}$. 
-
-The Geometric distribution builds on Bernoulli. Again suppose we have the coin with probability $p$ of coming up heads. If we want to ask how many (independent) coin flips it will take until it comes up heads, the Geometric distribution answers this question. $X$ is the number of flips until we get the result we want.
-
-Applying this to the realm of computing, as in~\cite{pmd}. Suppose we have a server farm that has $n$ disks, each of which independently dies (fails) with probability $p$ in a year. So what is the appropriate model for each of these questions?
-
-\begin{enumerate}
-	\item How many disks die in the first year?
-	\item Given disk $d$, how long until this disk dies?
-	\item After one year, is a specific disk $d$ alive or dead?
-\end{enumerate}
-
-The answers are (1) Binomial, (2) Geometric, and (3) Bernoulli.
-
-Now let us turn to the Poisson distribution; this is very common in computing. This is our somewhat ``natural'' idea of randomness. This distribution arises when we have a mixture of a very large number of sources, each with a very small probability. So this is a lot like the number of arrivals to a website or packets at a router in some unit time. If a random variable $X$ has a Poisson distribution, the p.m.f. is:
-
-\[
-	p_{x}(i) = \dfrac{e^{-\lambda}\lambda^{i}}{i!},\mbox{ where $i = 0, 1, 2\ldots$}.
-\]
-
-One more thing: there are also continuous random variables, and although we won't talk much about them, we should also consider the exponential distribution. This is a distribution where the probability density function (p.m.f.) drops off exponentially. If $x \geq 0$, then $f_{x}(x) = \lambda e^{-\lambda x})$. The cumulative distribution function, i.e., $F_{x}(x) = P\{ X \leq x \}$ is the integration of this function from negative infinity to $x$, equal to $1-e^{-\lambda x}$ (again, for $x \geq 0$). What we care about here is actually the inverse of this, $\overline{F_{x}}(x)$, the probability that the value is greater than $x$ -- namely, the outliers or the ``tail'' of the distribution. Note that we see a constant drop-off of $e^{-\lambda}$ with each unit increase of $x$. Heavy tails are not very nice. 
-
-
-How about expectation and variance. Recall the notation here $E[X]$ is the expected value of a random variable $X$. Expected value is, not kidding, just a ``weighted average''\footnote{One of the biggest light bulb moments of my undergraduate life.}. Let's say you're entering into a game where you pay \$3 to play. If you have a 50\% chance of losing all your money, a 10\% chance of winning \$10, and a 40\% chance of getting your \$3 back, should you play?
-
-Do the math: your expected return is $(0.5 \times 0) + (0.1 \times 10) + (0.4 \times 3) \rightarrow 0 + 1 + 1.2 = 2.2$. So you expect that by playing this game, for every \$3 entry, you get back \$2.20 (on average). It doesn't seem like a good investment, does it? Econ 101 logic would tell you the answer is: how much do you value the fun of playing and the hope and excitement of winning? If it's equal to or more than \$0.80 then it is worth it.
-
-Proofs of these exist in the textbook(s) but let's not belabour the point by proving it. Just take my word for it that the expectation for a Geometric distribution with probability $p$ is $1/p$: so if we have a coin where the probability of landing heads is $1/3$, then we expect it takes 3 flips to get heads. If a Poisson distribution applies to something, the expectation $E[\lambda] = \lambda$. Okay, that's nice.
-
-The weighted average is nice, but it's not the whole story. If your numbers are 5, 6, and 7, then their average is 6. But the average of the numbers 0, 6, and 12 is also 6. But we should know already that averages can be misleading. A student who takes six courses in a term is unlikely to find that these six exams are distributed equally over the three week exam period as 2, 2, and 2, with at least a little time between any two exams. On the contrary, said student may find there are four in the first week, then a long pause before the next, or two back to back, or even two at once. This student might think the registrar's office hates him or her, but rest assured, it is nothing personal. An average arrival rate of 1 request per second could still, with some probability, produce 3 arrivals in a single second. These should illustrate the idea that we can have an average that seems benign but have outlier situations that are actually messy to deal with.
-
-The formal definition of variance of a random variable $X$ is the expected squared difference of $X$ from its mean:
-
-\[
-	\mathrm{Var}(X) = E[X^{2}] - (E[X])^{2}
-\]
-
-Just take my word for it at the moment that the following table, copied from the book~\cite{pmd} is correct:
-
-\begin{center}
-\begin{tabular}{l|l|l}
-	\textbf{Distribution} & \textbf{Mean} & \textbf{Variance}\\ \hline
-	Bernoulli & $p$ & $p(1-p)$\\ \hline
-	Binomial & $np$ & $np(1-p)$\\ \hline
-	Geometric & $\dfrac{1}{p}$ & $\dfrac{1-p}{p^{2}}$ \\ \hline
-	Poisson & $\lambda$ & $\lambda$
-\end{tabular}
-\end{center}
-
-There is plenty more that you should know about (conditional probability, exponential distributions, etc.) but let us break off this thrilling review of probability and put it to use.
+\addcontentsline{toc}{chapter}{32 --- Convergence \& Ergodicity}
 
 \section*{Convergence}
 
@@ -8879,7 +8277,7 @@ What about the number of jobs in the system? The value $\rho/(1 ? \rho)$ gives t
 
 \section*{M/M/k}
 
-Now let us take it to multiple servers. We will say jobs arrive at a single queue and then when a server is ready it will take the first job from the front of the queue. The servers are identical and jobs can be served by any server. So far, so simple.
+Now let us take it to multiple servers ($k$ of them, in fact). We will say jobs arrive at a single queue and then when a server is ready it will take the first job from the front of the queue. The servers are identical and jobs can be served by any server. So far, so simple.
 
 Sadly, the math just got harder. Let's turn again to~\cite{williams-q} as the source for this section. The server utilization for the server farm is now $\rho = \lambda s / N$ (the average utilization for all $N$ servers). To make our calculations a little easier, we want an intermediate value $K$ which looks scary, but is not so bad:
 
@@ -9020,29 +8418,6 @@ The average size of a device's queue is $W$, and for a queue with characteristic
 \[ s = \cfrac{-w \pm \sqrt{w^{2}+4w}}{2\lambda}.\]
 
 Yup. The quadratic formula strikes back. 
-
-
-
-
-
-
-
-
-
-\chapter*{34 --- Practical Scaling: Amazon AWS}
-
-\addcontentsline{toc}{chapter}{34 --- Practical Scaling: Amazon AWS}
-
-\section*{Scaling with AWS}
-
-After all this discussion about scalability, let's take a look at a talk on the subject of how to scale up using Amazon Web Services (AWS) to your first 11 Million Users. Yes, this one goes to 11.
-
-
-\begin{center}
-\url{https://www.youtube.com/watch?v=vg5onp8TU6Q}
-\end{center}
-
-See also~\cite{awsscale} for a written summary about it.
 
 
 
