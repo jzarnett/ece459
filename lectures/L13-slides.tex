@@ -1,7 +1,7 @@
 \input{configuration}
-\usepackage{multirow}
 
-\title{Lecture 13 --- Dependencies and Speculation }
+
+\title{Lecture 13 --- Early Termination, Reduced-Resource Computation }
 
 \author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -16,733 +16,557 @@
 
  \end{frame}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Next topic: Dependencies}
+\frametitle{Quitting Time}
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/dependency.jpeg}
+	\includegraphics[width=0.7\textwidth]{images/quitting-time.jpg}
 \end{center}
 
-     \structure{Dependencies} are the main
-      limitation to parallelization.\\[1em]
-     Example: computation must be evaulated as {\tt XY} and not {\tt YX}.\\[1em]
-  
+Knowing when to quit is wise.
+
 \end{frame}
 
+
 \begin{frame}
-  \frametitle{Not synchronization}
+\frametitle{Two Strategies}
+There are two basic ideas. 
 
-  
-      Assume (for now) no synchronization problems.\\[1em]
-      Only trying to identify code that is safe to run in
-      parallel.
+\begin{itemize}
+\item Skip some parts of work
+\item Intentionally reduce accuracy to speed things up. 
+\end{itemize}
 
-  
+You may implement these strategies when you're writing an exam.
+
+Your program might support only one.
+
+\end{frame}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination}
+
+
+
+  We've seen barriers before.
+
+  No thread may proceed past a barrier until all of the threads
+reach the barrier.
+
+  This may slow down the program: maybe one of the threads is horribly
+  slow.
+
+  Solution: kill the slowest thread.
+
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Dependencies: Analogies}
-
-Must extract bicycle from garage before closing garage door.
-
-Must close washing machine door before starting the cycle.
-
-Must be called on before answering questions? (sort of)
-
-Students must submit assignment before course staff can mark the assignment.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Dependencies: Analogies}
-
-Must install package $X$ before running package $Y$.
+  \frametitle{Early Phase Termination: Objection}
 
 \begin{center}
-	\includegraphics[width=0.6\textwidth]{images/debian_main.png}
+	\includegraphics[width=0.5\textwidth]{images/ohno.jpg}
 \end{center}
-\hfill xkcd 797
-	
 
+\begin{center}
+``Oh no, that's going to change the meaning of the program!''
+\end{center}
 \end{frame}
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Loop-carried Dependencies (1)}
+\begin{frame}
+  \frametitle{Early Phase Termination: When is it OK anyway?}
 
-Can we run these lines in parallel? \\ ~~~(initially vec[0] and vec[1] are 1)
-\begin{lstlisting}[language=Rust]
-let mut vec = vec![1; 32];
-    /* */
-vec[4] = vec[0] + 1;
-vec[5] = vec[0] + 2;
-\end{lstlisting}
-\pause
-\structure{Yes.}\\[1em]
+
+OK, so we don't want to be completely crazy.\\[1em]
+
+Instead: 
 \begin{itemize}
-\item There are no dependencies between these lines.
-\item However, this is not how we normally use arrays\ldots
+\item develop a statistical model of the program behaviour.
+\item only kill tasks that don't introduce unacceptable distortions.
 \end{itemize}
 
+~\\[1em]
+
+When we run the program: \\ \qquad get the output, plus a confidence interval.
+
+
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+
+\begin{frame}
+\frametitle{Oh noooo!}
+
+Example:
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/mariokart.jpg}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Remember, Remember...}
+
+Many problems are mathematically hard in nature: to find the optimal solution you have to consider every possibility. 
+
+Well, what this strategy presupposes is: don't.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Route Sucks}
+
+Imagine the travelling salesperson problem, just for the sake of an example. 
+
+There are $n$ points to visit and you want to minimize the amount of travel time. 
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/bugsbunny.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Route Sucks}
+
+The only way to know if a solution is best is to consider every possible route.
+
+One way we can know if we're wasting time is to remember previous outcomes.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Route Sucks}
+
+The solution we're evaluating will have some travel cost in units (maybe kms). 
+
+If the currently-accumulated cost in kms is larger than the total of the thus-far best solution, give up. 
+
+Another idea?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Close Enough is Good Enough}
+
+Another approach is to stop as soon as you have a solution that's reasonable. 
+
+If our target is to get total travel under 500 km then we can stop searching as soon as we find one that satisfies this constraint.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{You Have Ten Chances}
+
+You can also choose to reduce the amount of effort by trying, say, five or ten different possibilities and seeing which of those is the best.
+
+There's no guarantee you'll get an optimal solution.
+
+Interesting to think about: what does Google Maps do?
+
+\end{frame}
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Loop-carried Dependencies (2)}
+\begin{frame}
+  \frametitle{Trading Accuracy for Performance}
 
-What about this? (all elements initially 1)
-\begin{lstlisting}[language=Rust]
-for i in 1 .. vec.len() {
-    vec[i] = vec[i-1] + 1;
-}
-\end{lstlisting}
 
-\pause
-\alert{No, a[2] = 3 or a[2] = 2.}\\[1em]
+    Consider Monte Carlo integration.\\
+    It illustrates a general tradeoff: accuracy vs performance.\\
+  
+    Martin Rinard generalized the accuracy vs performance tradeoff with:
+      \begin{itemize}
+        \item early phase termination [OOPSLA07]
+        \item loop perforation [CSAIL TR 2009]
+      \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: Two Examples}
+
+
+
+Monte Carlo simulators: \\
+Raytracers:
 \begin{itemize}
-\item Statements depend on previous loop iterations.
-\item An example of a \structure{loop-carried dependency}.
+\item already picking points randomly.
 \end{itemize}
 
+In both cases: spawn a lot of threads.\\[1em]
+Could wait for all threads to complete;\\
+or just compensate for missing data points,\\
+assuming they look like points you did compute.
+
+
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-\frametitle{Larger example: Loop-carried Dependencies}
-{\small
-\begin{lstlisting}[language=Rust]
-// Repeatedly square input, return number of iterations before
-// absolute value exceeds 4, or 1000, whichever is smaller.
-fn mandelbrot(x0: f64, y0: f64) -> i32 {
-    let mut iterations = 0;
-    let mut x = x0;
-    let mut y = y0;
-    let mut x_squared = x * x;
-    let mut y_squared = y * y;
-    while (x_squared + y_squared < 4f64) && (iterations < 1000) {
-        y = 2f64 * x * y + y0;
-        x = x_squared - y_squared + x0;
-        x_squared = x * x;
-        y_squared = y * y;
-        iterations += 1;
-    }
-    return iterations;
-}
-\end{lstlisting}
-}
-How can we parallelize this? \\
-\pause
-\begin{itemize}
-\item Run {\tt mandelbrot} sequentially for each point, but parallelize
-different point computations.
-\end{itemize}
+
+\begin{frame}
+\frametitle{Calling the Election}
+
+In other cases, some threads simply take too long, but we don't need all of them to produce a result. 
+
+If we are evaluating some protocol where the majority wins, we can stop as soon as sufficient results have been returned.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/dewey.jpg}
+\end{center}
+
+
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{A Solution Exists!}
+
+For some categories of problem, we know not only that a solution will exist, but also how many steps it takes to solve (optimally). 
+
+Consider the Rubik's Cube:
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/rubikscube.jpg}
+\end{center}
+
+Brute force?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Rubik's Cube}
+
+Okay, that's fun to talk about, but it's always better if we see it in action? 
+
+Let's play around with \url{https://rubiks-cube-solver.com/}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Austerity Programs for Computer Programs}
+
+We do more with less! 
+
+Well, you can use \texttt{float/f32} instead of \texttt{double/f64}. 
+
+But you can also work with integers to represent floating point numbers.
+
+But when is it appropriate?
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Circuit Analysis}
+
+You're entering points that were measured (with some error) and you're computing using machine numbers (also with some error).
+
+The question is whether the simulation is good enough.
+
+What resistors are going to be put in your circuit board?
+
+is there any point in calculating it down to five decimal places when the resistors you buy have a tolerance of $\pm$5\%? 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Circuit Analysis}
+
+
+No, and if you took a circuits course with Prof. Barby he would be very disappointed if you said yes.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/barby.png}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{\texttt{iddqd}}
+
+Quake III: ``fast inverse square root''. 
+
+For graphics processing, sometimes you want to calculate $1/\sqrt{x}$.
+.
+Square root (or similar) is usually calculated by some interpolation or root-finding method
+
+\end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{Stride}
-
- Now consider this example---is it parallelizable? (Again, all elements initially 1.)
+\frametitle{Fast Inverse Square Root}
 
 \begin{lstlisting}[language=C]
-for i in 4 .. vec.len() {
-    vec[i] = vec[i-4] + 1;
+float FastInvSqrt(float x) {
+  float xhalf = 0.5f * x;
+  int i = *(int*)&x;         // evil floating point bit level hacking
+  i = 0x5f3759df - (i >> 1);  // what the fuck?
+  x = *(float*)&i;
+  x = x*(1.5f-(xhalf*x*x));
+  return x;
 }
 \end{lstlisting}
 
-\pause
+ Now this probably seems like dark magic, and it is. 
 
-Yes, to a degree. We can execute 4 statements in parallel at a time:
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Float to Int?}
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/float-to-int.png}
+\end{center}
+
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Oh, never mind...}
+
+
+The clever hack is somewhat obsoleted now by the fact that CPU instructions now exist to give you fast inverse square root. 
+
+This was obviously not something you could rely on in 1999.
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{The N-Body Simulation}
+
+A common physics problem that programmers are asked to simulate is the N-Body problem.
+
+\begin{center}
+\includegraphics[width=0.8\textwidth]{images/Galaxy_Cluster_sim.png}
+\end{center}
+\hfill Image Credit: Michael L. Umbricht 
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Trade Accuracy for Performance}
+
+You could look for optimizations that trade off accuracy for performance. 
+
+As you might imagine, using \texttt{float} instead of \texttt{double}.
+
+
+More? Then we need some domain knowledge. 
+
+Hint: consider the formula: $F = \dfrac{Gm_{1}m_{2}}{r^{2}}$. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The N-Body Simulation}
+
+Let's assume it's OpenCL converted and is optimized.
+
+Can we use \texttt{float} instead of \texttt{double}?
+
+What if we want more?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Estimation is Okay}
+
+Points that are far away contribute only very small forces. 
+
+So you can estimate them (crudely). 
+
+The idea is to divide the points into a number of ``bins'' which are cubes representing a locale of some sort. 
+
+Then, compute the centre of mass for each bin. 
+
+When calculating the forces: centre of mass for faraway bins; individual particles for nearby particles.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{This used to be an assignment... }
+
+A more concrete explanation with an example: suppose the space  is divided into $[0, 1000]^3$, so we can take bins which are cubes of length 100. 
+
+This gives 1000 bins. 
+
+To increase the accuracy, what should we do?
+
+To increase the speed, what should we do?
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Define Your Types}
+
+\begin{lstlisting}[language=Rust]
+struct Point {
+    x: f32,
+    y: f32,
+    z: f32,
+    mass: f32,
+}
+\end{lstlisting}
+
+
+We are going to improve this by adding a \texttt{bin} property to each point.
+
+This tells us if something is close by.
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Compute Centre of Mass}
+
+Compute all of the masses in parallel: create one thread per bin, and add a point's
+position if it belongs to the bin.
+
+
+Note that this parallelizes with the number of bins.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Save Time}
+
+The payoff from all these calculations is to save time while calculating forces. 
+
+In this example, we'll compute exact forces for the points in the same bin and the directly-adjacent bins in each direction
+
+That makes 27 bins in all, with 6 bins sharing a square, 12 bins sharing an edge, and 8 bins sharing a point with the centre bin). 
+
+If there is no adjacent bin 
+(i.e., this is an edge), just act as if there are no points 
+in the place where the nonexistent bin would be. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{More Overhead}
+
+This does mean there is overhead in calculating bins, meaning the total amount of overhead goes up. 
+
+Is it worth it? 
+
+With 50~000 points:
 \begin{itemize}
-  \item \texttt{vec[4] = vec[0] + 1, vec[8] = vec[4] + 1}
-  \item \texttt{vec[5] = vec[1] + 1, vec[9] = vec[5] + 1}
-  \item \texttt{vec[6] = vec[2] + 1, vec[10] = vec[6] + 1}
-  \item \texttt{vec[7] = vec[3] + 1, vec[11] = vec[7] + 1}
-\end{itemize}  
-We can say that the array accesses have stride 4
+\item    No approximations: 39 seconds
+\item    With approximations: 37 seconds.
+\end{itemize}
+
+With 100~000 points:
+\begin{itemize}
+\item    No approximations: 162 seconds
+\item    With approximations: 147 seconds.
+\end{itemize}
+
+Of course, parallelizing this helps even more... 
 
 \end{frame}
 
 
+
+
+%%
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Memory-carried Dependencies}
-
-Dependencies limit the amount of parallelization.
-
-\begin{lstlisting}[language=Rust]
-let mut acct: Account = Account {
-    balance: 0.0f32
-};
-f(&mut acct);
-g(&mut acct);
-
-/* */
-
-fn f (a: &mut Account) {
-    a.balance += 50.0f32;
-}
-fn g (a: &mut Account) {
-    a.balance *= 1.01f32;
-}
-\end{lstlisting}
-
-What are the possible outcomes after executing {\tt g()} and {\tt f()}
+  \frametitle{Loop Perforation}
 
 
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  Like early-phase termination, but for sequential programs:\\
+  \qquad throw away data that's not actually useful.
 
+  \begin{lstlisting}
+for i in 0 .. n { sum += numbers.get(i).unwrap(); }
+  \end{lstlisting}
 
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{Summary of Memory-carried Dependencies}
-
-Well, turns out our memory-carried dependencies are the hazards:
-\begin{center}
-\begin{tabular}{ll|p{2.8cm}p{3.2cm}}
-& & \multicolumn{2}{c}{Second Access} \\ 
-&  & \bf Read & \bf Write \\ \hline
-\multirow{2}{*}{First Access} & \bf Read & No Dependency Read After Read (RAR)  & Anti-dependency Write After Read (WAR) \\[0.5em]
-& \bf Write & True Dependency Read After Write (RAW) & Output Dependency Write After Write (WAW) \\
-\end{tabular}
-\end{center}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Critical Paths}
-
-  
-
-  Should be familiar with critical paths from other courses (Gantt charts).\\[1em]
-
-  Consider the following diagram (edges are tasks):
-
-\begin{center}
-\begin{tikzpicture}[->,>=stealth',shorten >=1pt,auto,column sep=2.2cm,
-                    semithick,initial text=]
-  \node[initial,block] (s0) {Start};
-  \node[block] (s1) [right=of s0] {S1};
-  \node[block] (s2) [right=of s1] {S2};
-  \node[bw] (s3) [right=of s2] {Finish};
-
-  \path (s0) edge node {A} (s1)
-        (s1) edge node {B} (s2)
-        (s2) edge node {D} (s3)
-        (s0) edge[bend left=30] node {C} (s2);
-\end{tikzpicture}
-\end{center}
-
-  \begin{itemize}
-    \item B depends on A, C has no dependencies, and D depends on B and C.
-    \item Can execute A-then-B in parallel with C.
-    \item Keep dependencies in mind when calculating speedups for more
-      complex programs.
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Breaking Dependencies}
-
-  
-  \structure{Speculation}: architects use it to predict
-      branch targets.
-  
   \begin{center}
-  	\includegraphics[width=0.5\textwidth]{images/6sided_dice.jpg}
+    $\Downarrow$
   \end{center}
-  	\hfill Image Credit: Diacritica
 
-Roll the dice and see how we do!
+  \begin{lstlisting}
+for i in (0 .. n).step_by(2) { sum += numbers.get(i).unwrap(); }
+sum *= 2;
+  \end{lstlisting}
 
-\end{frame}
+  This gives a speedup of $\sim$ 2 if {\tt numbers[]} is nice.\\[1em]
+
+  Works for video encoding: can't observe difference.
 
 
-\begin{frame}
-\frametitle{Coffee Analogy}
 
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/tims.jpg}
-\end{center}
-
-If you're a regular, can they guess your order?
-
-And how much time would they save?
-
-\end{frame}
-
-  
-
-\begin{frame}
-\frametitle{Breaking Dependencies}
-
-We need not wait for the branch to be evaluated.
-
-We'll use speculation at a coarser-grained level: speculatively parallelize code.
-
-Two ways: \alert{speculative execution} and
-      \alert{value speculation}.
-  
 \end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Speculative Execution: Example}
+\begin{frame}
+  \frametitle{Applications of Reduced Resource Computation}
 
-  
-Consider the following code:
-  
-\begin{lstlisting}[language=Rust]
-fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
-    let val = long_calculation(x, y);
-    if val > threshold {
-        return val + second_long_calculation(x, y);
-    }
-    return val;
-}
-\end{lstlisting}
 
-  Will we need to run {\tt second\_long\_calculation}?
-  \vfill  
+  Loop perforation works for:
   \begin{itemize}
-    \item<2> OK, so: could we execute {\tt long\_calculation} and {\tt second\_long\_calculation}
-      in parallel if we didn't have the conditional?
-  \end{itemize}
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Speculative Execution: Assume No Conditional}
-
-  
-  Yes, we could parallelize them. Consider this code:
-    
-\begin{lstlisting}[language=Rust]
-fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
-    let t1 = thread::spawn(move || {
-        return long_calculation(x, y);
-    });
-    let t2 = thread::spawn(move || {
-        return second_long_calculation(x, y);
-    });
-    let val = t1.join().unwrap();
-    let v2 = t2.join().unwrap();
-    if val > threshold {
-        return val + v2;
-    }
-    return val;
-}
-\end{lstlisting}
-
-  We do both the calculations in parallel and return the same result as before.
-  
-    \begin{itemize}
-    \item What are we assuming about {\tt long\_calculation} and
-{\tt second\_long\_calculation}?
+   \item evaluating forces on water molecules (summing numbers);
+   \item Monte-Carlo simulation of swaption pricing;
+   \item video encoding.
   \end{itemize}
 
+  More on the video encoding example:\\
+  Changing loop increments from 4 to 8 gives:
+\begin{itemize}
+ \item speedup of 1.67;
+ \item signal-to-noise ratio decrease of 0.87\%;
+ \item bitrate increase of 18.47\%;
+ \item visually indistinguishable results.
+\end{itemize}
 
 \end{frame}
 
-\begin{frame}[fragile]
-\frametitle{Can We Improve?}
-
-The current thread is a valid thread for doing work and we don't have to create two threads and join two threads. 
-
-We can create one and maybe have less overhead.
-
-\begin{lstlisting}[language=Rust]
-fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
-    let t1 = thread::spawn(move || {
-        return second_long_calculation(x, y);
-    });
-    let val = long_calculation(x, y);
-    let v2 = t1.join().unwrap();
-    if val > threshold {
-        return val + v2;
-    }
-    return val;
-}
-\end{lstlisting}
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Check Assumptions}
-  
-  $T_1$: time to run {\tt long\_calculation}.
-
-  $T_2$: time to run {\tt second\_long\_calculation}.
-
-  $p$: probability that {\tt second\_long\_calculation} executes.\\[1em]
-
-  In the normal case we have:
-    \[T_{\mbox{\scriptsize normal}} = T_1 + pT_2.\]
-
-  $S$: synchronization overhead.\\
-  Our speculative code takes:
-    \[ T_{\mbox{\scriptsize speculative}} = \mbox{max}(T_1, T_2) + S.\]
-
-    \structure{Exercise.} When is speculative code faster? Slower? \\ How could you improve it?
-
-  
-\end{frame}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Shortcomings of Speculative Execution}
-
-  
-  Consider the following code:
-  
-\begin{lstlisting}[language=Rust]
-fn do_other_work(x: i32, y: i32) -> i32 {
-    let val = long_calculation(x, y);
-    return second_long_calculation(val);
-}
-\end{lstlisting}
-
-  Now we have a true dependency; can't use speculative~execution.\\[1em]
-
-  But: if the value is predictable, we can execute
-      {\tt second\_long\_calculation} using the predicted value.\\[1em]
-
-  This is \structure{value speculation}.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Value Speculation Implementation}
-  
-  This code does value speculation:
-
-\begin{lstlisting}[language=Rust]
-fn do_other_work(x: i32, y: i32, last_value: i32) -> i32 {
-    let t = thread::spawn(move || {
-        return second_long_calculation(last_value);
-    });
-    let val = long_calculation(x, y);
-    let v2 = t.join().unwrap();
-    if val == last_value {
-        return v2;
-    }
-    return second_long_calculation(val);
-}
-\end{lstlisting}
-
-
-  Note: this is like memoization (plus parallelization).
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Estimating Impact of Value Speculation}
-
-  
-  $T_1$: time to run {\tt long\_calculation}.
-
-  $T_2$: time to run {\tt second\_long\_calculation}.
-
-  $p$: probability that {\tt second\_long\_calculation} executes again.
-
-  $S$: synchronization overhead.\\[1em]
-
-  In the normal case, we have:
-    \[ T = T_1 +T_2.\]
-
-  This speculative code takes:
-    \[ T = \mbox{max}(T_1, T_2) + S + pT_2.\]
-
-    \structure{Exercise.} Again, when is speculative code faster? Slower? How could you improve it?
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{When Can We Speculate?}
-
-  
-  Required conditions for safety:
-
-  \begin{itemize}
-    \item {\tt long\_calculation} and {\tt second\_long\_calculation} must not call
-      each other.
-    \item {\tt second\_long\_calculation} must not depend on
-      any values set or modified by {\tt long\_calculation}.
-    \item The return value of {\tt long\_calculation} must be deterministic.
-  \end{itemize}
-
-  General warning: Consider \structure{side effects} of function calls.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-\begin{frame}
-\frametitle{Side Effects}
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/side-effects.jpg}
-\end{center}
-\hfill Image Credit: Kes, Cartoonstock
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Side Effects}
-
-As a general warning: Consider the \alert{side effects} of function calls. 
-
-They have a big impact on parallelism. Side effects are problematic, but why? 
-
-For one thing they're kind of unpredictable. 
-
-Side effects are changes in state that do not depend on the function input. 
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Side Effects}
-
-Calling a function or expression has a side effect if it has some visible effect on the outside world. 
-
-Some things necessarily have side effects, like printing to the console. 
-
-Others are side effects which may be avoidable if we can help it, like modifying a global variable.
-
-\end{frame}
-
-
-
-
-\begin{frame}
-\frametitle{Software Transactional Memory}
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/timetravel.jpg}
-\end{center}
-
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{STM: Introduction}
-
-
-    Instead of programming with locks, we have transactions on memory.
-      \begin{itemize}
-        \item Analogous to database transactions
-      \end{itemize}
-    An old idea; recently saw some renewed interest.\\[1em]
-
-    A series of memory operations either all succeed; or \\ \qquad
-     all fail (and get
-      rolled back), and are later retried.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{STM: Benefits}
-
-
-    Simple programming model: need not worry about lock
-      granularity or deadlocks.\\[1em]
-
-    Just group lines of code that should logically be one operation
-      in an {\tt atomic} block!\\[1em]
-
-    It is the responsibility of the implementer to ensure the code
-      operates as an atomic transaction.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}[fragile]
-\frametitle{STM Example}
-
-Set up a transaction with an atomic block:
-
-\begin{lstlisting}[language=Rust]
-let x = atomically(|trans| {
-    var.write(trans, 42)?; // Pass failure to parent.
-    var.read(trans) // Return the value saved in var.
-});
-\end{lstlisting}
-
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{STM: Implementing a Motivating Example}
-
-
-\begin{lstlisting}[language=Rust]
-struct Account {
-    balance: TVar<f32>,
-}
-
-fn transfer_funds(sender: &mut Account, receiver: &mut Account, amount: f32) {
-    atomically(|tx| {
-        let sender_balance = sender.balance.read(tx)?;
-        let receiver_balance = receiver.balance.read(tx)?;
-        sender.balance.write(tx, sender_balance - amount)?;
-        receiver.balance.write(tx, receiver_balance + amount)?;
-        Ok(0)
-    });
-}
-\end{lstlisting}
-
-[Note: bank transfers aren't actually atomic!]\\[1em]
-
-With STM, we do not have to worry about remembering to acquire locks,
-      or about deadlocks.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{STM: Drawbacks}
-
-
-    Rollback is key to STM. \\
-     \qquad But, some things cannot be rolled back. \\
-     \qquad (write to the screen, send packet over network)\\[1em]
-
-    Nested transactions. \\
-     \qquad What if an inner transaction succeeds, \\ yet the
-      transaction aborts? \\[1em]
-
-    Limited transaction size: \\
- \qquad Most implementations (especially
-    all-hardware) \\ have a limited transaction size.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Basic STM Implementation (Software)}
-
-
-    In all atomic blocks, record all reads/writes to a log.\\[1em]
-    At the end of the block, running thread verifies that no other threads
-      have modified any values read.\\[1em]
-    If validation is successful, changes are {\bf committed}.\\
-    Otherwise, the block is {\bf aborted} and re-executed.\\[2em]
-
-  Note: Hardware implementations exist too.
-
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{Basic STM Implementation Issues}
-
-
-    Since you don't protect against dataraces (just rollback),\\
-      a datarace may trigger a fatal error in your program.
-
-\begin{tabular}{r|l}
-\begin{minipage}{.46\textwidth}
-\begin{lstlisting}[language=Rust]
-fn what_could_go_wrong(x: TVar<i32>, y: TVar<i32>) {
-    atomically(|t| {
-        let old_x = x.read(t)?;
-        let old_y = y.read(t)?;
-        x.write(t, old_x + 1);
-        y.write(t, old_y + 1);
-        Ok(0)
-    });
-}
-\end{lstlisting}
-\end{minipage}
-&
-\begin{minipage}{.52\textwidth}
-\begin{lstlisting}[language=Rust]
-fn oh_no(x: TVar<i32>, y: TVar<i32>) {
-    atomically(|transaction| {
-        if x.read(transaction)? != y.read(transaction)? {
-            loop { /* Cursed Thread */}
-        }
-        Ok(0)
-    });
-}
-\end{lstlisting}
-\end{minipage}
-\end{tabular}
-
- In this silly example, assume initially {\tt x = y}. You may think the
-      code will not go into an infinite loop, but it can.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{STM Summary}
-
-
-     Software Transactional Memory gives another approach to
-      parallelism: \\ \qquad no need to deal with locks and their associated problems.
-
-     Currently slow, but a lot of research is going into improving it. (futile?)
-
-     Operates by either completing an atomic block, or retrying (by rolling
-      back) until it successfully completes.
-
-\end{frame}
 
 
 \end{document}

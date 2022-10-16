@@ -1,6 +1,6 @@
 \input{configuration}
 
-\title{Lecture 17 --- Mostly Data Parallelism }
+\title{Lecture 17 --- Compiler Optimizations }
 
 \author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -13,601 +13,881 @@
 \begin{frame}
   \titlepage
 
- \end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data and Task Parallelism}
-
-  
-     \structure{Data parallelism} is performing \emph{the same} operations on
-      different input.\\
-
-     {\bf Example:} doubling all elements of an array.\\[1em]
-
-     \structure{Task parallelism} is performing \emph{different} operations
-      on different input.
-
-    {\bf Example:} playing a video file: one thread decompresses
-      frames, another renders.
-
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 
 \begin{frame}
-\frametitle{You're Not Using Those Bytes, Are You?}
+\frametitle{Lunch Time, Already?}
 
-Consider the size of an \texttt{i32}... 4 bytes? At least 2...
+``Is there any such thing as a free lunch?''
 
-Array of capacity $N$? That uses $N \times 4$ bytes.
+Compiler optimizations really do feel like a free lunch.
 
-Can we limit the size of the integer? Is 65,535 enough?
+
+But what do{\tt -O} or {\tt -C~opt-level=3} really mean?
+
+
+We'll see some representative compiler optimizations and discuss how
+they can improve program performance. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{You Do Your Job...}
+
+I'll point out cases that stop compilers
+from being able to optimize your code. 
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/havetoshare.png}
+	\includegraphics[width=0.4\textwidth]{images/ducreux.jpg}
 \end{center}
 
 \end{frame}
 
-
 \begin{frame}
-\frametitle{This used to be easier...}
+\frametitle{You Do Your Job...}
 
-The other hidden cost is that of course things that were simple like \texttt{array[i] += 1} is more complicated. 
+In general, it's better if the
+compiler automatically does a performance-improving transformation
+rather than you doing it manually.
 
-\begin{center}
-	\includegraphics[width=0.6\textwidth]{images/hex.jpg}
-\end{center}
-
-What do we do now?
+It's probably a waste of time for
+you and it also makes your code less readable.
 
 \end{frame}
 
 
-\begin{frame}
-\frametitle{Math is Math}
-
-Instead of just \texttt{+=1} we need to calculate the new number to add. 
-
-The interesting part is about how to represent the upper portion of the number.
-
-We can manually break out our calculators or draw a bit vector or think in hexadecimal about how to convert a number if it's more difficult.
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Don't You Forget About Me}
-
-Maybe you think this example is silly because of  Rust's \texttt{i8}/C's \texttt{short}.
-
-You can use this to reduce the size of the array.
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/arrayforants.jpg}
-\end{center}
-
-But then modifying each \texttt{short} in a different instruction defeats the purpose.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Bigger!}
-
-If it's a 64-bit processor there's no reason why you couldn't modify 8 bytes in a single instruction. 
-
-The principle is the same, even if the math is a little more complex.
-
-What we've got here is a poor-person version of Single Instruction Multiple Data (SIMD)...
-
-\end{frame}
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data Parallelism: Single Instruction, Multiple Data}
-
-  
-   SIMD, an overview:
-    \begin{itemize}
-    \item You can load a bunch of data and perform 
-      arithmetic.
-    \item Intructions process multiple data items simultaneously.
-      (Exact number is hardware-dependent).
-    \end{itemize}
-    For x86-class CPUs, MMX and SSE extensions provide SIMD instructions.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{One Command}
-
-SIMD provides an advantage by using a single control unit to command multiple processing units.
-
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/simd.png}
-\end{center}
-
-Example: consider I ask people to erase boards in class...
-
-Only works if we all do the same thing!
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{SIMD Example}
+\frametitle{Flame On!}
 
-  
-  Consider the following code:
+When you want fast binaries, you want to disable debug information and enable compiler optimization.
+
+ You also want link-time optimization (described below) by adding to your \texttt{Cargo.toml}:
+\begin{verbatim}
+    [profile.release]
+    lto = true
+\end{verbatim}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{About Compiler Optimizations}
+
+First of all, ``optimization'' is
+a bit of a misnomer. 
+
+Compilers generally don't generate ``optimal'' code. They generate \emph{better} code.
+
+\begin{center}
+\includegraphics[width=0.7\textwidth]{images/bender.jpg}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Optimization Levels}
+
+\texttt{rustc} to confirm that apart from some vectorization, most of Rust's optimization takes place at the backend LLVM level.
+
+
+The \texttt{-C opt-level} option mostly sets inline limits and passes the requested optimization level to the backend:
+
+\begin{itemize}
+\item    0: no optimizations, also turns on cfg(debug\_assertions).
+\item    1: basic optimizations
+\item    2: some optimizations
+\item     3: all optimizations
+\item    "s": optimize for binary size
+\item    "z": optimize for binary size, but also turn off loop vectorization.
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Understand LLVM}
+ Since Rust leverages LLVM optimizations, it's good to understand those. Many pages on the Internet describe
+optimizations. 
+
+Here's one that contains good examples for C/\CPP; I've translated appropriate cases to Rust in this lecture.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Scalar Optimizations: Constant Folding}
+
+Tag line: ``Why do later something you can do now?''
+
+\begin{center}
+\vspace*{-1em}
+\begin{tabular}{lll}
+i = 1024 * 1024 &
+$\Longrightarrow$ &
+i = 1048576
+\end{tabular}
+\end{center}
+
+\emph{Enabled always.}
+
+The compiler will not emit code that does the multiplication at runtime.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Common Subexpression Elimination}
+
+We can do common subexpression elimination
+when the same expression {\tt x~op~y} is computed more than once. 
+
+Neither {\tt x} nor {\tt y} may change between the two computations. 
+
 
 \begin{lstlisting}[language=Rust]
-pub fn foo(a: &[f64], b: &[f64], c: &mut [f64]) {
-    for ((a, b), c) in a.iter().zip(b).zip(c) {
-        *c = *a + *b;
+    pub fn add(c:i32, d: i32, y:i32, z:i32) -> (i32, i32, i32) {
+        let a = (c + d) * y;
+        let b = (c + d) * z;
+        let w = 3; let x = f(); let y = x;
+        let z = w + y;
+        return (a, b, z);
     }
-}\end{lstlisting}
 
-    In this scenario, we have a regular operation over block data.\\[1em]
+    pub fn f() -> i32 { return 5; }
+\end{lstlisting}
 
-    We could use threads, but we'll use SIMD.
+\noindent \emph{Enabled at level 1.}
 
-  
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+\frametitle{Constant Propagation}
+
+Moves constant values from definition to
+use. 
+
+The transformation is valid if there are no redefinitions of the
+variable between the definition and its use.
+
+ In the above example,
+we can propagate the constant value 3 to its use in {\tt z = w + y},
+yielding {\tt z = 3 + y}.
+
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Copy Propagation}
+
+A bit more sophisticated than constant
+propagation---telescopes copies of variables from their definition to
+their use. 
+
+Using it, we can replace the
+last statement with {\tt z = w + x}. 
+
+If we run both constant and copy
+propagation together, we get {\tt z = 3 + x}.
+
+These scalar optimizations are more complicated in the presence
+of pointers, e.g. {\tt z = *w + y}.
+
+\end{frame}
+
+
 \begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly}
+\frametitle{Redundant Code Optimizations}
 
-We can compile with \texttt{rustc} defaults
-and get something like this as core loop contents:
-\begin{verbatim}
-  movsd   xmm0, qword ptr [rcx]
-  addsd   xmm0, qword ptr [rdx]
-  movsd   qword ptr [rax], xmm0
-\end{verbatim}
-
-This uses the SSE and SSE2 instructions
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly}
-
-  If you additionally specify \texttt{-O}, the compiler generates a number of variants, including this middle one:
-\begin{verbatim}
-  movupd  xmm0, xmmword ptr [rdi + 8*rcx]
-  movupd  xmm1, xmmword ptr [rdi + 8*rcx + 16]
-  movupd  xmm2, xmmword ptr [rdx + 8*rcx]
-  addpd   xmm2, xmm0
-  movupd  xmm0, xmmword ptr [rdx + 8*rcx + 16]
-  addpd   xmm0, xmm1
-  movupd  xmmword ptr [r8 + 8*rcx], xmm2
-  movupd  xmmword ptr [r8 + 8*rcx + 16], xmm0
-\end{verbatim}
-
-The \emph{packed} operations ({\tt p}) operate on multiple data
-elements at a time.
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{SIMD}
-
-The compiler uses SIMD instructions if the target architecture supports it.
-
-We can explicitly invoke the instructions, or use libraries
-
-It is complementary to using threads, and good for cases where loops operate over vectors of data.
-
-SIMD instructions also work well on small data sets, where thread startup
-cost is too high.
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{SIMD Pros and Cons}
-
-A more efficient (= less CPU resources) way to parallelize code than threads.
-
-Data must be 16-byte aligned when loading to/storing from 128-bit registers.\\
-\quad Not required in SSE4.2... if your CPU supports it.
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Alignment}
+Dead code elimination: removes code that is guaranteed to not execute.
 
 \begin{center}
-	\includegraphics[width=0.8\textwidth]{images/superhero-alignment.png}
+	\includegraphics[width=0.3\textwidth]{images/alreadydead.jpg}
 \end{center}
 
-Oh. Not this kind of alignment.
+{\scriptsize
+\begin{center}
+\vspace*{-2em}
+\begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=Rust]
+  pub fn f(x:i32) -> i32 {
+    return x * 2;
+  }
+  \end{lstlisting}
+  \end{minipage} \begin{minipage}{.3\textwidth}
+\begin{lstlisting}[language=Rust]
+  pub fn g() {
+    if f(5) % 2 == 0 {
+      // do stuff...
+    } else {
+      // do other stuff
+    }
+  }
+\end{lstlisting}
+\end{minipage}
+\end{center}
+}
+
+The general problem, as with many other compiler problems, is undecidable.
+
 
 \end{frame}
-
 
 
 \begin{frame}
-\frametitle{Forcing Alignment}
+\frametitle{Loop Optimizations}
 
-Rust will generally align primitives to their sizes. 
+Loop optimizations are particularly profitable when loops execute
+often. 
 
-Under the default representation, Rust promises nothing else about alignment.
+This is often a win, because programs spend a lot of time looping.
 
-You can use the \texttt{repr(packed(N)} or \texttt{repr(align(N)} directives to express constraints on alignment.
+
+The trick is to find which loops are going to be the important ones.
+
+A loop induction variable is a variable that varies on each iteration
+of the loop. 
+
+The loop variable is definitely a loop induction variable
+but there may be others. 
+
+\emph{Induction variable elimination} gets
+rid of extra induction variables.
+
 
 
 \end{frame}
 
+\begin{frame}
+\frametitle{Scalar Replacement}
+
+\emph{Scalar replacement} replaces an array read {\tt a[i]}
+occuring multiple times with a single read {\tt temp = a[i]} and references
+to {\tt temp} otherwise. 
+
+It needs to know that {\tt a[i]} won't change
+between reads.
+
+Rust has array bounds checks, but they can be eliminated if using an iterator.
+
+You would usually iterate on an \texttt{IntoIterator}.
+
+
+\end{frame}
 
 \begin{frame}[fragile]
-\frametitle{Worked SIMD Example}
+\frametitle{Loop Unrolling}
 
-\begin{lstlisting}[language=Rust]
-use simdeez::*;
-use simdeez::scalar::*;
-use simdeez::sse2::*;
-use simdeez::sse41::*;
-use simdeez::avx2::*;
-simd_runtime_generate!(
-// assumes that the input sizes are evenly divisible by VF32_WIDTH
-pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
-  let len = a.len();
-  let mut result: Vec<f32> = Vec::with_capacity(len);
-  result.set_len(len);
-  for i in (0..len).step_by(S::VF32_WIDTH) {
-    let a0 = S::loadu_ps(&a[i]);
-    let b0 = S::loadu_ps(&b[i]);
-    S::storeu_ps(&mut result[0], S::add_ps(a0, b0));
-  }
-  result
-});
+This
+lets the processor run more code without having to branch
+as often. 
 
-fn main() {
-  let a : [f32; 4] = [1.0, 2.0, 3.0, 4.0];
-  let b : [f32; 4] = [5.0, 6.0, 7.0, 8.0];
-  unsafe {
-    println!("{:?}", add_sse2(&a, &b))
+\emph{Software pipelining} is a synergistic optimization,
+which allows multiple iterations of a loop to proceed in parallel.
+
+
+This optimization is also useful for SIMD. Here's an example.
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=Rust]
+    for i in &[1,2,3,4] {
+      f(*i);
+    }
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=Rust]
+f(0); f(1); f(2); f(3);
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Loop Interchange}
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/loop-interchange.jpg}
+\end{center}
+
+Changes the nesting of loops to
+coincide with the ordering of array elements in memory. 
+
+
+\begin{center}
+\vspace*{-1em}
+\begin{minipage}{.39\textwidth}
+  \begin{lstlisting}[language=Rust]
+pub fn mul(mut a: [[i32; 8]; 4], c: i32) {
+  for i in 0..7 {
+     for j in 0..3 {
+       a[j][i] = a[j][i] * c;
+     }
   }
 }
-\end{lstlisting}
-
-
-
+  \end{lstlisting}
+  \end{minipage} $\hspace*{2em} \Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=Rust]
+pub fn mul(mut a: [[i32; 8]; 4], c: i32) {
+  for j in 0..3 {
+    for i in 0..7 {
+      a[j][i] = a[j][i] * c;
+    }
+  }
+}
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+  A stackoverflow answer suggests that Rust is row-major
+  (a[1][1] is beside a[1][2]) but that this is not
+  guaranteed.
+  
 \end{frame}
 
+\begin{frame}[fragile]
+\frametitle{Loop Fusion}
 
-
-\begin{frame}
-\frametitle{Single-Thread Performance}
-
-``Can you run faster just by trying harder?''
-
+This optimization is like the OpenMP collapse
+construct; we transform
 \begin{center}
-\includegraphics[width=0.7\textwidth]{images/theflash.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Single-Thread Performance}
-
-
-Performance improvements to date have \\
-used parallelism
-to improve throughput. 
-
-Decreasing latency is trickier---\\
-often requires domain-specific
-tweaks. 
-
-Today: one example of decreasing latency: \\
-\hspace*{2em} Stream VByte.
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{I have a cunning plan...}
-
-
-
-Even Stream VByte uses parallelism:\\
-\hspace*{2em}vector instructions. 
-
-But there
-are sequential improvements, \\
-e.g. Stream VByte takes care to be predictable
-for the branch predictor.
-
-
-\end{frame}
-\begin{frame}
-\frametitle{Inverted Indexes (like it's CS 137 again!)}
-
-
-
 \vspace*{-1em}
-Abstractly: store a sequence of small integers.
-
-
-Why Inverted indexes?
-
-\hspace*{1cm}allow fast lookups by term;\\
-\hspace*{1cm}support boolean queries combining terms.
-
-
-
-\end{frame}
-\begin{frame}
-\frametitle{Dogs, cats, cows, goats. In ur documents.}
-
-
-\begin{center}
-\begin{tabular}{r|l}
-docid & terms \\ \hline
-1 & dog, cat, cow\\
-2 & cat\\
-3 & dog, goat\\
-4 & cow, cat, goat\\
-\end{tabular}
-\end{center}
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Inverting the Index}
-
-
-Here's the index and the inverted index:
-\begin{center}
-\begin{tabular}{r|l}
-docid & terms \\ \hline
-1 & dog, cat, cow\\
-2 & cat\\
-3 & dog, goat\\
-4 & cow, cat, goat\\
-\end{tabular} \hspace*{2em}
-\begin{tabular}{r|l}
-term & docs \\ \hline
-dog & 1, 3 \\
-cat & 1, 2, 4 \\
-cow & 1, 4 \\
-goat & 3, 4
-\end{tabular}
-\end{center}
-
-Inverted indexes contain many small integers.
-
-Deltas typically small if doc ids are sorted.
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Storing inverted index lists: VByte}
-
-
-\vspace*{-2em}
-VByte uses a variable number of bytes\\
-to store integers.  
-
-Why? Most integers are
-small,\\
-especially on today's 64-bit processors.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{How VByte Works}
-
-
-VByte works like this:
-
-\begin{itemize}
-\item $x$ between 0 and $2^7-1$ (e.g. $17 = 0b10001$):\\
-\hspace*{1em}$0xxx xxxx$, e.g. $0001 0001$;
-\item $x$ between $2^7$ and $2^{14}-1$ (e.g. $1729 = 0b110 11000001$):\\
-\hspace*{1em}                   $1xxx xxxx/0xxx xxxx$ (e.g. $1100 0001/0000 1101$);\\
-\item $x$ between $2^{14}$ and $2^{21}-1$: \\
-\hspace*{1em}$1xxx xxxx/1xxx xxxx/0xxx xxxx$;
-\item etc.
-\end{itemize}
-
-Control bit, or high-order bit, is:\\
-\hspace*{2em}0 once done representing the int,\\
-\hspace*{2em}1 if more bits remain.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Why VByte Helps}
-
-
-Isn't dealing with variable-byte integers harder?\\
-\hspace*{2em} $\bullet$~ Yup!
-
-But perf improves: \\
-\hspace*{2em} $\bullet$~  We are using fewer bits! 
-
-We fit more information into RAM and
-cache, and can get higher throughput. (think inlining)
-
-Storing and reading 0s isn't good use of resources. 
-
-However, a naive algorithm to decode VByte \\
-gives branch mispredicts.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Stream VByte}
-\vspace*{-2em}
-
-Stream VByte: a variant of VByte using SIMD.
-
-
-Science is incremental. \\
-Stream VByte builds on earlier work---\\
-\hspace*{2em}masked VByte, {\sc varint}-GB, {\sc varint}-G8IU. 
-
-Innovation in Stream VByte:\\
-\hspace*{2em}\emph{store the control and data streams separately}.
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Control Stream}
-\vspace*{-4em}
-
-Stream VByte's control stream uses two bits per integer to represent the size of the integer:
-\begin{center}
-\vspace*{-3em}
-\begin{tabular}{ll@{~~~~~~~~}ll}
-00 & 1 byte & 10 & 3 bytes\\
-01 & 2 bytes & 11 & 4 bytes
-\end{tabular}
-\end{center}
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Decoding Stream VByte}
-
-
-Per decode iteration:\\
-\hspace*{2em} reads 1 byte from the control stream,\\
-\hspace*{2em} and 16 bytes of data.
-
-
-Lookup table on control stream byte: decide how many
-bytes it needs out of the 16 bytes it has read.
-
-SIMD instructions: \\
-\hspace*{2em}shuffle the bits each into their own integers. 
-
-Unlike VByte, \\
-Stream VByte uses all 8 bits
-of data bytes as data.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Stream VByte Example}
-
-
-Say control stream contains $0b1000~1100$. \\
-Then the data stream
-contains the following sequence of integer sizes: $3, 1, 4, 1$. 
-
-Out of the 16 bytes read,
-this iteration uses 9 bytes; \\
-\hspace*{2em} $\Rightarrow$ it advances the data pointer by 9. 
-
-The SIMD
-``shuffle'' instruction puts decoded integers from data stream at known positions in the
-128-bit SIMD register.
-
-Pad the first 3-byte integer with 1 byte, then
-the next 1-byte integer with 3 bytes, etc. 
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Stream VByte: Shuffling the Bits}
-\vspace*{-1em}
-
-Say the data input is:\\
-{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. 
-
-The 128-bit output is:\\
-{\tt 0x00f8~23e1/0000~0027/2524 9748/0000~001b}\\
-/s denote separation
-between outputs. 
-
-Shuffle mask is precomputed and
-read from an array.
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=Rust]
+    for i in 0..100 {
+       a[i] = 4;
+    }
+
+    for i in 0..100 {
+       b[i] = 7;
+    }
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=Rust]
+    for i in 0..100 {
+       a[i] = 4;
+       b[i] = 7;
+    }
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
+There's a trade-off between data locality and loop overhead.
+
+Sometimes the inverse transformation, \emph{loop fission}, will
+improve performance.
 
 \end{frame}
 
 \begin{frame}[fragile]
-\frametitle{SIMD Instructions}
+\frametitle{Loop-Invariant Code Motion}
 
+ Also known as \emph{Loop hoisting},
+this optimization moves calculations out of a loop. 
+\begin{center}
 \vspace*{-1em}
+\begin{minipage}{.3\textwidth}
+  \begin{lstlisting}[language=Rust]
+for i in 0..100 {
+    s = x * y;
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
+  \begin{lstlisting}[language=Rust]
+s = x * y;
+for i in 0..100 {
+    a[i] = s * i;
+}
+  \end{lstlisting}
+  \end{minipage}
+  \end{center}
 
-The core of the implementation uses\\
-three SIMD instructions:
-\begin{lstlisting}[language=C]
-  uint8_t C = lengthTable[control];
-  __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
-  __m128i Shuf = _mm_loadu_si128(shuffleTable[control]);
-  Data = _mm_shuffle_epi8(Data, Shuf);
-  databytes += C; control++;
-\end{lstlisting}
+
+This reduces the amount of work we have to do for each iteration of the loop.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Miscellaneous Low-Level Optimizations}
+
+I used to talk about likely/unlikely branch prediction hints,
+but Rust seems not keen to expose this. 
+
+Rust does expose the \verb+#[cold]+
+attribute, which you can use to mark a method as unlikely to be called (e.g. \texttt{panic}).
+
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{But Does It Work?!}
+\frametitle{Architecture-Specific}
 
-\vspace*{-1em}
+LLVM can also generate code tuned to particular
+processors. 
 
-Stream VByte performs better than previous techniques on a realistic input.
+ You can specify this using {\tt  -C target-cpu} and {\tt -C target-feature}.
+
+This will enable specific instructions that not all CPUs support (e.g. SSE4.2).
+
+{\tt native} is a good target CPU if you run and compile on the same machine.
+
+\noindent
+Good to use on your local machine or your cloud servers, not ideal for code you ship to others.
 
 
-Why?
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Interprocedural Analysis and Link-Time Optimizations}
+
+``Are economies of scale real?''
+
+In this context, does a
+whole-program optimization really improve your program?
+
+
+We'll start by first talking about some information that is critical for
+whole-program optimizations.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Alias and Pointer Analysis}
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/redstring.jpg}
+\end{center}
+
+It's all connected!
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Alias and Pointer Analysis}
+
+Compiler optimizations often need
+to know about what parts of memory each statement reads to.  
+
+This is
+easy when talking about scalar variables which are stored on the
+stack. 
+
+This is much harder when talking about pointers or arrays
+(which can alias). 
+
+This is much harder in conventional languages when talking about pointers or arrays, which can alias. 
+
+The whole borrowing thing primarily controls aliasing.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Alias Analysis}
+
+When we know that two pointers don't alias, then we know that their
+effects are independent, so it's correct to move things around.
+
+Controlled aliasing makes it easier to reason about than in other languages.
+
+Shape analysis
+builds on pointer analysis to determine that data structures are indeed
+trees rather than lists.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Call Graph Analysis}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/CallMeMaybe.png}
+\end{center}
+
+Many interprocedural analyses require accurate call graphs. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Call Graph}
+
+
+A \alert{call graph} is a directed graph showing relationships between
+functions. 
+
+It's easy to compute a call graph when you have C-style
+function calls. 
+
+It's much harder when you have virtual methods, as in
+C++ or Java, or even C function pointers. 
+
+In particular, you need pointer
+analysis information to construct the call graph.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Devirtualization}
+
+This optimization attempts to convert virtual function calls to direct calls.  
+
+Virtual method calls have the potential to be slow, because there is effectively a branch to predict. 
+
+(In general for Rust and \CPP, the program must read the object's vtable.) 
+
+Plus, virtual calls impede other optimizations.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Devirtualization}
+
+Compilers can help by doing sophisticated analyses to compute the call graph and by replacing virtual method calls with nonvirtual method calls.  
+
+
+ \begin{lstlisting}[language=Rust]
+     fn flag() -> bool { true }
+
+     fn main() {
+         let mut to: &dyn Foo = &Bar;
+         if flag() { to = &Baz; }
+         to.foo();
+     }
+
+     trait Foo { fn foo(&self) -> i32; }
+
+     struct Bar;
+     impl Foo for Bar {
+         fn foo(&self) -> i32 { println!("bar"); 0 }
+     }
+
+     struct Baz;
+     impl Foo for Baz {
+         fn foo(&self) -> i32 { println!("baz"); 1 }
+     }
+  \end{lstlisting}
+
+Devirtualization could eliminate vtable access; instead, we could just call {\tt Baz.foo()} 
+directly. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Devirtualization}
+
+`Rapid Type Analysis'' analyzes the entire program, observes that
+only {\tt B} objects are ever instantiated, and enables devirtualization
+of the {\tt b.m()} call.
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Inlining}
+
+  
+
+  We have seen the notion of inlining:
+  \begin{itemize}
+    \item Instructs the compiler to just insert the function code in-place,
+      instead of calling the function.
+    \item Hence, no function call overhead!
+    \item Compilers can also do better---context-sensitive---operations they couldn't
+      have done before.
+  \end{itemize}
+  \vfill
+\end{frame}
+
+\begin{frame}
+\frametitle{Inline Commands}
+
+In Rust, you can tell the compiler to inline a function using an annotation:
+\begin{itemize}
+ \item \#[inline] hints the compiler to perform an inline expansion.
+ \item \#[inline(always)] asks the compiler to always perform an inline expansion.
+ \item \#[inline(never)] asks the compiler to never perform an inline expansion.
+\end{itemize}
+
+  
+  No overhead\ldots~ sounds like better performance\ldots~ \\let's inline everything!
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{The Other Side of Inlining}
+
+  
+
+  One big downside:
+  \begin{itemize}
+    \item Your program size is going to increase.
+  \end{itemize}
+   This is worse than you think:
+      \begin{itemize}
+        \item Fewer cache hits.
+        \item More trips to memory.
+      \end{itemize}
+   Some inlines can grow very rapidly (C++ extended constructors).\\[1em]
+  Just from this your performance may go down easily.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Compilers on Inlining}
+
+  
+
+  Inlining is merely a suggestion to compilers.\\
+  They may ignore you.\\[1em]
+
+  For example:
+n  \begin{itemize}
+    \item taking the address of an ``inline'' function and using it; or
+    \item virtual functions (in C++),
+  \end{itemize}
+  will get you ignored quite fast.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{From a Usability Point-of-View}
+
+  
+  Debugging is more difficult (e.g. you can't set a breakpoint in a function that
+  doesn't actually exist).
+  \begin{itemize}
+    \item Most compilers simply won't inline code with debugging symbols on.
+    \item Some do, but typically it's more of a pain.
+  \end{itemize}~\\[1em]
+
+  Library design:
+  \begin{itemize}
+    \item If you change any inline function in your library, any users
+      of that library have to {\bf recompile} their program if the
+      library updates. (non-binary-compatible change!)
+  \end{itemize}
+  Not a problem for non-inlined functions---programs execute the new function
+      dynamically at runtime.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Inlining}
+
+ Compilers can inline following compiler directives, but usually more based on heuristics. 
+ 
+ Devirtualization enables more inlining. 
+ 
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Devirtualization and Inlining}
+
+Obviously, inlining and devirtualization require call graphs. 
+
+But so
+does any analysis that needs to know about the heap effects of
+functions that get called.
+
+
+{\small
+\begin{lstlisting}[language=Rust]
+    static mut N:i32 = 5;
+
+    fn f() { }
+
+    fn main() {
+      unsafe { 
+        N = 2;
+        f();
+        println!("{}", N);  
+      }
+    }
+    \end{lstlisting}
+}
+
+We could propagate the constant value 2 to the print statement,
+as long as we know that {\tt f()} does not write to {\tt N}.
+
+But idiomatic Rust helps us here.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Tail Recursion Elimination}
+
+This optimization is mandatory in some functional languages; we replace a call by a {\tt goto} at the compiler level.
+
+{\small
+\begin{lstlisting}[language=Rust]
+pub fn fibonacci(n: u64) -> u64 {
+    fn fibonacci_lr(n: u64, a: u64, b: u64) -> u64 {
+        match n {
+            0 => a,
+            _ => fibonacci_lr(n - 1, a + b, a),
+        }
+    }
+    fibonacci_lr(n, 1, 0)
+}
+\end{lstlisting}
+}
+Here, \texttt{fibonacci\_lr} doesn't need to return control to its caller
+(because the recursive call is in tail position. 
+
+This avoids function call overhead and reduces call stack use.
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Link-Time Optimization}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/sadzelda.jpg}
+\end{center}
+
+``I've spent a hundred years trying to hold back Calamity Ganon and you've spent your time doing WHAT?''
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Link-Time Optimization}
+
+
+Biggest challenge for interprocedural optimizations = scalability, so 
+it fits right in as a topic of discussion for this course.
+
+An outline of interprocedural optimization:
 
 \begin{itemize}
-\item control bytes are sequential:\\
-\hspace*{1em} CPU can always prefetch the next control byte, \\
-\hspace*{1em} because
-its location is predictable;
-\item data bytes are sequential \\
-\hspace*{1em}and loaded at high throughput;
-\item shuffling exploits the instruction set: \\
-\hspace*{1em}takes 1 cycle;
-\item control-flow is regular \\
-\hspace*{1em}(tight loop which retrieves/decodes control
-\& data;\\
-\hspace*{1em}no conditional jumps).
+\item local generation (parallelizable)
+\item whole-program analysis (hard to parallelize!)
+\item local transformations (parallelizable)
 \end{itemize}
+
 \end{frame}
+
+
+\begin{frame}
+\frametitle{Transformations in Code}
+
+Transformations:
+
+\begin{itemize}
+\item global decisions, local transformations:
+\begin{itemize}
+\item devirtualization
+\item dead variable elimination/dead function elimination
+\item field reordering, struct splitting/reorganization
+\end{itemize}
+\item global decisions, global transformations:
+\begin{itemize}
+\item cross-module inlining
+\item virtual function inlining
+\item interprocedural constant propagation
+\end{itemize}
+\end{itemize}
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Whole Program Analysis}
+
+The interesting issues arise from making the whole-program analysis scalable. 
+
+\begin{verbatim}
+-----------------------------------------------------------
+Language                files        comment           code
+-----------------------------------------------------------
+
+[Chromium] C++          44991        1405276       11102212
+[Firefox] C++           10973         605158        4467943
+[Linux] C               26238        2573558       13092340
+\end{verbatim}
+
+
+Whole-program analysis requires that all of 
+this code (in IR) be available to the analysis \& some summary of the code be in memory,  along with the call graph.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Whole Program Analysis}
+
+\large
+
+
+Whole-program analysis $\Rightarrow$ any part of the program may affect other parts. 
+
+First problem: getting it into memory; loading the IR for tens of millions of lines of code is a non-starter.
+
+
+Clearly, anything that is more expensive than linear time can cause problems. 
+
+Partitioning the program can help.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{gcc Whole Program Analysis}
+
+{\Large How did gcc get better?  Avoiding unnecessary work. }
+
+\begin{itemize}
+\item gcc 4.5: initial version of LTO;
+\item gcc 4.6: parallelization; partitioning of the call graph (put closely-related functions together, approximate functions in other partitions); the bottleneck: streaming in types and declarations;
+\item gcc 4.7--4.9: improve build times, memory usage [``chasing unnecessary data away''.]
+\end{itemize}
+
+Today's gcc, with {\tt -flto}, does work and includes
+optimizations including constant propagation and function
+specialization.
+
+LLVM LTO can, however, optimize across source languages.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{It Works!}
+
+\Large
+
+
+gcc LTO gives $\sim$ 3--5\% perf improvements (good per compiler experts).
+
+
+Developers can shift attention from 
+manual factoring to letting compiler do it.
+
+\end{frame}
+
 
 
 \end{document}

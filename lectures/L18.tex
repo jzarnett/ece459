@@ -1,557 +1,215 @@
-\include{header}
+\input{../common/header}
 
 \begin{document}
 
-\lecture{18 --- Compiler Optimizations}{\term}{Patrick Lam}
+\lecture{18 --- Optimizing the Compiler}{\term}{Patrick Lam}
 
-\section*{Compiler Optimizations}
+\section*{Optimizing the \texttt{rustc} Compiler}
 
-\hfill ``Is there any such thing as a free lunch?''
+Last time, we talked about optimizations that the compiler can do.
+This time, we'll switch our focus to optimizing the compiler itself.
+Dr. Nicholas Nethercote (author of Valgrind and of its associated PhD thesis)
+has written a series of blog posts describing his
+work speeding up the Rust
+compiler~\cite{nethercote20:_how_rust,nethercote19:_how_rust,nethercote19:_rust,nethercote19b:_how_rust}. These
+serve as a good case study for careful optimization work of a large
+system. There are also posts from 2016 and 2018 but we'll focus on the later posts.
+For some context, from the first 2016 post~\cite{nethercote16:_how_rust}:
+\begin{quote}
+Rust is a great language, and Mozilla plans to use it extensively in Firefox. However, the Rust compiler (rustc) is quite slow and compile times are a pain point for many Rust users. Recently I've been working on improving that.
+\end{quote}
 
-Compiler optimizations really do feel like a free lunch.
-But what do {\tt -O} or
-{\tt -C~opt-level=3} really mean?
-We'll see some representative compiler optimizations and discuss how
-they can improve program performance. Because we're talking about
-Programming for Performance, I'll point out cases that stop compilers
-from being able to optimize your code. In general, it's better if the
-compiler automatically does a performance-improving transformation
-rather than you doing it manually; it's probably a waste of time for
-you and it also makes your code less readable. Rust lets you force the compiler to do certain optimizations (inlining) even if it might otherwise think it's a bad idea, which is a good compromise when it works.
+An observation back from 2016:
+\begin{quote}
+Any time you throw a new profiler at any large codebase that hasn't been heavily optimized there's a good chance you'll be able to make some sizeable improvements.
+\end{quote}
 
-\paragraph{Enabling compiler optimization.} When you want fast binaries, you want to disable debug information and enable compiler optimization. Specify \texttt{cargo~-{}-release}. You also want link-time optimization (described below) by adding to your \texttt{Cargo.toml}:
+\subsection*{Measurement Infrastructure}
+
+Nicholas Nethercote is a self-described non-rustc expert. Good news for you: you, too, can improve the
+performance of systems that you didn't design and don't maintain. His approach has been to use a benchmark suite (\texttt{rustc-perf\footnote{\url{https://github.com/rust-lang-nursery/rustc-perf}}})
+and profilers (the Rust heap allocation profiler DHAT, or Dynamic Heap Allocation Tool~\footnote{\url{https://blog.mozilla.org/nnethercote/2019/04/17/a-better-dhat/}} as well as
+\texttt{perf-record} and \texttt{Cachegrind}) to find and eliminate hotspots.
+
+The benchmark suite is run on the \url{https://perf.rust-lang.org/} machine, which is basically
+a continuous integration server that publishes runtimes. That server is essential for tracking performance regressions.
+
+However, the feedback loop through the remote server is too slow. You
+will have a better experience if you run your benchmarks locally on a
+fast computer (which is acceptable for this use case: the machinery is
+representative of typical use). The optimization workflow is to make a
+potential change and then benchmark it. Acceptable changes don't blow
+up runtimes for any benchmarks and reduce runtimes by a couple of
+percents for at least a few benchmarks.
+
+Altogether, between January 2019 and July 2019, the Rust compiler reduced
+its running times by from 20\% to 40\% on the tested benchmarks; from November 2017,
+the number is from 20\% to 60\%. Note that a 75\% time reduction means that the compiler
+is four times as fast.
+
+\paragraph{Benchmark selection.} It's also important to have representative
+benchmarks. We can look at the description of the Rust perf benchmarks\footnote{\url{https://github.com/rust-lang/rustc-perf/tree/master/collector/benchmarks}}
+as of this writing.
+There are three categories:
+\begin{itemize}
+\item ``Real programs that are important:'' The suite includes 15 programs that the community cares about.
+Recall that we are testing compiler performance here.  These
+benchmarks include features that are ``used by many Rust programs'',
+including the commonly-used futures implementation, regular expression
+parser, and command-line argument parser.  So even though the
+command-line parser only affects a negligible part of total Rust
+programs' runtime, it comes up in compiling many of these programs.
+The hello world benchmark is not a real program but it is an
+important lower bound. The web renderer is important to an important Rust stakeholder.
+\item ``Real programs that stress the compiler:'' Here we have 8 edge cases
+that perhaps don't behave like most Rust programs but are important points in its performance
+envelope. For instance, \texttt{encoding} contains large tables, \texttt{keccak} contains many local variables
+and basic blocks, and \texttt{ucd} contains large statics that test the non-lexical lifetimes implementation.
+\item ``Artificial stress tests:'' Many of these 18 small programs are performance regression tests for specific issues that
+have occured in the past (and are sometimes named after the specific issue, e.g. \texttt{issue-46499}.)
+Quadratic or exponential behaviour are problematic if $n$ can grow, and many of the programs here
+reference the problem.
+\end{itemize}
+
+You can see the benchmark runtimes for the most recent run at \url{https://perf.rust-lang.org/status.html}.
+The machine also has a dashboard, and graphs over time (so one can track which commits are responsible for a regression) and the
+ability to compare two runs. The CI machine also various builds starting with different incremental and cache states; to quote:
+\begin{quote}
+The test harness is very thorough. For each benchmark, it measures Debug, Opt, and Check (no code generation) invocations. Furthermore, within each of those categories, it does five or more runs, including a normal build and various kinds of incremental builds. A full benchmarking run measures over 400 invocations of rustc.
+\end{quote}
+
+\paragraph{Data collection.} The main event uses \texttt{perf-stat} to measure compiler runtimes.
+As we know, this tool produces various outputs (wall-clock time, CPU
+instructions, etc) and the site can display them.
+
+% for the slides: https://perf.rust-lang.org/index.html?start=&end=&absolute=true&stat=wall-time
+% https://perf.rust-lang.org/dashboard.html
+
+\texttt{rustc} itself includes some per-pass profiling, enabled with \texttt{-Ztime-passes}. This is
+coarse-grained information and not so helpful for finding smaller hotspots. Cachegrind's instruction
+counts are most useful, and point at \texttt{malloc} and \texttt{free}, whence DHAT.
+
+Briefly about DHAT~\cite{seward10:_fun_dhat}: it aims to find
+pathological memory uses.  Either repeated \texttt{malloc}s of blocks
+that live briefly, or \texttt{malloc}s of blocks that live for the
+entire program lifetime (and are perhaps never used). Understanding
+DHAT is beyond the scope of this lecture.
+
+I'll also point out that custom \texttt{println!} statements can help for all debugging, including
+performance debugging, and the blog posts mention that in passing, although not specific examples.
+He post-processes the print results, so I assume that this is a lot of counting of events.
+
+\subsection*{Case Studies: Micro-optimizations}
+Let's look at a couple of micro-optimizations. Each of these is an example of looking through
+the profiler data, finding a hotspot, making a change, and testing it. We'll talk
+about what we learn from each specific case as well.
+%% https://github.com/rust-lang/rust/issues/59718
+
+\paragraph{memcpy removal.} In the vein of doing less work, there were a number of changes
+which reduced the size of hot structures below 128 bytes, at which point the LLVM backend will
+emit inline code rather than a call to \texttt{memcpy}. So there are two improvements as a result:
+fewer bytes to move, and one less function call.
+Nethercote tracked hot calls to \texttt{memcpy}
+by modifying DHAT to find \texttt{memcpy}.
+
+\paragraph{Type sizes.} You can read about the general strategy of reducing type sizes at \url{https://nnethercote.github.io/perf-book/type-sizes.html} and some specific examples here:
+\begin{itemize}[noitemsep]
+\item ``\href{https://github.com/rust-lang/rust/pull/64302}{\#64302}: This PR shrank the ObligationCauseCode type from 56 bytes to 32 bytes by boxing two of its variants, speeding up many benchmarks by up to 2.6\%.''
+\item ``\href{https://github.com/rust-lang/rust/pull/64394}{\#64394}: This PR reduced the size of the SubregionOrigin type from 120 bytes to 32 bytes by boxing its largest variant, which sped up many benchmarks slightly (by less than 1\%). If you are wondering why this type caused memcpy calls despite being less than 128 bytes, it's because it is used in a BTreeMap and the tree nodes exceeded 128 bytes.''
+\item ``\href{https://github.com/rust-lang/rust/pull/67340}{\#67340}: This PR shrunk the size of the Nonterminal type from 240 bytes to 40 bytes, reducing the number of memcpy calls (because memcpy is used to copy values larger than 128 bytes), giving wins on a few benchmarks of up to 2\%.''
+\end{itemize}
+You tell me: what is the perf tradeoff involved with boxing, i.e. when does it succeed and when does it fail?
+
+\paragraph{Manual application of compiler techniques.} Manually specifying inlining, specialization, and factoring out common expressions:
+\begin{itemize}[noitemsep]
+\item ``\href{https://github.com/rust-lang/rust/pull/64420}{\#64420}: This PR inlined a hot function, speeding up a few benchmarks by up to 2.8\%. The function in question is indirectly recursive, and LLVM will normally refuse to inline such functions. But I was able to work around this by using a trick: creating two variants of the function, one marked with \#[inline(always)] (for the hot call sites) and one marked with \#[inline(never)] (for the cold call sites).''
+\item ``\href{https://github.com/rust-lang/rust/pull/64500}{\#64500}: This PR did a bunch of code clean-ups, some of which helped performance to the tune of up to 1.7\%. The improvements came from factoring out some repeated expressions, and using iterators and retain instead of while loops in some places.''
+\item ``\href{https://github.com/rust-lang/rust/pull/67079}{\#67079}: Last year in \#64545 I introduced a variant of the shallow\_resolved function that was specialized for a hot calling pattern. This PR specialized that function some more, winning up to 2\% on a couple of benchmarks.''
+\item ``\href{https://github.com/rust-lang/rust/pull/69256}{\#69256}: This PR marked with \#[inline] some small hot functions relating to metadata reading and writing, for 1-5\% improvements across a number of benchmarks.''
+\end{itemize}
+Specialization comes up a bunch of other times too.
+
+\paragraph{Removing bad APIs.} \href{https://github.com/rust-lang/rust/pull/60630}{\#60630}: disallows slow symbol-to-string comparisons and forces the use of more consistent symbol-to-symbol comparisons.
+
+\paragraph{Doing less work.} A key optimization technique.
+\begin{itemize}[noitemsep]
+\item {} \href{https://github.com/rust-lang/rust/pull/58210}{\#58210}: This PR changed a hot assertion to run only in debug builds, for a 20\%(!) win on one workload; \url{https://github.com/rust-lang/rust/pull/61612} removed unnecessary ``is it a keyword'' calls for a 7\% win on programs with large constants.
+\item {} ``\href{https://github.com/rust-lang/rust/pull/70837}{\#70837}: There is a function called find\_library\_crate that does exactly what its name suggests. It did a lot of repetitive prefix and suffix matching on file names stored as PathBufs. The matching was slow, involving lots of re-parsing of paths within PathBuf methods, because PathBuf isn't really designed for this kind of thing. This PR pre-emptively extracted the names of the relevant files as strings and stored them alongside the PathBufs, and changed the matching to use those strings instead, giving wins on various benchmarks of up to 3\%.''
+\end{itemize}
+
+Another example of doing less work:
+\begin{quote}
+Then Alex Crichton told me something important: the compiler always produces both object code and bitcode for crates. The object code is used when compiling normally, and the bitcode is used when compiling with link-time optimization (LTO), which is rare. A user is only ever doing one or the other, so producing both kinds of code is typically a waste of time and disk space.
+\end{quote}
+The solution turned out to be somewhat complicated and I won't summarize it here, but yielded improvements of up to 18\%. Note the comment: ``When faced with messy code that I need to understand, my standard approach is to start refactoring.''
+
+\subsection*{Negative Results}
+Sometimes it's more fun to look at things that don't work. Here are a couple of cases.
+\begin{itemize}[noitemsep]
+\item ``I tried drain\_filter in compress. It was slower.''
+\item ``I tried several invasive changes to the data representation, all of which ended up slowing things down.''
+\end{itemize}
+That last change is a case of making the code more complicated and slower. Obviously not a win. Note also the following report:
+\begin{itemize}[noitemsep]
+\item ``\href{https://github.com/rust-lang/rust/pull/69332}{\#69332}: This PR reverted the part of \#68914 that changed the u8to64\_le function in a way that made it simpler but slower. This didn't have much impact on performance because it's not a hot function, but I'm glad I caught it in case it gets used more in the future. I also added some explanatory comments so nobody else will make the same mistake I did!''
+\end{itemize}
+Sometimes making the code simpler is, on second thought, also not a win.
+
+\subsection*{Architecture-level changes}
+Most of the changes we've discussed so far have been local changes that get a couple of
+percent speedup. Let's talk about a couple of larger-scale changes. One of them works
+and the other one doesn't, as of writing.
+
+\paragraph{Pipelined compilation.} In Lecture 10 we talked about the pipeline-of-tasks
+design. Compilers, too, can use this design; the reference is~\cite{nethercote19b:_how_rust}.
+Here we are talking about compiling multi-crate Rust projects. There is a dependency graph,
+and \texttt{cargo} already launches a dependency after all its requisites are met.
+What's important here is that there is a certain point before the end at which \texttt{rustc}
+finishing emitting
+metadata for dependencies. Once that is complete then dependencies can proceed in parallel with the
+requisite. That constitutes pipelining. Here's a picture without pipelining:
 \begin{verbatim}
-    [profile.release]
-    lto = true
+                   metadata            metadata
+          [-libA----|--------][-libB----|--------][-binary-----------]
+          0s        5s       10s       15s       20s                30s
 \end{verbatim}
-
-\paragraph{About Compiler Optimizations.} First of all, ``optimization'' is
-a bit of a misnomer, since compilers generally do not generate ``optimal'' code.
-They just generate \emph{better} code.
-
-Often, what happens is that the program you literally wrote is too slow. The
-contract of the compiler (working with the architecture) is to actually execute
-a program with the same behaviour as yours, but which runs faster.
-
-I looked at \texttt{rustc} to confirm that apart from some vectorization, most of Rust's optimization takes place at the backend LLVM level; the \texttt{-C opt-level} option mostly sets inline limits and passes the requested optimization level to the backend. Here's what the optimization levels mean:
-
+and with:
+\begin{verbatim}
+          [-libA----|--------]
+                    [-libB----|--------]
+                                       [-binary-----------]
+          0s        5s       10s       15s                25s
+\end{verbatim}
+The authors of the patch weren't sure whether it was actually helpful on others' code so they crowdsourced the evaluation
+of a preliminary version\footnote{\url{https://internals.rust-lang.org/t/evaluating-pipelined-rustc-compilation/10199/47}}.
+Here's what they found from the reports (quoting from the crowdsource call):
 \begin{itemize}[noitemsep]
-\item    0: no optimizations, also turns on cfg(debug\_assertions).
-\item    1: basic optimizations
-\item    2: some optimizations
-\item     3: all optimizations
-\item    "s": optimize for binary size
-\item    "z": optimize for binary size, but also turn off loop vectorization.
+\item    ``Across the board there appears to be no regressions. The reductions in build time here I can't reproduce locally and may have been PIPELINING/PIPELINED confusion (sorry!) and may also just be normal variance. In either case there hasn't yet been a reliably reproducible regression!''
+\item    ``Build speeds can get up to almost 2x faster in some cases''
+\item    ``Across the board there's an average 10\% reduction in build times. The standard deviation though is pretty and it seems to confirm that you're either seeing large-ish reductions or very little.''
 \end{itemize}
-
-\paragraph{Reference material.} Since Rust leverages LLVM optimizations, it's good to understand those. Many pages on the Internet describe
-optimizations. Here's one that contains good examples for C/\CPP; I've translated appropriate cases to Rust in this lecture.
-
-$\qquad \qquad$ \url{http://www.digitalmars.com/ctg/ctgOptimizer.html}
-
-If you happen to be working with C/\CPP~in the future, you can find a full list of {\tt gcc} options here:
-
-$\qquad \qquad$ \url{http://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html}
-
-\subsection*{Scalar Optimizations}
-General note: we can use \url{https://godbolt.org/} to investigate what the compiler does. It will be easier to understand if you specify \texttt{-C overflow-checks=n}.
-
-By scalar optimizations, I mean optimizations
-which affect scalar (non-array) operations. Here are some examples.
-
-\paragraph{Constant folding.} Probably the simplest optimization one can think of.
-Tag line: ``Why do later something you can do now?'' We simply translate:
-
-\begin{center}
-\vspace*{-1em}
-\begin{tabular}{lll}
-i = 1024 * 1024 &
-$\Longrightarrow$ &
-i = 1048576
-\end{tabular}
-\end{center}
-
-\noindent \emph{Enabled always.} The compiler will not emit
-code that does the multiplication at runtime. It will simply use the
-computed value.
-
-\paragraph{Common subexpression elimination.} We can do common subexpression elimination
-when the same expression {\tt x op y} is computed more than once, and
-neither {\tt x} nor {\tt y} change between the two computations. In the
-below example, we need to compute {\tt c + d} only once.
-
-
-\begin{lstlisting}[language=Rust]
-    pub fn add(c:i32, d: i32, y:i32, z:i32) -> (i32, i32, i32) {
-        let a = (c + d) * y;
-        let b = (c + d) * z;
-        let w = 3; let x = f(); let y = x;
-        let z = w + y;
-        return (a, b, z);
-    }
-
-    pub fn f() -> i32 { return 5; }
-\end{lstlisting}
-
-\noindent \emph{Enabled at level 1.}
-
-\paragraph{Constant propagation.} Moves constant values from definition to
-use. The transformation is valid if there are no redefinitions of the
-variable between the definition and its use. In the above example,
-we can propagate the constant value 3 to its use in {\tt z = w + y},
-yielding {\tt z = 3 + y}.
-
-\paragraph{Copy propagation.} A bit more sophisticated than constant
-propagation---telescopes copies of variables from their definition to
-their use. This usually runs after CSE. Using it, we can replace the
-last statement with {\tt z = w + x}. If we run both constant and copy
-propagation together, we get {\tt z = 3 + x}.
-
-In C, these scalar optimizations are more complicated in the presence
-of pointers, e.g. {\tt z = *w + y}. Fortunately, we're not talking about C here.
-
-%\paragraph{Scalar Replacement of Aggregates.} Censored. Too many people misunderstood it last year.
-
-\paragraph{Redundant Code Optimizations.} In some sense, most optimizations
-remove redundant code, but one particular optimization is \emph{dead code
-elimination}, which removes code that is guaranteed to not execute.
-For instance:
-
-{\scriptsize
-\begin{center}
-\vspace*{-2em}
-\begin{minipage}{.3\textwidth}
-\begin{lstlisting}[language=Rust]
-  pub fn f(x:i32) -> i32 {
-    return x * 2;
-  }
-  \end{lstlisting}
-  \end{minipage} \begin{minipage}{.3\textwidth}
-\begin{lstlisting}[language=Rust]
-  pub fn g() {
-    if f(5) % 2 == 0 {
-      // do stuff...
-    } else {
-      // do other stuff
-    }
-  }
-\end{lstlisting}
-\end{minipage}
-\end{center}
-}
-We see that the then-branch in {\tt g()} is always going to execute, and the
-else-branch is never going to execute.
-The general problem, as with many other compiler problems, is undecidable. Let's not get too caught up in the semantics of the \textit{Entscheidungsproblem}, even if you do speak German and like to show it off by pronouncing that word correctly.
-
-\subsection*{Loop Optimizations}
-Loop optimizations are often a win, because programs spend a lot of time looping. They are particularly profitable for loops with high iteration counts.
-The trick is to find which loops those are.
-Profiling is helpful.
-
-A loop induction variable is a variable that varies on each iteration
-of the loop; a \texttt{for} loop variable is definitely a loop induction variable,
-but there may be others, which may be functions computable from a primary induction variable. \emph{Induction variable elimination} finds and eliminates (of course!) extra induction variables.
-
-\emph{Scalar replacement} replaces an array read {\tt a[i]}
-occuring multiple times with a single read {\tt temp = a[i]} and references
-to {\tt temp} otherwise. It needs to know that {\tt a[i]} won't change
-between reads.
-
-Sane languages include array bounds checks, and loop optimizations
-can eliminate array bounds checks if they can prove that the loop
-never iterates past the array bounds. This doesn't come up in
-idiomatic Rust because you would usually iterate on an
-\texttt{IntoIterator}. Language design for the win.
-
-\paragraph{Loop unrolling.} This optimization
-lets the processor run more code without having to branch
-as often. \emph{Software pipelining} is a synergistic optimization,
-which allows multiple iterations of a loop to proceed in parallel.
-This optimization is also useful for SIMD. Rust does this. Here's an example.
-\begin{center}
-\vspace*{-1em}
-\begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=Rust]
-    for i in &[1,2,3,4] {
-      f(*i);
-    }
-  \end{lstlisting}
-  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=Rust]
-f(0); f(1); f(2); f(3);
-  \end{lstlisting}
-  \end{minipage}
-  \end{center}
-
-\paragraph{Loop interchange.} This optimization can give big wins
-for caches (which are key); it changes the nesting of loops to
-coincide with the ordering of array elements in memory. Although Rust
-supports 2-dimensional arrays, it looks like it can be idiomatic Rust to index
-manually (i.e. \texttt{[i*N+j]}) or to use a crate to do it for you, e.g.
-\texttt{ndarray}.
-For instance:
-\begin{center}
-\vspace*{-1em}
-\begin{minipage}{.39\textwidth}
-  \begin{lstlisting}[language=Rust]
-pub fn mul(mut a: [[i32; 8]; 4], c: i32) {
-    for i in 0..7 {
-        for j in 0..3 {
-            a[j][i] = a[j][i] * c;
-        }
-    }
-}
-  \end{lstlisting}
-  \end{minipage} $\hspace*{2em} \Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=Rust]
-pub fn mul(mut a: [[i32; 8]; 4], c: i32) {
-    for j in 0..3 {
-        for i in 0..7 {
-            a[j][i] = a[j][i] * c;
-        }
-    }
-}
-  \end{lstlisting}
-  \end{minipage}
-  \end{center}
-  A stackoverflow answer suggests that Rust is row-major
-  (a[1][1] is beside a[1][2]) but that this is not
-  guaranteed: {\scriptsize \url{https://stackoverflow.com/questions/37316336/is-rust-multi-dimensional-array-row-major-and-tightly-packed}}. OpenGL, on the other hand, is supposedly column-major.
-
-Strangely enough, sometimes you want to do things the column-major way even though it's ``wrong''. If your two dimensional array is of an appropriate size then by intentionally hitting things in the ``wrong'' order, you'll trigger all your page faults up front and load all your pages into cache and then you can go wild. This was suggested as a way to make matrix multiplication faster for a sufficiently large matrix\ldots
-
-\paragraph{Loop fusion.} Here, we transform
-\begin{center}
-\vspace*{-1em}
-\begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=Rust]
-    for i in 0..100 {
-       a[i] = 4;
-    }
-
-    for i in 0..100 {
-       b[i] = 7;
-    }
-  \end{lstlisting}
-  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=Rust]
-    for i in 0..100 {
-       a[i] = 4;
-       b[i] = 7;
-    }
-  \end{lstlisting}
-  \end{minipage}
-  \end{center}
-There's a trade-off between data locality and loop overhead; hence,
-sometimes the inverse transformation, \emph{loop fission}, will
-improve performance.
-
-\paragraph{Loop-invariant code motion.} Also known as \emph{loop hoisting},
-this optimization moves calculations out of a loop. 
-\begin{center}
-\vspace*{-1em}
-\begin{minipage}{.3\textwidth}
-  \begin{lstlisting}[language=Rust]
-for i in 0..100 {
-    s = x * y;
-    a[i] = s * i;
-}
-  \end{lstlisting}
-  \end{minipage} $\Longrightarrow \hspace*{2em}$ \begin{minipage}{.4\textwidth}
-  \begin{lstlisting}[language=Rust]
-s = x * y;
-for i in 0..100 {
-    a[i] = s * i;
-}
-  \end{lstlisting}
-  \end{minipage}
-  \end{center}
-
-This reduces the amount of work we have to do for each iteration of the loop.
-
-
-\subsection*{Miscellaneous Low-Level Optimizations}
-Some optimizations affect low level code generation; here are the ones that
-{\tt rustc} can do.
-
-\paragraph{Cold.} I used to talk about likely/unlikely branch prediction hints,
-but Rust seems not keen to expose this. Rust does expose the \verb+#[cold]+
-attribute, which you can use to mark a method as unlikely to be called (e.g. \texttt{panic}).
-
-\paragraph{Architecture-Specific.} LLVM can generate code tuned to particular
-processors and processor variants (by using instructions available for certain processors,
-and by modifying the cost model). You can specify this using {\tt
-  -C target-cpu} and {\tt -C target-feature}.
-This will enable specific instructions that not all CPUs support (e.g. SSE4.2).
-{\tt native} is a good target CPU if you're running where you compile.
-See~\cite{wilcox20:_target_featur_target_cpu_rust}
-for a more detailed discussion. 
-
-\noindent
-Good to use on your local machine or your cloud servers, not ideal for code you ship to others.
-
-
-\section*{Interprocedural Analysis and Link-Time Optimizations}
-\hfill ``Are economies of scale real?''
-
-In this context, does a
-whole-program optimization really improve your program?
-We'll start by first talking about some information that is critical for
-whole-program optimizations. They are much less of an issue for Rust but
-you may well be programming in C or \CPP~someday soon.
-
-\subsection*{Alias and Pointer Analysis}
-I made passing references above to the fact that compiler optimizations often need
-to know about what parts of memory each statement accesses---things like ``neither
-{\tt x} nor {\tt y} change''. This is
-easy to establish when talking about scalar variables which are stored on the
-stack. This is much harder in conventional languages when talking about pointers or arrays, which can alias. The whole borrowing thing primarily controls aliasing.
-
-\emph{Alias analysis} helps by declaring that a
-given variable {\tt p} does not alias another variable {\tt q}; that
-is, they point to different heap locations. \emph{Pointer analysis}
-abstractly tracks what regions of the heap each variable points to.
-A region of the heap may be the memory allocated at a particular
-program point.
-
-When we know that two pointers don't alias, then we know that their
-effects are independent, so it's correct to move things around.
-This also helps in reasoning about side effects and enabling reordering.
-
-We've talked about automatic parallelization previously in this course.
-In Rust, controlled aliasing makes automatic parallelization much more tractable.
-Shape analysis
-builds on pointer analysis to determine that data structures are indeed
-trees rather than lists.
-
-For a Rust-centric discussion: \url{https://doc.rust-lang.org/nomicon/aliasing.html}.
-
-\paragraph{Call Graphs.} Many interprocedural analyses require accurate
-call graphs. A call graph is a directed graph showing relationships between
-functions. It's easy to compute a call graph when you have C-style
-function calls. It's much harder when you have virtual methods, as in
-\CPP~or Java, or even C function pointers. In particular, you need pointer
-analysis information to construct the call graph. For Rust, indirect function
-calls (function pointers) and dynamic dispatch through traits are challenges
-to call graph construction\footnote{\url{https://blog.japaric.io/stack-analysis-2/}}.
-
-\paragraph{Devirtualization.} This optimization attempts to convert
-virtual function calls to direct calls.  Virtual method calls have the
-potential to be slow, because there is effectively a branch to
-predict. If the branch prediction goes well, then it doesn't impose
-more runtime cost. However, the branch prediction might go poorly.  (In
-general for both Rust and \CPP, the program must read the object's vtable.) Plus, virtual
-calls impede other optimizations. Compilers can help by doing
-sophisticated analyses to compute the call graph and by replacing
-virtual method calls with nonvirtual method calls.  Consider the
-following code\footnote{Inspired by code in previous footnote.}:
-  \begin{lstlisting}[language=Rust]
-     fn flag() -> bool { true }
-
-     fn main() {
-         let mut to: &dyn Foo = &Bar;
-         if flag() { to = &Baz; }
-         to.foo();
-     }
-
-     trait Foo { fn foo(&self) -> i32; }
-
-     struct Bar;
-     impl Foo for Bar {
-         fn foo(&self) -> i32 { println!("bar"); 0 }
-     }
-
-     struct Baz;
-     impl Foo for Baz {
-         fn foo(&self) -> i32 { println!("baz"); 1 }
-     }
-  \end{lstlisting}
-Devirtualization could eliminate vtable access; instead, we could just call {\tt Baz.foo()} 
-directly. By the way, ``Rapid Type Analysis'' (applied to \CPP, not sure if it's used in Rust)
-analyzes the entire program, could hypothetically observe that
-only {\tt Baz} objects are ever instantiated (not true here), and would in that case
-enable devirtualization
-of the {\tt to.foo()} call.
-
-\paragraph{Inlining.} We have seen the notion of inlining:
-  \begin{itemize}[noitemsep]
-    \item Instructs the compiler to just insert the function code in-place,
-      instead of calling the function.
-    \item Hence, no function call overhead!
-    \item Compilers can also do better---context-sensitive---operations they couldn't
-      have done before.
-  \end{itemize}
-
-In Rust, you can tell the compiler to inline a function using an annotation:
-\begin{itemize}[noitemsep]
- \item \#[inline] hints the compiler to perform an inline expansion.
- \item \#[inline(always)] asks the compiler to always perform an inline expansion.
- \item \#[inline(never)] asks the compiler to never perform an inline expansion.
-\end{itemize}
-
-OK, so inlining removes overhead. Sounds like better performance! Let's inline everything!
-
-
-\paragraph{The Other Side of Inlining.}
-Inlining has one big downside:
-  \begin{itemize}
-    \item Your program size is going to increase.
-  \end{itemize}
-   This is worse than you think:
-      \begin{itemize}[noitemsep]
-        \item Fewer cache hits.
-        \item More trips to memory.
-      \end{itemize}
-   Some inlines can grow very rapidly.
-  Just from this your performance may go down easily.
-
-  Note also that inlining is merely a suggestion to compilers~\cite{gcc:inlining}.
-  They may ignore you.
-  For C/\CPP:
-  \begin{itemize}[noitemsep]
-    \item taking the address of an ``inline'' function and using it; or
-    \item virtual functions (in \CPP),
-  \end{itemize}
-  will get you ignored quite fast.
-
-\paragraph{Implications of inlining.} Inlining can make your life worse in two ways.
-First, debugging is more difficult (e.g. you can't set a breakpoint in a function that
-  doesn't actually exist).
- Most compilers simply won't inline code with debugging symbols on.
- Some do, but typically it's more of a pain.
-
-Second, it can be a problem for library design:
-  \begin{itemize}[noitemsep]
-    \item If you change any inline function in your library, any users
-      of that library have to {\bf recompile} their program if the
-      library updates. (Congratulations, you made a non-binary-compatible change!)
-  \end{itemize}
-This would not be a problem for non-inlined functions---programs execute the new function
-dynamically at runtime.
-
-Obviously, inlining and devirtualization require call graphs. But so
-does any analysis that needs to know about the heap effects of
-functions that get called; for instance, consider this obviously terrible Rust code:
-
-{\small
-\begin{lstlisting}[language=Rust]
-    static mut N:i32 = 5;
-
-    fn f() { }
-
-    fn main() {
-      unsafe { 
-        N = 2;
-        f();
-        println!("{}", N);  
-      }
-    }
-    \end{lstlisting}
-}
-We could propagate the constant value 2 to the print statement,
-as long as we know that {\tt
-f()} does not write to {\tt N}. But idiomatic Rust helps us
-here. If \texttt{N} was instead some memory location $o$ with a unique
-pointer to it, then we would know whether or not \texttt{f()} has
-access to that unique pointer (and, in particular, there wouldn't exist some other
-pointer also pointing to $o$). For a shared object, we check whether the callee
-requests write permission to any object. In any case, we're less likely to have random
-state hanging around that may or may not be accessed by a function.
-
-\paragraph{Tail Recursion Elimination.} This optimization is mandatory
-in some functional languages; we replace a call by a {\tt goto} at the
-compiler level. It is not mandatory in C/\CPP/Rust.
-Consider this example\footnote{\url{https://stackoverflow.com/questions/59257543/when-is-tail-recursion-guaranteed-in-rust}}:
-
-{\small
-\begin{lstlisting}[language=Rust]
-pub fn fibonacci(n: u64) -> u64 {
-    fn fibonacci_lr(n: u64, a: u64, b: u64) -> u64 {
-        match n {
-            0 => a,
-            _ => fibonacci_lr(n - 1, a + b, a),
-        }
-    }
-    fibonacci_lr(n, 1, 0)
-}
-\end{lstlisting}
-}
-
-Here, \texttt{fibonacci\_lr} doesn't need to return control to its caller
-(because the recursive call is in tail position, i.e. the last thing that happens
-in the function). This avoids
-function call overhead and reduces call stack use.
-
-\section*{Link-Time Optimizations}
-Next up: mechanics of interprocedural optimizations in modern open-source
-compilers. Conceptually, interprocedural optimizations have been well-understood
-for a while. But practical implementations in open-source compilers are still
-relatively new; Hubi\v{c}ka~\cite{hubicka14:_linkt_gcc} summarizes recent history.
-In 2004, the only real interprocedural optimization in gcc was inlining, and it was
-quite ad-hoc.
-
-The biggest challenge for interprocedural optimizations is scalability, so 
-it fits right in as a topic of discussion for this course.
-Here's an outline of how it works:
-\begin{itemize}[noitemsep]
-\item local generation (parallelizable): compile to Intermediate Representation. Must generate compact
-IR for whole-program analysis phase.
-\item whole-program analysis (hard to parallelize!): create call graph, make transformation decisions. Possibly partition
-the program.
-\item local transformations (parallelizable): carry out transformations to local IRs, generate object code.
-Perhaps use call graph partitions to decide optimizations. 
-\end{itemize}
-There were a number of conceptually-uninteresting implementation
-challenges to be overcome before gcc could have its intermediate code available for
-interprocedural analysis (i.e. there was no stable on-disk IR format). The transformations look like this:
-\begin{itemize}[noitemsep]
-\item global decisions, local transformations:
-\begin{itemize}[noitemsep]
-\item devirtualization
-\item dead variable elimination/dead function elimination
-\item field reordering, struct splitting/reorganization
-\end{itemize}
-\item global decisions, global transformations:
-\begin{itemize}[noitemsep]
-\item cross-module inlining
-\item virtual function inlining
-\item interprocedural constant propagation
-\end{itemize}
-\end{itemize}
-The interesting issues arise from making the whole-program analysis scalable. Firefox, the Linux kernel,
-and Chromium contain tens of millions of lines of code. Whole-program analysis requires that all of 
-this code (in IR) be available to the analysis and that at least some summary of the code be in memory, 
-along with the call graph.
-(Since it's a whole-program analysis, any part of the program may affect other parts). The first problem
-is getting it into memory; loading the IR for tens of millions of lines of code is a non-starter.
-Clearly, anything that is more expensive than linear time can cause problems. Partitioning the program
-can help.
-
-How did gcc get better?
-Hubi\v{c}ka~\cite{hubicka15:_link_gcc} explains how. In line with what I've said earlier, it's
-avoiding unnecessary work.
-\begin{itemize}[noitemsep]
-\item gcc 4.5: initial version of LTO;
-\item gcc 4.6: parallelization; partitioning of the call graph (put closely-related functions together, approximate functions in other partitions); the bottleneck: streaming in types and declarations;
-\item gcc 4.7--4.9: improve build times, memory usage [``chasing unnecessary data away''.]
-\end{itemize}
-As far as I can tell, today's gcc, with {\tt -flto}, does work and includes
-optimizations including constant propagation and function
-specialization. LLVM and Rust's use of it also include various flavours of LTO.
-I couldn't find much information about happens specifically for Rust; I'd expect the
-LLVM details below to apply. LLVM LTO can, however,
-optimize across source languages, i.e. if your program contains both C and Rust,
-the compiler and linker can optimize both using the intermediate representation.
-
-\paragraph{Impact.} gcc LTO appears to give 3--5\% improvements in performance, which compiler experts consider good.
-Like we discussed last time, this allows developers to shift their attention from 
-manual factoring of translation units to letting the compiler do it. (This is kind of like going
-from manual transmissions to automatic transmissions for cars\ldots).
-
-The LLVM project provides more details at~\cite{project17:_llvm_link_time_optim}, while gcc details
-can be found at~\cite{novillo09:_linkt}.
-
-%\url{https://gcc.gnu.org/wiki/LightweightIpo}
+Specifically, the compiler-side changes required were\footnote{\href{https://github.com/rust-lang/rust/issues/58465}{\#58465}}: (1) ability to produce an rlib (archive with object code, compressed bytecode, and metadata) with only meta files for dependencies
+(as opposed to when producing a full linkable artifact); and (2) ability to signal to cargo that meta file is created
+(implemented using a JSON message from \texttt{rustc} to \texttt{cargo})\footnote{PS: more detailed design discussion here: \url{https://rust-lang.github.io/compiler-team/working-groups/pipelining/NOTES/}.}
+
+\paragraph{Linking.}
+``I found that using LLD as the linker when building rustc itself
+reduced the time taken for linking from about 93 seconds to about 41
+seconds.''  I'm not sure of the total time here, but it looks like
+linking takes 20 minutes, or 1200 seconds, on the CI infrastructure. A
+50 second change is about 2.5\%, so a reasonable proportion of the
+total; it is a larger proportion for incremental builds, and described
+as ``a huge \% of the compile''. But that change is blocked by
+not-\texttt{rustc} design
+problems\footnote{\url{https://github.com/rust-lang/rust/issues/39915\#issuecomment-618726211}},
+especially across platforms (there is no macOS lld linker backend that
+works).  And the linker on Linux/Unix has to be invoked through the
+system C compiler, and specifying a specific linker is only possible
+for some C compilers (if gcc, then at least 9).
+
+What am I saying here? A useful tip for these two optimizations just
+above: ``Don't have tunnel vision'', i.e. look at the broader context
+and where you can really make a difference.
 
 \input{bibliography.tex}
 
