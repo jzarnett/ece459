@@ -25,7 +25,7 @@ tex_lectures = sorted(list(filter(lambda x: '.tex' in x and len(x) == 7, files))
 
 buf = ''
 
-with open('header.tex', 'r') as f:
+with open('../common/header.tex', 'r') as f:
     buf = f.read()
 
 # Replace header
@@ -40,7 +40,7 @@ for (index, file) in enumerate(tex_lectures):
         with open(file, 'r') as f:
             s = f.read()
             # Remove include header
-            s = s.replace('\\include{header}', '')
+            s = s.replace('\\input{../common/header}', '')
 
             # Add table of contents if first notes read
             if (index == 0):
