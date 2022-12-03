@@ -2,129 +2,234 @@
 
 \begin{document}
 
-\lecture{29 --- Profiling and Scalability}{\term}{Jeff Zarnett}
+\lecture{29 --- Liar, Liar}{\term}{Patrick Lam \& Jeff Zarnett}
 
-\section*{Profiling and Scalability}
+I was thinking today about how humans are quite adept at building and
+using tools (though not
+unique\footnote{https://www.rnz.co.nz/news/national/366747/clever-kea-using-tools-to-raid-traps}). Profilers
+are useful tools, but they can mislead you.  If you understand how
+profilers work, you can avoid being misled.
 
-Following the discussion of profiling, we should take some time to understand performance and scalability. Recall that what we want in scalability is that we can take our software from 1 user to 100 to 10 million. Finishing work faster helps, but it's not the only way. So to scale up, we probably need to do some profiling to find out what's slow, but we have some things we need to worry about when we want to get away from just working on our dev machines and into big numbers of users.
+As we've been saying this week, there are sampling-based and instrumentation-based profilers.
+The tl;dr is that a sampling-based profiler can miss things, while an instrumentation-based
+profiler distorts the system under observation.
 
-So we should respect the following principles, as outlined in~\cite{swps}.
-
-\paragraph{Hardware Principle.} 
-Scalability testing is very different from  QA testing (as if you actually test your code!) in that you will do development and QA on your local computer and all you really care about is whether the program produces the correct output ``fast enough''. That's fine, but it's no way to test if it scales. If you actually want to test for scalability and real world performance, you should be doing it on the machines that are going to run the program in the live environment. Why? Well, low-end systems have very different limiting factors. You might be limited by the 4GB of RAM in your laptop and that would go away in the 64GB of RAM server you're using. So you might spend a great deal of time worrying about RAM usage when it turns out it doesn't matter.
-
-\paragraph{Reality Principle.}
-It would be a good idea to use a ``real'' workload, as much as one can possibly simulate. Legal reasons might prevent you from using actual customer data, but you should be trying to use the best approximation of it that you have. If you only generate some test data, you may not accurately represent the way the users are going to behave the system. Your test set run summary reports occasionally... your users might run them every hour. 
-
-\paragraph{Volume Principle.}
-``More is the new more.'' It's okay to use lighter workloads for regression testing and things like that, but if you actually want to see how your system performs under pressure, you actually need to put it under pressure. You can simulate pressure by limiting RAM or running something very CPU-intensive concurrently, but it's just not the same.
-
-These tests, incidentally, are of great interest to the customers, who would like to know that you can deliver. 
-
-\paragraph{Reproducibility and Regression Testing.}
-Your results will need to be reproducible. Remember that good programming practice says that unit tests should be run, and re-run to make sure it all works. The same is true in your performance tests. Just as we don't want to see old bugs cropping up again, old (solved) performance issues are not nice to see either. Or a new change that slows the whole program down is not a success either. So please, have regression testing and performance regression testing. Real-life example: \href{https://arewefastyet.com}{arewefastyet.com} tracks regressions/improvements in Firefox perf.
-
-\section*{Characterizing Performance \& Scalability Problems}
-
-\begin{quote}
-\textit{It is a capital mistake to theorize before one has data. Insensibly one begins to twist facts to suit theories, instead of theories to suit facts.}
-\end{quote}
-\hfill - Sherlock Holmes (\textit{A Scandal in Bohemia}; Sir Arthur Conan Doyle)
-
-Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before reaching conclusions. At a high level we probably have four potential culprits to start with:
-\begin{enumerate}
-	\item CPU
-	\item Memory
-	\item Disk
-	\item Network
-\end{enumerate}
-
-These are, obviously, more categories than specific causes, but they are starting points for further investigation. They are listed in some numerical order, but there is no reason why one would have to investigate them in the order defined there.
-
-CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that used to donate its free CPU cycles to world community grid (I'm singlehandedly saving the world, you see.):
-
-\begin{verbatim}
-top - 07:28:19 up 151 days, 23:38,  8 users,  load average: 0.87, 0.92, 0.91
-\end{verbatim}
-
-Those last three numbers are the one, five, and fifteen minute averages of CPU load, respectively. Lower numbers mean less CPU usage and a less busy machine. A small guide on how to interpret this, from~\cite{scout}.
-
-Picture a single core of a CPU as a lane of traffic. You are a bridge operator and so you need to monitor how many cars are waiting to cross that bridge. If no cars are waiting, traffic is good and drivers are happy. If there is a backup of cars, then there will be delays. Our numbering scheme corresponds to this:
-
-\begin{enumerate}
-	\item 0.00 means no traffic (and in fact anything between 0.00 and 0.99) means we're under capacity and there will be no delay.
-	\item 1.00 means we are exactly at capacity. Everything is okay, but if one more car shows up, there will be a delay.
-	\item Anything above 1.00 means there's a backup (delay). If we have 2.00 load, then the bridge is full and there's an equal number of cars waiting to get on the bridge. 
-\end{enumerate}
-
-Or, visually, also from~\cite{scout}:
-
+Visually, sampling-based profiling can do this:
 \begin{center}
-	\includegraphics[width=0.55\textwidth]{images/car-analogy.png}
+	\url{https://www.youtube.com/watch?v=jQDjJRYmeWg}
 \end{center}
 
-Being at or above 1.00 isn't necessarily bad, but you should be concerned if there is consistent load of 1.00 or above. And if you are below 1.00 but getting close to it, you know how much room you have to scale things up -- if load is 0.4 you can increase handily. If load is 0.9 you're pushing the limit already. If load is above 0.70 then it's probably time to investigate. If it's at 1.00 consistently we have a serious problem. If it's up to 5.00 then this is a red alert situation.
+The video's not fake; it's a real helicopter and it's really flying. What's happening, however, is that the camera is taking images at some multiple of the frequency of the blade rotation speed so it gives the illusion that the blades are not spinning at all. This is a sampling problem, and you see the same problem in car commercials on TV where it looks like the wheels are spinning backwards. They're not, but the sampling effect of the camera can make it look that way.
 
-Now this is for a single CPU -- if you have a load of 3.00 and a quad core CPU, this is okay. You have, in the traffic analogy, four lanes of traffic, of which 3 are being used to capacity. So we have a fourth lane free and it's as if we're at 75\% utilization on a single CPU.
+The main assumptions underlying sampling are that samples are ``random'' and that the sample distribution approximates the actual time-spent distribution\footnote{Lifted from ``Profilers are Lying Hobbitses'', \url{https://www.infoq.com/presentations/profilers-hotspots-bottlenecks/}, which talks about profiling for JVMs.}.
 
+\section*{Lies from Metrics}
+While app-specific metrics can lie too, mostly we'll talk about CPU
+perf counters today.
+In particular, we're going to look at two types of sampling-based lies.
 
-Next on the list is memory. One way to tell if memory is the limiting factor is actually to look at disk utilization. If there is not enough RAM in the box, there will be swapping and then performance goes out the window and scalability goes with. That is of course, the worst case. You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
+The reference for the first type of lie is a blog post by Paul Khuong~\cite{metrics}.
 
-\begin{verbatim}
-KiB Mem:   8167736 total,  6754408 used,  1413328 free,   172256 buffers
-KiB Swap:  8378364 total,  1313972 used,  7064392 free.  2084336 cached Mem
-\end{verbatim}
+This goes back to {\tt mfence}, which we've seen before. It is used, for instance, in
+spinlock implementations. Khuong found that his profiles said that spinlocking didn't take much time.
+But empirically: eliminating spinlocks = better than expected! Hmm.
 
-This can be misleading though, because memory being ``full'' does not necessarily mean anything bad. It means the resource is being used to its maximum potential, yes, but there is no benefit to keeping a block of memory open for no reason. Things will move into and out of memory as they need to, and nobody hands out medals to indicate that you did an awesome job of keeping free memory. It's not like going under budget in your department for the year.  Also, memory is not like the CPU; if there's nothing for the CPU to do, it will just idle (or go to a low power state, which is nice for saving the planet). But memory won't ``forget'' data if it doesn't happen to be needed right now - data will hang around in memory until there is a reason to move or change it. So freaking out about memory appearing as full is kind of like getting all in a knot about how ``System Idle Process'' is hammering the CPU\footnote{Yes, a tech journalist named John Dvorak really wrote an article about this, and I will never, ever forgive him for it.}.
-
-You can also ask about page faults, with the command \texttt{ps -eo min\_flt,maj\_flt,cmd} which will give you the major page faults (had to fetch from disk) and minor page faults (had to copy a page from another process). The output of this is too big even for the notes, but try it yourself (or I might be able to do a demo of it in class). But this is lifetime and you could have a trillion page faults at the beginning of your program and then after that everything is fine. What you really want is to ask Linux for a report on swapping:
-
-\begin{verbatim}
-jz@Loki:~$ vmstat 5
-procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----
- r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
- 1  0 1313972 1414600 172232 2084296    0    0     3    39    1    1 27  1 72  0  0
- 0  0 1313972 1414476 172232 2084296    0    0     0    21  359  735 19  0 80  0  0
- 0  0 1313972 1414656 172236 2084228    0    0     0   102  388  758 22  0 78  0  0
- 4  0 1313972 1414592 172240 2084292    0    0     0    16  501  847 33  0 67  0  0
- 0  0 1313972 1412028 172240 2084296    0    0     0     0  459  814 29  0 71  0  0
-\end{verbatim}
-
-In particular, the columns ``si'' (swap in) and ``so'' (swap out) are the ones to pay attention to. In the above example, they are all zero. That is excellent and tends to indicate that we are not swapping to disk and that's not the performance limiting factor. Sometimes we don't get that situation. A little bit of swapping may be inevitable, but if we have lots of swapping, we have a very big problem. Here's a not-so-nice example, from~\cite{vmstat}:
-
-\begin{verbatim}
-  procs                      memory    swap          io     system cpu
-r  b  w   swpd   free  buff cache  si  so   bi   bo   in    cs us  sy  id
-. . .
-1  0  0  13344   1444  1308 19692   0 168  129   42 1505   713 20  11  69
-1  0  0  13856   1640  1308 18524  64 516  379  129 4341   646 24  34  42
-3  0  0  13856   1084  1308 18316  56  64   14    0  320  1022 84   9   8
-\end{verbatim}
-
-If we're not doing significant swapping, then memory isn't holding us back, so we can conclude it is not the limiting factor in scaling the application up. On to disk.
-
-Looking at disk might seem slightly redundant if memory is not the limiting factor. After all, if the data were in memory it would be unnecessary to go to disk in the first place. Still, sometimes we can take a look at the disk and see if that is our bottleneck.
+The next step is (as we do in this course) to create microbenchmarks to better understand what's
+going on. The microbenchmark contained memory accesses to uncached locations, or computations,
+surrounded by store pairs/mfence/locks. He used perf to evaluate the impact of mfence vs lock.
+You'll recall that perf is sampling-based and records how often the CPU is found executing each
+instruction.
 
 {\scriptsize
-\begin{verbatim}
-jz@Loki:~$ iostat -dx /dev/sda 5 
-Linux 3.13.0-24-generic (Loki) 	16-02-13 	_x86_64_	(4 CPU)
-
-Device:         rrqm/s   wrqm/s     r/s     w/s    rkB/s    wkB/s avgrq-sz avgqu-sz   await r_await w_await  svctm  %util
-sda               0.24     2.78    0.45    2.40    11.60   154.98   116.91     0.17   61.07   11.57   70.27   4.70   1.34
-\end{verbatim}
+\begin{lstlisting}
+# for locks:
+$ perf annotate -s cache_misses
+[...]
+    0.06 :        4006b0:       and    %rdx,%r10
+    0.00 :        4006b3:       add    $0x1,%r9
+    ;; random (out of last level cache) read
+    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
+   30.37 :        4006bb:       mov    %rcx,%r10
+    ;; foo is cached, to simulate our internal lock
+    0.12 :        4006be:       mov    %r9,0x200fbb(%rip)
+    0.00 :        4006c5:       shl    $0x17,%r10
+    [... Skipping arithmetic with < 1% weight in the profile]
+    ;; locked increment of an in-cache "lock" byte
+    1.00 :        4006e7:       lock incb 0x200d92(%rip)
+   21.57 :        4006ee:       add    $0x1,%rax
+    [...]
+    ;; random out of cache read
+    0.00 :        400704:       xor    (%rsi,%r10,8),%rbp
+   21.99 :        400708:       xor    %r9,%r8
+    [...]
+    ;; locked in-cache decrement
+    0.00 :        400729:       lock decb 0x200d50(%rip)
+   18.61 :        400730:       add    $0x1,%rax
+    [...]
+    0.92 :        400755:       jne    4006b0 <cache_misses+0x30>
+\end{lstlisting}
 }
 
-It's that last column, \%util that tells us what we want to know. The device bandwidth here is barely being used at all. If you saw it up at 100\% then you would know that the disk was being maxed out and that would be a pretty obvious indicator that it is the limiting factor. This does not tell you much about what is using the CPU, of course, and you can look at what processes are using the I/O subsystems with \texttt{iotop} which requires root privileges\footnote{https://xkcd.com/149/}.
+We can see that in the lock situation, reads take 30 + 22 = 52\% of runtime,
+while locks take 19 + 21 = 40\% of runtime.
 
-That leaves us with networks. We can ask about the network with \texttt{nload}: which gives the current, average, min, max, and total values. And you get a nice little graph if there is anything to see. It's not so much fun if nothing is happening. But you'll get the summary, at least:
+{\scriptsize
+\begin{lstlisting}
+# for mfence:
+$ perf annotate -s cache_misses
+[...]
+    0.00 :        4006b0:       and    %rdx,%r10
+    0.00 :        4006b3:       add    $0x1,%r9
+    ;; random read
+    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
+   42.04 :        4006bb:       mov    %rcx,%r10
+    ;; store to cached memory (lock word)
+    0.00 :        4006be:       mov    %r9,0x200fbb(%rip)
+    [...]
+    0.20 :        4006e7:       mfence 
+    5.26 :        4006ea:       add    $0x1,%rax
+    [...]
+    ;; random read
+    0.19 :        400700:       xor    (%rsi,%r10,8),%rbp
+   43.13 :        400704:       xor    %r9,%r8
+    [...]
+    0.00 :        400725:       mfence 
+    4.96 :        400728:       add    $0x1,%rax
+    0.92 :        40072c:       add    $0x1,%rax
+    [...]
+    0.36 :        40074d:       jne    4006b0 <cache_misses+0x30>
+\end{lstlisting}
+}
+Looks like the reads take 85\% of runtime,
+while the mfence takes 15\% of runtime.
 
-\begin{verbatim}
-Curr: 3.32 kBit/s
-Avg: 2.95 kBit/s
-Min: 1.02 kBit/s
-Max: 12.60 kBit/s
-Ttl: 39.76 GByte                                                                                       \end{verbatim}
+Metrics lie, though, and when you focus on the metrics as opposed to what you
+actually care about, it's easy to be led astray.
+
+In this case, what we actually care about is the total \# of cycles.
+
+    \begin{tabular}{lr}
+    No atomic/fence:& 2.81e9 cycles\\
+    lock inc/dec: & 3.66e9 cycles\\
+    mfence: & 19.60e9 cycles
+    \end{tabular}
+
+That 15\% number is a total lie.
+Profilers, even using CPU expense counts, drastically underestimate the impact of mfence,
+and overestimate the impact of locks.
+
+This is because mfence causes a pipeline flush, and the resulting 
+costs get attributed to instructions being flushed, not to the mfence itself. In other
+words, mfence makes other instructions run more slowly, which camouflages its own effect
+on the overall performance.
+
+
+\section*{The Long Tail}
+
+The other type of lie that sampling can hide is the one where infrequent long tails are hidden in averages.
+Our source here is the blog post by Dan Luu~\cite{perf-tracing}. Suppose we have a task that's going to get distributed over multiple computers (like a search). If we look at the latency distribution, the problem is mostly that we see a long tail of events and when we are doing a computation or search where we need all the results, we can only go as the slowest step. Let's take a look at a histogram of disk read latencies, where we are performing a 64 kB read, also from that source:
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/disk_tail.png}
+\end{center}
+
+Let's break it down. Peak 1 corresponds to something cached in RAM---best case scenario. Peak 2 is at around 3ms, which is too fast for spinning and seeking magnetic hard disks, but it's fast enough for reading something from the disk cache via the PCI-Express interface. Peak 3 is obviously disk seek and read times, around 25ms. 
+
+These numbers don't look terrible, except for the fact that we have peaks at 250, 500, 750, and 1000 ms and the 99th percentile is some 696ms which is a very, very long time. Sampling profilers are not very good at finding these things, because they throw everything into various buckets and therefore we get averages. The averages are misleading, though, because we have these weird outliers that take dramatically longer. Averages are nice as long as our data is also reasonably ``nice''.
+
+So what actually happened? Well, from~\cite{perf-tracing}: The investigator found out that the cause was kernel throttling of the CPU for processes that went beyond their usage quota. To enforce the quota, the kernel puts all of the relevant threads to sleep until the next multiple of a quarter second. When the quarter-second hand of the clock rolls around, it wakes up all the threads, and if those threads are still using too much CPU, the threads get put back to sleep for another quarter second. The phase change out of this mode happens when, by happenstance, there aren't too many requests in a quarter second interval and the kernel stops throttling the threads. After finding the cause, an engineer found that this was happening on 25\% of disk servers at Google, for an average of half an hour a day, with periods of high latency as long as 23 hours. This had been happening for three years.
+
+Further limitations of sampling profilers emerge, as demonstrated in this graph, also from~\cite{perf-tracing}, showing the data we get out of our sampling profiler if we take a look at Lucene (a search indexer):
+
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/perf-sample.png}
+\end{center}
+
+So at the default sampling interval for perf we see\ldots nothing interesting whatsoever. If we bump up to the max sampling frequency of perf, we get a moderately more interesting graph, but not much. If we use a different tool and can sample at a dramatically higher rate, then we end up with something way more useful. So we're left to wonder why does perf sample so infrequently, and how does SHIM get around this?
+
+Well, for one thing, perf samples are done with interrupts. Processing interrupts takes a fair amount of time and if you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work. So sampling tools usually don't interrupt the program too often. SHIM gets around this by being more invasive---it instruments the program, adding some periodically executed code that puts information out whenever there is an appropriate event (e.g., function return). This produces a bunch of data which can be dealt with later to produce something useful.
+
+This instrumentation-based approach is more expensive in general, but note that DTrace\footnote{Note also the comment in the blog post: ``Yes, that includes dtrace, which I'm calling out in particular because any time you have one of these discussions, a dtrace troll will come along to say that dtrace has supported that for years. It's like the common lisp of trace tools, in terms of community trolling.''} and Nethercote's counts tool (discussed in L25) also enable custom instrumentation of select events. 
+
+\section*{Lies from Counters}
+This is fairly niche, but Rust compiler hackers were trying to include
+support for hardware performance counters (what perf reports) because
+{\tt -Z self-profile} data was too noisy\footnote{Full story, in gory
+detail,
+at \url{https://hackmd.io/sH315lO2RuicY-SEt7ynGA?view}.}. Counters
+are, for instance, faster than measuring time and way (i.e. 5 orders of magnitude) more deterministic.
+
+To make counters as deterministic as possible:
+\begin{itemize}[noitemsep]
+\item disable Address Space Layout Randomization (randomized pointer addresses affect hash layouts);
+\item subtract time spent processing interrupts (IRQs);
+\item profile one thread only (if you can, in your context).
+\end{itemize}
+Fun fact. We talked about Spectre back in Lecture 7. Speculative execution comes up here too in terms of
+counters being wrong. AMD speculates past atomics and then rolls back, but doesn't roll back perf counters.
+Post-Spectre, there's a hidden model-specific register (``SpecLockMap'') that disables speculating past atomics, the kind of thing you would
+want around to protect you against future things in that vein that someone might discover. Or, in better words than mine\footnote{\url{https://twitter.com/eddyb_r/status/1323587371703668742}}:
+
+\begin{center}
+\includegraphics{images/L27-eb-tweet.png}
+\end{center}
+
+\section*{Lies about Calling Context}
+This part is somewhat outdated now, as it's a pretty specific technical problem that especially arises under the {\tt gprof} tool. It's still a good example of lying tools, though,
+so I'll include a condensed version. Yossi Kreinin~\cite{lies} writes about it in more detail.
+
+gprof uses two C standard-library functions: {\bf profil()} and {\bf mcount()}.
+
+\vspace*{-1em}
+\begin{itemize}[noitemsep]
+\item {\bf profil()}: asks glibc to record which instruction 
+  is currently executing (100$\times$/second).
+\item {\bf mcount()}: records call graph edges; called by {\tt -pg} instrumentation.
+\end{itemize}
+\vspace*{-1em}
+
+Hence, {\bf profil} information is statistical, while {\bf mcount}
+information is exact.  gprof can draw unreliable inferences. If you have a method \texttt{easy} and a method \texttt{hard}, each of which is called once, and \texttt{hard} takes up almost all the CPU time,
+gprof might divide total time by 2 and report bogus results.
+
+The following results from gprof are suspect (among others):
+\vspace*{-1em}
+\begin{itemize}[noitemsep]
+  \item contribution of children to parents;
+  \item total runtime spent in self+children;
+\end{itemize}
+\vspace*{-1em}
+
+\paragraph{When are call graph edges right?}
+Two cases:
+\vspace*{-1em}
+    \begin{itemize}[noitemsep]
+    \item functions with only one caller
+      (e.g. {\tt f()} only called by {\tt g()}); or,
+    \item functions which always take the same time to complete
+      (e.g. {\tt rand()}).
+    \end{itemize}
+\vspace*{-1em}
+
+On the other hand, results for any function whose running time depends on its inputs,
+and which is called from multiple contexts, are sketchy.
+
+
+Next, we'll talk about callgrind/KCacheGrind. Like our old friends memcheck, helgrind, and cachegrind, callgrind is part of valgrind, and runs the program under an x86 JIT.  KCacheGrind is a frontend to callgrind. callgrind gives better information, but imposes
+more overhead.
+KCacheGrind works properly on the earlier running example, but we can still deceive it with more complicated examples.
+
+%% \paragraph{Summary.} We've seen that some profiler results are exact;
+%% some results are sampled; and some results are interpolated. If you understand the tool, you understand where it can go
+%% wrong. 
+
+%% Understand your tools!
+
+
+\paragraph{Overall summary.} We saw a bunch of lies today: calling-context lies and perf attribution
+lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
+and understand how your tools work.
+
 
 \input{bibliography.tex}
 

@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 25 --- Profiling }
+\title{Lecture 26 ---Profiling and Scalability}
 
-\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\author{Jeff Zarnett\\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -17,652 +17,160 @@
 
 
 
-\part{Profiling}
-
 \begin{frame}
-\partpage
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Remember the Initial Quiz}
-
-
-Think back: what operations are fast and what operations are not?
-
-Takeaway: our intuition  is often wrong. 
-
-Not just at a macro level, \\
-but at a micro level. 
-
-You may be able to narrow down that this computation of $x$ is slow, \\
-but if you examine it carefully\ldots what parts of it are slow?
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Premature Optimization}
-
-\vspace*{.5cm}
-
-\begin{quote}
-\textit{Programmers waste enormous amounts of time thinking about, or worrying about, the speed of noncritical parts of their programs, and these attempts at efficiency actually have a strong negative impact when debugging and maintenance are considered. We should forget about small efficiencies, say about 97\% of the time: premature optimization is the root of all evil. Yet we should not pass up our opportunities in that critical 3\%.}
-\end{quote}
-	\hfill -- Donald Knuth
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{That Saying You Were Expecting}
-
-
-\begin{changemargin}{1.5cm}
-Feeling lucky? \\
-Maybe you optimized a slow part. 
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/feellucky.jpg}
-\end{center}
-
-To make your programs or systems fast, \\
-you need to find out what is currently slow and improve it (duh!). 
-
-Up until now, it's mostly been about \\
-\qquad ``let's speed this up''.\\
-We haven't taken much time to decide what we should speed up.
-\end{changemargin}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Basic Overview}
-
-
-\begin{changemargin}{1.5cm}
-General idea:\\
-\qquad collect data on what parts of the code\\
-\qquad are taking up most of the time.
-
-\begin{itemize}
-\item What functions get called?
-\item How long do functions take?
-\item What's using memory?
-\end{itemize}
-\end{changemargin}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{\texttt{printf}}
-
-
-\begin{changemargin}{1.5cm}
-There is always the ``informal'' way: ``debug'' by print statements.
-
-On entry to \texttt{foo}, log ``entering function foo'', plus timestamp.
-
-On exit, log ``exiting foo'', also with timestamp.
-\end{changemargin}
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/stringerbell.jpg}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Console Profiling}
-
-
-\begin{changemargin}{1cm}
-Kind of works, and [JZ] has used it... But this approach is not necessarily good.  
-
-This is ``invasive'' profiling---change the source code of the program to add instrumentation (log statements). 
-
-Plus we have to do a lot of manual accounting.
-
-Doesn't really scale.
-\end{changemargin}
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Profiling my Kernel}
-
-I ran the command \texttt{nvprof target/release/nbody-cuda}.
-
-{\tiny
-\begin{verbatim}
-==20734== Profiling application: target/release/nbody-cuda
-==20734== Profiling result:
-            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
- GPU activities:  100.00%  10.7599s         1  10.7599s  10.7599s  10.7599s  calculate_forces
-                    0.00%  234.72us         2  117.36us  100.80us  133.92us  [CUDA memcpy HtoD]
-                    0.00%  94.241us         1  94.241us  94.241us  94.241us  [CUDA memcpy DtoH]
-      API calls:   97.48%  10.7599s         1  10.7599s  10.7599s  10.7599s  cuStreamSynchronize
-                    1.92%  211.87ms         1  211.87ms  211.87ms  211.87ms  cuCtxCreate
-                    0.54%  59.648ms         1  59.648ms  59.648ms  59.648ms  cuCtxDestroy
-                    0.04%  4.8704ms         1  4.8704ms  4.8704ms  4.8704ms  cuModuleLoadData
-                    0.00%  404.72us         2  202.36us  194.51us  210.21us  cuMemAlloc
-                    0.00%  400.58us         2  200.29us  158.08us  242.50us  cuMemcpyHtoD
-                    0.00%  299.30us         2  149.65us  121.42us  177.88us  cuMemFree
-                    0.00%  243.86us         1  243.86us  243.86us  243.86us  cuMemcpyDtoH
-                    0.00%  85.000us         1  85.000us  85.000us  85.000us  cuModuleUnload
-                    0.00%  41.356us         1  41.356us  41.356us  41.356us  cuLaunchKernel
-                    0.00%  18.483us         1  18.483us  18.483us  18.483us  cuStreamCreateWithPriority
-                    0.00%  9.0780us         1  9.0780us  9.0780us  9.0780us  cuStreamDestroy
-                    0.00%  2.2080us         2  1.1040us     215ns  1.9930us  cuDeviceGetCount
-                    0.00%  1.4600us         1  1.4600us  1.4600us  1.4600us  cuModuleGetFunction
-                    0.00%  1.1810us         2     590ns     214ns     967ns  cuDeviceGet
-                    0.00%     929ns         3     309ns     230ns     469ns  cuDeviceGetAttribute
-\end{verbatim}
-}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{And the better version...}
-
-
-Oh, and for comparison, here's the one where I make much better use of the GPU's capabilities (with better grid and block settings):
-
-{\tiny
-\begin{verbatim}
-=22619== Profiling result:
-            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
- GPU activities:   99.92%  417.53ms         1  417.53ms  417.53ms  417.53ms  calculate_forces
-                    0.06%  236.03us         2  118.02us  101.44us  134.59us  [CUDA memcpy HtoD]
-                    0.02%  93.057us         1  93.057us  93.057us  93.057us  [CUDA memcpy DtoH]
-      API calls:   52.09%  417.54ms         1  417.54ms  417.54ms  417.54ms  cuStreamSynchronize
-                   26.70%  214.00ms         1  214.00ms  214.00ms  214.00ms  cuCtxCreate
-                   13.63%  109.26ms         1  109.26ms  109.26ms  109.26ms  cuModuleLoadData
-                    7.42%  59.502ms         1  59.502ms  59.502ms  59.502ms  cuCtxDestroy
-                    0.05%  364.08us         2  182.04us  147.65us  216.42us  cuMemcpyHtoD
-                    0.04%  306.48us         2  153.24us  134.10us  172.37us  cuMemAlloc
-                    0.04%  285.73us         2  142.86us  122.90us  162.83us  cuMemFree
-                    0.03%  246.37us         1  246.37us  246.37us  246.37us  cuMemcpyDtoH
-                    0.01%  61.916us         1  61.916us  61.916us  61.916us  cuModuleUnload
-                    0.00%  26.218us         1  26.218us  26.218us  26.218us  cuLaunchKernel
-                    0.00%  15.902us         1  15.902us  15.902us  15.902us  cuStreamCreateWithPriority
-                    0.00%  9.0760us         1  9.0760us  9.0760us  9.0760us  cuStreamDestroy
-                    0.00%  1.6720us         2     836ns     203ns  1.4690us  cuDeviceGetCount
-                    0.00%  1.0950us         1  1.0950us  1.0950us  1.0950us  cuModuleGetFunction
-                    0.00%     888ns         3     296ns     222ns     442ns  cuDeviceGetAttribute
-                    0.00%     712ns         2     356ns     212ns     500ns  cuDeviceGet
-\end{verbatim}
-}
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Wizardry!}
+\frametitle{Profiling and Scalability}
 
 
 \begin{changemargin}{2cm}
-Like debugging: if you get to be a wizard you can maybe do it by code inspection.
+Goal: scale number of users,
+
+\[ 1 \rightarrow 100 \rightarrow 10 000 000. \]
+
+Be more fast? \\
+You have other options too\ldots
+\end{changemargin}
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/miracle.jpeg}
+	\includegraphics[width=0.2\textwidth]{images/Rebel_Yell.jpg}\\
+	\hfill ``In the midnight hour, she cries 'more, more, more''' - Billy Idol
 \end{center}
 
-But speculative execution inside your head is harder for perf than debugging.
+\end{frame}
 
-So: we want to use tools \\ 
-and do this in a methodical way.
+
+\begin{frame}
+\frametitle{Don't Guess, Measure}
+
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/testinprod.png}
+\end{center}
+
+\begin{changemargin}{2cm}
+As always, we want to measure (profile).\\[1em]
+3 principles to think about\\
+when going from dev to production:
+\end{changemargin}
+
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Hardware Principle}
+
+
+\begin{changemargin}{2cm}
+Scalability testing $\neq$  QA testing.\\[1em]
+
+Dev + QA on local computer.\\
+Your concerns: Is it right? Is it fast enough?\\[1em]
+
+Fine, but it's no way to test if it scales. 
 \end{changemargin}
 
 \end{frame}
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Introduction to Profiling}
+\frametitle{Hardware Principle}
 
 
+\begin{changemargin}{2cm}
+Test on prod-like machines.\\[1em]
+Low-end systems have very different limiting factors. \\[1em]
+Your laptop: limited by 16GB of RAM.\\
+Prod server: 128GB of RAM.\\[1em]
+So you might spend a great deal of time worrying about RAM usage and it just doesn't matter.
+\end{changemargin}
 
-\begin{changemargin}{1.5cm}
-    So far we've been looking at small problems.\\[1em]
-    Must {\bf profile} to see what's slow in a
-      large program.\\[1em]
-    Two main outputs:
-      \begin{itemize}
-        \item flat;
-        \item call-graph.
-      \end{itemize}
-
-
-
-    Two main data gathering methods:
-      \begin{itemize}
-        \item statistical;
-        \item instrumentation.
-      \end{itemize}
-   \end{changemargin}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
-  \frametitle{Profiler Outputs}
+\frametitle{Reality Principle}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/qa.png}
+\end{center}
 
 
-\begin{changemargin}{.5cm}
-  
-  {\bf Flat Profiler:}
-
-  \begin{itemize}
-    \item Only computes average time in a particular function.
-    \item Does not include other (useful) information (callees).
-  \end{itemize}
-
-~\\[1em]
-
-  {\bf Call-graph Profiler:}
-
-  \begin{itemize}
-    \item Computes call times.
-    \item Reports frequency of function calls.
-    \item Gives a call graph: who called what function?
-  \end{itemize}
-  \end{changemargin}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \begin{frame}
-  \frametitle{Data Gathering Methods}
+\frametitle{Reality Principle}
 
-
-\begin{changemargin}{1.5cm}
-  {\bf Statistical:}
-
-  Mostly, take samples of the system state, that is:
-  \begin{itemize}
-    \item every 100ms, check the system state.
-    \item will cause some slowdown, but not much.
-  \end{itemize}
-~\\[1em]
-
-  {\bf Instrumentation:}\\
-  Add instructions at specified program points:
-  \begin{itemize}
-    \item can do this at compile time or run time (expensive);
-    \item can instrument either manually or automatically;
-    \item like conditional breakpoints.
-  \end{itemize}
-  \end{changemargin}
+\begin{changemargin}{2cm}
+Use a ``real'' workload.\\
+(As far as possible).\\[1em]
+Maybe not actual live customer data,\\
+but try to come close.\\[1em]
+Limited test data/scenarios $\Rightarrow$ \\
+\qquad inaccurate test results.\\[1em]
+Your tests run summary reports occasionally\ldots\\
+your users might run them every hour. 
+\end{changemargin}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 \begin{frame}
-  \frametitle{Guide to Profiling}
+\frametitle{Volume Principle}
 
-  
+\begin{changemargin}{2cm}
+``More is the new more.'' 
+
+Lighter workloads OK for regression testing. 
+
+To see how your system performs under pressure, you actually need to put it under pressure. 
+
+Can simulate pressure by limiting RAM or\\ running something very CPU-intensive concurrently,\\
+but it's just not the same.
+
+These tests also  of great interest to the customers, who would like to know that you can deliver. 
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Reproducibility and Regression Testing}
+
+
+\begin{changemargin}{2cm}
+Science rule 1: results need to be reproducible!
+
+Good programming practice: must run unit tests,\\
+and re-run to make sure it all works. 
+
+Old (solved) performance issues also bad.
+
+Or a new change that slows the whole program down still more bad.
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Elementary, My Dear Watson!}
+
 
 \begin{changemargin}{1cm}
-  When writing large software projects:\\[1em]
-
-     $\bullet$ First, write clear and concise code. \\
-      \qquad Don't do premature optimizations---\\
-      \qquad focus on correctness.\\
-     $\bullet$ Profile to get a baseline of your performance:\\[0em]
-      \begin{itemize}
-        \item allows you to easily track any performance changes;
-        \item allows you to re-design your program before it's too late.
-      \end{itemize}
-  Focus your optimization efforts on the code that matters.
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Things to Look For}
-
-
-\begin{changemargin}{1.5cm}
-  
-    Good signs:\\[0em]
-
-    \begin{itemize}
-      \item Time is spent in the right part of the system.
-      \item Most time should not be spent handling errors;\\
- in non-critical code; or in exceptional cases.
-      \item Time is not unnecessarily spent in OS.
-    \end{itemize}
-    \end{changemargin}
-    
-    \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/tobermory.jpg}\\
-	\hfill Kitchener driver follows GPS directions right into Lake Huron...
- 	\end{center}
-    
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Development vs Prod}
-
-You can always profile your systems in development, but that might not
-help with complexities in production. 
-
-The constraints on profiling 
-production systems are that the profiling must not affect the system's
-performance or reliability.
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Per-Process}
-
- We'll first talk about {\tt perf}, the profiler 
-recommended for use with Rust. This is Linux-specific, though.
-
-The \texttt{perf} tool is an interface to the Linux kernel's built-in
-sample-based profiling using CPU counters. 
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Previous Offering Profiling}
-
-\begin{lstlisting}[basicstyle=\scriptsize]
-[plam@lynch nm-morph]$ perf stat ./test_harness
-
- Performance counter stats for './test_harness':
-
-       6562.501429 task-clock                #    0.997 CPUs utilized          
-               666 context-switches          #    0.101 K/sec                  
-                 0 cpu-migrations            #    0.000 K/sec                  
-             3,791 page-faults               #    0.578 K/sec                  
-    24,874,267,078 cycles                    #    3.790 GHz                     [83.32%]
-    12,565,457,337 stalled-cycles-frontend   #   50.52% frontend cycles idle    [83.31%]
-     5,874,853,028 stalled-cycles-backend    #   23.62% backend  cycles idle    [66.63%]
-    33,787,408,650 instructions              #    1.36  insns per cycle        
-                                             #    0.37  stalled cycles per insn [83.32%]
-     5,271,501,213 branches                  #  803.276 M/sec                   [83.38%]
-       155,568,356 branch-misses             #    2.95% of all branches         [83.36%]
-
-       6.580225847 seconds time elapsed
-\end{lstlisting} %$
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Do it with Rust}
-
-The first thing to do is to compile with debugging info, go to your \texttt{Cargo.toml} file and add:
-\begin{verbatim}
-[profile.release]
-debug = true
-\end{verbatim}
-
-This means that \verb+cargo build --release+ will now compile the version with debug info.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{I've got a Cunning Plan}
-
-Run the program using \texttt{perf record}, which will sample the execution of the program to produce a data set.
-
-
-Then there are three ways we can look at the code: \texttt{perf report}, \texttt{perf annotate}, and a flamegraph.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{CLion}
-
-During development of some of the code exercises, I used the CLion built-in profiler for this purpose. 
-
-It generates a flamegraph for you too, and I'll show that for how to create the flamegraph as well.
-
-
-\end{frame}
-
-\part{Profiler Guided Optimization}
-\begin{frame}
-\partpage
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Profiler Guided Optimization}
-
-
-Using static analysis, \\
-the compiler makes its best predictions about runtime behaviour.
-
-Example: branch prediction. 
-
-\begin{lstlisting}[language=Rust]
-fn which_branch(a: i32, b: i32) {
-    if a < b {
-        println!("Case one.");
-    } else {
-        println!("Case two.");
-    }
-}
-\end{lstlisting}
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{A Virtual Call to Devirtualize}
-
-\begin{multicols}{2}
-\begin{lstlisting}[language=Rust]
-trait Polite {
-    fn greet(&self) -> String;
-}
-
-struct Kenobi {
-    /* Stuff */
-}
-impl Polite for Kenobi {
-    fn greet(&self) -> String {
-        return String::from("Hello there!");
-    }
-}
-\end{lstlisting}
-\columnbreak
-\begin{lstlisting}[language=Rust]
-struct Grievous {
-    /* Things */
-}
-impl Polite for Grievous {
-    fn greet(&self) -> String {
-        return String::from("General Kenobi.");
-    }
-}
-
-fn devirtualization(thing: &Polite) {
-    println!("{}", thing.greet());
-}
-
-\end{lstlisting}
-\end{multicols}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Match}
-
-\begin{lstlisting}[language=Rust]
-fn match_thing(x: i32) -> i32 {
-    match x {
-        0..10 => 1,
-        11..100 => 2,
-        _ => 0
-    }
-}
-\end{lstlisting}
-
-Same thing with \texttt{x}: what is its typical value? If we know that, it is our prediction. 
-
-Actually, in a match block with many options, could we rank them in descending order of likelihood?
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Adapting to an Uncertain World}
-
-
-How can we know where we go?
-\begin{itemize}
-\item could provide hints\ldots
-\end{itemize}
-
-Java HotSpot virtual machine: updates predictions on the fly. 
-
-So, just guess.\\
-If wrong, the Just-in-Time compiler adjusts \& recompiles.
-
-The compiler runs and it does its job and that's it; the program is never updated with newer predictions if more data becomes known.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Profiling Mitigates Uncertainty}
-
-
-
-Rust: usually no adaptive runtime system.
-
-POGO:
-\begin{itemize}
-\item observe actual runs;
-\item predict the future.
-\end{itemize}
-
-So, we need multi-step compilation:
-\begin{itemize}
-\item compile with profiling;
-\item run to collect data;
-\item recompile with profiling data to optimize.
-\end{itemize}
-
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Step One: Measure}
-
-
-
-First, generate an executable with instrumentation. 
-
-The compiler inserts a bunch of probes into the generated code to record data. 
-\begin{itemize}
-\item Function entry probes;
-\item Edge probes;
-\item Value probes.
-\end{itemize}
-
-Result: instrumented executable plus empty database file (for profiling data).
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Step Two: Training Day}
+\begin{quote}
+\textit{It is a capital mistake to theorize before one has data. Insensibly one begins to twist facts to suit theories, instead of theories to suit facts.}
+\end{quote}
+\hfill --- Sherlock Holmes\\
+\hfill (\textit{A Scandal in Bohemia}; Sir Arthur Conan Doyle)
+\end{changemargin}
 
 \begin{center}
-	\includegraphics[width=0.6\textwidth]{images/training-day.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Step Two: Training Day}
-
-
-
-Second, run the instrumented executable.
-
-Real-world scenarios are best.
-
-Ideally, spend training time on perf-critical sections. 
-
-Use as many runs as you can stand.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Step Two: Training Day}
-
-
-
-Don't exercise every part of the program (not SE 465/ECE 453 here!)
-
-That would be counterproductive.
-
-Usage data must match real world scenarios,\\
-... or the compiler gets misinformed about what's important. 
-
-Or you might end up teaching it that almost nothing
-is important\ldots (``everything's on the exam!'')
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Step Three: Recompile}
-
-
-
-Finally, compile the program again.
-
-Inputs: source plus training data.
-
-Outputs: (you hope) a better output executable than from static analysis alone.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Summary Graphic}
-
-\begin{center}
-	\includegraphics[width=0.75\textwidth]{images/pogo-workflow.jpg}
+	\includegraphics[width=0.3\textwidth]{images/jeremybrett.jpg}
 \end{center}
 
 \end{frame}
@@ -670,78 +178,263 @@ Outputs: (you hope) a better output executable than from static analysis alone.
 
 
 \begin{frame}
-\frametitle{Save Some Steps}
+\frametitle{Collect Evidence}
 
 
+\begin{changemargin}{1cm}
+Who's to blame?
+\begin{enumerate}
+	\item CPU
+	\item Memory
+	\item Disk
+	\item Network
+\end{enumerate}
 
-Not necessary to do all three steps for every build. 
-
-Re-use training data while it's still valid.
-
-Recommended dev workflow:
-\begin{itemize}
-\item dev A performs these steps, checks the training data into source control
-\item whole team can use profiling information for their compiles.
-\end{itemize}
-
-
+These are, obviously, \\
+categories rather than specific causes.
+\end{changemargin}
 \end{frame}
 
 
 
 \begin{frame}
-\frametitle{Not fixing all the problems in the world}
+\frametitle{Blame the CPU}
 
 
-
-What does it mean for it to be better? 
-
-The algorithms will aim for speed in areas that are ``hot''. 
-
-The algorithms will aim for minimal code size in areas that are ``cold'' .
-
-Less than 5\% of methods compiled for speed.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Combining Training Runs}
-
-
-
-Can combine multiple training runs and manually give suggestions about important scenarios.
-
-The more a scenario runs in the training data, \\
-the more important it will be, from POGO's point of view.
-
-Can merge multiple runs with user-assigned weightings.
+\begin{changemargin}{1cm}
+CPU is probably the easiest of these to diagnose. \\[1em]
+\texttt{htop}, Task Manager, etc. will tell you if CPU hosed.\\
+Look at the \%CPU columns\\
+and see where all your CPU is going. 
+\end{changemargin}
 
 
 \end{frame}
+
 
 
 \begin{frame}[fragile]
-\frametitle{Full Test Scenario}
+\frametitle{Overwatch}
+
+
+\begin{changemargin}{1cm}
+Still, that tells you about right now; \\
+what about the long term average? \\[1em]
+
+Checking with my machine ``Loki'', that has since ascended to Valhalla:\\[1em]
 
 {\scriptsize
 \begin{verbatim}
-# STEP 1: Compile the binary with instrumentation
-rustc -Cprofile-generate=/tmp/pgo-data -O ./main.rs
+top - 07:28:19 up 151 days, 23:38,  8 users,  load average: 0.87, 0.92, 0.91
+\end{verbatim}
+}
 
-# STEP 2: Run the binary a few times, maybe with common sets of args.
-#         Each run will create or update `.profraw` files in /tmp/pgo-data
-./main mydata1.csv
-./main mydata2.csv
-./main mydata3.csv
+Those last three numbers are the one, five, and fifteen minute averages of CPU load, respectively. \\[1em]
 
-# STEP 3: Merge and post-process all the `.profraw` files in /tmp/pgo-data
-llvm-profdata merge -o ./merged.profdata /tmp/pgo-data
+Lower numbers mean less CPU usage and a less busy machine. 
+\end{changemargin}
 
-# STEP 4: Use the merged `.profdata` file during optimization. All `rustc`
-#         flags have to be the same.
-rustc -Cprofile-use=./merged.profdata -O ./main.rs
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Interpreting Load Numbers}
+
+
+\begin{changemargin}{1cm}
+Picture a single core of a CPU as a lane of traffic. 
+
+You are a bridge operator and so you need to monitor how many cars are waiting to cross that bridge. 
+
+If no cars are waiting, traffic is good and drivers are happy. 
+
+If there is a backup of cars, then there will be delays.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Single-CPU Load Scheme}
+
+
+\begin{changemargin}{1cm}
+\begin{enumerate}
+	\item 0.00 means no traffic. \\
+    Anything between 0.00 and 0.99 means we're under capacity and there will be no delay.\\[1em]
+	\item 1.00 means we are exactly at capacity. \\
+    Everything is okay, but if one more car shows up, there will be a delay.\\[1em]
+	\item Anything above 1.00 means there's a backup (delay). \\
+    If we have 2.00 load, then the bridge is full and there's an equal number of cars waiting to get on the bridge. 
+\end{enumerate}
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Car Analogy}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/car-analogy.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Is it a Problem?}
+
+
+\begin{changemargin}{1cm}
+$\ge$ 1.00 isn't necessarily bad, but you should be concerned if there is consistent load of 1.00 or above. 
+
+$<$ 1.00 but getting close to it: you know how much room you have to scale things up.
+
+$>$ 0.70 then it's probably time to investigate.
+
+$\ge$ 1.00 consistently we have a serious problem. 
+
+5.00: this is a red alert situation.
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Multicore}
+
+
+\begin{changemargin}{1cm}
+Now this is for a single CPU---if you have a load of 3.00 and a quad core CPU, this is okay. 
+
+Traffic analogy: four lanes of traffic, of which 3 are being used to capacity.
+
+So we have a fourth lane free and it's as if we're at 75\% utilization on a single CPU.
+\end{changemargin}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Disk? Or Memory?}
+
+
+\begin{changemargin}{1cm}
+How to tell? Look at disk utilization. \\[1em]
+
+Not enough RAM $\Rightarrow$ swapping, bad perf, no scalability.\\[1em]
+
+(In the worst case.)\\[1em]
+
+You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
+
+{\scriptsize
+\begin{verbatim}
+KiB Mem:   8167736 total,  6754408 used,  1413328 free,   172256 buffers
+KiB Swap:  8378364 total,  1313972 used,  7064392 free.  2084336 cached Mem
+\end{verbatim}
+}
+\end{changemargin}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Misleading Memory}
+
+
+\begin{changemargin}{1cm}
+Why? Memory being ``full'' does not necessarily mean anything bad. \\[1em]
+
+It means the resource is being used to its maximum potential, yes, but there is no benefit to keeping a block of memory open for no reason. (Or stockpiling late days).\\[1em]
+
+Also, memory is unlike CPU; if there's nothing for the CPU to do, it will just idle (low power state).
+\end{changemargin}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Really, Dvorak, Really?}
+
+
+\begin{changemargin}{1cm}
+Memory won't ``forget'' data if it doesn't happen to be needed right now---data will hang around in memory until there is a reason to move or change it. 
+
+So freaking out about memory appearing as full is kind of like getting all in a knot about how ``System Idle Process'' is hammering the CPU\ldots
+\end{changemargin}
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Page Faults}
+
+
+\begin{changemargin}{1cm}
+You can also ask about page faults, with the command
+\begin{center}
+\texttt{ps -eo min\_flt,maj\_flt,cmd}
+\end{center}
+
+Major page faults: had to fetch from disk. 
+
+Minor page faults: had to copy a page from another process. 
+
+The output of this is too big even for the notes.
+
+This is process-lifetime data.
+\end{changemargin}
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Swapping Report}
+
+
+\begin{changemargin}{1cm}
+What you really want is to ask Linux for a report on swapping:
+\end{changemargin}
+\vspace*{-2em}
+{\scriptsize
+\begin{verbatim}
+jz@Loki:~$ vmstat 5
+procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+ 1  0 1313972 1414600 172232 2084296    0    0     3    39    1    1 27  1 72  0  0
+ 0  0 1313972 1414476 172232 2084296    0    0     0    21  359  735 19  0 80  0  0
+ 0  0 1313972 1414656 172236 2084228    0    0     0   102  388  758 22  0 78  0  0
+ 4  0 1313972 1414592 172240 2084292    0    0     0    16  501  847 33  0 67  0  0
+ 0  0 1313972 1412028 172240 2084296    0    0     0     0  459  814 29  0 71  0  0
+\end{verbatim}
+}
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Swapping Report with Actual Swapping}
+
+{\small
+\begin{verbatim}
+  procs                      memory    swap          io     system cpu
+r  b  w   swpd   free  buff cache  si  so   bi   bo   in    cs us  sy  id
+. . .
+1  0  0  13344   1444  1308 19692   0 168  129   42 1505   713 20  11  69
+1  0  0  13856   1640  1308 18524  64 516  379  129 4341   646 24  34  42
+3  0  0  13856   1084  1308 18316  56  64   14    0  320  1022 84   9   8
 \end{verbatim}
 }
 
@@ -750,160 +443,63 @@ rustc -Cprofile-use=./merged.profdata -O ./main.rs
 
 
 \begin{frame}
-\frametitle{Behind the Scenes}
+\frametitle{Skip to Disk}
 
 
+\begin{changemargin}{1cm}
+Looking at disk might seem slightly redundant if memory is not the limiting factor. 
 
-In the optimize phase, compiler uses the training data for:
+After all, if the data were in memory it would be unnecessary to go to disk in the first place. 
 
-\begin{enumerate}
-\item Full and partial inlining
-\item Function layout
-\item Speed and size decision
-\item Basic block layout 
-\item Code separation
-\item Virtual call speculation
-\item Switch expansion
-\item Data separation
-\item Loop unrolling
-\end{enumerate}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Muh Gainz}
-
-
-
-Most performance gains from inlining.
-
-Decisions based on the call graph path profiling. 
-
-But: behaviour of function \texttt{foo} may be very different when called from \texttt{B} than when called from \texttt{D}. 
-
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/callpaths.png}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Another Call Graph}
-
-
-Example 2 of relationships between functions.\\
-Numbers on edges represent the number of invocations:
-
-\begin{center}
-	\includegraphics[width=\textwidth]{images/callpaths2.png}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{The POGO View of the World}
-
-When considering what to do here, POGO takes the view like this:
-
-\begin{center}
-	\includegraphics[width=\textwidth]{images/callpaths3.png}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{The POGO View of the World}
-
-\begin{center}
-	\includegraphics[width=\textwidth]{images/callpaths4.png}
-\end{center}
+Still, sometimes we can take a look at the disk and see if that is our bottleneck.
+\end{changemargin}
 
 \end{frame}
 
 
 
 
-\begin{frame}
-\frametitle{Page Locality}
+\begin{frame}[fragile]
+\frametitle{Looking at Disk Usage}
+
+{\tiny
+\begin{verbatim}
+jz@Loki:~$ iostat -dx /dev/sda 5 
+Linux 3.13.0-24-generic (Loki) 	16-02-13 	_x86_64_	(4 CPU)
+
+Device:         rrqm/s   wrqm/s     r/s     w/s    rkB/s    wkB/s avgrq-sz avgqu-sz   await r_await w_await  svctm  %util
+sda               0.24     2.78    0.45    2.40    11.60   154.98   116.91     0.17   61.07   11.57   70.27   4.70   1.34
+\end{verbatim}
+}
 
 
-
-Call graph profiling data also good for packing blocks.
-
-Put most common cases nearby.\\
-Put successors after their predecessors.
-
-Packing related code = fewer page faults (cache misses).
-
-Calling a function in same page as caller =  ``page locality''.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Block Layout}
-
-\begin{center}
-	\includegraphics[width=\textwidth]{images/blocklayout.png}
-\end{center}
+\begin{changemargin}{1cm}
+Last column \%util tells us what we want to know.
+\end{changemargin}
 
 \end{frame}
 
 
 
-\begin{frame}
-\frametitle{Dead Code?}
+\begin{frame}[fragile]
+\frametitle{Network}
 
 
-
-According to the author, ``dead'' code goes in its own special block. 
-
-Probably not truly dead code (compile-time unreachable).
-
-Instead: code that never gets invoked in training.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Benchmark Results}
+\begin{changemargin}{1cm}
+We can ask about the network with \texttt{nload}. 
  
-OK, how well does POGO work?
+You get a nice little graph if there is anything to see. 
 
-The application under test is a standard benchmark suite (Spec2K):
+But you'll get the summary, at least:
 
-
-\begin{center}
-\begin{tabular}{l|l|l|l|l|l}
-	\textbf{Spec2k:} & \textbf{sjeng} & \textbf{gobmk} & \textbf{perl} & \textbf{povray} & \textbf{gcc}\\ \hline
-	\textbf{App Size:} &  {Small} & {Medium} & {Medium} & {Medium} & {Large} \\ \hline
-	\textbf{Inlined Edge Count} & 50\% & 53\% & 25\% & 79\% & 65\% \\ \hline
-	\textbf{Page Locality} & 97\% & 75\% & 85\% & 98\% & 80\% \\ \hline
-	\textbf{Speed Gain} & 8.5\% & 6.6\% & 14.9\% & 36.9\% & 7.9\% \\ 
-\end{tabular}
-\end{center}
-
- 
-We can speculate about how well synthetic benchmarks results translate to real-world application performance\ldots
-
-
+\begin{verbatim}
+Curr: 3.32 kBit/s
+Avg: 2.95 kBit/s
+Min: 1.02 kBit/s
+Max: 12.60 kBit/s
+Ttl: 39.76 GByte                                                                                       \end{verbatim}
+\end{changemargin}
 \end{frame}
-
-
 
 
 \end{document}
-
