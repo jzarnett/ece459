@@ -110,7 +110,7 @@ You may ask, of course, why should the optimizer do this work at all? Why not si
 Our guide in this is~\cite{joinelim}. We will examine some real SQL queries to see how we can get rid of a total unnecessary join. This join can only be removed if the database server can prove that the join is not needed and that therefore the removal of this operation has no impact on the outcome.
 
 
-Consider a statement that looks like this: \texttt{SELECT c.* FROM customer AS c JOIN address AS a ON c.address\_id = a.address\_id;} This gets customer information and joins with those where there are addresses on file. This is an inner join and as presented simply we cannot do anything with this information. We need to make sure that the customer data has a matching row.
+Consider a statement that looks like this: \texttt{SELECT c.* FROM customer AS c JOIN address AS a ON c.address\_id = a.address\_id;} This gets customer information and joins with those where there are addresses on file. This is an inner join and as presented, we cannot do any elimination with this information. We need to make sure that the customer data has a matching row.
 
 If, however, a new piece of information is considered, it changes everything entirely. Suppose that we have a foreign key defined from customer's \texttt{address\_id} to the address \texttt{id} field. If nulls are not permitted then we know for sure that every customer has exactly one record in the address table and therefore the join condition is not useful and may be eliminated. This means we could in fact replace that query with \texttt{select * from customer;} with no need for any references to the join table at all. That would be much, much faster since it is a simple select with no conditions.
 
@@ -121,10 +121,6 @@ An outer join constraint can be removed as well. Imagine the query said this: \t
 Suppose the foreign key constraint is removed. Does that change anything? No -- a unique constraint on the address would be sufficient for us to conclude that the join means no duplication of rows in customer will take place. Therefore it can once again be replaced with the simple \texttt{select * from customer;}.
 
 If, however, both constraints are removed and we cannot be sure that there is at most one address corresponding to a customer, then we have no choice but to do the join.
-
-For an even wilder example, when an outer join occurs with distinct keyword: in a many-to-many relationship (the example in the source material is about actors and films) then outer join would produce duplicate tuples. The query asks for a listing of actor names. It is an outer join query (which I confess makes very little sense: why do you care about the films entered who have no actors in them, and why would there be any anyway?). Because it's an outer join you will even return the actors who appear in no films. And thus potentially a lot of duplicates that are eliminated. 
-
-This last example is a bit forced, at least in my opinion. Why would you query all actors whether or not they had been in a film by referencing films? If you don't care whether they had been in a film, why do you even look at the films table... Anyway, this sort of thing could happen in an application where the SQL statement is composed by some if-statement logic where there are multiple checkboxes like ``appears in a film'' and ``does not appear in film'' and two conditions are added (like ``incoming = true OR incoming = false'').
 
 Obviously, the more complex the query, the harder it is to determine whether or not a particular join may be eliminated. More than that, the same queries written exactly the same on a database in which the constraints have not been added would not be eligible for the join elimination optimization. In the inner join example, the foreign key and not null constraints, for example, are beneficial. This reveals a second purpose why constraints are valuable in the database. In addition to allowing us to enforce logical rules of the application inside of the database, it allows queries to be completed more efficiently.
 
@@ -145,36 +141,6 @@ Fortunately, we can create an algorithm that can ``remember'' subsets of the cho
 This is a really big improvement, actually, considering how quickly the factorial term scales up. The trade-off for this approach is that the resultant approach may not be globally optimal (but instead just locally optimal). If $r_{1} \bowtie r_{4}$ produces very few tuples, it may be maximally efficient to do that join computation first, a strategy that will never be tried in an algorithm where $r_{1}$, $r_{2}$, and $r_{3}$ are combined to a subexpression for evaluation. 
 
 Remember though, this is as estimating process. The previous statement that said $r_{1} \bowtie r_{4}$ produces very few tuples as if it is a fact. The optimizer does not know that for sure and must rely on estimates where available. So even though the optimizer may, if it had tried all possibilities, determined that $r_{1} \bowtie r_{4}$ produces the fewest tuples and should be joined first, it is possible that estimate was off and the actual cost of a different plan was lower.
-
-A simple pseudocode algorithm for using dynamic programming to optimize join orders is below from~\cite{dsc}. In this, imagine that there exists a structure \texttt{result} that contains both a plan and a cost element. This result is stored in some array or other data structure for future retrieval. This recursive algorithm has $O(3^{n})$ behaviour which is... well... it's not going to win algorithm of the year.
-
-\begin{verbatim}
-procedure find_plan( subquery S ) 
-  if current subquery S result has already been computed
-    return previously computed result for S
-  end if
-
-  declare variable result
-
-  if current subquery S contains no joins
-    set result.plan for S to best way of accessing this relation
-    set result.cost for S this relation based on plan
-  else 
-    for each non empty subset S1 of current relation S that is not equal to S
-      variable r1 = find_plan( S1 ) 
-      variable r2 = find_plan( S - S1 )
-      A = best algorithm for joining r1 and r2
-      cost = r1.cost + r2.cost + cost of A
-      if cost less than current best plan for S
-        result.plan = execute r1, execute r2, join using A
-        result.cost = cost
-      end if  
-    end for
-   end if
-return result
-\end{verbatim}
-
-This is perhaps a bit hard to read and may require some explanation. The procedure checks if there has already been a result computed for this and if it is then there is no sense in re-doing that work. Use the already known result instead. Otherwise we will break the query down into smaller and smaller parts until we get down to just one relation: retrieving the matching part of that relation is computed. Then we can go up a level and find the best way to join that with the result (which itself may need to be broken down). This recursive procedure will eventually produce a result for how long it will take to perform the series of joins.
 
 The sort order in which tuples are generated is important if the result will be used in another join. A sort order is called \textit{interesting} if it is useful in a later operation. If $r_{1}$ and $r_{2}$ are being computed for a join with $r_{3}$ it is advantageous if the combined result $r_{1} \bowtie r_{2}$ is sorted on attributes that match to $r_{3}$ to make that join more efficient; if it is sorted by some attribute not in $r_{3}$ that means an additional sort will be necessary~\cite{dsc}.
 
@@ -215,6 +181,9 @@ There are exceptions, however. One from~\cite{dsc}: suppose the query is $\sigma
 \paragraph{Plan caching.} In any busy system, common queries may be repeated over and over again with slightly different parameters. For example, \cite{dsc} suggests the following sort of query: a student wishes to query what courses they are enrolled in. If one student does this query with a particular value for student ID number, we can re-use that same evaluation plan in the future when another student does the exact same query with her student ID number instead. 
 
 The results will be different and this query may be more expensive on the second run if, for example, the second student is taking 7 courses this term and the first student is taking 5. That is expected, all we really needed was an estimate. With that in mind, if we have actually carried out the exact query we can use the actual execution time as the updated estimate for how long it takes (or perhaps an average of the last $n$ executions of that same query if it has high variability). 
+
+\subsection*{Applicability}
+If we're not planning on implementing or understanding a database, is any of this useful? Yes! The database is just a specific example of an implementation and something that we're familiar with. The real lesson is about how to programmatically generate, evaluate, and choose amongst alternative options for accomplishing a goal. 
 
 \input{bibliography.tex}
 

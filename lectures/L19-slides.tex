@@ -334,21 +334,14 @@ And we don't want to do the query when estimating the cost...
 
 If we cannot measure, then, well, we need to guess.
 
-Estimates are based on assumptions; those assumptions are very often wrong. 
-
-That is okay. We do not need to be perfect. 
-
-All we need is to be better than not optimizing!
-
-And even if we pick the second or third or fifth best option, that is acceptable as long as we are close to the best option.
-
+No need to be perfect: all we need is to be better than not optimizing!
 
 \end{frame}
 
 \begin{frame}
 \frametitle{Cost Centres}
 
-There are five major areas where costs for actually performing a query accumulates. 
+Areas where costs for performing a query accumulates:
 
 \begin{enumerate}
 	\item \textbf{Disk I/O}
@@ -358,7 +351,7 @@ There are five major areas where costs for actually performing a query accumulat
 	\item \textbf{Communication}
 \end{enumerate}
 
-We will generally proceed on the basis that disk I/O is the largest cost and outweighs everything else.
+Assumption: disk is the largest one.
 
 \end{frame}
 
@@ -425,15 +418,11 @@ The more exact values we have, the better our guesses. But things start to get i
 \begin{frame}
 \frametitle{Query Optimization}
 
-Let us focus now on \alert{Join Elimination}.
+Slight digression on \alert{Join Elimination}.
 
-So much of the previous examination has focused on the cost of the join and that has highlighted in a real way just how expensive it is to perform a join. 
-
-For this reason, good optimizer routines will attempt to eliminate the join altogether if it can be skipped. 
+Attempt to eliminate the join altogether if it can be skipped. 
 
 The optimizer can only do this if there is certainty that the outcome will not be affected by not doing the join. 
-
-We will shortly see how that is accomplished.
 
 
 \end{frame}
@@ -447,33 +436,20 @@ Why not simply count on the developers who wrote the SQL in the first place to r
 
 That would be nice but would you also like a pony? 
 
+
+\begin{center}
+	\includegraphics[width=0.2\textwidth]{images/wantitall.jpg}
+\end{center}
 \end{frame}
 
 \begin{frame}
 \frametitle{Join Elimination}
 
-Developers make mistakes, as you know, or perhaps some legacy code cannot be changed for some reason. 
 
 Regardless, SQL is a language in which you specify the result that you want, not specifically how to get it. 
 
-If there is a more efficient route, then it's worth taking from the point of view of the database server. 
-
-If you ask for some operation that the compiler knows it can replace with an equivalent but faster operation, why wouldn't you want that? 
 
 Compilers don't admonish the user for writing code that it has to transform into a faster equivalent, they just do that transparently.
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Join Elimination}
-
-We will examine some real SQL queries to see how we can get rid of a total unnecessary join.
-
-This join can only be removed if the database server can prove that the join is not needed.
-
-Therefore the removal of this operation has no impact on the outcome.
 
 
 \end{frame}
@@ -481,11 +457,10 @@ Therefore the removal of this operation has no impact on the outcome.
 \begin{frame}
 \frametitle{Join Elimination Example}
 
-Consider a statement that looks like this: \texttt{SELECT c.* FROM customer AS c JOIN address AS a ON c.address\_id = a.address\_id;} 
+Query: \texttt{SELECT c.* FROM customer AS c JOIN address AS a ON c.address\_id = a.address\_id;} 
 
-This gets customer information and joins with those where there are addresses on file. 
 
-This is an inner join and as presented simply we cannot do anything with this information. 
+Inner join; as presented, cannot eliminate.
 
 We need to make sure that the customer data has a matching row.
 
@@ -497,13 +472,11 @@ We need to make sure that the customer data has a matching row.
 
 Suppose that we have a foreign key defined from customer's \texttt{address\_id} to the address \texttt{id} field. 
 
-If nulls are not permitted then we know for sure that every customer has exactly one record in the address table.
+If nulls are not permitted, then we know for sure that every customer has exactly one record in the address table.
 
 Therefore the join condition is not useful and may be eliminated. 
 
-This means we could in fact replace that query with \texttt{select * from customer;} with no need for any references to the join table at all. 
-
-That would be much, much faster since it is a simple select with no conditions.
+New query: \texttt{select * from customer;} faster (select without conditions).
 
 
 \end{frame}
@@ -511,24 +484,18 @@ That would be much, much faster since it is a simple select with no conditions.
 \begin{frame}
 \frametitle{More Elimination}
 
-The foreign key and not null constraints on the address ID field of the customer make it possible for the optimization of the join elimination to occur.
+The foreign key and not null constraints on the address ID field of the customer enable elimination.
 
 An outer join constraint can be removed as well.
 
 Imagine the query said this: \texttt{SELECT c.* FROM customer AS c LEFT OUTER JOIN address AS a ON c.address\_id = a.address\_id;}. 
 
-All tuples are fetched from customer whether or not there is an associated address. 
+All tuples are fetched from customer whether or not there is an address. 
 
 \end{frame}
 
 \begin{frame}
 \frametitle{Or Don't...?}
-
-Suppose the foreign key constraint is removed. 
-
-Does that change anything? No -- a unique constraint on the address would be sufficient. 
-
-Therefore it can once again be replaced with the simple \texttt{select * from customer;}.
 
 If, however, both constraints are removed and we cannot be sure that there is at most one address corresponding to a customer.
 
@@ -538,41 +505,10 @@ Then we have to do the join.
 \end{frame}
 
 \begin{frame}
-\frametitle{Eliminate a Wilder Join}
-
-When an outer join occurs with distinct keyword.
-
-In a many-to-many relationship (the example in the source material is about actors and films) then outer join would produce duplicate tuples. 
-
-The query asks for a listing of actor names. 
-
-It is an outer join query (which makes no sense...) 
-
-Because it's an outer join you will even return the actors who appear in no films.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Bad Example is Bad?}
-
-Why would you query all actors whether or not they had been in a film by referencing films? 
-
-If you don't care whether they had been in a film, why do you even look at the films table...
-
-Anyway, this sort of thing could happen in an application where the SQL statement is composed by some if-statement logic.
-
-E.g., checkboxes like ``appears in a film'' and ``does not appear in film'' and two conditions are added (like ``incoming = true OR incoming = false'').
-
-\end{frame}
-
-\begin{frame}
 \frametitle{Harder to Read}
 Obviously, the more complex the query, the harder it is to determine whether or not a particular join may be eliminated. 
 
 The same queries written on a database in which the constraints have not been added would not be eligible for the join elimination optimization. 
-
-In the inner join example, the foreign key and not null constraints, for example, are beneficial. 
 
 This reveals a second purpose why constraints are valuable in the database.
 
@@ -580,15 +516,16 @@ This reveals a second purpose why constraints are valuable in the database.
 
 \begin{frame}
 \frametitle{Join Elimination Analogy}
-You are asked to search through the library to find all copies of the book ``Harry Potter and the pthread House Elves''. 
+Task: find all copies of the book ``Harry Potter and the pthread House Elves''. 
 
-That is a plausible task. 
 
-But, suppose that you know as well there is a rule that this library will keep only one copy of that book ever. 
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/archives.jpg}
+\end{center}
 
-If that is the case, as soon as you have found the single copy of that book, you can stop looking (no need to check more ``just in case''). 
+Rule: this library will keep only one copy of that book ever. 
 
-This sort of optimization is very similar in that the rules let us avoid doing unnecessary work and that is a big part of the optimization routine.
+As soon as you have found the single copy of that book, you can stop looking.
 
 \end{frame}
 
@@ -598,9 +535,19 @@ This sort of optimization is very similar in that the rules let us avoid doing u
 
 It was perhaps oversimplifying to have said earlier that choosing a plan was just as simple as picking the one with the lowest cost. 
 
-There is a little bit more to it than that.
 
 There about choosing the one with the lowest cost is correct (generally) but the difficulty is in devising and calculating all possible evaluation plans. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Evaluation Plan Selection}
+
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/overthink.jpg}
+\end{center}
 
 These operations are not free in terms of CPU usage or time and it is possible to waste more time on analysis than choosing a better algorithm would save. 
 
@@ -620,15 +567,11 @@ The theory is that the join operations are likely to be the slowest and take the
 \begin{frame}
 \frametitle{Focus on the Join}
 
-We already know that the order of joins in a statement like $r_{1} \bowtie r_{2} \bowtie r_{3}$ is something the optimizer can choose. 
+The order of joins in a statement like $r_{1} \bowtie r_{2} \bowtie r_{3}$ is something the optimizer can choose. 
 
 In this case there are 3 relations and there are 12 different join orderings. 
 
-In fact, for $n$ relations there are $\dfrac{(2(n-1))!}{(n-1)!}$ possible orderings. 
-
-Some of them, are obviously symmetric which reduces the number that we have to calculate, since $r_{1} \bowtie r_{2}$ is not different from $r_{2} \bowtie r_{1}$. 
-
-In any case, even if we can cut down the symmetrical cases the problem grows out of hand very quickly when $n$ gets larger.
+For $n$ relations there are $\dfrac{(2(n-1))!}{(n-1)!}$ possible orderings (some symmetric).
 
 
 \end{frame}
@@ -637,11 +580,12 @@ In any case, even if we can cut down the symmetrical cases the problem grows out
 \begin{frame}
 \frametitle{Why Are We Doing This?}
 
-Once more than three relations are affected by a join query it may be an opportunity to stop and think very hard about what is going on here. 
+Why joining so many tables? Is this a design issue?
 
-This is quite unusual if the database design is good. 
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/zoidberg.jpg}
+\end{center}
 
-The database server may want to ask why do you have a join query that goes across six or eight or twelve relations. 
 
 It cannot examine all (non-symmetric) approaches and choose the optimal one. It would take too long.
 
@@ -653,22 +597,18 @@ It cannot examine all (non-symmetric) approaches and choose the optimal one. It 
 
 We can create an algorithm that can ``remember'' subsets of the choices. 
 
-If we have, for example, $r_{1} \bowtie r_{2} \bowtie r_{3} \bowtie r_{4} \bowtie r_{5}$, we can break that down a bit. 
-
-We could compute the best order for a subpart, say $(r_{1} \bowtie r_{2} \bowtie r_{3})$. 
+Request  $r_{1} \bowtie r_{2} \bowtie r_{3} \bowtie r_{4} \bowtie r_{5}$? Compute the best order for $(r_{1} \bowtie r_{2} \bowtie r_{3})$. 
 
 Then re-use that repeatedly for any further joins with $r_{4}$ and $r_{5}$. 
 
-This ``saved'' result can be re-used repeatedly turning our problem from five relations into two three-relation problems.
+This ``saved'' result can be re-used repeatedly.
 
 \end{frame}
 
 \begin{frame}
 \frametitle{Make the DB Server Sad}
 
-This is a really big improvement, actually, considering how quickly the factorial term scales up. 
-
-The trade-off for this approach is that the resultant approach may not be globally optimal (but instead just locally optimal). 
+The resultant approach may not be globally optimal (just locally optimal). 
 
 If $r_{1} \bowtie r_{4}$ produces very few tuples, it may be maximally efficient to do that join computation first.
 
@@ -681,57 +621,9 @@ That will never be tried in an algorithm where $r_{1}$, $r_{2}$, and $r_{3}$ are
 
 Remember though, this is as estimating process. 
 
-The previous statement that said $r_{1} \bowtie r_{4}$ produces very few tuples as if it is a fact. 
-
-The optimizer does not know that for sure and must rely on estimates where available. 
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Dynamic Programming Join Optimization}
-
-A simple pseudocode algorithm for using dynamic programming to optimize join orders is below. 
-
-In this, imagine that there exists a structure \texttt{result} that contains both a plan and a cost element. 
-
-This result is stored in some array or other data structure for future retrieval. 
-
-This recursive algorithm has $O(3^{n})$ behaviour which is... well... it's not going to win algorithm of the year.
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Dynamic Programming Join Optimization}
-{\scriptsize
-\begin{verbatim}
-procedure find_plan( subquery S ) 
-  if current subquery S result has already been computed
-    return previously computed result for S
-  end if
-
-  declare variable result
-
-  if current subquery S contains no joins
-    set result.plan for S to best way of accessing this relation
-    set result.cost for S this relation based on plan
-  else 
-    for each non empty subset S1 of current relation S that is not equal to S
-      variable r1 = find_plan( S1 ) 
-      variable r2 = find_plan( S - S1 )
-      A = best algorithm for joining r1 and r2
-      cost = r1.cost + r2.cost + cost of A
-      if cost less than current best plan for S
-        result.plan = execute r1, execute r2, join using A
-        result.cost = cost
-      end if  
-    end for
-   end if
-return result
-\end{verbatim}
-}
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/guessing.png}
+\end{center}
 
 \end{frame}
 
@@ -742,18 +634,23 @@ The sort order in which tuples are generated is important if the result will be 
 
 A sort order is called \alert{interesting} if it is useful in a later operation. 
 
+\end{frame}
+
+\begin{frame}
+\frametitle{May You Live In Interesting Times}
+
 Suppose $r_{1}$ and $r_{2}$ are being computed for a join with $r_{3}$.
 
 It is advantageous if the combined result $r_{1} \bowtie r_{2}$ is sorted on attributes that match to $r_{3}$ to make that join more efficient.
 
-If it is sorted by some attribute not in $r_{3}$ that means an additional sort will be necessary.
+If it is sorted by an attribute not in $r_{3}$, an additional sort will be necessary.
 
 \end{frame}
 
 \begin{frame}
 \frametitle{Generalizations Are Always Wrong}
 
-With this in mind it means that the best plan for computing a particular subset of the join query is not necessarily the best plan overall. 
+The best plan for computing a particular subset of the join query is not necessarily the best plan overall. 
 
 That extra sort may cost more than was saved by doing the join itself faster. 
 
@@ -769,9 +666,10 @@ Fortunately there are, usually anyway, not too many interesting sort orders...
 
 Join order optimization is a big piece of the puzzle but it's not the only thing we can do in query evaluation. 
 
-Let's briefly revisit the subject of how equivalent queries are formed. 
-
-We already decided it is too expensive to try out all equivalent queries, but perhaps we are determined to try to at least generate lots of alternatives.
+Too many to consider them all, but we can generate some alternatives.
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/toomany.jpg}
+\end{center}
 
 \end{frame}
 
@@ -779,10 +677,10 @@ We already decided it is too expensive to try out all equivalent queries, but pe
 \frametitle{To Generate Alternatives}
 
 \begin{enumerate}
-	\item A way of storing expressions that reduces duplication and therefore keeps down the amount of space needed to store the various queries.
-	\item A way of detecting duplicate derivations of the same expression.
-	\item A way of storing optimal subexpression evaluation plans so that we don't have to recompute them.
-	\item An algorithm that will terminate early the evaluation of a particular plan if it is already worse than the cheapest plan so far found. 
+	\item Efficient Storage of Expressions
+	\item Duplicate Detection
+	\item Remembering optimal plans
+	\item Early-terminating algorithm
 \end{enumerate}
 
 
@@ -792,11 +690,10 @@ We already decided it is too expensive to try out all equivalent queries, but pe
 \begin{frame}
 \frametitle{Nested Subqueries}
 
-If possible, nested subqueries will be transformed into an alternative representation: a join query. 
+If possible, nested subqueries will be transformed into a join query. 
 
-To summarize the rather long story, if evaluated the ``slow'' way the subquery needs to be run a lot of times. 
+If evaluated the ``slow'' way the subquery needs to be run a lot of times. 
 
-Thus, to make it faster, we would prefer to turn it into a join (which we already know how to handle).
 
 If really necessary we can run the subquery once and use that temporary relation in a join (where exists or ``in'' predicates may fall into this category).
 
@@ -808,9 +705,6 @@ If really necessary we can run the subquery once and use that temporary relation
 
 Now we will talk about some heuristic rules (guidelines, really) that we have definitely mentioned earlier.
 
-We talked about, for example, how to perform a selection. 
-
-Now we can actually discuss them more formally.
 
 \end{frame}
 
@@ -819,29 +713,8 @@ Now we can actually discuss them more formally.
 
 No surprises here: the sooner we do a selection, the fewer tuples are going to result and the fewer tuples are input to any subsequent operations. 
 
-Performing the selection is almost always an improvement. 
 
-Chances are we get a lot of benefit out of selection: it can cut a relation down from a very large number of tuples to relatively few (or even one). 
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Perform selection early}
-
-There are exceptions, however.
-
-Suppose the query is $\sigma_{\theta}( r \bowtie s )$ where $\theta$ refers only to attributes in $s$. 
-
-If we do the selection first and: 
-
-(1) $r$ is small compared to $s$ and 
-
-(2) there is an index on the join attributes of $s$ but not on those used by $\theta$ 
-
-...then the selection is not so nice. 
-
-It would throw away some useful information and force a scan on $s$.
+There are exceptions, however: if we throw away too much, it forces us to do a full table scan to complete a join. 
 
 
 \end{frame}
@@ -855,19 +728,6 @@ Just like selection, however, it is possible the projection throws away an attri
 
 
 \end{frame}
-
-\begin{frame}
-\frametitle{Left-deep join orders}
-
-Some query optimizers do not bother doing all the fanciful join optimization routines to solve which joins are best. 
-
-Instead they will consider join orders where each of the right operands of the join is always one of the initial relations $r_{k}$ from the query $r_{1} \bowtie r_{2} \bowtie ... \bowtie r_{n}$. 
-
-The reasoning behind this is it takes ``only'' $O(n!)$ time to consider all left-deep orders rather than all possible join orders.
-
-
-\end{frame}
-
 
 \begin{frame}
 \frametitle{Set Limits}
@@ -890,25 +750,17 @@ A student wishes to query what courses they are enrolled in.
 
 If one student does this query with a particular value for student ID number, we can re-use that same evaluation plan in the future.
 
-Another student will repeat the exact same query with her student ID number instead.
-
-The results will be different and this query may be more expensive on the second run.
-
-That is expected, all we really needed was an estimate.
-
 \end{frame}
 
+
 \begin{frame}
-\frametitle{Practical Optimization}
+\frametitle{Applicability}
 
-To wrap up the topic of query optimization we'll have a video. 
+If we're not implementing a database is this still useful?
 
-The talk is entitled ``How Modern SQL Databases Come up with Algorithms that You Would Have Never Dreamed Of'' by Lukas Eder: 
+Yes -- the database is just an example!
 
-\begin{center}
-\url{https://www.youtube.com/watch?v=wTPGW1PNy_Y}
-\end{center}
-
+Real lesson: how to programmatically generate, evaluate, and choose amongst alternatives.
 
 \end{frame}
 
