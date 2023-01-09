@@ -5741,7 +5741,7 @@ You may ask, of course, why should the optimizer do this work at all? Why not si
 Our guide in this is~\cite{joinelim}. We will examine some real SQL queries to see how we can get rid of a total unnecessary join. This join can only be removed if the database server can prove that the join is not needed and that therefore the removal of this operation has no impact on the outcome.
 
 
-Consider a statement that looks like this: \texttt{SELECT c.* FROM customer AS c JOIN address AS a ON c.address\_id = a.address\_id;} This gets customer information and joins with those where there are addresses on file. This is an inner join and as presented simply we cannot do anything with this information. We need to make sure that the customer data has a matching row.
+Consider a statement that looks like this: \texttt{SELECT c.* FROM customer AS c JOIN address AS a ON c.address\_id = a.address\_id;} This gets customer information and joins with those where there are addresses on file. This is an inner join and as presented, we cannot do any elimination with this information. We need to make sure that the customer data has a matching row.
 
 If, however, a new piece of information is considered, it changes everything entirely. Suppose that we have a foreign key defined from customer's \texttt{address\_id} to the address \texttt{id} field. If nulls are not permitted then we know for sure that every customer has exactly one record in the address table and therefore the join condition is not useful and may be eliminated. This means we could in fact replace that query with \texttt{select * from customer;} with no need for any references to the join table at all. That would be much, much faster since it is a simple select with no conditions.
 
@@ -5752,10 +5752,6 @@ An outer join constraint can be removed as well. Imagine the query said this: \t
 Suppose the foreign key constraint is removed. Does that change anything? No -- a unique constraint on the address would be sufficient for us to conclude that the join means no duplication of rows in customer will take place. Therefore it can once again be replaced with the simple \texttt{select * from customer;}.
 
 If, however, both constraints are removed and we cannot be sure that there is at most one address corresponding to a customer, then we have no choice but to do the join.
-
-For an even wilder example, when an outer join occurs with distinct keyword: in a many-to-many relationship (the example in the source material is about actors and films) then outer join would produce duplicate tuples. The query asks for a listing of actor names. It is an outer join query (which I confess makes very little sense: why do you care about the films entered who have no actors in them, and why would there be any anyway?). Because it's an outer join you will even return the actors who appear in no films. And thus potentially a lot of duplicates that are eliminated. 
-
-This last example is a bit forced, at least in my opinion. Why would you query all actors whether or not they had been in a film by referencing films? If you don't care whether they had been in a film, why do you even look at the films table... Anyway, this sort of thing could happen in an application where the SQL statement is composed by some if-statement logic where there are multiple checkboxes like ``appears in a film'' and ``does not appear in film'' and two conditions are added (like ``incoming = true OR incoming = false'').
 
 Obviously, the more complex the query, the harder it is to determine whether or not a particular join may be eliminated. More than that, the same queries written exactly the same on a database in which the constraints have not been added would not be eligible for the join elimination optimization. In the inner join example, the foreign key and not null constraints, for example, are beneficial. This reveals a second purpose why constraints are valuable in the database. In addition to allowing us to enforce logical rules of the application inside of the database, it allows queries to be completed more efficiently.
 
@@ -5776,36 +5772,6 @@ Fortunately, we can create an algorithm that can ``remember'' subsets of the cho
 This is a really big improvement, actually, considering how quickly the factorial term scales up. The trade-off for this approach is that the resultant approach may not be globally optimal (but instead just locally optimal). If $r_{1} \bowtie r_{4}$ produces very few tuples, it may be maximally efficient to do that join computation first, a strategy that will never be tried in an algorithm where $r_{1}$, $r_{2}$, and $r_{3}$ are combined to a subexpression for evaluation. 
 
 Remember though, this is as estimating process. The previous statement that said $r_{1} \bowtie r_{4}$ produces very few tuples as if it is a fact. The optimizer does not know that for sure and must rely on estimates where available. So even though the optimizer may, if it had tried all possibilities, determined that $r_{1} \bowtie r_{4}$ produces the fewest tuples and should be joined first, it is possible that estimate was off and the actual cost of a different plan was lower.
-
-A simple pseudocode algorithm for using dynamic programming to optimize join orders is below from~\cite{dsc}. In this, imagine that there exists a structure \texttt{result} that contains both a plan and a cost element. This result is stored in some array or other data structure for future retrieval. This recursive algorithm has $O(3^{n})$ behaviour which is... well... it's not going to win algorithm of the year.
-
-\begin{verbatim}
-procedure find_plan( subquery S ) 
-  if current subquery S result has already been computed
-    return previously computed result for S
-  end if
-
-  declare variable result
-
-  if current subquery S contains no joins
-    set result.plan for S to best way of accessing this relation
-    set result.cost for S this relation based on plan
-  else 
-    for each non empty subset S1 of current relation S that is not equal to S
-      variable r1 = find_plan( S1 ) 
-      variable r2 = find_plan( S - S1 )
-      A = best algorithm for joining r1 and r2
-      cost = r1.cost + r2.cost + cost of A
-      if cost less than current best plan for S
-        result.plan = execute r1, execute r2, join using A
-        result.cost = cost
-      end if  
-    end for
-   end if
-return result
-\end{verbatim}
-
-This is perhaps a bit hard to read and may require some explanation. The procedure checks if there has already been a result computed for this and if it is then there is no sense in re-doing that work. Use the already known result instead. Otherwise we will break the query down into smaller and smaller parts until we get down to just one relation: retrieving the matching part of that relation is computed. Then we can go up a level and find the best way to join that with the result (which itself may need to be broken down). This recursive procedure will eventually produce a result for how long it will take to perform the series of joins.
 
 The sort order in which tuples are generated is important if the result will be used in another join. A sort order is called \textit{interesting} if it is useful in a later operation. If $r_{1}$ and $r_{2}$ are being computed for a join with $r_{3}$ it is advantageous if the combined result $r_{1} \bowtie r_{2}$ is sorted on attributes that match to $r_{3}$ to make that join more efficient; if it is sorted by some attribute not in $r_{3}$ that means an additional sort will be necessary~\cite{dsc}.
 
@@ -5846,6 +5812,9 @@ There are exceptions, however. One from~\cite{dsc}: suppose the query is $\sigma
 \paragraph{Plan caching.} In any busy system, common queries may be repeated over and over again with slightly different parameters. For example, \cite{dsc} suggests the following sort of query: a student wishes to query what courses they are enrolled in. If one student does this query with a particular value for student ID number, we can re-use that same evaluation plan in the future when another student does the exact same query with her student ID number instead. 
 
 The results will be different and this query may be more expensive on the second run if, for example, the second student is taking 7 courses this term and the first student is taking 5. That is expected, all we really needed was an estimate. With that in mind, if we have actually carried out the exact query we can use the actual execution time as the updated estimate for how long it takes (or perhaps an average of the last $n$ executions of that same query if it has high variability). 
+
+\subsection*{Applicability}
+If we're not planning on implementing or understanding a database, is any of this useful? Yes! The database is just a specific example of an implementation and something that we're familiar with. The real lesson is about how to programmatically generate, evaluate, and choose amongst alternative options for accomplishing a goal. 
 
 
 
@@ -6975,7 +6944,7 @@ This isn't a hardware course so we're not going to invest a lot of time in talki
 
 \addcontentsline{toc}{chapter}{25 --- Profiling: Observing Operations}
 
-\section*{Observations}
+\section*{Observations Precede Conclusions}
 
 Think back to the beginning of the course when we did a quiz on what operations are fast and what operations are not. The important takeaway was not that we needed to focus on how to micro-optimize this abstraction or that hash function, but that our intuition about what is fast and what is slow is often wrong. Not just at a macro level, but at a micro level. You may be able to narrow down that this computation of $x$ is slow, but if you examine it carefully\ldots what parts of it are slow?
 
@@ -6986,7 +6955,7 @@ If you don't use tools, then you end up guessing. You just make some assumptions
 \end{quote}
 	\hfill -- Donald Knuth
 
-So going about this blindly is probably a waste of time. You might be fortunate and optimize a slow part\footnote{There is a saying that even a blind squirrel sometimes finds a nut.} but we should really follow one of my favourite rules: ``don't guess, measure!''\footnote{Now I am certain you are sick of hearing that.} So, to make your programs or systems fast, you need to find out what is currently slow and improve it (duh!). Up until now in the course it's mostly been about ``let's speed this up'', but we did not take much time to decide what we should speed up (though you maybe did this on an assignment\ldots?).
+So going about this blindly is probably a waste of time. You might be fortunate and optimize a slow part, but we should really follow one of my favourite rules: ``don't guess, measure!'' So, to make your programs or systems fast, you need to find out what is currently slow and improve it (duh!). Up until now in the course it's mostly been about ``let's speed this up'', but we did not take much time to decide what we should speed up (though you maybe did this on an assignment\ldots?).
 
 The general idea is, collect some data on what parts of the code are taking up the majority of the time. This can be broken down into looking at what functions get called, or how long functions take, or what's using memory\ldots
 
@@ -7000,7 +6969,7 @@ The general idea is, collect some data on what parts of the code are taking up t
 
 We'll return to profilers later, because it's a big topic, but for now we'll start with traces and counters.
 
-\subsection*{Logging}
+\subsection*{Tracing: Logging}
 We'll start with the idea of logging. It's an effective way of finding out what's going on in your program as it executes, and probably all of us have use print statements as a form of debugging, but also as a form of tracing. When we're running a small program, we don't always make the log messages very nice, but in a production system, logs typically have a timestamp, a message, and some attributes. The timestamp is helpful for organizing and searching the logs. 
 
 In~\cite{usd} it's recommended that if there can be only one tool for observing your program's execution, it is logging. This is because logging can tell you things about how much work the software did in a time period, when things are busy, which transactions are slow, when the service is down, etc. This probably matches well with our intuition that printf debugging or tracing is a good first option to figure out what's going on.
@@ -7031,9 +7000,61 @@ One way that we get into the situation of over-logging is if it's difficult or i
 
 So we are aiming for a balance: include the relevant information that would let us spot patterns or correlate with other data sources, but not so much that the important information is lost or that PII is exposed.
 
+There is a third way that a program logging too much, beyond drowning out key info or logging PII, and that's if the overhead of tracing is significant. Normally we're happy to accept some small slowdown in our program to have traceability, but let's try to put some numbers to tracing overhead. 
+
+Some quick, off-the-cuff figures from~\cite{usd}:
+\begin{itemize}
+	\item If we ask the CPU trace tool to track every conditional branch taken, that would be about a $20\times$ slowdown. This amount of overhead would be acceptable if we're debugging the program on a development machine (own laptop or testing deployment), but certainly not in a production environment.
+	\item If we ask for a timestamp at every function call and return in our program the slowdown is around $1.2-1.5\times$. This may (emphasis on may) be acceptable in a production environment if the task is not time-critical, but only temporarily while experimenting or observing.
+	\item If we ask for a timestamp of every system call entry and exit (user-space to kernel transition and back), that might be much less than $1\%$ overhead. This would likely be acceptable in a production environment for all but the most time-critical of operations and could remain in place at all times.
+\end{itemize}
+
+That covers tracing the CPU. What about memory? If you've used Valgrind\footnote{So, we used to cover Valgrind in this course. That made sense when it was C and \CPP~but we used to discuss it in Rust too. While the Helgrind part might help you find lock acquisition issues, for the most part students found that there were too many false positives around memcheck and it was just causing students to stress about losing marks. So... away with it.} before, you know it. If you haven't, as I say to the ECE~252 students: The target program then runs under the ``supervision'' of the tool. This results in running dramatically slower than normal, but you get additional checks and monitoring of the program. Why? Valgrind checks every memory read and write for validity (is the variable initialized? Is it off the end of an array? All those fun things that we, fortunately, no longer think about in Rust), but also records information about where memory is allocated to help the programmer in tracking down the genesis of a memory leak. When execution of the program ends, Valgrind shows the stack trace of the path that led to the allocation that was leaked. That's pretty neat!
+
+A disk trace tool would most likely have extremely tiny overhead because the speed of the disk as compared to the CPU is very slow. Something similar goes for the network; the latency is high and speed of the network are slow compared to what the CPU can do~\cite{usd}. 
+
+Tracing also can play a role in identifying deadlocks and delays in threads caused by waiting for locks: simply log every lock and unlock. But we might really be only interested in the locks where there is contention, i.e., threads are sometimes or often failing to acquire the lock because it's held by another thread~\cite{usd}. After all, if our intention is to observe the behaviour of the program with the intention of improving performance, the part where a thread isn't getting what it wants immediately and must wait is much more interesting than the part where everything is fine and there are no delays.
+
+\paragraph{Space, the Final Frontier.} Whatever trace strategy we choose, the trace itself takes up space. If we are producing a very large amount of data, it won't all fit in memory and has to go on disk. It's possible that the amount of data that we produce will fill up the disk very quickly, or arrive so fast that the disk cannot keep up. In~\cite{usd} there's a quick calculation that says a main memory system with 20 GB/s bandwidth and 64-byte cache lines that records up to 8 bytes of data per trace entry could result in producing data at a rate of 2.4 GB per second! That's a rather overwhelming amount of data -- even if you could write it all out to disk fast enough, it would fill up an 8 TB hard drive in just under an hour. Either we need to capture less data by recording fewer things or by recording for a shorter time. Just add this to the reasons why we need to be judicious about how much trace data to capture.
+
 \subsection*{Aggregate Measures (Counters)}
+Many profiling tools rely heavily on counters. Counters, as the name suggests, keep a count of events: interrupts, cache misses, data bytes written, calls to function \texttt{do\_magic()}. Keeping track of these numbers is relatively inexpensive (specially when compared to other approaches so counting every occurrence of an event is actually plausible. Counters are a form of aggregation, because we're summing the number of occurrences and at the end of the program we have a total number. The counter any any data derived from it certainly takes much less space than a trace.
 
-Aggregate measures are exactly what they sound like: summaries of data. Calculating the average response time of a request is an aggregate measure 
+The sum is the simplest kind, but other aggregate measures are exactly what they sound like: summaries of data. Calculating the average response time of a request is an aggregate measure: we've summed up the total time per request and divided it by the number of requests in the given period and hopefully the resulting value is a useful one. Asking the computer to calculate the summary is sensible, of course, because it's not realistic to ask a human to look at 50~000 requests and calculate their average time. Some obvious aggregate measures are things like: number of requests, requests broken down by type, average time to respond to a request, percentage of error responses...  
+
+Whatever aggregate measures we use, they are useful only with context.  Suppose that after my pull request is merged, the average login time for a user is 0.75 seconds; is that a problem? Without a baseline to compare against, I'm not sure. If before my PR it was 0.5 seconds, I made performance much worse and that doesn't sound good; should I revert it and re-work it? Maybe, unless I am intentionally making login slower to make a brute-force password attack more expensive for an attacker. Context is key: the summary tells you some data, but not the reasons.
+
+Another example: if I tell you that a request takes, on average, 1.27 seconds to get a response, is that good or bad? There's, again, no way to say anything about it without a point of reference. Are we being asked to approve or deny a transaction and there's a time limit of 1 second to give our answer (or else a default answer is assumed)? We're missing the target and that's a problem. If instead I said the time limit is 10 seconds, then we have plenty of room. Or do we?
+
+Average time isn't quite enough to know if we're doing well when it comes to time limits. If the average time is 1.27 seconds it does not preclude the possibility that the maximum time is outside the 10 second time limit and that means for some percentage of requests, possibly a large percentage, we're not making the deadline. How hard of a deadline are we talking about? To address this we can look at maximum and 95th percentile kind of aggregate measures as well.
+
+The other way that averages can be misleading is that they misrepresent the bursty nature of the data. If your service receives, on average, 7 requests per second, does that mean it looks like the first, second, or third row below (all from~\cite{usd})?
+
+\begin{center}
+	\includegraphics{images/burst1}\\
+	\includegraphics{images/burst2}\\
+	\includegraphics{images/burst3}\\
+\end{center}
+
+While the first scenario is really nice and very predictable, is that realistic? Later on in the course we'll talk more about queueing theory and we'll learn that random arrivals and what it means for things to arrive.
+
+When we choose to aggregate our data in some way, we must make a decision about the period of time in question. If our program is going to, say encode a video, the period of time is probably the whole execution time of the task: it took 3h 21 minutes to encode the video and that results in a processing rate of 210.9 frames per second. For services that run indefinitely or when we're impatient, we might want to look at a shorter period of time and consider that. But if we choose the wrong period we'll miss important things: if we look at purchases per hour, if we look at Sunday night that might be misleading as compared to Monday at noon.
+
+\paragraph{Look at the pretty pictures.} 
+Often, we want to not just see the raw data, but also the trend in the data; choosing the right visualization is really helpful. Digital speedometers in cars are more accurate than a sweep one in terms of showing you the speed of your vehicle, but the sweeping analog speedometer makes it easier for a person to understand the acceleration (rate of change of that speed). Representing changes in data over time in a graph makes it easier to identify trends or alarming things, and as a bonus, managers and non-technical people love them and love to rely on them. 
+
+Consider just a simple example of the CPU usage graph from my laptop when I compile and run the nbody-parallel code; the blue represents user-space execution and red represents kernel execution:
+
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/cpu-load.png}
+\end{center}
+
+It is obvious in this picture at what point the simulation starts running for real. If we see this and we can identify an operation that starts around the time the CPU is maxed out, we have found something useful.
+
+\paragraph{Dashboards.} If we put together enough pretty pictures, we get a... dashboard! Dashboards are (ideally) more than just pretty pictures of LINE GOES UP. It is instead intended to be a collection of useful graphs (time trends, histograms, etc) that present an easily-digestible summary of the situation. Good dashboards make it clear what's happening and what things need attention. Of course, dashboards tend to make more sense when we have many things to measure; not so much if we're just trying to optimize one specific thing.
+
+\subsection*{Drill-down}
+All of this introduction to profiling has really been focused around the higher level ideas for identifying what's happening and what operations, if any, are slow (or slower than expected). Once we know that, for example, importing CSV files with tax rates is slow, we can start to use some profiling tools to identify what is slow inside that functionality.  In the next topic, we'll start by narrowing down what area is the bottleneck. 
 
 
 
@@ -7043,9 +7064,170 @@ Aggregate measures are exactly what they sound like: summaries of data. Calculat
 
 
 
-\chapter*{26 --- Program Profiling and POGO}
 
-\addcontentsline{toc}{chapter}{26 --- Program Profiling and POGO}
+\chapter*{26 --- Profiling and Scalability}
+
+\addcontentsline{toc}{chapter}{26 --- Profiling and Scalability}
+
+\section*{Profiling and Scalability}
+
+We've had a long look at the subject of observation -- identifying areas in the execution of our program that are a potential issue. Most of our upcoming discussion will be around the idea of CPU profiling, which is to say, examining where CPU time is going. That's generally predicated on the idea that CPU time is limiting factor. But maybe it isn't, and before we go about focusing on how to improve this aspect, let's check that assumption and consider what else it could be.
+
+While we're discussing this, we will also take some time to relate performance to scalability. Very early on in the course we mentioned the idea that what we want in scalability is to take our software from 1 user to 100 to 10 million. To scale up, we probably need to do some profiling to find out what's slow and make a decision about what to change. It's also useful in terms of making an estimate of our maximum number of users or transactions could be. That's not a hypothetical scenario either; I [JZ] was asked by a C-Level (company executive) whether a particular system could handle 10$\times$ as many users -- and that answer had to be supported with some numbers.
+
+With that said, if you identify a problem in a production system and we want to experiment on it with a dev machine, or if we have an application developed and we want to estimate what its performance and limiting factors would be, there are a few things we need to worry about.  So we should respect the following principles, as outlined in~\cite{swps}.
+
+\paragraph{Hardware Principle.} 
+Scalability testing is very different from  QA testing (you test your code, right?) in that you will do development and QA on your local computer and all you really care about is whether the program produces the correct output ``fast enough''. That's fine, but it's no way to test if it scales. If you actually want to test for scalability and real world performance, you should be doing it on the machines that are going to run the program in the live/production environment. Why? Well, low-end systems have very different limiting factors. You might be limited by the 16GB of RAM in your laptop and that would go away in the 64GB of RAM server you're using. So you might spend a great deal of time worrying about RAM usage when it turns out it doesn't matter.
+
+\paragraph{Reality Principle.}
+It would be a good idea to use a ``real'' workload, as much as one can possibly simulate. Legal reasons might prevent you from using actual customer data, but you should be trying to use the best approximation of it that you have. 
+
+If you only generate some test data, it might not be representative of the actual data: you might say 1\% of your customers are on the annual subscription but if it's really 10\% that might make a difference in how long it takes to run an analysis. On the other hand, your test data might be much larger than in production because your tests create (and don't delete) entities in the test system database every time you run.
+
+This isn't theoretical: I [JZ] have been the incident responder on an incident where an app doesn't start up because the database migration takes too long and gets killed. This issue wasn't caught in the test environment because the size of data there was much smaller than the live database. So of course the migration was finished well under the time limit during testing... and failed when going live. Oops.
+
+Related to that, user behaviour is hard to simulate, too. If you are making threads that pretend to be users to simulate concurrent usage of the system, the scripts those threads run may not accurately represent the way the users really behave.  Your test example scenario may assume that company managers want to run the report once a month... your users might run them every hour. That one really happened to me [JZ] as well. The manager was using the report to keep an eye on what his team members were doing all day!
+
+\paragraph{Volume Principle.}
+``More is the new more.'' It's okay to use lighter workloads for regression testing and things like that, but if you actually want to see how your system performs under pressure, you actually need to put it under pressure! You can simulate pressure by limiting RAM or running something very CPU-intensive concurrently, but it's not quite the same as having an actually-high workload. 
+
+Why not? The issue isn't so much the test as it is what you're not seeing. If I want to test the app on my laptop under CPU pressure I can just run the app while I repeatedly convert a lecture video just to consume CPU cycles. That does have the effect of limited CPU time available and we can see how the app performs when CPU time is maxed out. But that's not the same as what happens if you have 500 users concurrently, because you might not get to full CPU usage with 500 users due to other reasons, such as lock contention. 
+
+These tests, incidentally, are of great interest to the customers and C-Levels, who would like to know that you can deliver promised levels of performance or throughput, or what the current maximum is.
+
+\paragraph{Reproducibility and Regression Testing.}
+Your results will need to be reproducible. Remember that good programming practice says that tests should be run, and re-run to make sure it all works. The same is true in your performance tests. Just as we don't want to see old bugs cropping up again, old (solved) performance issues are not nice to see either. Or a new change that slows the whole program down is not a success either. So please, have regression testing and performance regression testing. Real-life example: \url{https://arewefastyet.com} tracks regressions/improvements in Firefox performance.
+
+\section*{Characterizing Performance \& Scalability Problems}
+
+\begin{quote}
+\textit{It is a capital mistake to theorize before one has data. Insensibly one begins to twist facts to suit theories, instead of theories to suit facts.}
+\end{quote}
+\hfill - Sherlock Holmes (\textit{A Scandal in Bohemia}; Sir Arthur Conan Doyle)
+
+Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before reaching conclusions. At a high level we probably have five potential culprits to start with:
+\begin{enumerate}
+	\item CPU
+	\item Memory
+	\item Disk
+	\item Network
+	\item Locks
+\end{enumerate}
+
+These are, obviously, more categories than specific causes, but they are starting points for further investigation. They are listed in some numerical order, but there is no reason why one would have to investigate them in the order defined there.
+
+\paragraph{CPU.} CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that used to donate its free CPU cycles to world community grid (I'm singlehandedly saving the world, you see.):
+
+\begin{verbatim}
+top - 07:28:19 up 151 days, 23:38,  8 users,  load average: 0.87, 0.92, 0.91
+\end{verbatim}
+
+Those last three numbers are the one, five, and fifteen minute averages of CPU load, respectively. Lower numbers mean less CPU usage and a less busy machine. A small guide on how to interpret this, from~\cite{scout}.
+
+Picture a single core of a CPU as a lane of traffic. You are a bridge operator and so you need to monitor how many cars are waiting to cross that bridge. If no cars are waiting, traffic is good and drivers are happy. If there is a backup of cars, then there will be delays. Our numbering scheme corresponds to this:
+
+\begin{enumerate}
+	\item 0.00 means no traffic (and in fact anything between 0.00 and 0.99) means we're under capacity and there will be no delay.
+	\item 1.00 means we are exactly at capacity. Everything is okay, but if one more car shows up, there will be a delay.
+	\item Anything above 1.00 means there's a backup (delay). If we have 2.00 load, then the bridge is full and there's an equal number of cars waiting to get on the bridge. 
+\end{enumerate}
+
+Or, visually, also from~\cite{scout}:
+
+\begin{center}
+	\includegraphics[width=0.55\textwidth]{images/car-analogy.png}
+\end{center}
+
+Being at or above 1.00 isn't necessarily bad, but you should be concerned if there is consistent load of 1.00 or above. And if you are below 1.00 but getting close to it, you know how much room you have to scale things up -- if load is 0.4 you can increase handily. If load is 0.9 you're pushing the limit already. If load is above 0.70 then it's probably time to investigate. If it's at 1.00 consistently we have a serious problem. If it's up to 5.00 then this is a red alert situation.
+
+Now this is for a single CPU -- if you have a load of 3.00 and a quad core CPU, this is okay. You have, in the traffic analogy, four lanes of traffic, of which 3 are being used to capacity. So we have a fourth lane free and it's as if we're at 75\% utilization on a single CPU.
+
+
+\paragraph{Memory and Disk.} Next on the list is memory. One way to tell if memory is the limiting factor is actually to look at disk utilization. If there is not enough RAM in the box, there will be swapping and then performance goes out the window and scalability goes with. That is of course, the worst case. You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
+
+\begin{verbatim}
+KiB Mem:   8167736 total,  6754408 used,  1413328 free,   172256 buffers
+KiB Swap:  8378364 total,  1313972 used,  7064392 free.  2084336 cached Mem
+\end{verbatim}
+
+This can be misleading though, because memory being ``full'' does not necessarily mean anything bad. It means the resource is being used to its maximum potential, yes, but there is no benefit to keeping a block of memory open for no reason. Things will move into and out of memory as they need to, and nobody hands out medals to indicate that you did an awesome job of keeping free memory. It's not like going under budget in your department for the year.  Also, memory is not like the CPU; if there's nothing for the CPU to do, it will just idle (or go to a low power state, which is nice for saving the planet). But memory won't ``forget'' data if it doesn't happen to be needed right now - data will hang around in memory until there is a reason to move or change it. So freaking out about memory appearing as full is kind of like getting all in a knot about how ``System Idle Process'' is hammering the CPU\footnote{Yes, a tech journalist named John Dvorak really wrote an article about this, and I will never, ever forgive him for it.}.
+
+You can also ask about page faults, with the command \texttt{ps -eo min\_flt,maj\_flt,cmd} which will give you the major page faults (had to fetch from disk) and minor page faults (had to copy a page from another process). The output of this is too big even for the notes, but try it yourself (or I might be able to do a demo of it in class). But this is lifetime and you could have a trillion page faults at the beginning of your program and then after that everything is fine. What you really want is to ask Linux for a report on swapping:
+
+\begin{verbatim}
+jz@Loki:~$ vmstat 5
+procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+ 1  0 1313972 1414600 172232 2084296    0    0     3    39    1    1 27  1 72  0  0
+ 0  0 1313972 1414476 172232 2084296    0    0     0    21  359  735 19  0 80  0  0
+ 0  0 1313972 1414656 172236 2084228    0    0     0   102  388  758 22  0 78  0  0
+ 4  0 1313972 1414592 172240 2084292    0    0     0    16  501  847 33  0 67  0  0
+ 0  0 1313972 1412028 172240 2084296    0    0     0     0  459  814 29  0 71  0  0
+\end{verbatim}
+
+In particular, the columns ``si'' (swap in) and ``so'' (swap out) are the ones to pay attention to. In the above example, they are all zero. That is excellent and tends to indicate that we are not swapping to disk and that's not the performance limiting factor. Sometimes we don't get that situation. A little bit of swapping may be inevitable, but if we have lots of swapping, we have a very big problem. Here's a not-so-nice example, from~\cite{vmstat}:
+
+\begin{verbatim}
+  procs                      memory    swap          io     system cpu
+r  b  w   swpd   free  buff cache  si  so   bi   bo   in    cs us  sy  id
+. . .
+1  0  0  13344   1444  1308 19692   0 168  129   42 1505   713 20  11  69
+1  0  0  13856   1640  1308 18524  64 516  379  129 4341   646 24  34  42
+3  0  0  13856   1084  1308 18316  56  64   14    0  320  1022 84   9   8
+\end{verbatim}
+
+If we're not doing significant swapping, then memory isn't holding us back, so we can conclude it is not the limiting factor in scaling the application up. On to disk.
+
+Looking at disk might seem slightly redundant if memory is not the limiting factor. After all, if the data were in memory it would be unnecessary to go to disk in the first place. Still, sometimes we can take a look at the disk and see if that is our bottleneck.
+
+{\scriptsize
+\begin{verbatim}
+jz@Loki:~$ iostat -dx /dev/sda 5 
+Linux 3.13.0-24-generic (Loki) 	16-02-13 	_x86_64_	(4 CPU)
+
+Device:         rrqm/s   wrqm/s     r/s     w/s    rkB/s    wkB/s avgrq-sz avgqu-sz   await r_await w_await  svctm  %util
+sda               0.24     2.78    0.45    2.40    11.60   154.98   116.91     0.17   61.07   11.57   70.27   4.70   1.34
+\end{verbatim}
+}
+
+It's that last column, \%util that tells us what we want to know. The device bandwidth here is barely being used at all. If you saw it up at 100\% then you would know that the disk was being maxed out and that would be a pretty obvious indicator that it is the limiting factor. This does not tell you much about what is using the CPU, of course, and you can look at what processes are using the I/O subsystems with \texttt{iotop} which requires root privileges\footnote{https://xkcd.com/149/}.
+
+\paragraph{Network.} That leaves us with networks. We can ask about the network with \texttt{nload}: which gives the current, average, min, max, and total values. And you get a nice little graph if there is anything to see. It's not so much fun if nothing is happening. But you'll get the summary, at least:
+
+\begin{verbatim}
+Curr: 3.32 kBit/s
+Avg: 2.95 kBit/s
+Min: 1.02 kBit/s
+Max: 12.60 kBit/s
+Ttl: 39.76 GByte                                                                                       \end{verbatim}
+
+\paragraph{Locks.}
+The last possibility we'll consider is that your code is slow because we're waiting for locks, either frequently or for lengthy periods of time. We've already discussed appropriate use of locks, so we won't repeat that. The discussion here is about how to tell if there is a locking problem in the first place.
+
+We'll exclude the discussion of detecting deadlock, because we'll say that deadlock is a correctness problem more than a performance problem. In any case, a previous course (ECE 252, SE 350, MTE 241) very likely covered the idea of deadlock and how to avoid it. The Helgrind tool (Valgrind suite) is a good way to identify things like lock ordering problems that cause a deadlock. Onwards then. 
+
+Unexpectedly low CPU usage, that's not explained by I/O-waits, may be a good indicator of lock contention. If that's the case, when CPU usage is low we would see many threads are blocked. 
+
+Unlike some of the other things we've discussed, there's no magical \texttt{locktrace} tool that would tell us about critical section locks, and the POSIX pthread library does not have any locks tracing in its specification~\cite{usd}. One possibility is to introduce some logging or tracing ourselves, e.g., recording in the log that we want to enter a critical section $A$ and then another entry once we're in it and a third entry when we leave $A$. That's not great, but it is something! 
+
+I did some reading about \texttt{perf lock} but the problem is, as above, that it doesn't really find user-space lock contention. You can ask tools to tell you about thread switches but that's not quite the same. Other commercial tools like the Intel VTune claim that they can find these sorts of problems. But those cost money and may be CPU-vendor-specific.
+
+
+\subsection*{But it's probably CPU...}
+Most profiling tools, and most of our discussion, will be about CPU profiling. It's the most likely problem we'll face and something that we are hopefully able to do something about. 
+
+
+
+
+
+
+
+
+
+\chapter*{27 --- Program Profiling and POGO}
+
+\addcontentsline{toc}{chapter}{27 --- Program Profiling and POGO}
 
 \section*{Profiling}
 We've spent some time talking about observing programs at a higher level, but now we should consider zooming in a little bit to using specific profiling tools to figure out where CPU time is going and how to make use of that.
@@ -7410,235 +7592,49 @@ There are more details in the source as to how many functions are used in a typi
 
 
 
-\chapter*{27 --- Liar, Liar and Memory Profiling}
+\chapter*{28 --- Causal and Memory Profiling}
 
-\addcontentsline{toc}{chapter}{27 --- Liar, Liar and Memory Profiling}
+\addcontentsline{toc}{chapter}{28 --- Causal and Memory Profiling}
 
-I was thinking today about how humans are quite adept at building and
-using tools (though not
-unique\footnote{https://www.rnz.co.nz/news/national/366747/clever-kea-using-tools-to-raid-traps}). Profilers
-are useful tools, but they can mislead you.  If you understand how
-profilers work, you can avoid being misled.
+\section*{Causal Profiling}
+At this point we've got some experience in identifying areas of the program that we think are slow or are limiting the maximum performance of our program. If we are presented with more than one thing, how do we know which of those would yield the most benefit? Is it possible that optimizing something would actually have no or a negative effect? The scientific approach would be to do an experiment and find out. That is, change the code, see the impact, re-evaluate. What causal profiling offers us is a way to run those experiments without changing any code. That could be a significant savings of time and effort. 
 
-As we've been saying this week, there are sampling-based and instrumentation-based profilers.
-The tl;dr is that a sampling-based profiler can miss things, while an instrumentation-based
-profiler distorts the system under observation.
+One such causal profiler is called Coz (pronounced like ``cause'')~\cite{coz}. It does a what-if analysis that says: what would be the impact of speeding up this particular part of the code? 
 
-Visually, sampling-based profiling can do this:
+A very simple approach would just look at the time of the program and just calculate what happens if the runtime of function \texttt{work()} is reduced by, say, 10\%. But that isn't a realistic approach, because speeding up that function might have no overall impact or change the execution time by increasing lock contention or some other mechanism. No, we actually need a simulation. 
+
+The key observation of the Coz profiler authors is the idea that speeding up some area of code is fundamentally the same as slowing down every other part of the code. It's all relative! This is what we would call a virtual speedup. How is the other code slowed down? Adding some pauses to (stopping the execution of) the other threads. That certainly makes them run slower. Maybe you're not convinced that slowing down everything else is equivalent?
+
+
+Shown below is the argument from~\cite{coz} in visual form. The original runtime is shown as (a). Hypothetically, if we make function \texttt{f} faster by some factor $d = 40\%$ that gives us (b). And if instead of actually making function \texttt{f} faster we instead paused other threads for $0.4 \times t(f)$ where $t(f)$ is the original execution time of \texttt{f}, we get an equivalent effect to that of of optimizing \texttt{f} by $d$.
 \begin{center}
-	\url{https://www.youtube.com/watch?v=jQDjJRYmeWg}
+	\includegraphics[width=0.4\textwidth]{images/virtual-speedup.jpg}
 \end{center}
 
-The video's not fake; it's a real helicopter and it's really flying. What's happening, however, is that the camera is taking images at some multiple of the frequency of the blade rotation speed so it gives the illusion that the blades are not spinning at all. This is a sampling problem, and you see the same problem in car commercials on TV where it looks like the wheels are spinning backwards. They're not, but the sampling effect of the camera can make it look that way.
-
-The main assumptions underlying sampling are that samples are ``random'' and that the sample distribution approximates the actual time-spent distribution\footnote{Lifted from ``Profilers are Lying Hobbitses'', \url{https://www.infoq.com/presentations/profilers-hotspots-bottlenecks/}, which talks about profiling for JVMs.}.
-
-\section*{Lies from Metrics}
-While app-specific metrics can lie too, mostly we'll talk about CPU
-perf counters today.
-In particular, we're going to look at two types of sampling-based lies.
-
-The reference for the first type of lie is a blog post by Paul Khuong~\cite{metrics}.
-
-This goes back to {\tt mfence}, which we've seen before. It is used, for instance, in
-spinlock implementations. Khuong found that his profiles said that spinlocking didn't take much time.
-But empirically: eliminating spinlocks = better than expected! Hmm.
-
-The next step is (as we do in this course) to create microbenchmarks to better understand what's
-going on. The microbenchmark contained memory accesses to uncached locations, or computations,
-surrounded by store pairs/mfence/locks. He used perf to evaluate the impact of mfence vs lock.
-You'll recall that perf is sampling-based and records how often the CPU is found executing each
-instruction.
-
-{\scriptsize
-\begin{lstlisting}
-# for locks:
-$ perf annotate -s cache_misses
-[...]
-    0.06 :        4006b0:       and    %rdx,%r10
-    0.00 :        4006b3:       add    $0x1,%r9
-    ;; random (out of last level cache) read
-    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
-   30.37 :        4006bb:       mov    %rcx,%r10
-    ;; foo is cached, to simulate our internal lock
-    0.12 :        4006be:       mov    %r9,0x200fbb(%rip)
-    0.00 :        4006c5:       shl    $0x17,%r10
-    [... Skipping arithmetic with < 1% weight in the profile]
-    ;; locked increment of an in-cache "lock" byte
-    1.00 :        4006e7:       lock incb 0x200d92(%rip)
-   21.57 :        4006ee:       add    $0x1,%rax
-    [...]
-    ;; random out of cache read
-    0.00 :        400704:       xor    (%rsi,%r10,8),%rbp
-   21.99 :        400708:       xor    %r9,%r8
-    [...]
-    ;; locked in-cache decrement
-    0.00 :        400729:       lock decb 0x200d50(%rip)
-   18.61 :        400730:       add    $0x1,%rax
-    [...]
-    0.92 :        400755:       jne    4006b0 <cache_misses+0x30>
-\end{lstlisting}
-}
-
-We can see that in the lock situation, reads take 30 + 22 = 52\% of runtime,
-while locks take 19 + 21 = 40\% of runtime.
-
-{\scriptsize
-\begin{lstlisting}
-# for mfence:
-$ perf annotate -s cache_misses
-[...]
-    0.00 :        4006b0:       and    %rdx,%r10
-    0.00 :        4006b3:       add    $0x1,%r9
-    ;; random read
-    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
-   42.04 :        4006bb:       mov    %rcx,%r10
-    ;; store to cached memory (lock word)
-    0.00 :        4006be:       mov    %r9,0x200fbb(%rip)
-    [...]
-    0.20 :        4006e7:       mfence 
-    5.26 :        4006ea:       add    $0x1,%rax
-    [...]
-    ;; random read
-    0.19 :        400700:       xor    (%rsi,%r10,8),%rbp
-   43.13 :        400704:       xor    %r9,%r8
-    [...]
-    0.00 :        400725:       mfence 
-    4.96 :        400728:       add    $0x1,%rax
-    0.92 :        40072c:       add    $0x1,%rax
-    [...]
-    0.36 :        40074d:       jne    4006b0 <cache_misses+0x30>
-\end{lstlisting}
-}
-Looks like the reads take 85\% of runtime,
-while the mfence takes 15\% of runtime.
-
-Metrics lie, though, and when you focus on the metrics as opposed to what you
-actually care about, it's easy to be led astray.
-
-In this case, what we actually care about is the total \# of cycles.
-
-    \begin{tabular}{lr}
-    No atomic/fence:& 2.81e9 cycles\\
-    lock inc/dec: & 3.66e9 cycles\\
-    mfence: & 19.60e9 cycles
-    \end{tabular}
-
-That 15\% number is a total lie.
-Profilers, even using CPU expense counts, drastically underestimate the impact of mfence,
-and overestimate the impact of locks.
-
-This is because mfence causes a pipeline flush, and the resulting 
-costs get attributed to instructions being flushed, not to the mfence itself. In other
-words, mfence makes other instructions run more slowly, which camouflages its own effect
-on the overall performance.
-
-
-\section*{The Long Tail}
-
-The other type of lie that sampling can hide is the one where infrequent long tails are hidden in averages.
-Our source here is the blog post by Dan Luu~\cite{perf-tracing}. Suppose we have a task that's going to get distributed over multiple computers (like a search). If we look at the latency distribution, the problem is mostly that we see a long tail of events and when we are doing a computation or search where we need all the results, we can only go as the slowest step. Let's take a look at a histogram of disk read latencies, where we are performing a 64 kB read, also from that source:
+The tool provides some graphs of potential program speedup. From the recorded presentation, it might look something like the diagram below, where the boxes on the right correspond to different theoretical actions in the application being examined:
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/disk_tail.png}
+	\includegraphics[width=0.4\textwidth]{images/coz-speedup-graph.png}
 \end{center}
 
-Let's break it down. Peak 1 corresponds to something cached in RAM---best case scenario. Peak 2 is at around 3ms, which is too fast for spinning and seeking magnetic hard disks, but it's fast enough for reading something from the disk cache via the PCI-Express interface. Peak 3 is obviously disk seek and read times, around 25ms. 
+This pretend application shows all the possible outcomes, from continuous linear speedup, to speedup capped at some point, to no effect, and finally to where optimizing something makes the overall program runtime worse. 
 
-These numbers don't look terrible, except for the fact that we have peaks at 250, 500, 750, and 1000 ms and the 99th percentile is some 696ms which is a very, very long time. Sampling profilers are not very good at finding these things, because they throw everything into various buckets and therefore we get averages. The averages are misleading, though, because we have these weird outliers that take dramatically longer. Averages are nice as long as our data is also reasonably ``nice''.
+It's easy to imagine scenarios corresponding to each of those. If we're computing the n-body problem, anything that improves the calculation of forces will certainly make things better. And it's easy to imagine that sometimes optimizing a part of the program does not improve anything because that code is not on the critical path. We can also easily imagine that improving something works up to a point where it ceases to be the limiting factor. But making things worse? We already covered that idea: speeding up a thread may increase lock contention or add something to the critical path. At some point, things may recover and be a net benefit.
 
-So what actually happened? Well, from~\cite{perf-tracing}: The investigator found out that the cause was kernel throttling of the CPU for processes that went beyond their usage quota. To enforce the quota, the kernel puts all of the relevant threads to sleep until the next multiple of a quarter second. When the quarter-second hand of the clock rolls around, it wakes up all the threads, and if those threads are still using too much CPU, the threads get put back to sleep for another quarter second. The phase change out of this mode happens when, by happenstance, there aren't too many requests in a quarter second interval and the kernel stops throttling the threads. After finding the cause, an engineer found that this was happening on 25\% of disk servers at Google, for an average of half an hour a day, with periods of high latency as long as 23 hours. This had been happening for three years.
+It is important to remember that just because hypothetically speeding up a particular part of the program would be beneficial, doesn't mean that it's possible to speed up that part. And almost certainly not possible to do so to an arbitrary degree. We still have to make an assessment of what optimizations we can make and how difficult it would be to actually realize those improvements.
 
-Further limitations of sampling profilers emerge, as demonstrated in this graph, also from~\cite{perf-tracing}, showing the data we get out of our sampling profiler if we take a look at Lucene (a search indexer):
+Once we've made a change to the program, then it's time to run an experiment again with the new baseline to see what else we can do.
 
+The paper has a table summarizing the optimizations they applied to a few different programs, which seems to support the idea that the tool can be used effectively to get a meaningful speedup with relatively few lines of code~\cite{coz}:
 \begin{center}
-	\includegraphics[width=0.3\textwidth]{images/perf-sample.png}
+	\includegraphics[width=0.6\textwidth]{images/coz-speedup.jpg}
 \end{center}
 
-So at the default sampling interval for perf we see\ldots nothing interesting whatsoever. If we bump up to the max sampling frequency of perf, we get a moderately more interesting graph, but not much. If we use a different tool and can sample at a dramatically higher rate, then we end up with something way more useful. So we're left to wonder why does perf sample so infrequently, and how does SHIM get around this?
+There are potentially some limitations to this, of course. Putting pauses in the execution of the code can work when the execution of the program is all on the same machine and we have control over all the threads; it would need some meaningful extension to work for a distributed system where coordinating things across many servers would be needed.
 
-Well, for one thing, perf samples are done with interrupts. Processing interrupts takes a fair amount of time and if you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work. So sampling tools usually don't interrupt the program too often. SHIM gets around this by being more invasive---it instruments the program, adding some periodically executed code that puts information out whenever there is an appropriate event (e.g., function return). This produces a bunch of data which can be dealt with later to produce something useful.
+Using some benchmarking workload, the authors estimate a 17.6\% overhead for this tool, which is broken down into 2.6\% for startup debug information collection, sampling at 4.8\%, and 10.2\% is the delay that's caused by slowing down other threads to create a virtual speedup~\cite{coz}.
 
-This instrumentation-based approach is more expensive in general, but note that DTrace\footnote{Note also the comment in the blog post: ``Yes, that includes dtrace, which I'm calling out in particular because any time you have one of these discussions, a dtrace troll will come along to say that dtrace has supported that for years. It's like the common lisp of trace tools, in terms of community trolling.''} and Nethercote's counts tool (discussed in L25) also enable custom instrumentation of select events. 
-
-\section*{Lies from Counters}
-This is fairly niche, but Rust compiler hackers were trying to include
-support for hardware performance counters (what perf reports) because
-{\tt -Z self-profile} data was too noisy\footnote{Full story, in gory
-detail,
-at \url{https://hackmd.io/sH315lO2RuicY-SEt7ynGA?view}.}. Counters
-are, for instance, faster than measuring time and way (i.e. 5 orders of magnitude) more deterministic.
-
-To make counters as deterministic as possible:
-\begin{itemize}[noitemsep]
-\item disable Address Space Layout Randomization (randomized pointer addresses affect hash layouts);
-\item subtract time spent processing interrupts (IRQs);
-\item profile one thread only (if you can, in your context).
-\end{itemize}
-Fun fact. We talked about Spectre back in Lecture 7. Speculative execution comes up here too in terms of
-counters being wrong. AMD speculates past atomics and then rolls back, but doesn't roll back perf counters.
-Post-Spectre, there's a hidden model-specific register (``SpecLockMap'') that disables speculating past atomics, the kind of thing you would
-want around to protect you against future things in that vein that someone might discover. Or, in better words than mine\footnote{\url{https://twitter.com/eddyb_r/status/1323587371703668742}}:
-
-\begin{center}
-\includegraphics{images/L27-eb-tweet.png}
-\end{center}
-
-\section*{Lies about Calling Context}
-This part is somewhat outdated now, as it's a pretty specific technical problem that especially arises under the {\tt gprof} tool. It's still a good example of lying tools, though,
-so I'll include a condensed version. Yossi Kreinin~\cite{lies} writes about it in more detail.
-
-gprof uses two C standard-library functions: {\bf profil()} and {\bf mcount()}.
-
-\vspace*{-1em}
-\begin{itemize}[noitemsep]
-\item {\bf profil()}: asks glibc to record which instruction 
-  is currently executing (100$\times$/second).
-\item {\bf mcount()}: records call graph edges; called by {\tt -pg} instrumentation.
-\end{itemize}
-\vspace*{-1em}
-
-Hence, {\bf profil} information is statistical, while {\bf mcount}
-information is exact.  gprof can draw unreliable inferences. If you have a method \texttt{easy} and a method \texttt{hard}, each of which is called once, and \texttt{hard} takes up almost all the CPU time,
-gprof might divide total time by 2 and report bogus results.
-
-The following results from gprof are suspect (among others):
-\vspace*{-1em}
-\begin{itemize}[noitemsep]
-  \item contribution of children to parents;
-  \item total runtime spent in self+children;
-\end{itemize}
-\vspace*{-1em}
-
-\paragraph{When are call graph edges right?}
-Two cases:
-\vspace*{-1em}
-    \begin{itemize}[noitemsep]
-    \item functions with only one caller
-      (e.g. {\tt f()} only called by {\tt g()}); or,
-    \item functions which always take the same time to complete
-      (e.g. {\tt rand()}).
-    \end{itemize}
-\vspace*{-1em}
-
-On the other hand, results for any function whose running time depends on its inputs,
-and which is called from multiple contexts, are sketchy.
-
-
-Next, we'll talk about callgrind/KCacheGrind. Like our old friends memcheck, helgrind, and cachegrind, callgrind is part of valgrind, and runs the program under an x86 JIT.  KCacheGrind is a frontend to callgrind. callgrind gives better information, but imposes
-more overhead.
-KCacheGrind works properly on the earlier running example, but we can still deceive it with more complicated examples.
-
-%% \paragraph{Summary.} We've seen that some profiler results are exact;
-%% some results are sampled; and some results are interpolated. If you understand the tool, you understand where it can go
-%% wrong. 
-
-%% Understand your tools!
-
-
-\paragraph{Overall summary.} We saw a bunch of lies today: calling-context lies and perf attribution
-lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
-and understand how your tools work.
+If you'd like to see some more details of the tool, you can see the author presentation at the ACM symposium here: \url{https://www.youtube.com/watch?v=jE0V-p1odPg}
 
 \section*{Memory Profiling}
 
@@ -7932,131 +7928,236 @@ As is often the case, we have examined how the tool works on a trivial program. 
 
 
 
-\chapter*{29 --- Profiling and Scalability}
+\chapter*{29 --- Liar, Liar}
 
-\addcontentsline{toc}{chapter}{29 --- Profiling and Scalability}
+\addcontentsline{toc}{chapter}{29 --- Liar, Liar}
 
-\section*{Profiling and Scalability}
+I was thinking today about how humans are quite adept at building and
+using tools (though not
+unique\footnote{https://www.rnz.co.nz/news/national/366747/clever-kea-using-tools-to-raid-traps}). Profilers
+are useful tools, but they can mislead you.  If you understand how
+profilers work, you can avoid being misled.
 
-Following the discussion of profiling, we should take some time to understand performance and scalability. Recall that what we want in scalability is that we can take our software from 1 user to 100 to 10 million. Finishing work faster helps, but it's not the only way. So to scale up, we probably need to do some profiling to find out what's slow, but we have some things we need to worry about when we want to get away from just working on our dev machines and into big numbers of users.
+As we've been saying this week, there are sampling-based and instrumentation-based profilers.
+The tl;dr is that a sampling-based profiler can miss things, while an instrumentation-based
+profiler distorts the system under observation.
 
-So we should respect the following principles, as outlined in~\cite{swps}.
-
-\paragraph{Hardware Principle.} 
-Scalability testing is very different from  QA testing (as if you actually test your code!) in that you will do development and QA on your local computer and all you really care about is whether the program produces the correct output ``fast enough''. That's fine, but it's no way to test if it scales. If you actually want to test for scalability and real world performance, you should be doing it on the machines that are going to run the program in the live environment. Why? Well, low-end systems have very different limiting factors. You might be limited by the 4GB of RAM in your laptop and that would go away in the 64GB of RAM server you're using. So you might spend a great deal of time worrying about RAM usage when it turns out it doesn't matter.
-
-\paragraph{Reality Principle.}
-It would be a good idea to use a ``real'' workload, as much as one can possibly simulate. Legal reasons might prevent you from using actual customer data, but you should be trying to use the best approximation of it that you have. If you only generate some test data, you may not accurately represent the way the users are going to behave the system. Your test set run summary reports occasionally... your users might run them every hour. 
-
-\paragraph{Volume Principle.}
-``More is the new more.'' It's okay to use lighter workloads for regression testing and things like that, but if you actually want to see how your system performs under pressure, you actually need to put it under pressure. You can simulate pressure by limiting RAM or running something very CPU-intensive concurrently, but it's just not the same.
-
-These tests, incidentally, are of great interest to the customers, who would like to know that you can deliver. 
-
-\paragraph{Reproducibility and Regression Testing.}
-Your results will need to be reproducible. Remember that good programming practice says that unit tests should be run, and re-run to make sure it all works. The same is true in your performance tests. Just as we don't want to see old bugs cropping up again, old (solved) performance issues are not nice to see either. Or a new change that slows the whole program down is not a success either. So please, have regression testing and performance regression testing. Real-life example: \href{https://arewefastyet.com}{arewefastyet.com} tracks regressions/improvements in Firefox perf.
-
-\section*{Characterizing Performance \& Scalability Problems}
-
-\begin{quote}
-\textit{It is a capital mistake to theorize before one has data. Insensibly one begins to twist facts to suit theories, instead of theories to suit facts.}
-\end{quote}
-\hfill - Sherlock Holmes (\textit{A Scandal in Bohemia}; Sir Arthur Conan Doyle)
-
-Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before reaching conclusions. At a high level we probably have four potential culprits to start with:
-\begin{enumerate}
-	\item CPU
-	\item Memory
-	\item Disk
-	\item Network
-\end{enumerate}
-
-These are, obviously, more categories than specific causes, but they are starting points for further investigation. They are listed in some numerical order, but there is no reason why one would have to investigate them in the order defined there.
-
-CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that used to donate its free CPU cycles to world community grid (I'm singlehandedly saving the world, you see.):
-
-\begin{verbatim}
-top - 07:28:19 up 151 days, 23:38,  8 users,  load average: 0.87, 0.92, 0.91
-\end{verbatim}
-
-Those last three numbers are the one, five, and fifteen minute averages of CPU load, respectively. Lower numbers mean less CPU usage and a less busy machine. A small guide on how to interpret this, from~\cite{scout}.
-
-Picture a single core of a CPU as a lane of traffic. You are a bridge operator and so you need to monitor how many cars are waiting to cross that bridge. If no cars are waiting, traffic is good and drivers are happy. If there is a backup of cars, then there will be delays. Our numbering scheme corresponds to this:
-
-\begin{enumerate}
-	\item 0.00 means no traffic (and in fact anything between 0.00 and 0.99) means we're under capacity and there will be no delay.
-	\item 1.00 means we are exactly at capacity. Everything is okay, but if one more car shows up, there will be a delay.
-	\item Anything above 1.00 means there's a backup (delay). If we have 2.00 load, then the bridge is full and there's an equal number of cars waiting to get on the bridge. 
-\end{enumerate}
-
-Or, visually, also from~\cite{scout}:
-
+Visually, sampling-based profiling can do this:
 \begin{center}
-	\includegraphics[width=0.55\textwidth]{images/car-analogy.png}
+	\url{https://www.youtube.com/watch?v=jQDjJRYmeWg}
 \end{center}
 
-Being at or above 1.00 isn't necessarily bad, but you should be concerned if there is consistent load of 1.00 or above. And if you are below 1.00 but getting close to it, you know how much room you have to scale things up -- if load is 0.4 you can increase handily. If load is 0.9 you're pushing the limit already. If load is above 0.70 then it's probably time to investigate. If it's at 1.00 consistently we have a serious problem. If it's up to 5.00 then this is a red alert situation.
+The video's not fake; it's a real helicopter and it's really flying. What's happening, however, is that the camera is taking images at some multiple of the frequency of the blade rotation speed so it gives the illusion that the blades are not spinning at all. This is a sampling problem, and you see the same problem in car commercials on TV where it looks like the wheels are spinning backwards. They're not, but the sampling effect of the camera can make it look that way.
 
-Now this is for a single CPU -- if you have a load of 3.00 and a quad core CPU, this is okay. You have, in the traffic analogy, four lanes of traffic, of which 3 are being used to capacity. So we have a fourth lane free and it's as if we're at 75\% utilization on a single CPU.
+The main assumptions underlying sampling are that samples are ``random'' and that the sample distribution approximates the actual time-spent distribution\footnote{Lifted from ``Profilers are Lying Hobbitses'', \url{https://www.infoq.com/presentations/profilers-hotspots-bottlenecks/}, which talks about profiling for JVMs.}.
 
+\section*{Lies from Metrics}
+While app-specific metrics can lie too, mostly we'll talk about CPU
+perf counters today.
+In particular, we're going to look at two types of sampling-based lies.
 
-Next on the list is memory. One way to tell if memory is the limiting factor is actually to look at disk utilization. If there is not enough RAM in the box, there will be swapping and then performance goes out the window and scalability goes with. That is of course, the worst case. You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
+The reference for the first type of lie is a blog post by Paul Khuong~\cite{metrics}.
 
-\begin{verbatim}
-KiB Mem:   8167736 total,  6754408 used,  1413328 free,   172256 buffers
-KiB Swap:  8378364 total,  1313972 used,  7064392 free.  2084336 cached Mem
-\end{verbatim}
+This goes back to {\tt mfence}, which we've seen before. It is used, for instance, in
+spinlock implementations. Khuong found that his profiles said that spinlocking didn't take much time.
+But empirically: eliminating spinlocks = better than expected! Hmm.
 
-This can be misleading though, because memory being ``full'' does not necessarily mean anything bad. It means the resource is being used to its maximum potential, yes, but there is no benefit to keeping a block of memory open for no reason. Things will move into and out of memory as they need to, and nobody hands out medals to indicate that you did an awesome job of keeping free memory. It's not like going under budget in your department for the year.  Also, memory is not like the CPU; if there's nothing for the CPU to do, it will just idle (or go to a low power state, which is nice for saving the planet). But memory won't ``forget'' data if it doesn't happen to be needed right now - data will hang around in memory until there is a reason to move or change it. So freaking out about memory appearing as full is kind of like getting all in a knot about how ``System Idle Process'' is hammering the CPU\footnote{Yes, a tech journalist named John Dvorak really wrote an article about this, and I will never, ever forgive him for it.}.
-
-You can also ask about page faults, with the command \texttt{ps -eo min\_flt,maj\_flt,cmd} which will give you the major page faults (had to fetch from disk) and minor page faults (had to copy a page from another process). The output of this is too big even for the notes, but try it yourself (or I might be able to do a demo of it in class). But this is lifetime and you could have a trillion page faults at the beginning of your program and then after that everything is fine. What you really want is to ask Linux for a report on swapping:
-
-\begin{verbatim}
-jz@Loki:~$ vmstat 5
-procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----
- r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
- 1  0 1313972 1414600 172232 2084296    0    0     3    39    1    1 27  1 72  0  0
- 0  0 1313972 1414476 172232 2084296    0    0     0    21  359  735 19  0 80  0  0
- 0  0 1313972 1414656 172236 2084228    0    0     0   102  388  758 22  0 78  0  0
- 4  0 1313972 1414592 172240 2084292    0    0     0    16  501  847 33  0 67  0  0
- 0  0 1313972 1412028 172240 2084296    0    0     0     0  459  814 29  0 71  0  0
-\end{verbatim}
-
-In particular, the columns ``si'' (swap in) and ``so'' (swap out) are the ones to pay attention to. In the above example, they are all zero. That is excellent and tends to indicate that we are not swapping to disk and that's not the performance limiting factor. Sometimes we don't get that situation. A little bit of swapping may be inevitable, but if we have lots of swapping, we have a very big problem. Here's a not-so-nice example, from~\cite{vmstat}:
-
-\begin{verbatim}
-  procs                      memory    swap          io     system cpu
-r  b  w   swpd   free  buff cache  si  so   bi   bo   in    cs us  sy  id
-. . .
-1  0  0  13344   1444  1308 19692   0 168  129   42 1505   713 20  11  69
-1  0  0  13856   1640  1308 18524  64 516  379  129 4341   646 24  34  42
-3  0  0  13856   1084  1308 18316  56  64   14    0  320  1022 84   9   8
-\end{verbatim}
-
-If we're not doing significant swapping, then memory isn't holding us back, so we can conclude it is not the limiting factor in scaling the application up. On to disk.
-
-Looking at disk might seem slightly redundant if memory is not the limiting factor. After all, if the data were in memory it would be unnecessary to go to disk in the first place. Still, sometimes we can take a look at the disk and see if that is our bottleneck.
+The next step is (as we do in this course) to create microbenchmarks to better understand what's
+going on. The microbenchmark contained memory accesses to uncached locations, or computations,
+surrounded by store pairs/mfence/locks. He used perf to evaluate the impact of mfence vs lock.
+You'll recall that perf is sampling-based and records how often the CPU is found executing each
+instruction.
 
 {\scriptsize
-\begin{verbatim}
-jz@Loki:~$ iostat -dx /dev/sda 5 
-Linux 3.13.0-24-generic (Loki) 	16-02-13 	_x86_64_	(4 CPU)
-
-Device:         rrqm/s   wrqm/s     r/s     w/s    rkB/s    wkB/s avgrq-sz avgqu-sz   await r_await w_await  svctm  %util
-sda               0.24     2.78    0.45    2.40    11.60   154.98   116.91     0.17   61.07   11.57   70.27   4.70   1.34
-\end{verbatim}
+\begin{lstlisting}
+# for locks:
+$ perf annotate -s cache_misses
+[...]
+    0.06 :        4006b0:       and    %rdx,%r10
+    0.00 :        4006b3:       add    $0x1,%r9
+    ;; random (out of last level cache) read
+    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
+   30.37 :        4006bb:       mov    %rcx,%r10
+    ;; foo is cached, to simulate our internal lock
+    0.12 :        4006be:       mov    %r9,0x200fbb(%rip)
+    0.00 :        4006c5:       shl    $0x17,%r10
+    [... Skipping arithmetic with < 1% weight in the profile]
+    ;; locked increment of an in-cache "lock" byte
+    1.00 :        4006e7:       lock incb 0x200d92(%rip)
+   21.57 :        4006ee:       add    $0x1,%rax
+    [...]
+    ;; random out of cache read
+    0.00 :        400704:       xor    (%rsi,%r10,8),%rbp
+   21.99 :        400708:       xor    %r9,%r8
+    [...]
+    ;; locked in-cache decrement
+    0.00 :        400729:       lock decb 0x200d50(%rip)
+   18.61 :        400730:       add    $0x1,%rax
+    [...]
+    0.92 :        400755:       jne    4006b0 <cache_misses+0x30>
+\end{lstlisting}
 }
 
-It's that last column, \%util that tells us what we want to know. The device bandwidth here is barely being used at all. If you saw it up at 100\% then you would know that the disk was being maxed out and that would be a pretty obvious indicator that it is the limiting factor. This does not tell you much about what is using the CPU, of course, and you can look at what processes are using the I/O subsystems with \texttt{iotop} which requires root privileges\footnote{https://xkcd.com/149/}.
+We can see that in the lock situation, reads take 30 + 22 = 52\% of runtime,
+while locks take 19 + 21 = 40\% of runtime.
 
-That leaves us with networks. We can ask about the network with \texttt{nload}: which gives the current, average, min, max, and total values. And you get a nice little graph if there is anything to see. It's not so much fun if nothing is happening. But you'll get the summary, at least:
+{\scriptsize
+\begin{lstlisting}
+# for mfence:
+$ perf annotate -s cache_misses
+[...]
+    0.00 :        4006b0:       and    %rdx,%r10
+    0.00 :        4006b3:       add    $0x1,%r9
+    ;; random read
+    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
+   42.04 :        4006bb:       mov    %rcx,%r10
+    ;; store to cached memory (lock word)
+    0.00 :        4006be:       mov    %r9,0x200fbb(%rip)
+    [...]
+    0.20 :        4006e7:       mfence 
+    5.26 :        4006ea:       add    $0x1,%rax
+    [...]
+    ;; random read
+    0.19 :        400700:       xor    (%rsi,%r10,8),%rbp
+   43.13 :        400704:       xor    %r9,%r8
+    [...]
+    0.00 :        400725:       mfence 
+    4.96 :        400728:       add    $0x1,%rax
+    0.92 :        40072c:       add    $0x1,%rax
+    [...]
+    0.36 :        40074d:       jne    4006b0 <cache_misses+0x30>
+\end{lstlisting}
+}
+Looks like the reads take 85\% of runtime,
+while the mfence takes 15\% of runtime.
 
-\begin{verbatim}
-Curr: 3.32 kBit/s
-Avg: 2.95 kBit/s
-Min: 1.02 kBit/s
-Max: 12.60 kBit/s
-Ttl: 39.76 GByte                                                                                       \end{verbatim}
+Metrics lie, though, and when you focus on the metrics as opposed to what you
+actually care about, it's easy to be led astray.
+
+In this case, what we actually care about is the total \# of cycles.
+
+    \begin{tabular}{lr}
+    No atomic/fence:& 2.81e9 cycles\\
+    lock inc/dec: & 3.66e9 cycles\\
+    mfence: & 19.60e9 cycles
+    \end{tabular}
+
+That 15\% number is a total lie.
+Profilers, even using CPU expense counts, drastically underestimate the impact of mfence,
+and overestimate the impact of locks.
+
+This is because mfence causes a pipeline flush, and the resulting 
+costs get attributed to instructions being flushed, not to the mfence itself. In other
+words, mfence makes other instructions run more slowly, which camouflages its own effect
+on the overall performance.
+
+
+\section*{The Long Tail}
+
+The other type of lie that sampling can hide is the one where infrequent long tails are hidden in averages.
+Our source here is the blog post by Dan Luu~\cite{perf-tracing}. Suppose we have a task that's going to get distributed over multiple computers (like a search). If we look at the latency distribution, the problem is mostly that we see a long tail of events and when we are doing a computation or search where we need all the results, we can only go as the slowest step. Let's take a look at a histogram of disk read latencies, where we are performing a 64 kB read, also from that source:
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/disk_tail.png}
+\end{center}
+
+Let's break it down. Peak 1 corresponds to something cached in RAM---best case scenario. Peak 2 is at around 3ms, which is too fast for spinning and seeking magnetic hard disks, but it's fast enough for reading something from the disk cache via the PCI-Express interface. Peak 3 is obviously disk seek and read times, around 25ms. 
+
+These numbers don't look terrible, except for the fact that we have peaks at 250, 500, 750, and 1000 ms and the 99th percentile is some 696ms which is a very, very long time. Sampling profilers are not very good at finding these things, because they throw everything into various buckets and therefore we get averages. The averages are misleading, though, because we have these weird outliers that take dramatically longer. Averages are nice as long as our data is also reasonably ``nice''.
+
+So what actually happened? Well, from~\cite{perf-tracing}: The investigator found out that the cause was kernel throttling of the CPU for processes that went beyond their usage quota. To enforce the quota, the kernel puts all of the relevant threads to sleep until the next multiple of a quarter second. When the quarter-second hand of the clock rolls around, it wakes up all the threads, and if those threads are still using too much CPU, the threads get put back to sleep for another quarter second. The phase change out of this mode happens when, by happenstance, there aren't too many requests in a quarter second interval and the kernel stops throttling the threads. After finding the cause, an engineer found that this was happening on 25\% of disk servers at Google, for an average of half an hour a day, with periods of high latency as long as 23 hours. This had been happening for three years.
+
+Further limitations of sampling profilers emerge, as demonstrated in this graph, also from~\cite{perf-tracing}, showing the data we get out of our sampling profiler if we take a look at Lucene (a search indexer):
+
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/perf-sample.png}
+\end{center}
+
+So at the default sampling interval for perf we see\ldots nothing interesting whatsoever. If we bump up to the max sampling frequency of perf, we get a moderately more interesting graph, but not much. If we use a different tool and can sample at a dramatically higher rate, then we end up with something way more useful. So we're left to wonder why does perf sample so infrequently, and how does SHIM get around this?
+
+Well, for one thing, perf samples are done with interrupts. Processing interrupts takes a fair amount of time and if you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work. So sampling tools usually don't interrupt the program too often. SHIM gets around this by being more invasive---it instruments the program, adding some periodically executed code that puts information out whenever there is an appropriate event (e.g., function return). This produces a bunch of data which can be dealt with later to produce something useful.
+
+This instrumentation-based approach is more expensive in general, but note that DTrace\footnote{Note also the comment in the blog post: ``Yes, that includes dtrace, which I'm calling out in particular because any time you have one of these discussions, a dtrace troll will come along to say that dtrace has supported that for years. It's like the common lisp of trace tools, in terms of community trolling.''} and Nethercote's counts tool (discussed in L25) also enable custom instrumentation of select events. 
+
+\section*{Lies from Counters}
+This is fairly niche, but Rust compiler hackers were trying to include
+support for hardware performance counters (what perf reports) because
+{\tt -Z self-profile} data was too noisy\footnote{Full story, in gory
+detail,
+at \url{https://hackmd.io/sH315lO2RuicY-SEt7ynGA?view}.}. Counters
+are, for instance, faster than measuring time and way (i.e. 5 orders of magnitude) more deterministic.
+
+To make counters as deterministic as possible:
+\begin{itemize}[noitemsep]
+\item disable Address Space Layout Randomization (randomized pointer addresses affect hash layouts);
+\item subtract time spent processing interrupts (IRQs);
+\item profile one thread only (if you can, in your context).
+\end{itemize}
+Fun fact. We talked about Spectre back in Lecture 7. Speculative execution comes up here too in terms of
+counters being wrong. AMD speculates past atomics and then rolls back, but doesn't roll back perf counters.
+Post-Spectre, there's a hidden model-specific register (``SpecLockMap'') that disables speculating past atomics, the kind of thing you would
+want around to protect you against future things in that vein that someone might discover. Or, in better words than mine\footnote{\url{https://twitter.com/eddyb_r/status/1323587371703668742}}:
+
+\begin{center}
+\includegraphics{images/L27-eb-tweet.png}
+\end{center}
+
+\section*{Lies about Calling Context}
+This part is somewhat outdated now, as it's a pretty specific technical problem that especially arises under the {\tt gprof} tool. It's still a good example of lying tools, though,
+so I'll include a condensed version. Yossi Kreinin~\cite{lies} writes about it in more detail.
+
+gprof uses two C standard-library functions: {\bf profil()} and {\bf mcount()}.
+
+\vspace*{-1em}
+\begin{itemize}[noitemsep]
+\item {\bf profil()}: asks glibc to record which instruction 
+  is currently executing (100$\times$/second).
+\item {\bf mcount()}: records call graph edges; called by {\tt -pg} instrumentation.
+\end{itemize}
+\vspace*{-1em}
+
+Hence, {\bf profil} information is statistical, while {\bf mcount}
+information is exact.  gprof can draw unreliable inferences. If you have a method \texttt{easy} and a method \texttt{hard}, each of which is called once, and \texttt{hard} takes up almost all the CPU time,
+gprof might divide total time by 2 and report bogus results.
+
+The following results from gprof are suspect (among others):
+\vspace*{-1em}
+\begin{itemize}[noitemsep]
+  \item contribution of children to parents;
+  \item total runtime spent in self+children;
+\end{itemize}
+\vspace*{-1em}
+
+\paragraph{When are call graph edges right?}
+Two cases:
+\vspace*{-1em}
+    \begin{itemize}[noitemsep]
+    \item functions with only one caller
+      (e.g. {\tt f()} only called by {\tt g()}); or,
+    \item functions which always take the same time to complete
+      (e.g. {\tt rand()}).
+    \end{itemize}
+\vspace*{-1em}
+
+On the other hand, results for any function whose running time depends on its inputs,
+and which is called from multiple contexts, are sketchy.
+
+
+Next, we'll talk about callgrind/KCacheGrind. Like our old friends memcheck, helgrind, and cachegrind, callgrind is part of valgrind, and runs the program under an x86 JIT.  KCacheGrind is a frontend to callgrind. callgrind gives better information, but imposes
+more overhead.
+KCacheGrind works properly on the earlier running example, but we can still deceive it with more complicated examples.
+
+%% \paragraph{Summary.} We've seen that some profiler results are exact;
+%% some results are sampled; and some results are interpolated. If you understand the tool, you understand where it can go
+%% wrong. 
+
+%% Understand your tools!
+
+
+\paragraph{Overall summary.} We saw a bunch of lies today: calling-context lies and perf attribution
+lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
+and understand how your tools work.
+
 
 
 
@@ -8978,7 +9079,7 @@ efforts to make sure the code is good. But real life is rarely like the test sys
 \item see how it goes!
 \end{itemize}
 
-Of course, you should implement your system so that rollback is possible. If the canary deployment results in changes to the database table structure and this database is shared amongst all servers, trying to deploy the change can break the old servers and leave a rollback implausible because 
+Of course, you should implement your system so that rollback is possible. If the canary deployment results in changes to the database table structure and this database is shared amongst all servers, trying to deploy the change can break the old servers and leave a rollback implausible because we'd have to write a reverse database migration to undo it... if that's even possible. Because sometimes a migration is destructive!
 
 
 
