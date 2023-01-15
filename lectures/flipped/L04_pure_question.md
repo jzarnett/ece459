@@ -75,7 +75,7 @@ fn main() {
     // get its `address` by `as_mut_ptr`
     // convert `address` to a raw pointer `r`
 
-    let len = 10000000;
+    let len = 5;
     // TODO: ^ try increase the `len` to create a segment fault
     // can `len = 6` cause a segment fault?
 
