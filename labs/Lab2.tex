@@ -1,0 +1,169 @@
+%%%%%%%%%%%%  Generated using docx2latex.com  %%%%%%%%%%%%%%
+
+%%%%%%%%%%%%  v2.0.0-beta  %%%%%%%%%%%%%%
+
+\documentclass[12pt]{article}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{latexsym}
+\usepackage{amsfonts}
+\usepackage[normalem]{ulem}
+\usepackage{soul}
+\usepackage{array}
+\usepackage{amssymb}
+\usepackage{extarrows}
+\usepackage{graphicx}
+
+\usepackage{subfig}
+\usepackage{wrapfig}
+\usepackage{wasysym}
+\usepackage{enumitem}
+\usepackage{adjustbox}
+\usepackage{ragged2e}
+\usepackage[svgnames,table]{xcolor}
+\usepackage{tikz}
+\usepackage{longtable}
+\usepackage{changepage}
+\usepackage{setspace}
+\usepackage{hhline}
+\usepackage{multicol}
+\usepackage{tabto}
+\usepackage{float}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{fancyhdr}
+\usepackage[toc,page]{appendix}
+\usepackage[hidelinks]{hyperref}
+\usetikzlibrary{shapes.symbols,shapes.geometric,shadows,arrows.meta}
+\tikzset{>={Latex[width=1.5mm,length=2mm]}}
+\usepackage{flowchart}
+\usepackage[paperheight=11.0in,paperwidth=8.5in,left=0.86in,right=0.86in,top=0.71in,bottom=1in,headheight=1in]{geometry}
+\usepackage{XCharter}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\TabPositions{0.5in,1.0in,1.5in,2.0in,2.5in,3.0in,3.5in,4.0in,4.5in,5.0in,5.5in,6.0in,6.5in,}
+
+\urlstyle{same}
+
+\renewcommand{\_}{\kern-1.5pt\textunderscore\kern-1.5pt}
+
+\setlength{\topsep}{0pt}\setlength{\parindent}{0pt}\setlength{\parskip}{1em}
+
+ %%%%%%%%%%%%  This sets linespacing (verticle gap between Lines) Default=1 %%%%%%%%%%%%%%
+
+
+%\renewcommand{\arraystretch}{1.3}
+
+
+%%%%%%%%%%%%%%%%%%%% Document code starts here %%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{document}
+\begin{center}
+{\Large ECE 459: Programming for Performance}\\
+{\Large Lab 2---Building Dictionaries (in parallel)\footnote{v0, 19Jan23}}\\[1em]
+Patrick Lam\\
+Due: February 17, 2023 at 11:59 PM Eastern Time
+\end{center}
+
+\section*{Learning Objectives:}
+
+\begin{itemize}[noitemsep]
+	\item Become familiar with message-passing for communicating between threads; and,
+	\item Become familiar with the use of shared memory.
+\end{itemize}
+
+The most related lecture content for this lab is in Lectures 9 and 10, though there is somewhat-relevant content up to Lectures 16 and 17. 
+
+\section*{Background}
+Log files can be a key source of data about long-running executables like web servers and operating system kernels. Here's a sample line from a log file.
+
+\begin{verbatim}
+58717 2185 boot_cmd new 1076865186 1 Targeting domains:node-D1 and
+ nodes:node-[40-63] child of command 2176
+\end{verbatim}
+
+Analyzing log files can help you troubleshoot bad behaviour (both performance and crash related). Unfortunately, log files get huge (tens of gigabytes!). Really, you need to use tools to have any hope of deriving meaning from log files. Even more unfortunately, it seems like every piece of software uses its own log format. And, regardless of format, different software is going to log different information using different messages. So, how to write software that analyzes log files? Well, you could write a set of regular expressions for each program. But that's a lot of work.
+
+\cite{dai22} propose a mechanical way to extract structured data from unstructured logs. The core part of the approach is building dictionaries of so-called $n$-grams, or tuples of tokens, and identifying low-frequency $n$-grams as dynamic parts of log messages.
+
+Your task in this assignment is to speed up the dictionary construction. We've talked about concurrency. You'll use concurrency to read entire log files and build dictionaries of $n$-grams. Once you've built the dictionaries, you can use them to identify that tokens \texttt{nodes:node-[40-63]} and \texttt{2176} are dynamic, and the rest of the line is static.
+
+\vspace*{1em} \noindent There are three positional command-line arguments to your program. The first is the token, the second is the maximum possible length of the secret (it could be shorter), and the third is the alphabet (i.e. the set of characters that might be used in the secret).\par
+
+\vspace*{1em} \noindent You need to extract the signature portion from the token, and then use a brute-force approach to find the secret. You do this by exploring all possible values for the secret until one is found that produces the correct signature. The possible values for the secret are constrained by the key length and the alphabet. In a real-world situation, the problem is intractable because the alphabet is larger and the key length is longer (at least 32 characters). The examples used in this lab are chosen to have a short key length (four or five characters) and an alphabet consisting of the lowercase letters plus the digits 0 through 9.\par
+
+\vspace*{1em} \noindent
+  Please don’t try to use this code on UW hardware to crack anything other than some test data for this exercise. The test data is sufficiently small that you can crack it in a few minutes; if it’s taking much longer than that, something is wrong. \par
+
+\vspace*{1em} \noindent
+We provide starter code that consists of a single-threaded implementation in {\tt main.rs}. Instructions for running it can be found in the README file. Your job is to modify the code to improve its performance by using multiple threads.\par
+
+\vspace*{1em} \noindent
+In some cases, this is straightforward since the tasks are largely independent of each other. However, in this case things are more complex since the threads need to be able to communicate with each other. In particular, you want the threads to end once a solution has been found rather than exploring the entire solution space.\par
+
+\vspace*{1em} \noindent
+The two approaches you will be using are message passing and shared memory. The files {\tt message-passing.rs} and {\tt shared-mem.rs} are initially just copies of {\tt main.rs}, and you're expected to modify them to use message-passing and inter-thread communication respectively.\par
+
+\vspace*{1em} \noindent
+You're free to implement things as you see fit. You may want to look at the Crossbeam crate, since it will do a lot of the work for you. In particular, you can use {\tt crossbeam::scope} for shared memory. Just don't use channels. You can use other crates as long as you don't trivialize the problem.
+
+\vspace*{1em} \noindent
+For message passing, you are expected to use channels. There are multiple ways to do this, but we recommend that you start by looking at the unbounded channels provided by Crossbeam. Note that you should rely only on channels. You should not (and should not need to) make direct use of mutexes, atomics, or other shared state primitives. The channels do all this work for you.\par
+
+\vspace*{1em} \noindent
+By the same token (so to speak$ \ldots$), in the shared memory version you should not (and should not need to) use channels.\par
+
+\paragraph{Public service announcement.}  Please be sure to clean up after yourself and not leave long-running tasks hanging around and hogging all the CPUs.
+
+\section*{Rubric}
+The general principle is that correct solutions earn full marks. However, it is your responsibility to demonstrate to the TA that your solution is correct. Well-designed, clean solutions are therefore more likely to be recognized as correct. \par
+
+\vspace*{1em} \noindent
+Solutions that do not compile will earn at most 39$\%$  of the available marks for that part. Segfaulting or otherwise crashing solutions earn at most 49$\%$ . 
+
+\vspace*{1em} \noindent
+The mark breakdown is as follows:
+\begin{itemize}[noitemsep]
+  \item Message-passing solution (40 marks).
+  \item Shared-memory solution (40 marks).
+  \item Written report (20 marks):
+\begin{itemize}[noitemsep]
+	\item 8 marks for discussion of the message-passing solution;
+
+	\item 8 marks for discussion of the shared-memory solution; and
+
+	\item 4 marks for clarity.
+\end{itemize}
+\end{itemize}
+
+\section*{Clarifications}
+
+\paragraph{Do I have to do the impossible?} No. We will always test your code with solvable test cases.
+
+\paragraph{Is there a performance target?} No specific target, though faster is better. We're just marking your use of the required idioms (message-passing and shared memory). We'd be sad if your parallel solution was slower than the sequential code, but we wouldn't take it out on you.
+
+\paragraph{What do you mean by shared memory?} Our definition of shared memory means that you have a mutable variable which is accessed by multiple threads protected by locks and are not using the Rust channels. What you do with this mutable variable is up to you. (You can also use lock-free data structures).
+
+\paragraph{Do I have to stop immediately once I find a solution?} A small delay is fine, but you do need to communicate the stopping condition to all threads.
+
+\paragraph{Valgrind/Helgrind complain at me.} Yeah, it happens that sometimes it's not your fault (e.g. library code). Obviously, in this class, you are only responsible for things that are your fault.
+
+\paragraph{How many threads?} You are not required to support variable numbers of threads (though it's not a bad idea to do that experiment). The recommended value is the number of CPUs on the machine (value returned by \verb+num_cpus::get()+).
+
+\paragraph{How many possible solutions exist?} The number of possible solutions will fit in a \texttt{u64}.
+
+\paragraph{How big is the alphabet?} It can be smaller than the number of CPUs.
+
+\paragraph{Do we care about file layout (e.g. modules)?} No, go ahead and modularize if you want, as long as it compiles and runs using the default commands.
+
+\paragraph{What am I required to put in the report?} Just a clear explanation of your implementation. We do appreciate benchmark results, though. If there’s any explaining to do for the TAs about why you know that Helgrind reported errors are not a real problem, then that’s sensible in that it might prevent having to debate correctness with a TA.
+
+\paragraph{I'm still worried about Helgrind errors.} To make it clear: if you are sure that the Helgrind errors are from library code, they're not a problem. tokio semaphores and Crossbeam channels are known to make Helgrind upset. Also, it's safe to share Crossbeam channels by reference across threads (that's why the compiler allows it), so you don't need to worry about channel-related race conditions specifically.
+
+\vspace{\baselineskip}
+\bibliographystyle{alpha}
+\bibliography{Lab2}
+
+\end{document}
