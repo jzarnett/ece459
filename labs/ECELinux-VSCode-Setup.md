@@ -37,7 +37,7 @@ For example, you could copy it into your clipboard, SSH into the remote machine,
 
 1. Copy your SSH public key to eceterm (replace `id_rsa` with your file name):
 
-`scp ~/.ssh/id_rsa.pub username@eceterm.uwaterloo.ca`
+`scp ~/.ssh/id_rsa.pub username@eceterm.uwaterloo.ca:~/.ssh/`
 
 2. Connect to the remote machine, ie. over SSH (the password will be your Nexus PW):
 
