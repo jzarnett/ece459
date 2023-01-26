@@ -70,8 +70,7 @@ Due: February 17, 2023 at 11:59 PM Eastern Time
 \section*{Learning Objectives:}
 
 \begin{itemize}[noitemsep]
-	\item Become familiar with message-passing for communicating between threads; and,
-	\item Become familiar with the use of shared memory.
+	\item Become familiar with safely and quickly passing information between threads.
 \end{itemize}
 
 The most related lecture content for this lab is in Lectures 9 and 10, though there is somewhat-relevant content up to Lectures 16 and 17. 
@@ -81,88 +80,80 @@ Log files can be a key source of data about long-running executables like web se
 
 \begin{verbatim}
 58717 2185 boot_cmd new 1076865186 1 Targeting domains:node-D1 and
- nodes:node-[40-63] child of command 2176
+   nodes:node-[40-63] child of command 2176
 \end{verbatim}
 
-Analyzing log files can help you troubleshoot bad behaviour (both performance and crash related). Unfortunately, log files get huge (tens of gigabytes!). Really, you need to use tools to have any hope of deriving meaning from log files. Even more unfortunately, it seems like every piece of software uses its own log format. And, regardless of format, different software is going to log different information using different messages. So, how to write software that analyzes log files? Well, you could write a set of regular expressions for each program. But that's a lot of work.
+Analyzing log files can help you troubleshoot undesired behaviour (both performance and crash related). Unfortunately, log files get huge (tens of gigabytes!). Really, you need to use tools to have any hope of deriving meaning from sufficiently large log files. Even more unfortunately, it seems like every piece of software uses its own log format. And, regardless of format, different software is going to log different information using different messages. So, how to write software that analyzes log files? Well, you could write a set of regular expressions to capture relevant data for each program. But that's a lot of work.
 
-\cite{dai22} propose a mechanical way to extract structured data from unstructured logs. The core part of the approach is building dictionaries of so-called $n$-grams, or tuples of tokens, and identifying low-frequency $n$-grams as dynamic parts of log messages.
+\cite{dai22} propose a mechanical way to extract structured data from unstructured logs. The core part of the approach is building dictionaries of so-called $n$-grams, or tuples of tokens, and identifying low-frequency $n$-grams as dynamic parts of log messages. Before reading further you should read the reference provided and make sure you understand at least Sections 2 and 4. Ask on Piazza if you do not. The rest of this assignment document is written with the understanding that you have read the paper.
 
-Your task in this assignment is to speed up the dictionary construction. We've talked about concurrency. You'll use concurrency to read entire log files and build dictionaries of $n$-grams. Once you've built the dictionaries, you can use them to identify that tokens \texttt{nodes:node-[40-63]} and \texttt{2176} are dynamic, and the rest of the line is static.
+I've provided a sequential sequential implementation. Your task in this Programming for Performance assignment is thus to speed up the dictionary construction. You'll modify the starter code to use concurrency to read log files and build dictionaries of $n$-grams. Once you've built the dictionaries, you can use them to identify that tokens \texttt{nodes:node-[40-63]} and \texttt{2176} in the example above are dynamic, and the rest of the line is static.
 
-\vspace*{1em} \noindent There are three positional command-line arguments to your program. The first is the token, the second is the maximum possible length of the secret (it could be shorter), and the third is the alphabet (i.e. the set of characters that might be used in the secret).\par
+\section*{Running the code}
+The implementation takes a number of arguments. The most important ones are a log file (which is the source for the dictionaries), a declaration of its format, and a line to analyze for dynamic versus static tokens.
 
-\vspace*{1em} \noindent You need to extract the signature portion from the token, and then use a brute-force approach to find the secret. You do this by exploring all possible values for the secret until one is found that produces the correct signature. The possible values for the secret are constrained by the key length and the alphabet. In a real-world situation, the problem is intractable because the alphabet is larger and the key length is longer (at least 32 characters). The examples used in this lab are chosen to have a short key length (four or five characters) and an alphabet consisting of the lowercase letters plus the digits 0 through 9.\par
+{\tiny
+\begin{verbatim}
+cargo run --release -- --raw-hpc data/HPC.log \
+  --to-parse "58717 2185 boot_cmd new 1076865186 1 Targeting domains:node-D1 and nodes:node-[40-63] child of command 2176" \
+  --before-line "58728 2187 boot_cmd new 1076865197 1 Targeting domains:node-D2 and nodes:node-[72-95] child of command 2177" \
+  --after-line "58707 2184 boot_cmd new 1076865175 1 Targeting domains:node-D0 and nodes:node-[0-7] child of command 2175" \
+  --cutoff 106
+\end{verbatim}
+}
 
-\vspace*{1em} \noindent
-  Please don’t try to use this code on UW hardware to crack anything other than some test data for this exercise. The test data is sufficiently small that you can crack it in a few minutes; if it’s taking much longer than that, something is wrong. \par
+Here, we specify that the raw log file is in format HPC (\texttt{--raw-hpc}) and located in \texttt{data/HPC.log}. You'll find a number of other log files in the \texttt{data} subdirectory. In case you're curious about experimenting with even more logs, you can find a bunch at \url{https://github.com/logpai/loghub}.. The list of formats more-or-less supported is: linux, openstack, spark, hdfs, hpc, proxifier, healthapp.
 
-\vspace*{1em} \noindent
-We provide starter code that consists of a single-threaded implementation in {\tt main.rs}. Instructions for running it can be found in the README file. Your job is to modify the code to improve its performance by using multiple threads.\par
+The \texttt{--to-parse} argument specifies the line to be parsed. The logram approach also uses the previous and subsequent lines; if available, you can specify them with \texttt{--before-line} and \texttt{--after-line}. You can also specify just the two last and two first tokens with \texttt{--before} and \texttt{--after}.
 
-\vspace*{1em} \noindent
-In some cases, this is straightforward since the tasks are largely independent of each other. However, in this case things are more complex since the threads need to be able to communicate with each other. In particular, you want the threads to end once a solution has been found rather than exploring the entire solution space.\par
+Logram identifies low-frequency ngrams as likely dynamic tokens. The \texttt{--cutoff} argument is the cut-off for dynamic versus static tokens.
 
-\vspace*{1em} \noindent
-The two approaches you will be using are message passing and shared memory. The files {\tt message-passing.rs} and {\tt shared-mem.rs} are initially just copies of {\tt main.rs}, and you're expected to modify them to use message-passing and inter-thread communication respectively.\par
+I've put in a \texttt{--num-threads} option which specifies how many threads to start. Since the starter code is sequential, that option doesn't do anything yet. Your task is to make it do something.
 
-\vspace*{1em} \noindent
-You're free to implement things as you see fit. You may want to look at the Crossbeam crate, since it will do a lot of the work for you. In particular, you can use {\tt crossbeam::scope} for shared memory. Just don't use channels. You can use other crates as long as you don't trivialize the problem.
+The \texttt{README.md} file contains a number of other invocations of the code. logram is more effective on some log types than others. You can run your code on the longer-running examples and see how fast you've made it.
 
-\vspace*{1em} \noindent
-For message passing, you are expected to use channels. There are multiple ways to do this, but we recommend that you start by looking at the unbounded channels provided by Crossbeam. Note that you should rely only on channels. You should not (and should not need to) make direct use of mutexes, atomics, or other shared state primitives. The channels do all this work for you.\par
+\section*{Understanding the code}
+There's less going on here than in the Lab 1 code, but there is enough so that you can get practice with using concurrency, getting speedups, and avoiding race conditions.
 
-\vspace*{1em} \noindent
-By the same token (so to speak$ \ldots$), in the shared memory version you should not (and should not need to) use channels.\par
+We haven't talked about how to do profiling yet so I can't ask you to find what the bottleneck is. So, the bottleneck is \texttt{dictionary\_builder} in \texttt{packages/parser.rs}. There's a lot of other code; if you read the paper you can understand what it does.
 
-\paragraph{Public service announcement.}  Please be sure to clean up after yourself and not leave long-running tasks hanging around and hogging all the CPUs.
+This function sequentially iterates over the lines in the log file and hands them off to the function \texttt{process\_dictionary\_builder\_line}. What's important about that function is that it updates entries in its two \texttt{HashMap}s: \texttt{dbl} and \texttt{trpl} (for 2-grams and 3-grams respectively).
+
+\section*{Your task}
+Since this is Programming for Performance, your task is to make the code faster. The strategy will be to have multiple threads, each of which is responsible for analyzing a part of the log file (in parallel).
+\begin{enumerate}
+\item For this assignment, you can load the entire log file into memory at once so that you can give each thread a different segment of the log file. (Yes, that wouldn't work for gargantuan log files; to scale up more I would use a different approach.)
+\item Start a number of threads. Each thread processes its segment of the log file. First, give each thread a separate hash map, and merge the maps at the end. Evaluate this solution and write about it in the separate-maps commit log. Keep this implementation available under the \texttt{--single-map} command-line option (\texttt{args.single\_map} will be \texttt{Some(true)} when the option is specified). We do not expect this implementation to be faster than the original.
+\item Finally, look around on the Internet for crates that implement concurrent hash maps, and use a single concurrent hash map for \texttt{dbl} and one for \texttt{trpl}. Evaluate the performance of that---we are expecting it to be faster than the original, but we are not setting a specific performance target. Use this implementation when \texttt{--single-map} is not specified.
+
+  The first Google result for me is \texttt{chashmap}, but note that it is not under active maintenance. We suggest finding a concurrent hashmap crate that is being actively maintained.
+\end{enumerate}
+
+Have fun!
 
 \section*{Rubric}
 The general principle is that correct solutions earn full marks. However, it is your responsibility to demonstrate to the TA that your solution is correct. Well-designed, clean solutions are therefore more likely to be recognized as correct. \par
 
-\vspace*{1em} \noindent
-Solutions that do not compile will earn at most 39$\%$  of the available marks for that part. Segfaulting or otherwise crashing solutions earn at most 49$\%$ . 
+Solutions that do not compile will earn at most 39$\%$  of the available marks for that part. Segfaulting or otherwise crashing solutions earn at most 49$\%$. We are going to run your code on some testcases to make sure it works and look at the changes to see that you used concurrent hash maps.
 
-\vspace*{1em} \noindent
-The mark breakdown is as follows:
-\begin{itemize}[noitemsep]
-  \item Message-passing solution (40 marks).
-  \item Shared-memory solution (40 marks).
-  \item Written report (20 marks):
-\begin{itemize}[noitemsep]
-	\item 8 marks for discussion of the message-passing solution;
+\paragraph{Implementation (85 marks)} Your code must preserve the original behaviour and must use multiple threads. The separate-maps implementation is worth 40 points and the concurrent-maps implementation is worth 45 points.
 
-	\item 8 marks for discussion of the shared-memory solution; and
+\paragraph{Commit Log (15 marks)} 12 marks for explaining the changes that you've made. 3 marks for clarity of exposition. 
 
-	\item 4 marks for clarity.
+\subsection*{What goes in a commit log}
+Here's a suggested structure for your commit log message justifying the pull request.
+\begin{itemize}
+\item Pull Request title explaining the change (less than 80 characters)
+\item Summary (about 1 paragraph): brief, high-level description of the work done.
+\item Tech details (up to 3 paragraphs): anything interesting or noteworthy for the reviewer about how the work is done. 
+\item Something about how you tested this code for correctness and know it works (about 1 paragraph).
+\item Something about how you tested this code for performance and know it is faster (about 1 paragraph).
 \end{itemize}
-\end{itemize}
+Write logs in files {\tt commit-log/separate-maps.md} and {\tt commit-log/concurrent-hashmap.md}.
 
 \section*{Clarifications}
+I'm sure I'll have some. But I don't have any yet.
 
-\paragraph{Do I have to do the impossible?} No. We will always test your code with solvable test cases.
-
-\paragraph{Is there a performance target?} No specific target, though faster is better. We're just marking your use of the required idioms (message-passing and shared memory). We'd be sad if your parallel solution was slower than the sequential code, but we wouldn't take it out on you.
-
-\paragraph{What do you mean by shared memory?} Our definition of shared memory means that you have a mutable variable which is accessed by multiple threads protected by locks and are not using the Rust channels. What you do with this mutable variable is up to you. (You can also use lock-free data structures).
-
-\paragraph{Do I have to stop immediately once I find a solution?} A small delay is fine, but you do need to communicate the stopping condition to all threads.
-
-\paragraph{Valgrind/Helgrind complain at me.} Yeah, it happens that sometimes it's not your fault (e.g. library code). Obviously, in this class, you are only responsible for things that are your fault.
-
-\paragraph{How many threads?} You are not required to support variable numbers of threads (though it's not a bad idea to do that experiment). The recommended value is the number of CPUs on the machine (value returned by \verb+num_cpus::get()+).
-
-\paragraph{How many possible solutions exist?} The number of possible solutions will fit in a \texttt{u64}.
-
-\paragraph{How big is the alphabet?} It can be smaller than the number of CPUs.
-
-\paragraph{Do we care about file layout (e.g. modules)?} No, go ahead and modularize if you want, as long as it compiles and runs using the default commands.
-
-\paragraph{What am I required to put in the report?} Just a clear explanation of your implementation. We do appreciate benchmark results, though. If there’s any explaining to do for the TAs about why you know that Helgrind reported errors are not a real problem, then that’s sensible in that it might prevent having to debate correctness with a TA.
-
-\paragraph{I'm still worried about Helgrind errors.} To make it clear: if you are sure that the Helgrind errors are from library code, they're not a problem. tokio semaphores and Crossbeam channels are known to make Helgrind upset. Also, it's safe to share Crossbeam channels by reference across threads (that's why the compiler allows it), so you don't need to worry about channel-related race conditions specifically.
-
-\vspace{\baselineskip}
 \bibliographystyle{alpha}
 \bibliography{Lab2}
 
