@@ -19,7 +19,7 @@ fn main() {
                 previous_value = max.load(Ordering::SeqCst);
             }
         }
-	// L16 video describes it, lecture notes PDF has correct code
+	// L15 video describes it, lecture notes PDF has correct code
     });
     let final_max = max.load(Ordering::SeqCst);
     println!("Max value in the array is {}", final_max);
