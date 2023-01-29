@@ -1,18 +1,3 @@
-# Lecture 10: Locks, reentrancy
-
-Producer-consumer: have students shrink the critical section in `lectures/live-coding/L10/producer-consumer` and measure the perf diff:
-
-> hyperfine --warmup 1 --m 5 "cargo run --release"
-
-Discuss the 3 major concerns with locks.
-
-Do the proof about consistent ordering.
-
-Trylock example: here's a deadlock from stackoverflow: https://stackoverflow.com/questions/55958941/how-can-i-create-a-deadlock-with-rust
-
-Convert it to use trylocks and not deadlock. Of course you can't just unwrap() anymore. How can you measure the time spent waiting? (https://rust-lang-nursery.github.io/rust-cookbook/datetime/duration.html)
-
-```rust
 use std::{sync::{Mutex, MutexGuard}, thread};
 use std::thread::sleep;
 use std::time::Duration;
@@ -65,4 +50,3 @@ fn main() {
 
     println!("Want to see this after converting to trylocks");
 }
-```
