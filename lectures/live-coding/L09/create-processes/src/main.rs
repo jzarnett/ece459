@@ -1,7 +1,7 @@
 use std::process::Command;
 
 fn main() {
-    for j in 0 .. 50000 {
-       Command::new("/bin/false").spawn();
+    for _ in 0 .. 2000 { // The number cannot be too large
+       Command::new("/usr/bin/false").spawn().unwrap();
     }
 }

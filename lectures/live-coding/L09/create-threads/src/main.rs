@@ -1,7 +1,7 @@
 use std::thread;
 
 fn main() {
-    for _ in 0 .. 50000 {
+    for _ in 0 .. 2000 {
         thread::spawn(|| {
             false
         });
