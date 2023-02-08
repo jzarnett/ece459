@@ -51,8 +51,8 @@ fn body_body_interaction(
         difference.z * difference.z +
         EPSILON;
     let distance_sixth = distance_squared * distance_squared * distance_squared;
-    let inv_dist_cube = 1.0f32 / distance_sixth;
-    let magnitude = current_point.mass * inv_dist_cube;
+    let inv_dist_cube = 1.0f32 / (distance_sixth).sqrt();
+    let magnitude = other_point.mass * inv_dist_cube;
 
     current_accel.x = current_accel.x + difference.x * magnitude;
     current_accel.y = current_accel.y + difference.y * magnitude;
