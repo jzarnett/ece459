@@ -2,7 +2,7 @@
 
 * New York: roughly 1000 records
 * California: roughly 2000 records
-...
+* ...
 
 ### order (purchase_amount)
 
