@@ -1,3 +1,14 @@
+/*
+[dependencies]
+im = { version = "*" }
+rand = { version = "*" }
+
+[profile.dev]
+debuginfo=false
+opt-level=3
+*/
+
+#![allow(unused_imports)]
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use std::time::Instant;
