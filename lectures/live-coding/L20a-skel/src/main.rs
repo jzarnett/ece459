@@ -1,3 +1,14 @@
+/*
+[dependencies]
+im = { version = "*" }
+rand = { version = "*" }
+
+[profile.dev]
+debuginfo=false
+opt-level=3
+*/
+
+#![allow(unused_imports)]
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use std::time::Instant;
@@ -37,9 +48,11 @@ impl fmt::Display for Action {
 }
 
 fn generate_action(rng:&mut ThreadRng) -> Action {
-    // interesting experiments: vec is slow on 1..3 and vecdeque is fast
-    // 4..6 is surprisingly fast for vecdeque, slow for vector
-    let a = rng.gen_range(0..6);
+    // TODO change workloads
+    // Workload 1: insert and remove at the end/start of a Vec (`rng.gen_range(0..2)`)
+    // Workload 2: ok, randomly select some elements that go in/come out at the start/end as well (`rng.gen_range(2..4)`)
+    // Workload 3: random access insertions/deletions (`rng.gen_range(4..6)`)
+    let a = rng.gen_range(0..2);
     match a {
         0 => PushEnd(rng.gen::<i32>()),
         1 => PopStart,
@@ -53,8 +66,9 @@ fn generate_action(rng:&mut ThreadRng) -> Action {
 
 const N:i32 = 100000;
 fn main() {
-    //let mut v:Vec<i32> = vec![];
-    //let mut v:VecDeque<i32> = VecDeque::new();
+    // TODO change data structures
+    // let mut v:Vec<i32> = vec![];
+    // let mut v:VecDeque<i32> = VecDeque::new();
     let mut v:Vector<i32> = Vector::new();
 
     let now = Instant::now();
@@ -63,26 +77,23 @@ fn main() {
     let mut v_length = 0;
     let mut max_length = 0;
 
-    // populate v
     for _ in 1..100000 {
-    	v.insert(0, rng.gen::<i32>());
-    	v_length = v_length + 1;
+        v.insert(0, rng.gen::<i32>());
+        v_length = v_length + 1;
     }
 
     for _n in 1..N {
-        // randomly do an action on v
         let action = generate_action(&mut rng);
         match action {
-        	PushEnd(i) => { v.insert(v_length, i); v_length = v_length + 1; },
-        	PopEnd => { if ! v.is_empty() { v_length = v_length - 1; v.remove(v_length); } },
-        	PushStart(i) => { v.insert(0, i); v_length = v_length + 1 },
-        	PopStart => { if ! v.is_empty() { v_length = v_length - 1; v.remove(0); } },
-        	PushRandom(i) => { v.insert(rng.gen_range(0..v_length+1), i); v_length = v_length + 1; }
-        	PopRandom => { if ! v.is_empty() { v.remove(rng.gen_range(0..v_length)); v_length = v_length - 1 } },
-        	_ => {}
-        	
-	}
-	if v_length > max_length { max_length = v_length; }
+            PushEnd(i) => { v.insert(v_length, i); v_length = v_length + 1; },
+            PopEnd => { if ! v.is_empty() { v_length = v_length - 1; v.remove(v_length); } },
+            PushStart(i) => { v.insert(0, i); v_length = v_length + 1 },
+            PopStart => { if ! v.is_empty() { v_length = v_length - 1; v.remove(0); } },
+            PushRandom(i) => { v.insert(rng.gen_range(0..v_length+1), i); v_length = v_length + 1 },
+            PopRandom => { if ! v.is_empty() { v.remove(rng.gen_range(0..v_length)); v_length = v_length - 1 } },
+            _ => {}
+        }
+        if v_length > max_length { max_length = v_length; }
     }
 
     let elapsed_time = now.elapsed();

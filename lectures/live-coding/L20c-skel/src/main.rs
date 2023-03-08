@@ -40,8 +40,6 @@ impl fmt::Display for Action {
 }
 
 fn generate_action(rng:&mut ThreadRng) -> Action {
-    // interesting experiments: vec is slow on 1..3 and vecdeque is fast
-    // 4..6 is surprisingly fast for vecdeque, slow for vector
     let a = rng.gen_range(0..2);
     match a {
         0 => PushEnd(rng.gen::<i32>()),
@@ -55,7 +53,7 @@ fn generate_action(rng:&mut ThreadRng) -> Action {
 }
 
 const OUTER:i32 = 200;
-//const INITIAL_CAPACITY:usize = 5000000;
+// const INITIAL_CAPACITY:usize = 5000000;
 const INITIAL_CAPACITY:usize = 5000033;
 
 const FIXED_INITIAL_VEC_SIZE:i32 = 5000000;
@@ -112,8 +110,7 @@ fn main() {
             }
         }
     }
-    fs::write("src/main.rs", new_lines).expect("can't write output"
-    );
+    fs::write("src/main.rs", new_lines).expect("can't write output");
     // recompile
     Command::new("cargo")
             .arg("build")
