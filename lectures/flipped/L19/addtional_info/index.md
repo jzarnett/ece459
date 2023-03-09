@@ -1,9 +1,8 @@
 ### customer
 
 ```SQL
-customer_id, PRIMARY KEY
+(customer_id, city, customer_name), PRIMARY KEY
 ```
 
-```SQL
-UNIQUE (customer_id, city, customer_name)
-```
+(For convenience, an index can be thought as a better-organized table with fewer
+columns and links to the original records)

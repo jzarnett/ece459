@@ -8,4 +8,4 @@
 
 * less than 100: roughly 100000 records
 * between 100 - 5000: roughly 10000 records
-* over 5000: roughly 30 records
+* over 5000: roughly 5 records
