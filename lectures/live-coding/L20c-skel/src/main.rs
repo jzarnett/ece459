@@ -53,9 +53,7 @@ fn generate_action(rng:&mut ThreadRng) -> Action {
 }
 
 const OUTER:i32 = 200;
-// const INITIAL_CAPACITY:usize = 5000000;
-const INITIAL_CAPACITY:usize = 5000033;
-
+const INITIAL_CAPACITY:usize = 5000000;
 const FIXED_INITIAL_VEC_SIZE:i32 = 5000000;
 const N:i32 = 100;
 fn main() {
@@ -93,30 +91,10 @@ fn main() {
 
     // modify main.rs line "const INITIAL_CAPACITY:usize = 1";
 
-    let target_line_start = "const INITIAL_CAPACITY:usize =";
-    let new_target_line = format!("{} {};\n", target_line_start, max_length);
+    // ...
 
-    let mut new_lines: String = "".to_owned();
-    if let Ok(lines) = read_lines("src/main.rs") {
-        // Consumes the iterator, returns an (Optional) String
-        for line in lines {
-            if let Ok(ip) = line {
-                if ip.starts_with(target_line_start) {
-                    new_lines.push_str(&new_target_line);
-                } else {
-                    new_lines.push_str(&ip);
-                }
-                new_lines.push_str("\n");
-            }
-        }
-    }
-    fs::write("src/main.rs", new_lines).expect("can't write output");
     // recompile
-    Command::new("cargo")
-            .arg("build")
-            .arg("--release")
-            .output()
-            .expect("failed to execute process");
+    // Command::new(...);
 }
 
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
