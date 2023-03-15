@@ -64,9 +64,14 @@ fn generate_action(rng:&mut ThreadRng) -> Action {
 
 const N:i32 = 100000;
 fn main() {
-    // let mut v:Vec<i32> = vec![];
+    let mut v:Vec<i32> = vec![];
+    // ^ 542ms for {0,1}, 551ms for {2,3}, 544ms for {4,5}
+
     // let mut v:VecDeque<i32> = VecDeque::new();
-    let mut v:Vector<i32> = Vector::new();
+    // ^ 2ms for {0,1}, 4ms for {2,3}, 136ms for {4,5}
+
+    // let mut v:Vector<i32> = Vector::new();
+    // ^ 4ms for {0,1}, 3ms for {2,3}, 6449ms for {4,5}
 
     let now = Instant::now();
 
