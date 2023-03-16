@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let ptx = CString::new(include_str!("../resources/vector_add.ptx"))?;
     let module = Module::load_from_string(&ptx)?;
-    let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
+    let stream = Stream::new(StreamFlags::DEFAULT, None)?;
 
     // Create buffers for data
     let mut A_buf = DeviceBuffer::from_slice(A.as_slice())?;
