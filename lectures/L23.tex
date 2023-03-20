@@ -26,13 +26,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let ptx = CString::new(include_str!("../resources/add.ptx"))?;
     let module = Module::load_from_string(&ptx)?;
-    let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
+    let stream = Stream::new(StreamFlags::DEFAULT, None)?;
 
     // Create buffers for data
     let mut in_x = DeviceBuffer::from_slice(&[1.0f32; 10])?;
     let mut in_y = DeviceBuffer::from_slice(&[2.0f32; 10])?;
     let mut out_1 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
-    let mut out_2 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
 
     // This kernel adds each element in `in_x` and `in_y` and writes the result into `out`.
     unsafe {
@@ -52,7 +51,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Copy the results back to host memory
     let mut out_host = [0.0f32; 20];
     out_1.copy_to(&mut out_host[0..10])?;
-    out_2.copy_to(&mut out_host[10..20])?;
 
     for x in out_host.iter() {
         assert_eq!(3.0 as u32, *x as u32);
@@ -89,7 +87,7 @@ Next, in step 3, we request a \emph{context}. The context is described by the do
 
 The next step is to create our \textit{module}. A module is technically a package of code and data to run on the device, but in this case it just really means our kernel. What we do here is read the compiled PTX code into a C-String, then create the module from that string. It's also possible to load from a file directly. 
 
-Once we have created a module, we then create a \textit{stream}. The stream is where we assign work. You can think of it as being similar to a priority queue: you put items in there and work that is more important (lower priority number) can pre-empt work that is less important (higher priority number). Otherwise, work is done in the order it was scheduled, and tasks don't overlap. The stream is asynchronous, so once work has been assigned, it returns immediately. I'll point out that the Rustacuda implementation says you should set the \texttt{NON\_BLOCKING} flag to prevent synchronization with the NULL stream (the details of which we'll skip). 
+Once we have created a module, we then create a \textit{stream}. The stream is where we issue commands such as memory copies, kernel launches, etc. Commands on the same stream execute in order, while commands on different streams execute out of order. Commands that do not specify a stream are issued on the \textit{default stream}. The stream is asynchronous, so once a command has been issued, it returns immediately. Each \texttt{DeviceBuffer::from_slice()} is a memory copy issued on the default stream. We use the \texttt{DEFAULT} flag to issue the kernel launch on the default stream so that it executes after the memory copies\footnote{RustaCUDA recommends using the \texttt{NON_BLOCKING} flag, but this will result in the kernel launch being issued on a different stream than the memory copies, which is not what we want in this case.}.
 
 There's one more step before launching the kernel; in step 5, we
 create some \emph{data buffers}, which are used for moving data to and from the GPU. Remember, CUDA requires explicit communication, so whatever data want to provide as input has to be put into a buffer and then the buffer is transferred to the kernel. Whatever data comes as output will be transferred by the GPU into the output buffers we specify.
@@ -160,7 +158,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let ptx = CString::new(include_str!("../resources/nbody.ptx"))?;
     let module = Module::load_from_string(&ptx)?;
-    let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
+    let stream = Stream::new(StreamFlags::DEFAULT, None)?;
 
     // Create buffers for data
     let mut points = DeviceBuffer::from_slice(initial_positions.as_slice())?;
