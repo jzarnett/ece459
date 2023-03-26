@@ -45,7 +45,7 @@ RNG_SEED = 5
 # In[3]:
 
 
-TOTAL_DAILY_AGENTS = 4000
+TOTAL_DAILY_AGENTS = 2000
 PERFECT_ARRIVALS = True
 HOURLY_PERCENT = {
     "10:00 AM": 10,
@@ -249,7 +249,7 @@ PLOT_RANGE = {
 # 
 # Run the simulation here.
 
-# In[8]:
+# In[ ]:
 
 
 # Initialize Park
