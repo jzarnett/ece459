@@ -1,234 +1,361 @@
-\include{header}
+\input{../common/header}
 
 \begin{document}
 
-\lecture{27 --- Liar, Liar}{\term}{Patrick Lam \& Jeff Zarnett}
+\lecture{27 --- Program Profiling and POGO}{\term}{Jeff Zarnett \& Patrick Lam}
 
-I was thinking today about how humans are quite adept at building and
-using tools (though not
-unique\footnote{https://www.rnz.co.nz/news/national/366747/clever-kea-using-tools-to-raid-traps}). Profilers
-are useful tools, but they can mislead you.  If you understand how
-profilers work, you can avoid being misled.
+\section*{Profiling}
+We've spent some time talking about observing programs at a higher level, but now we should consider zooming in a little bit to using specific profiling tools to figure out where CPU time is going and how to make use of that.
 
-As we've been saying this week, there are sampling-based and instrumentation-based profilers.
-The tl;dr is that a sampling-based profiler can miss things, while an instrumentation-based
-profiler distorts the system under observation.
+I've used the logging-only approach myself to figure out what blocks of a single large function are taking a long time (such as a time when I found out that updating exchange rates was slow.). But this approach is not necessarily a good one.  It's an example of ``invasive'' profiling---we are going in and changing the source code of the program in question---to add (slow!) instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half-hour range and I could see that the save operation was taking twelve minutes. Not kidding.
 
-Visually, sampling-based profiling can do this:
-\begin{center}
-	\url{https://www.youtube.com/watch?v=jQDjJRYmeWg}
-\end{center}
-
-The video's not fake; it's a real helicopter and it's really flying. What's happening, however, is that the camera is taking images at some multiple of the frequency of the blade rotation speed so it gives the illusion that the blades are not spinning at all. This is a sampling problem, and you see the same problem in car commercials on TV where it looks like the wheels are spinning backwards. They're not, but the sampling effect of the camera can make it look that way.
-
-The main assumptions underlying sampling are that samples are ``random'' and that the sample distribution approximates the actual time-spent distribution\footnote{Lifted from ``Profilers are Lying Hobbitses'', \url{https://www.infoq.com/presentations/profilers-hotspots-bottlenecks/}, which talks about profiling for JVMs.}.
-
-\section*{Lies from Metrics}
-While app-specific metrics can lie too, mostly we'll talk about CPU
-perf counters today.
-In particular, we're going to look at two types of sampling-based lies.
-
-The reference for the first type of lie is a blog post by Paul Khuong~\cite{metrics}.
-
-This goes back to {\tt mfence}, which we've seen before. It is used, for instance, in
-spinlock implementations. Khuong found that his profiles said that spinlocking didn't take much time.
-But empirically: eliminating spinlocks = better than expected! Hmm.
-
-The next step is (as we do in this course) to create microbenchmarks to better understand what's
-going on. The microbenchmark contained memory accesses to uncached locations, or computations,
-surrounded by store pairs/mfence/locks. He used perf to evaluate the impact of mfence vs lock.
-You'll recall that perf is sampling-based and records how often the CPU is found executing each
-instruction.
+I also mentioned earlier that I used the profiling tool for CUDA to find out what was wrong with my N-Body program. I ran the command \texttt{nvprof target/release/nbody-cuda}, and in addition to the regular program output I got the following, which showed that the time was going to the kernel and I wasn't losing a lot in overhead:
 
 {\scriptsize
-\begin{lstlisting}
-# for locks:
-$ perf annotate -s cache_misses
-[...]
-    0.06 :        4006b0:       and    %rdx,%r10
-    0.00 :        4006b3:       add    $0x1,%r9
-    ;; random (out of last level cache) read
-    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
-   30.37 :        4006bb:       mov    %rcx,%r10
-    ;; foo is cached, to simulate our internal lock
-    0.12 :        4006be:       mov    %r9,0x200fbb(%rip)
-    0.00 :        4006c5:       shl    $0x17,%r10
-    [... Skipping arithmetic with < 1% weight in the profile]
-    ;; locked increment of an in-cache "lock" byte
-    1.00 :        4006e7:       lock incb 0x200d92(%rip)
-   21.57 :        4006ee:       add    $0x1,%rax
-    [...]
-    ;; random out of cache read
-    0.00 :        400704:       xor    (%rsi,%r10,8),%rbp
-   21.99 :        400708:       xor    %r9,%r8
-    [...]
-    ;; locked in-cache decrement
-    0.00 :        400729:       lock decb 0x200d50(%rip)
-   18.61 :        400730:       add    $0x1,%rax
-    [...]
-    0.92 :        400755:       jne    4006b0 <cache_misses+0x30>
-\end{lstlisting}
+\begin{verbatim}
+==20734== Profiling application: target/release/nbody-cuda
+==20734== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:  100.00%  10.7599s         1  10.7599s  10.7599s  10.7599s  calculate_forces
+                    0.00%  234.72us         2  117.36us  100.80us  133.92us  [CUDA memcpy HtoD]
+                    0.00%  94.241us         1  94.241us  94.241us  94.241us  [CUDA memcpy DtoH]
+      API calls:   97.48%  10.7599s         1  10.7599s  10.7599s  10.7599s  cuStreamSynchronize
+                    1.92%  211.87ms         1  211.87ms  211.87ms  211.87ms  cuCtxCreate
+                    0.54%  59.648ms         1  59.648ms  59.648ms  59.648ms  cuCtxDestroy
+                    0.04%  4.8704ms         1  4.8704ms  4.8704ms  4.8704ms  cuModuleLoadData
+                    0.00%  404.72us         2  202.36us  194.51us  210.21us  cuMemAlloc
+                    0.00%  400.58us         2  200.29us  158.08us  242.50us  cuMemcpyHtoD
+                    0.00%  299.30us         2  149.65us  121.42us  177.88us  cuMemFree
+                    0.00%  243.86us         1  243.86us  243.86us  243.86us  cuMemcpyDtoH
+                    0.00%  85.000us         1  85.000us  85.000us  85.000us  cuModuleUnload
+                    0.00%  41.356us         1  41.356us  41.356us  41.356us  cuLaunchKernel
+                    0.00%  18.483us         1  18.483us  18.483us  18.483us  cuStreamCreateWithPriority
+                    0.00%  9.0780us         1  9.0780us  9.0780us  9.0780us  cuStreamDestroy
+                    0.00%  2.2080us         2  1.1040us     215ns  1.9930us  cuDeviceGetCount
+                    0.00%  1.4600us         1  1.4600us  1.4600us  1.4600us  cuModuleGetFunction
+                    0.00%  1.1810us         2     590ns     214ns     967ns  cuDeviceGet
+                    0.00%     929ns         3     309ns     230ns     469ns  cuDeviceGetAttribute
+\end{verbatim}
 }
 
-We can see that in the lock situation, reads take 30 + 22 = 52\% of runtime,
-while locks take 19 + 21 = 40\% of runtime.
+Oh, and for comparison, here's the one where I make much better use of the GPU's capabilities (with better grid and block settings):
 
 {\scriptsize
-\begin{lstlisting}
-# for mfence:
-$ perf annotate -s cache_misses
-[...]
-    0.00 :        4006b0:       and    %rdx,%r10
-    0.00 :        4006b3:       add    $0x1,%r9
-    ;; random read
-    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
-   42.04 :        4006bb:       mov    %rcx,%r10
-    ;; store to cached memory (lock word)
-    0.00 :        4006be:       mov    %r9,0x200fbb(%rip)
-    [...]
-    0.20 :        4006e7:       mfence 
-    5.26 :        4006ea:       add    $0x1,%rax
-    [...]
-    ;; random read
-    0.19 :        400700:       xor    (%rsi,%r10,8),%rbp
-   43.13 :        400704:       xor    %r9,%r8
-    [...]
-    0.00 :        400725:       mfence 
-    4.96 :        400728:       add    $0x1,%rax
-    0.92 :        40072c:       add    $0x1,%rax
-    [...]
-    0.36 :        40074d:       jne    4006b0 <cache_misses+0x30>
-\end{lstlisting}
+\begin{verbatim}
+=22619== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   99.92%  417.53ms         1  417.53ms  417.53ms  417.53ms  calculate_forces
+                    0.06%  236.03us         2  118.02us  101.44us  134.59us  [CUDA memcpy HtoD]
+                    0.02%  93.057us         1  93.057us  93.057us  93.057us  [CUDA memcpy DtoH]
+      API calls:   52.09%  417.54ms         1  417.54ms  417.54ms  417.54ms  cuStreamSynchronize
+                   26.70%  214.00ms         1  214.00ms  214.00ms  214.00ms  cuCtxCreate
+                   13.63%  109.26ms         1  109.26ms  109.26ms  109.26ms  cuModuleLoadData
+                    7.42%  59.502ms         1  59.502ms  59.502ms  59.502ms  cuCtxDestroy
+                    0.05%  364.08us         2  182.04us  147.65us  216.42us  cuMemcpyHtoD
+                    0.04%  306.48us         2  153.24us  134.10us  172.37us  cuMemAlloc
+                    0.04%  285.73us         2  142.86us  122.90us  162.83us  cuMemFree
+                    0.03%  246.37us         1  246.37us  246.37us  246.37us  cuMemcpyDtoH
+                    0.01%  61.916us         1  61.916us  61.916us  61.916us  cuModuleUnload
+                    0.00%  26.218us         1  26.218us  26.218us  26.218us  cuLaunchKernel
+                    0.00%  15.902us         1  15.902us  15.902us  15.902us  cuStreamCreateWithPriority
+                    0.00%  9.0760us         1  9.0760us  9.0760us  9.0760us  cuStreamDestroy
+                    0.00%  1.6720us         2     836ns     203ns  1.4690us  cuDeviceGetCount
+                    0.00%  1.0950us         1  1.0950us  1.0950us  1.0950us  cuModuleGetFunction
+                    0.00%     888ns         3     296ns     222ns     442ns  cuDeviceGetAttribute
+                    0.00%     712ns         2     356ns     212ns     500ns  cuDeviceGet
+\end{verbatim}
 }
-Looks like the reads take 85\% of runtime,
-while the mfence takes 15\% of runtime.
-
-Metrics lie, though, and when you focus on the metrics as opposed to what you
-actually care about, it's easy to be led astray.
-
-In this case, what we actually care about is the total \# of cycles.
-
-    \begin{tabular}{lr}
-    No atomic/fence:& 2.81e9 cycles\\
-    lock inc/dec: & 3.66e9 cycles\\
-    mfence: & 19.60e9 cycles
-    \end{tabular}
-
-That 15\% number is a total lie.
-Profilers, even using CPU expense counts, drastically underestimate the impact of mfence,
-and overestimate the impact of locks.
-
-This is because mfence causes a pipeline flush, and the resulting 
-costs get attributed to instructions being flushed, not to the mfence itself. In other
-words, mfence makes other instructions run more slowly, which camouflages its own effect
-on the overall performance.
 
 
-\section*{The Long Tail}
+Nicholas Nethercote wrote the ``counts'' tool\footnote{\url{https://github.com/nnethercote/counts}} to process ad-hoc debug output and shows an example of using it to profile the size of heap allocations in Firefox. In the example in the README, he reports that while most allocations are small, most memory is allocated as part of a large allocation. He provides a number of other examples where ad-hoc profiling is useful: how often are certain paths executed? how many times does a loop iterate? how many elements are in a hash table at a given location? And more! It's hard to write a general-purpose tool for these ad-hoc queries.
 
-The other type of lie that sampling can hide is the one where infrequent long tails are hidden in averages.
-Our source here is the blog post by Dan Luu~\cite{perf-tracing}. Suppose we have a task that's going to get distributed over multiple computers (like a search). If we look at the latency distribution, the problem is mostly that we see a long tail of events and when we are doing a computation or search where we need all the results, we can only go as the slowest step. Let's take a look at a histogram of disk read latencies, where we are performing a 64 kB read, also from that source:
+(Also like debugging, if you get to be a wizard you can maybe do it by code inspection, but that technique of speculative execution inside your head is a lot harder to apply to performance problems than it is to debugging. Trained professionals like Nicholas Nethercote use profilers, so you can too.)
+
+So we should all agree, we want to use tools and do this in a methodical way.
+
+Now that we agree on that, let's think about how profiling tools work\:
+
+\begin{itemize}[noitemsep]
+\item sampling-based (traditional): every so often (e.g. 100ms for gprof), stop the system and ask it what it's doing (query the system state); or,
+\item instrumentation-based, or probe-based/predicate-based
+  (sometimes, too expensive): query system state under certain
+  conditions; like conditional breakpoints.
+\end{itemize}
+We'll talk about both per-process profiling and system-wide profiling. You can read more about profiling in Chapter 5 (Profiling) of The Rust Performance Book~\cite{nethercote20:_rust_perfor_book}; it discusses heap profiling in much more detail than we do (or don't,
+more accurately).
+
+If you need your system to run fast, you need to start profiling
+and benchmarking as soon as you can run the system. Benefits:
+\begin{itemize}[noitemsep]
+\item establishes a baseline performance for the system;
+\item allows you to measure impacts of changes and further system development;
+\item allows you to re-design the system before it's too late;
+\item avoids the need for ``perf spray'' to make the system faster, since
+that spray is often made of ``unobtainium''\footnote{\url{http://en.wikipedia.org/wiki/Unobtainium}}.
+\end{itemize}
+
+\paragraph{Tips for Leveraging Profiling.}
+When writing large software projects:
+  \begin{itemize}[noitemsep]
+    \item First, write clear and concise code. Don't do any premature optimizations---focus on correctness. Still, there are choices you can make that support performance at this stage, like using an efficient search or sort algorithm, if you know it's better and won't take additional effort.
+    \item Once it's working, profile to get a baseline of your performance: it allows you to easily track any performance changes and to re-design your program before it's too late.
+  \end{itemize}
+Focus your optimization efforts on the code that matters.
+
+Look for abnormalities; in particular, you're looking for
+deviations from the following rules:
+\begin{itemize}[noitemsep]
+\item time is spent in the right part of the system/program;
+\item time is not spent in error-handling, noncritical code, or exceptional cases; and
+\item time is not unnecessarily spent in the operating system.
+\end{itemize}
+For instance, ``why is {\tt ps} taking up all my cycles?'';
+see page 34 of ~\cite{300ps}.
+
+\paragraph{Development vs. production.}
+You can always profile your systems in development, but that might not
+help with complexities in production. (You want separate dev and
+production systems, of course!) We'll talk a bit about DTrace, which
+is one way of profiling a production system. The constraints on profiling 
+production systems are that the profiling must not affect the system's
+performance or reliability.
+
+\section*{Userspace per-process profiling}
+Sometimes---or, in this course, often---you can get away with
+investigating just one process and get useful results about that
+process's behaviour.  We'll first talk about {\tt perf}, the profiler 
+recommended for use with Rust. This is Linux-specific, though.
+
+The \texttt{perf} tool is an interface to the Linux kernel's built-in
+sample-based profiling using CPU counters. It works per-process, per-CPU, or system-wide. It can report the cost of each line of code.
+
+Webpage: \url{https://perf.wiki.kernel.org/index.php/Tutorial}
+
+\noindent
+Here's a usage example on some old assignment code from a previous offering of the course:
+\begin{lstlisting}[basicstyle=\scriptsize]
+[plam@lynch nm-morph]$ perf stat ./test_harness
+
+ Performance counter stats for './test_harness':
+
+       6562.501429 task-clock                #    0.997 CPUs utilized          
+               666 context-switches          #    0.101 K/sec                  
+                 0 cpu-migrations            #    0.000 K/sec                  
+             3,791 page-faults               #    0.578 K/sec                  
+    24,874,267,078 cycles                    #    3.790 GHz                     [83.32%]
+    12,565,457,337 stalled-cycles-frontend   #   50.52% frontend cycles idle    [83.31%]
+     5,874,853,028 stalled-cycles-backend    #   23.62% backend  cycles idle    [66.63%]
+    33,787,408,650 instructions              #    1.36  insns per cycle        
+                                             #    0.37  stalled cycles per insn [83.32%]
+     5,271,501,213 branches                  #  803.276 M/sec                   [83.38%]
+       155,568,356 branch-misses             #    2.95% of all branches         [83.36%]
+
+       6.580225847 seconds time elapsed
+\end{lstlisting} %$
+
+Right, let's get started. We're going to use the blog post~\cite{rustflamegraph} as a guide; that source tells a more complete story of an example of using the profiler to optimize, but for now we are just interested in the steps.
+
+The first thing to do is to compile with debugging info, go to your \texttt{Cargo.toml} file and add:
+\begin{verbatim}
+[profile.release]
+debug = true
+\end{verbatim}
+
+This means that \texttt{cargo build --release} will now compile the version with debug info (you can tell because it will say \texttt{Finished release [optimized + debuginfo] target(s) in 0.55s}; without this, we wouldn't get the part that says debug info so we can tell if it's correct. And we want it to be the release version that we're instrumenting, because we want the compiler optimizations to be applied. Without those, we might be trying to optimize things where the compiler would do it for us anyway.
+
+The basic plan is to run the program using \texttt{perf record}, which will sample the execution of the program to produce a data set. Then there are three ways we can look at the code: \texttt{perf report}, \texttt{perf annotate}, and a flamegraph. We'll look at all of those, but in a live demo.
+
+
+\paragraph{CLion.} While we've seen how to use \texttt{perf}, it's not the only way. During development of some of the code exercises, I used the CLion built-in profiler for this purpose. It generates a flamegraph for you too, and I'll show that for how to create the flamegraph as well.
+
+\section*{Profiler Guided Optimization (POGO)}
+
+In 2015 we were fortunate enough to have a guest lecture from someone at Microsoft actually in the room to give the guest lecture on the subject of Profile Guided Optimization (or POGO). In subsequent years, I was not able to convince him to fly in just for the lecture. Anyway, let's talk about the subject, which is by no means restricted to Rust.
+
+The compiler does static analysis of the code you've written and makes its best guesses about what is likely to happen. The canonical example for this is branch prediction: there is an if-else block and the compiler will then guess about which is more likely and optimize for that version. Consider three examples, originally from~\cite{pogo} but replaced with some Rust equivalents:
+
+\begin{lstlisting}[language=Rust]
+fn which_branch(a: i32, b: i32) {
+    if a < b {
+        println!("Case one.");
+    } else {
+        println!("Case two.");
+    }
+}
+\end{lstlisting}
+
+Just looking at this, which is more likely, \texttt{a < b} or \texttt{a >= b}? Assuming there's no other information in the system the compiler can believe that one is more likely than the other, or having no real information, use a fallback rule. This works, but what if we are wrong? Suppose the compiler decides it is likely that \texttt{a} is the larger value and it optimizes for that version. However, it is only the case 5\% of the time, so most of the time the prediction is wrong. That's unpleasant. But the only way to know is to actually run the program.
+
+\begin{multicols}{2}
+\begin{lstlisting}[language=Rust]
+trait Polite {
+    fn greet(&self) -> String;
+}
+
+struct Kenobi {
+    /* Stuff */
+}
+impl Polite for Kenobi {
+    fn greet(&self) -> String {
+        return String::from("Hello there!");
+    }
+}
+\end{lstlisting}
+\columnbreak
+\begin{lstlisting}[language=Rust]
+struct Grievous {
+    /* Things */
+}
+impl Polite for Grievous {
+    fn greet(&self) -> String {
+        return String::from("General Kenobi.");
+    }
+}
+
+fn devirtualization(thing: &Polite) {
+    println!("{}", thing.greet());
+}
+
+\end{lstlisting}
+\end{multicols}
+
+
+
+There are similar questions raised for the other two examples. What is the ``normal'' type for some reference \texttt{thing}? It could be of either type \texttt{Kenobi} or \texttt{Grievous}. If we do not know, the compiler cannot do devirtualization (replace this virtual call with a real one). If there was exactly one type that implements the \texttt{Polite} trait we wouldn't have to guess. But are we much more likely to see \texttt{Kenobi} than \texttt{Grievous}?
+
+\begin{lstlisting}[language=Rust]
+fn match_thing(x: i32) -> i32 {
+    match x {
+        0..10 => 1,
+        11..100 => 2,
+        _ => 0
+    }
+}
+\end{lstlisting}
+
+ Same thing with \texttt{x}: what is its typical value? If we know that, it is our prediction. Actually, in a match block with many options, could we rank them in descending order of likelihood?
+
+There exists a solution to this, and it is that we can give hints to the compiler, but that's a manual process. Automation is a good thing and this lecture is about that. These sorts of things already exist for Java! The Java HotSpot virtual machine will update its predictions on the fly. There are some initial predictions and if they turn out to be wrong, the Just In Time compiler will replace it with the other version. That's neat! I don't know for certain but I suspect the .NET runtime will do the same for something like C\#. But this is Rust and we don't have the runtime to reduce the overhead: the compiler runs and it does its job and that's it; the program is never updated with newer predictions if more data becomes known.
+
+Solving this problem is the goal of POGO. It is taking the data from some actual runs of the program and using that to inform the predictions. This necessitates a multi-step compile: first compile the code, run it to collect data, then recompile the code using the data we collected. Let's expand on all three steps.
+
+Step one is to generate an executable with instrumentation. Ask to compile with instrumentation enabled, which also says what directory to put it in: \texttt{-Cprofile-generate=/tmp/pgo-data}. The compiler inserts a bunch of probes into the generated code that are used to record data. Three types of probe are inserted: function entry probes, edge probes, and value probes.  A function entry probe, obviously, counts how many times a particular function is called. An edge probe is used to count the transitions (which tells us whether an if branch is taken or the else condition). Value probes are interesting; they are used to collect a histogram of values. Thus, we can have a small table that tells us the frequency of what is given in to a \texttt{match} statement. When this phase is complete, there is an instrumented executable and an empty database file where the training data goes~\cite{pogo}. 
+
+Step two is training day: run the instrumented executable through real-world scenarios. Ideally you will spend the training time on the performance-critical sections. It does not have to be a single training run, of course, data can be collected from as many runs as desired. Keep in mind that the program will run a lot slower when there's the instrumentation present. 
+
+Still, it is important to note that you are not trying to exercise every part of the program (this is not unit testing); instead it should be as close to real-world-usage as can be accomplished. In fact, trying to use every bell and whistle of the program is counterproductive; if the usage data does not match real world scenarios then  the compiler has been given the wrong information about what is important. Or you might end up teaching it that almost nothing is important... 
+
+According to the docs about it\footnote{\url{https://doc.rust-lang.org/rustc/profile-guided-optimization.html}}, the output \texttt{.profraw} files require a little bit of processing before they're ready to go. When the program is running, the recording of data is done as quickly as possible with little regard for making it neat. Think of it like taking notes furiously during a lecture and then later revisiting them to organize them a bit. The tool for doing this is \texttt{llvm-profdata} and it will organize the data into a \texttt{.profdata} file. We can merge multiple runs as needed into a single file that will be used for input. 
+
+Step three is a recompile. This time, in addition to the source files, the (merged) training data is fed into the compiler for a second compile, and this data is applied to (hypothetically) produce a better output executable than could be achieved by static analysis alone.
+
+
+It is not necessary to do all three steps for every build. Old training data can be re-used until the code base has diverged significantly enough from the instrumented version. According to~\cite{pogo}, the recommended workflow is for one developer to perform these steps and check the training data into source control so that other developers can make use of it in their builds.
+
+The Intel Developer Zone explains the process in a handy infographic\footnote{Source: \url{https://software.intel.com/en-us/node/522721}} :
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/disk_tail.png}
+	\includegraphics[width=0.5\textwidth]{images/pogo-workflow.jpg}
 \end{center}
 
-Let's break it down. Peak 1 corresponds to something cached in RAM---best case scenario. Peak 2 is at around 3ms, which is too fast for spinning and seeking magnetic hard disks, but it's fast enough for reading something from the disk cache via the PCI-Express interface. Peak 3 is obviously disk seek and read times, around 25ms. 
 
-These numbers don't look terrible, except for the fact that we have peaks at 250, 500, 750, and 1000 ms and the 99th percentile is some 696ms which is a very, very long time. Sampling profilers are not very good at finding these things, because they throw everything into various buckets and therefore we get averages. The averages are misleading, though, because we have these weird outliers that take dramatically longer. Averages are nice as long as our data is also reasonably ``nice''.
 
-So what actually happened? Well, from~\cite{perf-tracing}: The investigator found out that the cause was kernel throttling of the CPU for processes that went beyond their usage quota. To enforce the quota, the kernel puts all of the relevant threads to sleep until the next multiple of a quarter second. When the quarter-second hand of the clock rolls around, it wakes up all the threads, and if those threads are still using too much CPU, the threads get put back to sleep for another quarter second. The phase change out of this mode happens when, by happenstance, there aren't too many requests in a quarter second interval and the kernel stops throttling the threads. After finding the cause, an engineer found that this was happening on 25\% of disk servers at Google, for an average of half an hour a day, with periods of high latency as long as 23 hours. This had been happening for three years.
+Or, here, a complete set of steps for actually running it if our program is all in \texttt{main.rs}, from the docs\footnote{\url{https://doc.rust-lang.org/rustc/profile-guided-optimization.html}}:
 
-Further limitations of sampling profilers emerge, as demonstrated in this graph, also from~\cite{perf-tracing}, showing the data we get out of our sampling profiler if we take a look at Lucene (a search indexer):
+{\scriptsize
+\begin{verbatim}
+# STEP 1: Compile the binary with instrumentation
+rustc -Cprofile-generate=/tmp/pgo-data -O ./main.rs
+
+# STEP 2: Run the binary a few times, maybe with common sets of args.
+#         Each run will create or update `.profraw` files in /tmp/pgo-data
+./main mydata1.csv
+./main mydata2.csv
+./main mydata3.csv
+
+# STEP 3: Merge and post-process all the `.profraw` files in /tmp/pgo-data
+llvm-profdata merge -o ./merged.profdata /tmp/pgo-data
+
+# STEP 4: Use the merged `.profdata` file during optimization. All `rustc`
+#         flags have to be the same.
+rustc -Cprofile-use=./merged.profdata -O ./main.rs
+\end{verbatim}
+}
+(NB: Debian/Ubuntu's rustc doesn't seem to support PGO; I had to rustup it myself on my computer; I also used the Complete Cargo Workflow listed later.)
+
+What does it mean for the executable to be better? We have already looked at an example about how to predict branches. Predicting it correctly will be faster than predicting it incorrectly, but this is not the only thing.  The algorithms will aim for speed in the areas that are ``hot'' (performance critical and/or common scenarios). The algorithms will alternatively aim to minimize the size of code of areas that are ``cold'' (not heavily used). It is recommended in~\cite{pogo} that less than 5\% of methods should be compiled for speed.
+
+It is possible that we can combine multiple training runs and we can manually give some suggestions of what scenarios are important. Obviously the more a scenario runs in the training data, the more important it will be, as far as the POGO optimization routine is concerned, but multiple runs can be merged with user assigned weightings.
+
+\subsection*{Behind the Scenes}
+
+In the optimize phase, the training data is used to do the following optimizations( which I will point out are based on C and \CPP~ programs and not necessarily Rust, but the principles should work because the Rust compiler's approach to this is based on that of LLVM/Clang)~\cite{pogo2}:
+
+\begin{multicols}{2}
+\begin{enumerate}
+\item Full and partial inlining
+\item Function layout
+\item Speed and size decision
+\item Basic block layout 
+\item Code separation
+\item Virtual call speculation
+\item Switch expansion
+\item Data separation
+\item Loop unrolling
+\end{enumerate}
+\end{multicols}
+
+For the most part we should be familiar with the techniques that are listed as being other compiler optimizations we have previously discussed. The new ones are (3) speed and size decision, which we have just covered; and items (4) and (5) which relate to how to pack the generated code in the binary.
+
+According to~\cite{pogo2} the majority of the performance gains relate to the inlining decisions. These decisions are based on the call graph path profiling: the behaviour of function \texttt{foo} may be very different when calling it from \texttt{bar} than it is when calling it from function \texttt{baz}. Let's look at this call graph from~\cite{pogo2}:
 
 \begin{center}
-	\includegraphics[width=0.3\textwidth]{images/perf-sample.png}
+	\includegraphics[width=0.25\textwidth]{images/callpaths.png}
 \end{center}
 
-So at the default sampling interval for perf we see\ldots nothing interesting whatsoever. If we bump up to the max sampling frequency of perf, we get a moderately more interesting graph, but not much. If we use a different tool and can sample at a dramatically higher rate, then we end up with something way more useful. So we're left to wonder why does perf sample so infrequently, and how does SHIM get around this?
-
-Well, for one thing, perf samples are done with interrupts. Processing interrupts takes a fair amount of time and if you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work. So sampling tools usually don't interrupt the program too often. SHIM gets around this by being more invasive---it instruments the program, adding some periodically executed code that puts information out whenever there is an appropriate event (e.g., function return). This produces a bunch of data which can be dealt with later to produce something useful.
-
-This instrumentation-based approach is more expensive in general, but note that DTrace\footnote{Note also the comment in the blog post: ``Yes, that includes dtrace, which I'm calling out in particular because any time you have one of these discussions, a dtrace troll will come along to say that dtrace has supported that for years. It's like the common lisp of trace tools, in terms of community trolling.''} and Nethercote's counts tool (discussed in L25) also enable custom instrumentation of select events. 
-
-\section*{Lies from Counters}
-This is fairly niche, but Rust compiler hackers were trying to include
-support for hardware performance counters (what perf reports) because
-{\tt -Z self-profile} data was too noisy\footnote{Full story, in gory
-detail,
-at \url{https://hackmd.io/sH315lO2RuicY-SEt7ynGA?view}.}. Counters
-are, for instance, faster than measuring time and way (i.e. 5 orders of magnitude) more deterministic.
-
-To make counters as deterministic as possible:
-\begin{itemize}[noitemsep]
-\item disable Address Space Layout Randomization (randomized pointer addresses affect hash layouts);
-\item subtract time spent processing interrupts (IRQs);
-\item profile one thread only (if you can, in your context).
-\end{itemize}
-Fun fact. We talked about Spectre back in Lecture 7. Speculative execution comes up here too in terms of
-counters being wrong. AMD speculates past atomics and then rolls back, but doesn't roll back perf counters.
-Post-Spectre, there's a hidden model-specific register (``SpecLockMap'') that disables speculating past atomics, the kind of thing you would
-want around to protect you against future things in that vein that someone might discover. Or, in better words than mine\footnote{\url{https://twitter.com/eddyb_r/status/1323587371703668742}}:
+Quick analysis of this code would have us find all the ways in which the functions might call each other. In total, there are 14 paths in this code, seven of which get us to function \texttt{Foo}. Consider another diagram showing the relationships between functions, in which the numbers on the edges represent the number of invocations~\cite{pogo2}:
 
 \begin{center}
-\includegraphics{images/L27-eb-tweet.png}
+	\includegraphics[width=0.4\textwidth]{images/callpaths2.png}
 \end{center}
 
-\section*{Lies about Calling Context}
-This part is somewhat outdated now, as it's a pretty specific technical problem that especially arises under the {\tt gprof} tool. It's still a good example of lying tools, though,
-so I'll include a condensed version. Yossi Kreinin~\cite{lies} writes about it in more detail.
+When considering what to do here, POGO takes the view like this~\cite{pogo2}:
 
-gprof uses two C standard-library functions: {\bf profil()} and {\bf mcount()}.
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/callpaths3.png}
+\end{center}
 
-\vspace*{-1em}
-\begin{itemize}[noitemsep]
-\item {\bf profil()}: asks glibc to record which instruction 
-  is currently executing (100$\times$/second).
-\item {\bf mcount()}: records call graph edges; called by {\tt -pg} instrumentation.
-\end{itemize}
-\vspace*{-1em}
+Each part of the call path is considered separately, remembering that we want to inline where it makes sense for speed, but otherwise leave it alone because of code size increases. Inlining \texttt{bar} into \texttt{bat} makes sense, but not inlining \texttt{bar} into \texttt{goo} (because that increases the code size without significant performance benefits). It also makes sense for \texttt{baz} to get inlined into \texttt{bar}. This is illustrated below~\cite{pogo2}:
 
-Hence, {\bf profil} information is statistical, while {\bf mcount}
-information is exact.  gprof can draw unreliable inferences. If you have a method \texttt{easy} and a method \texttt{hard}, each of which is called once, and \texttt{hard} takes up almost all the CPU time,
-gprof might divide total time by 2 and report bogus results.
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/callpaths4.png}
+\end{center}
 
-The following results from gprof are suspect (among others):
-\vspace*{-1em}
-\begin{itemize}[noitemsep]
-  \item contribution of children to parents;
-  \item total runtime spent in self+children;
-\end{itemize}
-\vspace*{-1em}
+Packing the blocks is also done based on this call graph profiling. The most common cases will be put next to each other, and, where possible, subsequent steps are put next to each other. The more we can pack related code together, the fewer page faults we get by jumping to some other section, causing a cache miss... If the function being called is in the same page as the call, it has achieved ``page locality'' (and that is the goal!). This is represented visually~\cite{pogo2}:
 
-\paragraph{When are call graph edges right?}
-Two cases:
-\vspace*{-1em}
-    \begin{itemize}[noitemsep]
-    \item functions with only one caller
-      (e.g. {\tt f()} only called by {\tt g()}); or,
-    \item functions which always take the same time to complete
-      (e.g. {\tt rand()}).
-    \end{itemize}
-\vspace*{-1em}
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/blocklayout.png}
+\end{center}
 
-On the other hand, results for any function whose running time depends on its inputs,
-and which is called from multiple contexts, are sketchy.
+According to the author, the ``dead'' code goes in its own special block. I don't think they actually mean truly dead code, the kind that is compile-time determined to be unreachable, but instead they mean code that never gets invoked in any of the training runs.
 
+So, to sum up, the training data is used to identify what branches are likely to be taken, inlines code where that is a performance increase, and tries to pack the binary code in such a way as to reduce cache misses/page faults. How well does it work?
 
-Next, we'll talk about callgrind/KCacheGrind. Like our old friends memcheck, helgrind, and cachegrind, callgrind is part of valgrind, and runs the program under an x86 JIT.  KCacheGrind is a frontend to callgrind. callgrind gives better information, but imposes
-more overhead.
-KCacheGrind works properly on the earlier running example, but we can still deceive it with more complicated examples.
+\subsection*{Benchmark Results}
 
-%% \paragraph{Summary.} We've seen that some profiler results are exact;
-%% some results are sampled; and some results are interpolated. If you understand the tool, you understand where it can go
-%% wrong. 
+This table, condensed from~\cite{pogo2} summarizes the gains to be made. The application under test is a standard benchmark suite (Spec2K) (admittedly, C rather than Rust, but the goal is to see if the principle of POGO works and not just a specific implementation):
 
-%% Understand your tools!
+\begin{center}
+\begin{tabular}{l|l|l|l|l|l}
+	\textbf{Spec2k:} & \textbf{sjeng} & \textbf{gobmk} & \textbf{perl} & \textbf{povray} & \textbf{gcc}\\ \hline
+	\textbf{App Size:} &  {Small} & {Medium} & {Medium} & {Medium} & {Large} \\ \hline
+	\textbf{Inlined Edge Count} & 50\% & 53\% & 25\% & 79\% & 65\% \\ \hline
+	\textbf{Page Locality} & 97\% & 75\% & 85\% & 98\% & 80\% \\ \hline
+	\textbf{Speed Gain} & 8.5\% & 6.6\% & 14.9\% & 36.9\% & 7.9\% \\ 
+\end{tabular}
+\end{center}
 
-
-\paragraph{Overall summary.} We saw a bunch of lies today: calling-context lies and perf attribution
-lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
-and understand how your tools work.
+There are more details in the source as to how many functions are used in a typical run and how many things were inlined and so on. But we get enough of an idea from the last row of how much we are speeding up the program, plus some information about why. We can speculate about how well the results in a synthetic benchmark translate to real-world application performance, but at least from this view it does seem to be a net gain.
 
 
 

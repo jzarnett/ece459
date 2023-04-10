@@ -1,0 +1,160 @@
+%%%%%%%%%%%%  Generated using docx2latex.com  %%%%%%%%%%%%%%
+
+%%%%%%%%%%%%  v2.0.0-beta  %%%%%%%%%%%%%%
+
+\documentclass[12pt]{article}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{latexsym}
+\usepackage{amsfonts}
+\usepackage[normalem]{ulem}
+\usepackage{soul}
+\usepackage{array}
+\usepackage{amssymb}
+\usepackage{extarrows}
+\usepackage{graphicx}
+
+\usepackage{subfig}
+\usepackage{wrapfig}
+\usepackage{wasysym}
+\usepackage{enumitem}
+\usepackage{adjustbox}
+\usepackage{ragged2e}
+\usepackage[svgnames,table]{xcolor}
+\usepackage{tikz}
+\usepackage{longtable}
+\usepackage{changepage}
+\usepackage{setspace}
+\usepackage{hhline}
+\usepackage{multicol}
+\usepackage{tabto}
+\usepackage{float}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{fancyhdr}
+\usepackage[toc,page]{appendix}
+\usepackage[hidelinks]{hyperref}
+\usetikzlibrary{shapes.symbols,shapes.geometric,shadows,arrows.meta}
+\tikzset{>={Latex[width=1.5mm,length=2mm]}}
+\usepackage{flowchart}
+\usepackage[paperheight=11.0in,paperwidth=8.5in,left=0.86in,right=0.86in,top=0.71in,bottom=1in,headheight=1in]{geometry}
+\usepackage{XCharter}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\TabPositions{0.5in,1.0in,1.5in,2.0in,2.5in,3.0in,3.5in,4.0in,4.5in,5.0in,5.5in,6.0in,6.5in,}
+
+\urlstyle{same}
+
+\renewcommand{\_}{\kern-1.5pt\textunderscore\kern-1.5pt}
+
+\setlength{\topsep}{0pt}\setlength{\parindent}{0pt}\setlength{\parskip}{1em}
+
+ %%%%%%%%%%%%  This sets linespacing (verticle gap between Lines) Default=1 %%%%%%%%%%%%%%
+
+
+%\renewcommand{\arraystretch}{1.3}
+
+
+%%%%%%%%%%%%%%%%%%%% Document code starts here %%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{document}
+\begin{center}
+{\Large ECE 459: Programming for Performance}\\
+{\Large Lab 2---Building Dictionaries (in parallel)\footnote{v0, 19Jan23}}\\[1em]
+Patrick Lam\\
+Due: February 10, 2023 at 11:59 PM Eastern Time
+\end{center}
+
+\section*{Learning Objectives:}
+
+\begin{itemize}[noitemsep]
+	\item Become familiar with safely and quickly passing information between threads.
+\end{itemize}
+
+The most related lecture content for this lab is in Lectures 9 and 10, though there is somewhat-relevant content up to Lectures 16 and 17. 
+
+\section*{Background}
+Log files can be a key source of data about long-running executables like web servers and operating system kernels. Here's a sample line from a log file.
+
+\begin{verbatim}
+58717 2185 boot_cmd new 1076865186 1 Targeting domains:node-D1 and
+   nodes:node-[40-63] child of command 2176
+\end{verbatim}
+
+Analyzing log files can help you troubleshoot undesired behaviour (both performance and crash related). Unfortunately, log files get huge (tens of gigabytes!). Really, you need to use tools to have any hope of deriving meaning from sufficiently large log files. Even more unfortunately, it seems like every piece of software uses its own log format. And, regardless of format, different software is going to log different information using different messages. So, how to write software that analyzes log files? Well, you could write a set of regular expressions to capture relevant data for each program. But that's a lot of work.
+
+\cite{dai22} propose a mechanical way to extract structured data from unstructured logs. The core part of the approach is building dictionaries of so-called $n$-grams, or tuples of tokens, and identifying low-frequency $n$-grams as dynamic parts of log messages. Before reading further you should read the reference provided and make sure you understand at least Sections 2 and 4. Ask on Piazza if you do not. The rest of this assignment document is written with the understanding that you have read the paper.
+
+I've provided a sequential sequential implementation. Your task in this Programming for Performance assignment is thus to speed up the dictionary construction. You'll modify the starter code to use concurrency to read log files and build dictionaries of $n$-grams. Once you've built the dictionaries, you can use them to identify that tokens \texttt{nodes:node-[40-63]} and \texttt{2176} in the example above are dynamic, and the rest of the line is static.
+
+\section*{Running the code}
+The implementation takes a number of arguments. The most important ones are a log file (which is the source for the dictionaries), a declaration of its format, and a line to analyze for dynamic versus static tokens.
+
+{\tiny
+\begin{verbatim}
+cargo run --release -- --raw-hpc data/HPC.log \
+  --to-parse "58717 2185 boot_cmd new 1076865186 1 Targeting domains:node-D1 and nodes:node-[40-63] child of command 2176" \
+  --before-line "58728 2187 boot_cmd new 1076865197 1 Targeting domains:node-D2 and nodes:node-[72-95] child of command 2177" \
+  --after-line "58707 2184 boot_cmd new 1076865175 1 Targeting domains:node-D0 and nodes:node-[0-7] child of command 2175" \
+  --cutoff 106
+\end{verbatim}
+}
+
+Here, we specify that the raw log file is in format HPC (\texttt{--raw-hpc}) and located in \texttt{data/HPC.log}. You'll find a number of other log files in the \texttt{data} subdirectory. In case you're curious about experimenting with even more logs, you can find a bunch at \url{https://github.com/logpai/loghub}.. The list of formats more-or-less supported is: linux, openstack, spark, hdfs, hpc, proxifier, healthapp.
+
+The \texttt{--to-parse} argument specifies the line to be parsed. The logram approach also uses the previous and subsequent lines; if available, you can specify them with \texttt{--before-line} and \texttt{--after-line}. You can also specify just the two last and two first tokens with \texttt{--before} and \texttt{--after}.
+
+Logram identifies low-frequency ngrams as likely dynamic tokens. The \texttt{--cutoff} argument is the cut-off for dynamic versus static tokens.
+
+I've put in a \texttt{--num-threads} option which specifies how many threads to start. Since the starter code is sequential, that option doesn't do anything yet. Your task is to make it do something.
+
+The \texttt{README.md} file contains a number of other invocations of the code. logram is more effective on some log types than others. You can run your code on the longer-running examples and see how fast you've made it.
+
+\section*{Understanding the code}
+There's less going on here than in the Lab 1 code, but there is enough so that you can get practice with using concurrency, getting speedups, and avoiding race conditions.
+
+We haven't talked about how to do profiling yet so I can't ask you to find what the bottleneck is. So, the bottleneck is \texttt{dictionary\_builder} in \texttt{packages/parser.rs}. There's a lot of other code; if you read the paper you can understand what it does.
+
+This function sequentially iterates over the lines in the log file and hands them off to the function \texttt{process\_dictionary\_builder\_line}. What's important about that function is that it updates entries in its two \texttt{HashMap}s: \texttt{dbl} and \texttt{trpl} (for 2-grams and 3-grams respectively).
+
+\section*{Your task}
+Since this is Programming for Performance, your task is to make the code faster. The strategy will be to have multiple threads, each of which is responsible for analyzing a part of the log file (in parallel).
+\begin{enumerate}
+\item For this assignment, you can load the entire log file into memory at once so that you can give each thread a different segment of the log file. (Yes, that wouldn't work for gargantuan log files; to scale up more I would use a different approach.)
+\item Start a number of threads. Each thread processes its segment of the log file. First, give each thread a separate hash map, and merge the maps at the end. Evaluate this solution and write about it in the separate-maps commit log. Keep this implementation available under the \texttt{--single-map} command-line option (\texttt{args.single\_map} will be \texttt{Some(true)} when the option is specified). We do not expect this implementation to be faster than the original.
+\item Finally, look around on the Internet for crates that implement concurrent hash maps, and use a single concurrent hash map for \texttt{dbl} and one for \texttt{trpl}. Evaluate the performance of that---we are expecting it to be faster than the original, but we are not setting a specific performance target. Use this implementation when \texttt{--single-map} is not specified.
+
+  The first Google result for me is \texttt{chashmap}, but note that it is not under active maintenance. We suggest finding a concurrent hashmap crate that is being actively maintained.
+\end{enumerate}
+
+Have fun!
+
+\section*{Rubric}
+The general principle is that correct solutions earn full marks. However, it is your responsibility to demonstrate to the TA that your solution is correct. Well-designed, clean solutions are therefore more likely to be recognized as correct. \par
+
+Solutions that do not compile will earn at most 39$\%$  of the available marks for that part. Segfaulting or otherwise crashing solutions earn at most 49$\%$. We are going to run your code on some testcases to make sure it works and look at the changes to see that you used concurrent hash maps.
+
+\paragraph{Implementation (85 marks)} Your code must preserve the original behaviour and must use multiple threads. The separate-maps implementation is worth 40 points and the concurrent-maps implementation is worth 45 points.
+
+\paragraph{Commit Log (15 marks)} 12 marks for explaining the changes that you've made. 3 marks for clarity of exposition. 
+
+\subsection*{What goes in a commit log}
+Here's a suggested structure for your commit log message justifying the pull request.
+\begin{itemize}
+\item Pull Request title explaining the change (less than 80 characters)
+\item Summary (about 1 paragraph): brief, high-level description of the work done.
+\item Tech details (up to 3 paragraphs): anything interesting or noteworthy for the reviewer about how the work is done. 
+\item Something about how you tested this code for correctness and know it works (about 1 paragraph).
+\item Something about how you tested this code for performance and know it is faster (about 1 paragraph).
+\end{itemize}
+Write logs in files {\tt commit-log/separate-maps.md} and {\tt commit-log/concurrent-hashmap.md}.
+
+\section*{Clarifications}
+I'm sure I'll have some. But I don't have any yet.
+
+\bibliographystyle{alpha}
+\bibliography{Lab2}
+
+\end{document}

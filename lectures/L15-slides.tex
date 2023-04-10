@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 15 --- Memory Consistency}
+\title{Lecture 15 --- Crossbeam and Rayon}
 
-\author{Patrick Lam \& Jeff Zarnett\\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\author{Jeff Zarnett\\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -15,323 +15,284 @@
  \end{frame}
  
  
-\begin{frame}
-\frametitle{Previously...}
 
-When we introduced atomics, we said to always use sequential consistency.
+\begin{frame}
+\frametitle{Doing it by hand...}
+
+In previous courses: do things the hard way: write your own!
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/robocop.jpg}\\
-	\hfill ``Stay out of trouble.'' - Robocop, 2043.
+	\includegraphics[width=0.5\textwidth]{images/zeropoints.jpg}
 \end{center}
 
-There are other options, but we need to discuss reordering.
+In industry, you'll use libraries that have appropriate functionality.\\
+\quad ... Assuming the license for them is acceptable to your project.
 
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Compiler Reordering}
-The compiler can change the order of certain events. 
-
-The compiler will be aware of things like load-delay slots and can swap the order of instructions to make use of those slots more effectively.
-
-\begin{multicols}{2}
-\begin{lstlisting}[language=Rust]
-let x = thing.y;
-println!("x = {}", x);
-z = z + 1;
-a = b + c;
-\end{lstlisting}
-\columnbreak
-\begin{lstlisting}[language=Rust]
-let x = thing.y;
-z = z + 1;
-a = b + c;
-println!("x = {}", x);
-\end{lstlisting}
-\end{multicols}
-
-We'll talk about other compiler optimizations soon, but we don't want to get away from the topic of reordering. 
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Hardware Reordering}
-
-In addition to the compiler reordering, the hardware can do some reordering of its own.
-
-There is another possibility we have to consider, and it is updates from other threads.
-
-We need a bit more reassurance that the value we're seeing is the latest one...
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{It's a Feature}
-
-Different hardware provides different guarantees about what reorderings it won't do.
-
- ARM is getting pretty popular, so we do have to care about hardware reorderings, unfortunately.
- 
- \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/apple-m1.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{I have a cunning plan...}
-
-In an obvious case, if the lines of code are \texttt{ z *= 2 } and \texttt {z += 1} then neither the compiler nor hardware will reorder those.
-
-It knows that it would change the outcome and produce the wrong answer. 
-
-There's a clear data dependency there, so the reordering won't happen. 
-
+Goal: directed parallelization. 
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{Reordering Gone Wrong}
-
-But what if there's no such clear dependency? Consider something like this pseudocode:
-
-\begin{multicols}{2}
-\begin{verbatim}
-lock mutex for point
-point.x = 42;
-point.y = -42;
-point.z = 0;
-unlock mutex for point
-\end{verbatim}
-\columnbreak
-\begin{verbatim}
-lock mutex for point
-point.x = 42;
-point.y = -42;
-unlock mutex for point
-point.z = 0;
-\end{verbatim}
-\end{multicols}
-
-What we need is a way to tell the compiler (and hardware) that this is not okay.
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Sequential Consistency}
-
- 
-  Sequential program: statements execute in order.
-
-  Your expectation for concurrency: sequential consistency.
-  
-\begin{center}
-\begin{lstlisting}
-    T1: x = 1; r1 = y;
-    T2: y = 1; r2 = x;
-\end{lstlisting}
-\end{center}
-
-
-    \begin{itemize}
-      \item each thread induces an \emph{execution trace}.
-      \item always: program has executed some prefix of each thread's
-        trace.
-    \end{itemize}
-  
-\end{frame}
-  
-\begin{frame}
-\frametitle{Sequential Consistency}
-
-
-\begin{quote}
-``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
-\end{quote}
-  In brief:
-  \begin{enumerate}
-  \item for each thread: in-order execution;
-  \item interleave the threads' executions.
-  \end{enumerate}~\\
-
-
-\end{frame}
-
-
-
-
-
-\begin{frame}
-\frametitle{The Blind Men and Elephant}
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/Blind_men_and_elephant.jpg}
-\end{center}
-
-But unfortunately, threads have their own view of the world.
-
-\end{frame}
-
-\begin{frame}
-  \frametitle{Reordering}
-
-  
-     Compilers and processors may reorder non-interfering memory
-     operations.
-
-      \[ T1: x = 1; r1 = y; \]
-
-     If two statements are independent:
-     \begin{itemize}
-        \item OK to execute them in either order.
-        \item (equivalently: publish their results to other threads).
-     \end{itemize}
-
-     Reordering is a major compiler tactic to produce speedup.
-  
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Memory Consistency Models}
-
-Rust uses the same memory consistency models as \CPP.
-
-It's the best attempt we have at modelling atomics because it is a very difficult subject
-
-We need way of talking about the \alert{causality} of the program...
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Causality?}
-
-\begin{center}
-	\includegraphics[width=0.7\textwidth]{images/causality-loop.png}
-\end{center}
-
-
-
-Establishing relationships between events such as ``event A happens before event B''. 
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Our new Toolkit}
-
-We can use a semaphore to ensure that one thing happens before another. 
-
-The idea is the same, but our toolkit is a little bit different: it's the \alert{memory barrier} or
-\alert{fence}. 
-
-This type of barrier prevents reordering, or,
-equivalently, ensures that memory operations become visible in the
-right order.
-
-\end{frame}
-
-
-
-
-\begin{frame}
-\frametitle{What have we got?}
-
-The x86 architecture defines the following types of memory 
-barriers:
-
-\begin{itemize}
-\item {\tt mfence}
-\item {\tt sfence}
-\item {\tt lfence}
-\end{itemize}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Build Fences in the Right Place}
-
-Consider the example again:
-  \begin{lstlisting}[language=C]
-                         f = 0
-
-/* thread 1 */                     /* thread 2 */
-while (f == 0) /* spin */;         x = 42;
-// memory fence                    // memory fence
-printf("%d", x);                   f = 1;
-  \end{lstlisting}
-This now prevents reordering, and we get the expected result.
-
-Memory fences are costly in performance.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Here Be Dragons}
-The \CPP~standard includes a few other orderings that don't appear in this section because they aren't in Rust. 
-
-But we'll cover Acquire-Release and Relaxed briefly. 
-
-Neither comes with a recommendation to use it, but if you can prove that your use of it is correct, then you can do it. 
-
-It may give a slight performance edge.
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Acquire and Release}
-
-Acquire and Release make a good team! 
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/acqrel.jpg}
-\end{center}
-
-By placing acquire at the start of a section and release after, anything in there is ``trapped'' and can't get out.
-
-That makes them the perfect combination for a critical section.
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Acquire/Release Spinlock}
+\frametitle{Crossbeam}
 
 \begin{lstlisting}[language=Rust]
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 fn main() {
-    let lock = Arc::new(AtomicBool::new(false)); // value answers "am I locked?"
+    let v = vec![1, 2, 3];
 
-    // ... distribute lock to threads somehow ...
+    let handle = thread::spawn(|| {
+        println!("Here's a vector: {:?}", v);
+    });
 
-    // Try to acquire the lock by setting it to true
-    while lock.compare_and_swap(false, true, Ordering::Acquire) { }
-    // broke out of the loop, so we successfully acquired the lock!
+    handle.join().unwrap();
+}
+\end{lstlisting}
 
-    // ... scary data accesses ...
+Remember this? Still doesn't work: the lifetime of \texttt{v} is a problem.
 
-    // ok we're done, release the lock
-    lock.store(false, Ordering::Release);
+For this situation, we used the \texttt{Arc} type sometimes.
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Crossbeam}
+
+ Crossbeam gives us the ability to create ``scoped'' threads. 
+ 
+ Scope is like a little container we are going to put our threads in.
+ 
+\begin{lstlisting}[language=Rust]
+fn main() {
+    let v = vec![1, 2, 3];
+
+    crossbeam::scope(|scope| {
+        println!("Here's a vector: {:?}", v);
+    }).unwrap();
+
+    println!("Vector v is back: {:?}", v);
+}
+\end{lstlisting}
+
+Does this work?
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Did we forget something important?}
+
+If I add statements where we print the thread ID, I get this output:
+
+{\scriptsize 
+\begin{verbatim}
+main thread has id 4583173568
+Here's a vector: [1, 2, 3]
+Now in thread with id 4583173568
+Vector v is back: [1, 2, 3]
+\end{verbatim}
+}
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/forgotsomething.png}
+\end{center}
+
+All we did was make the container, but we didn't spawn any threads.
+
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Let's fix that...}
+
+\begin{lstlisting}[language=Rust]
+fn main() {
+    let v = vec![1, 2, 3];
+    println!("main thread has id {}", thread_id::get());
+
+    crossbeam::scope(|scope| {
+        scope.spawn(|inner_scope| {
+            println!("Here's a vector: {:?}", v);
+            println!("Now in thread with id {}", thread_id::get());
+        });
+    }).unwrap();
+
+    println!("Vector v is back: {:?}", v);
+}
+\end{lstlisting}
+With output:
+
+{\scriptsize 
+\begin{verbatim}
+main thread has id 4439997888
+Here's a vector: [1, 2, 3]
+Now in thread with id 123145430474752
+Vector v is back: [1, 2, 3]
+\end{verbatim}
+}
+
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Still not unlimited power...}
+
+There are still rules, of course, and you cannot borrow the vector mutably into two threads in the same scope. 
+
+This does, however, reduce the amount of ceremony required for passing the data back and forth.
+
+Wrapping everything in \texttt{Arc} is tedious, to be sure. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Channels}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/kermit.jpg}
+\end{center}
+
+Rust: use message passing!
+
+Also Rust: doesn't give you a multiple-producer-multiple-consumer channel. 
+
+
+Good news: Crossbeam gives us one. 
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Produce, Consume, Repeat}
+
+Recall the multi-producer multi-consumer example from earlier. 
+
+We had to define a shared buffer structure and use semaphores and a mutex to coordinate access.
+
+We saw it's possible to get it wrong in when we drop the mutex.
+
+\begin{lstlisting}[language=Rust]
+let (send_end, receive_end) = bounded(CHANNEL_CAPACITY);
+let send_end = Arc::new(send_end);
+let receive_end = Arc::new(receive_end);
+\end{lstlisting}
+
+This is the bounded channel.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Consumer Code: Simpler!}
+
+\begin{lstlisting}[language=Rust]
+    for _j in 0 .. NUM_THREADS {
+        // create consumers
+        let receive_end = receive_end.clone();
+        threads.push(
+            thread::spawn(move || {
+                for _k in 0 .. ITEMS_PER_THREAD {
+                    let to_consume = receive_end.recv().unwrap();
+                    consume_item(to_consume);
+                }
+            })
+        );
+    }
+\end{lstlisting}
+
+Certainly that's a lot simpler and cleaner, but is it faster? 
+
+Original producer-consumer-opt version takes 372 ms to run for 10000 items consumed per thread, and the version with the channel takes 232. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Try Later}
+
+Another small thing that Crossbeam enables is an exponential backoff.
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/reverse.png}
+\end{center}
+
+Resources might not be available right now; retry later?
+
+It's unhelpful to have a tight loop that simply retries as fast as possible. 
+
+Wait a little bit and try again; if the error occurs, next time wait a little longer.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Press F5 Until the Website Loads!}
+
+Repeatedly retrying doesn't help. 
+
+If it's down for maintenance, it could be quite a while before it's back.
+
+Or, if the resource is overloaded right now, the reaction of requesting it more will make it even more overloaded and makes the problem worse! 
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{It's Hopeless}
+
+Eventually, you may have to conclude that there's no point in further retries. 
+
+At that point you can block the thread or return an error, but setting a cap on the maximum retry attempts is reasonable.
+
+The \texttt{Backoff} util from Crossbeam gives you this functionality. 
+
+Each step of the backoff takes about double the amount of time of the previous, up to a certain maximum.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Backoff in a Lock-Free Loop}
+
+Backoff in a lock-free loop:
+
+\begin{lstlisting}[language=Rust]
+use crossbeam_utils::Backoff;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
+
+fn fetch_mul(a: &AtomicUsize, b: usize) -> usize {
+    let backoff = Backoff::new();
+    loop {
+        let val = a.load(SeqCst);
+        if a.compare_and_swap(val, val.wrapping_mul(b), SeqCst) == val {
+            return val;
+        }
+        backoff.spin();
+    }
+}
+\end{lstlisting}
+
+The \texttt{spin()} function is used because we can try again immediately.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{No, After You}
+
+
+If what we actually need is to wait for another thread to take its turn before we go, we don't want to spin, we want to ``snooze''.
+
+\begin{lstlisting}[language=Rust]
+fn spin_wait(ready: &AtomicBool) {
+    let backoff = Backoff::new();
+    while !ready.load(SeqCst) {
+        backoff.snooze();
+    }
 }
 \end{lstlisting}
 
@@ -340,25 +301,287 @@ fn main() {
 
 
 \begin{frame}
-\frametitle{Relaxed?}
+\frametitle{We Give Up}
 
-Relaxed really does mean the compiler will take it easy, and all reorderings are possible.
+In both cases, the \texttt{backoff} type has a function \texttt{is\_completed} which returns true if the maximum backoff time has been reached.
 
-A counter that simply adds and you aren't using the counter to synchronize any action.
+An existing \texttt{backoff} can be re-used if it's reset with the unsurprisingly-named \texttt{reset} function.
+
+I think they forgot something: Jitter!
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Jitterbug Into My Brain?}
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/jitterbug.jpg}
+\end{center}
+(``OK Boomer...'')
+
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Matter, Order Does}
+\frametitle{Jitter}
 
-There have been a few reminders to use sequential consistency because atomics are hard to reason about and it's easy to get it wrong.
 
-Consider an inconsistent state in a lock-free-queue structure...
+The exponential backoff with jitter strategy is good for a scenario where you have lots of independent clients accessing the same resource.
 
-We can actually look at the fix applied in the code.
+If you have one client, maybe you want something like TCP congestion control.
 
 \end{frame}
+
+
+\begin{frame}
+\frametitle{Rayon}
+Let's revisit the nbody-bins-parallel program.
+
+It uses Rayon: a data parallelism library!
+
+In an ideal world, perhaps you've designed your application from the ground up to be easily parallelizable.
+
+
+Rayon: parallelize some spots without a full/major rewrite.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Thanks, Captain Obvious}
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/captainobvious.jpg}
+\end{center}
+
+We have a vector of points, and if there are $N$ points we can calculate the force on each one independently. 
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Goal: Parallelize}
+
+My initial approach looked at spawning threads and moving stuff into the thread.
+
+Problem: borrowing the \texttt{accelerations} vector as mutable more than once.
+
+I know the operation I want to do is correct and won't have race conditions because each element in the vector is being modified only by the one thread.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Stop Reinventing the Wheel}
+
+You can use \texttt{split\_at\_mut()} and it divides the slice into two pieces...
+
+You have to do this a lot, and use recursion maybe?
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/code-reuse.jpg}
+\end{center}
+
+Why not use a library?
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Apply Directly to Hot Loop}
+It's reasonably common that computationally-intensive parts of the program happen in a loop, so parallelizing loops is likely to be quite profitable.
+
+The line in question where we apply the Rayon library is:
+\begin{lstlisting}[language=Rust]
+accelerations.par_iter_mut().enumerate().for_each(|(i, current_accel)| {
+\end{lstlisting}
+
+A lot happens in this line...
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Demonstration}
+
+Let's actually run the program and see the difference!
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Doing the Work}
+
+We covered how work-units are created, but not how work gets done.
+
+We need more workers to get it done faster!
+
+By default, the same number of threads are spawned as available (logical) CPUs.
+
+Work is balanced using a work-stealing technique.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Diff}
+
+Here's how easy the Rayon change was:
+
+{\scriptsize 
+\begin{verbatim}
+diff live-coding/L14/nbody-bins/src/main.rs live-coding/L14/nbody-bins-parallel/src/main.rs
+2a3
+> use rayon::prelude::*;
+64c65
+<     for i in 0..NUM_POINTS {
+---
+>     accelerations.par_iter_mut().enumerate().for_each(|(i, current_accel)| {
+66d66
+<         let current_accel: &mut Acceleration = accelerations.get_mut(i).unwrap();
+79,80c79
+<     }
+< 
+---
+>     });
+\end{verbatim}
+}
+
+Why does the ease of doing this matter? 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Ease of Use is Important}
+
+Every change has the possibility of introducing a nonzero number of bugs. 
+
+This change is minimal and easier for a reviewer to verify that it's correct than a big rearchitecting. 
+
+And it's less costly in dev time!
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/codeworks.jpg}
+\end{center}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Warnings About Parallelism}
+
+Iterators do things in parallel, meaning the behaviour of the program can change a bit. 
+
+Printing to the console, for example, could be out of order.
+
+And you still have to satisfy the compiler there's no race conditions.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Find the Max}
+
+Lets try to find the max of a randomly-filled array.
+
+\begin{lstlisting}[language=Rust]
+use rayon::prelude::*;
+use rand::Rng;
+use std::i64::MIN;
+use std::i64::MAX;
+use std::sync::atomic::{AtomicI64, Ordering};
+
+const VEC_SIZE: usize = 10000000;
+
+fn init_vector() -> Vec<i64> {
+    let mut rng = rand::thread_rng();
+    let mut vec = Vec::new();
+    for _i in 0 ..VEC_SIZE {
+        vec.push(rng.gen::<i64>())
+    }
+    vec
+}
+
+\end{lstlisting}
+\end{frame}
+\begin{frame}[fragile]
+\frametitle{Find the Max}
+
+
+\begin{lstlisting}[language=Rust]
+
+fn main() {
+    let vec = init_vector();
+    let max = AtomicI64::new(MIN);
+    vec.par_iter().for_each(|n| {
+        loop {
+            let old = max.load(Ordering::SeqCst);
+            if *n <= old {
+                break;
+            }
+            let returned = max.compare_and_swap(old, *n, Ordering::SeqCst);
+            if returned == old {
+                println!("Swapped {} for {}.", n, old);
+                break;
+            }
+        }
+    });
+    println!("Max value in the array is {}", max.load(Ordering::SeqCst));
+    if max.load(Ordering::SeqCst) == MAX {
+        println!("This is the max value for an i64.")
+    }
+}
+\end{lstlisting}
+
+We use an atomic type to prevent data races.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{What About a Mutex?}
+
+\begin{lstlisting}[language=Rust]
+fn main() {
+    let vec = init_vector();
+    let max = Mutex::new(MIN);
+    vec.par_iter().for_each(|n| {
+        let mut m = max.lock().unwrap();
+        if *n > *m {
+            *m = *n;
+        }
+    });
+    let m = max.lock().unwrap();
+    println!("Max value in the array is {}", m);
+    if *m == MAX {
+        println!("This is the max value for an i64.")
+    }
+}
+\end{lstlisting}
+
+This increased the runtime from about 121.6~ms to about 871.7~ms.
+
+ The non-parallel code takes about 136.2~ms.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Use Libs Wisely}
+
+ This problem doesn't have enough work to parallelize effectively. 
+ 
+ While the lock-free version speeds it up a small amount, the mutex version was easier to write but made it much slower. 
+ 
+ So it's important to consider carefully when to apply the library, because a speedup is not guaranteed just by parallelizing a given loop.
+
+
+\end{frame}
+
 
 
 \end{document}

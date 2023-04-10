@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let ptx = CString::new(include_str!("../resources/nbody.ptx"))?;
     let module = Module::load_from_string(&ptx)?;
-    let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
+    let stream = Stream::new(StreamFlags::DEFAULT, None)?;
 
     // Create buffers for data
     let mut points = DeviceBuffer::from_slice(initial_positions.as_slice())?;

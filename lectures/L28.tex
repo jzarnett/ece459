@@ -1,10 +1,48 @@
-\include{header}
+\input{../common/header}
 
 \begin{document}
 
-\lecture{28 --- Memory Profiling, Cachegrind}{\term}{Jeff Zarnett \& Patrick Lam}
+\lecture{28 --- Causal and Memory Profiling}{\term}{Jeff Zarnett}
 
-% DHAT
+\section*{Causal Profiling}
+At this point we've got some experience in identifying areas of the program that we think are slow or are limiting the maximum performance of our program. If we are presented with more than one thing, how do we know which of those would yield the most benefit? Is it possible that optimizing something would actually have no or a negative effect? The scientific approach would be to do an experiment and find out. That is, change the code, see the impact, re-evaluate. What causal profiling offers us is a way to run those experiments without changing any code. That could be a significant savings of time and effort. 
+
+One such causal profiler is called Coz (pronounced like ``cause'')~\cite{coz}. It does a what-if analysis that says: what would be the impact of speeding up this particular part of the code? 
+
+A very simple approach would just look at the time of the program and just calculate what happens if the runtime of function \texttt{work()} is reduced by, say, 10\%. But that isn't a realistic approach, because speeding up that function might have no overall impact or change the execution time by increasing lock contention or some other mechanism. No, we actually need a simulation. 
+
+The key observation of the Coz profiler authors is the idea that speeding up some area of code is fundamentally the same as slowing down every other part of the code. It's all relative! This is what we would call a virtual speedup. How is the other code slowed down? Adding some pauses to (stopping the execution of) the other threads. That certainly makes them run slower. Maybe you're not convinced that slowing down everything else is equivalent?
+
+
+Shown below is the argument from~\cite{coz} in visual form. The original runtime is shown as (a). Hypothetically, if we make function \texttt{f} faster by some factor $d = 40\%$ that gives us (b). And if instead of actually making function \texttt{f} faster we instead paused other threads for $0.4 \times t(f)$ where $t(f)$ is the original execution time of \texttt{f}, we get an equivalent effect to that of of optimizing \texttt{f} by $d$.
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/virtual-speedup.jpg}
+\end{center}
+
+The tool provides some graphs of potential program speedup. From the recorded presentation, it might look something like the diagram below, where the boxes on the right correspond to different theoretical actions in the application being examined:
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/coz-speedup-graph.png}
+\end{center}
+
+This pretend application shows all the possible outcomes, from continuous linear speedup, to speedup capped at some point, to no effect, and finally to where optimizing something makes the overall program runtime worse. 
+
+It's easy to imagine scenarios corresponding to each of those. If we're computing the n-body problem, anything that improves the calculation of forces will certainly make things better. And it's easy to imagine that sometimes optimizing a part of the program does not improve anything because that code is not on the critical path. We can also easily imagine that improving something works up to a point where it ceases to be the limiting factor. But making things worse? We already covered that idea: speeding up a thread may increase lock contention or add something to the critical path. At some point, things may recover and be a net benefit.
+
+It is important to remember that just because hypothetically speeding up a particular part of the program would be beneficial, doesn't mean that it's possible to speed up that part. And almost certainly not possible to do so to an arbitrary degree. We still have to make an assessment of what optimizations we can make and how difficult it would be to actually realize those improvements.
+
+Once we've made a change to the program, then it's time to run an experiment again with the new baseline to see what else we can do.
+
+The paper has a table summarizing the optimizations they applied to a few different programs, which seems to support the idea that the tool can be used effectively to get a meaningful speedup with relatively few lines of code~\cite{coz}:
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/coz-speedup.jpg}
+\end{center}
+
+There are potentially some limitations to this, of course. Putting pauses in the execution of the code can work when the execution of the program is all on the same machine and we have control over all the threads; it would need some meaningful extension to work for a distributed system where coordinating things across many servers would be needed.
+
+Using some benchmarking workload, the authors estimate a 17.6\% overhead for this tool, which is broken down into 2.6\% for startup debug information collection, sampling at 4.8\%, and 10.2\% is the delay that's caused by slowing down other threads to create a virtual speedup~\cite{coz}.
+
+If you'd like to see some more details of the tool, you can see the author presentation at the ACM symposium here: \url{https://www.youtube.com/watch?v=jE0V-p1odPg}
 
 \section*{Memory Profiling}
 
@@ -12,7 +50,7 @@ Thus far we have focused on CPU profiling. Other kinds of profiling got some men
 
 During Rustification, we dropped a bunch of valgrind content. Valgrind is a memory error and leak detection toolset that is invaluable when programming in \CPP. (In brief: valgrind is a just-in-time engine that reinterprets machine code and instruments it to find sketchy things.) In particular, the memory leaks that valgrind's memcheck tool detects are, for the most part, not possible in Rust unless you try pretty hard\footnote{You can still create cycles in refcounted objects or call \texttt{std::mem::forget} or etc.}---the friendly compiler protects you against them by automatically dropping things.
 
-We're going to look at two kinds of memory profiling here, both part of valgrind. They can both occur in Rust, but it looks like the more common kind is when a lot of memory is allocated and then freed. More completely: ``places that cause excessive numbers of allocations; leaks; unused and under-used allocations; short-lived allocations; and allocations with inefficient data layouts''. valgrind's DHAT tool\cite[Chapter~10]{valgrind} detects these.
+We're going to look at two kinds of memory profiling here, both part of valgrind. They can both occur in Rust, but it looks like the more common kind is when a lot of memory is allocated and then freed. More completely: ``places that cause excessive numbers of allocations; leaks; unused and under-used allocations; short-lived allocations; and allocations with inefficient data layouts''. valgrind's DHAT tool~\cite[Chapter~10]{valgrind} detects these.
 
 The second kind of memory profiling addresses memory that memcheck reports as ``Still Reachable''. That is, things that remained allocated and still had pointers to them, but were not properly deallocated. Right, we care about them too, and for that we also want to do heap profiling. If we don't look after those things, we're just using more and more memory over time. That likely means more paging and the potential for running out of heap space altogether. Again, the memory isn't really lost, because we could free it.
 
@@ -72,7 +110,7 @@ A sibling of the example above would diverge at the call on line 10, not calling
 reports results for that node and all of its children.
 
 \subsection*{\st{Memory Profiling} Return to Asgard}
-JZ generally found a way to talk about Valgrind previously. But now, we're going to use its Massif tool. This is, obviously, a joke on ``massive'', combined with the name Sif, a Norse goddess associated with the earth (and in the Marvel movies, Shieldmaiden to Thor). While we're on the subject, Sif has an axe (shield?) to grind with Loki, because at some point he cut off her golden hair (and in the Marvel films, it grew back in dark). That Loki---what a trickster! Right, we're digressing\ldots what do you mean the course isn't ECE 459: Norse Mythology?!
+JZ generally found a way to talk about Valgrind in previous courses. But now, we're going to use its Massif tool. This is, obviously, a joke on ``massive'', combined with the name Sif, a Norse goddess associated with the earth (and in the Marvel movies, Shieldmaiden to Thor).
 
 So what does Massif do? It will tell you about how much heap memory your program is using, and also how the situation got to be that way. So let's start with the example program from the documentation, badly translated by yours truly to non-idiomatic Rust~\cite{massif}:
 
@@ -289,118 +327,6 @@ Other cool things we can do with Massif~\cite{massif}:
 % which programs to live demo?
 As is often the case, we have examined how the tool works on a trivial program. As a live demo, well, tune in and be surprised!
 %let's see what happens when we take the program complexity up a little bit by (1) looking at the search program we saw in the earlier talk about valgrind; and (2) looking at the original (unmodified) paster.c file from assignment 1 (and then perhaps fixing it and going on). Depending on time available, we may look at some more complex programs.
-
-\subsection*{Cachegrind}
-
-Cachegrind is another tool in the package and this one is much more performance oriented than the other two tools. Yes, Valgrind's memcheck and Helgrind look for errors in your program that are likely to lead to slowdowns (memory leaks) or make it easier to parallelize (spawn threads) without introducing errors. Cachegrind, however, does a simulation of how your program interacts with cache and evaluates how your program does on branch prediction. As we discussed earlier, cache misses and branch mispredicts have a huge impact on performance.
-
-Recall that a miss from the fastest cache results in a small penalty (perhaps, 10 cycles); a miss that requires going to memory requires about 200 cycles. A mispredicted branch costs somewhere between 10-30 cycles. All figures \& estimates from the cachegrind manual~\cite{cachegrind}.
-
-Cachegrind reports data about:
-\begin{itemize}[noitemsep]
-	\item The First Level Instruction Cache (I1) [L1 Instruction Cache]
-	\item The First Level Data Cache (D1) [L1 Data Cache]
-	\item The Last Level Cache (LL) [L3 Cache].
-\end{itemize}
-
-Unlike for normal Valgrind operation, you probably want to turn optimizations on (\texttt{-O2} or perhaps \texttt{-O3} in \texttt{gcc}). You still want debugging symbols, of course, but enabling optimizations will tell you more about what is going to happen in the released version of your program.
-
-In the \texttt{live-coding/L28} directory you will find \texttt{search.c} from ECE 254. Using the \texttt{--branch-sim=yes} option because by default it won't show it:
-
-\begin{verbatim}
-jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
-==16559== Cachegrind, a cache and branch-prediction profiler
-==16559== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
-==16559== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
-==16559== Command: ./search
-==16559== 
---16559-- warning: L3 cache found, using its data for the LL simulation.
-Found at 11 by thread 1 
-Found at 22 by thread 3 
-==16559== 
-==16559== I   refs:      310,670
-==16559== I1  misses:      1,700
-==16559== LLi misses:      1,292
-==16559== I1  miss rate:    0.54%
-==16559== LLi miss rate:    0.41%
-==16559== 
-==16559== D   refs:      114,078  (77,789 rd   + 36,289 wr)
-==16559== D1  misses:      4,398  ( 3,360 rd   +  1,038 wr)
-==16559== LLd misses:      3,252  ( 2,337 rd   +    915 wr)
-==16559== D1  miss rate:     3.8% (   4.3%     +    2.8%  )
-==16559== LLd miss rate:     2.8% (   3.0%     +    2.5%  )
-==16559== 
-==16559== LL refs:         6,098  ( 5,060 rd   +  1,038 wr)
-==16559== LL misses:       4,544  ( 3,629 rd   +    915 wr)
-==16559== LL miss rate:      1.0% (   0.9%     +    2.5%  )
-==16559== 
-==16559== Branches:       66,622  (65,097 cond +  1,525 ind)
-==16559== Mispredicts:     7,202  ( 6,699 cond +    503 ind)
-==16559== Mispred rate:     10.8% (  10.2%     +   32.9%   )
-
-\end{verbatim}
-
-So we see a breakdown of the instruction accesses, data accesses, and how well the last level of cache (L3 here) does. 
-
-Why did I say enable optimization? Well, here's the output of the search program if I compile with the \texttt{-O2} option:
-
-\begin{verbatim}
-jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
-==16618== Cachegrind, a cache and branch-prediction profiler
-==16618== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
-==16618== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
-==16618== Command: ./search
-==16618== 
---16618-- warning: L3 cache found, using its data for the LL simulation.
-Found at 11 by thread 1 
-Found at 22 by thread 3 
-==16618== 
-==16618== I   refs:      306,169
-==16618== I1  misses:      1,652
-==16618== LLi misses:      1,286
-==16618== I1  miss rate:    0.53%
-==16618== LLi miss rate:    0.42%
-==16618== 
-==16618== D   refs:      112,015  (76,522 rd   + 35,493 wr)
-==16618== D1  misses:      4,328  ( 3,353 rd   +    975 wr)
-==16618== LLd misses:      3,201  ( 2,337 rd   +    864 wr)
-==16618== D1  miss rate:     3.8% (   4.3%     +    2.7%  )
-==16618== LLd miss rate:     2.8% (   3.0%     +    2.4%  )
-==16618== 
-==16618== LL refs:         5,980  ( 5,005 rd   +    975 wr)
-==16618== LL misses:       4,487  ( 3,623 rd   +    864 wr)
-==16618== LL miss rate:      1.0% (   0.9%     +    2.4%  )
-==16618== 
-==16618== Branches:       65,827  (64,352 cond +  1,475 ind)
-==16618== Mispredicts:     7,109  ( 6,596 cond +    513 ind)
-==16618== Mispred rate:     10.7% (  10.2%     +   34.7%   )
-\end{verbatim}
-
-Interesting results: our data and instruction miss rates went down marginally but the branch mispredict rates went up! Well, sort of---there were fewer branches and thus fewer we got wrong as well as fewer we got right. So the total cycles lost to mispredicts went down. Is this an overall win for the code? Yes. 
-
-In some cases it's not so clear cut, and we could do a small calculation. If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400; a decrease of 11~400 cycles. Repeat for each of the measures and sum them up to determine if things got better overall and by how much. Also be sure that you're reasoning about a realistic workload.
-
-Cachegrind also produces a more detailed output file, titled cachegrind.out.<pid> (the PID in the example is 16618). This file is not especially human-readable, but we can ask the associated tool \texttt{cg\_annotate} to break it down for us, and if we have the source code available, so much the better, because it will give you line by line information. That's way too much to show even in the notes, so it's the sort of thing I can show in class (or you can create for yourself) but here's a small excerpt from the \texttt{search.c} example:
-
-
-
-{\scriptsize
-\begin{verbatim}
---------------------------------------------------------------------------------
--- Auto-annotated source: /home/jz/ece254/search.c
---------------------------------------------------------------------------------
- Ir I1mr ILmr Dr D1mr DLmr Dw D1mw DLmw Bc Bcm Bi Bim 
-127    1    1 96    3    0  4    0    0 23  11  0   0      for ( int i = arg->startIndex; i < arg->endIndex; ++i ) {
-147    0    0 84    3    2  0    0    0 21   9  0   0          if ( array[i] == arg->searchValue ) {
-  6    0    0  4    0    0  2    0    0  0   0  0   0              *result = i;
-  2    0    0  0    0    0  0    0    0  0   0  0   0              break;
-  .    .    .  .    .    .  .    .    .  .   .  .   .          }
-  .    .    .  .    .    .  .    .    .  .   .  .   .      }
-\end{verbatim}
-}
-
-Cachegrind is very\ldots verbose\ldots and it can be very hard to come up with useful changes based on what you see\ldots assuming your eyes don't glaze over when you see the numbers. Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). They have the highest penalty. You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints about what the likelihood of branch prediction is~\cite{cachegrind}. Of course, to learn more about how Cachegrind actually does what it does and how it runs the simulation, the manual is worth reading. Not that anybody reads manuals anymore\ldots Just give it a shot, when you get stuck, google the problem, click the first stack overflow link result\ldots
-
 
 \input{bibliography.tex}
 

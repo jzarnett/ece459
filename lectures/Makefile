@@ -3,7 +3,7 @@ SLIDES != ./slides.sh
 CREATE_DEPS != ./createMakefileDependencies.sh
 
 .PHONY: all clean
-all: $(LECTURE_NOTES) $(SLIDES)
+all: $(LECTURE_NOTES) $(SLIDES) notebook 
 
 include makefileDependencies/*.d
 

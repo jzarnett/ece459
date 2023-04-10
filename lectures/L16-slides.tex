@@ -1,8 +1,8 @@
 \input{configuration}
 
-\title{Lecture 16 --- Crossbeam and Rayon}
+\title{Lecture 16 --- Mostly Data Parallelism }
 
-\author{Jeff Zarnett\\ \small \texttt{jzarnett@uwaterloo.ca}}
+\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -12,576 +12,602 @@
 
 \begin{frame}
   \titlepage
+
  \end{frame}
- 
- 
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Data and Task Parallelism}
+
+  
+     \structure{Data parallelism} is performing \emph{the same} operations on
+      different input.\\
+
+     {\bf Example:} doubling all elements of an array.\\[1em]
+
+     \structure{Task parallelism} is performing \emph{different} operations
+      on different input.
+
+    {\bf Example:} playing a video file: one thread decompresses
+      frames, another renders.
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 \begin{frame}
-\frametitle{Doing it by hand...}
+\frametitle{You're Not Using Those Bytes, Are You?}
 
-In previous courses: do things the hard way: write your own!
+Consider the size of an \texttt{i32}... 4 bytes? At least 2...
+
+Array of capacity $N$? That uses $N \times 4$ bytes.
+
+Can we limit the size of the integer? Is 65,535 enough?
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/zeropoints.jpg}
+	\includegraphics[width=0.5\textwidth]{images/havetoshare.png}
 \end{center}
 
-In industry, you'll use libraries that have appropriate functionality.\\
-\quad ... Assuming the license for them is acceptable to your project.
+\end{frame}
 
-Goal: directed parallelization. 
+
+\begin{frame}
+\frametitle{This used to be easier...}
+
+The other hidden cost is that of course things that were simple like \texttt{array[i] += 1} is more complicated. 
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/hex.jpg}
+\end{center}
+
+What do we do now?
 
 \end{frame}
 
 
+\begin{frame}
+\frametitle{Math is Math}
+
+Instead of just \texttt{+=1} we need to calculate the new number to add. 
+
+The interesting part is about how to represent the upper portion of the number.
+
+We can manually break out our calculators or draw a bit vector or think in hexadecimal about how to convert a number if it's more difficult.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Don't You Forget About Me}
+
+Maybe you think this example is silly because of  Rust's \texttt{i8}/C's \texttt{short}.
+
+You can use this to reduce the size of the array.
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/arrayforants.jpg}
+\end{center}
+
+But then modifying each \texttt{short} in a different instruction defeats the purpose.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Bigger!}
+
+If it's a 64-bit processor there's no reason why you couldn't modify 8 bytes in a single instruction. 
+
+The principle is the same, even if the math is a little more complex.
+
+What we've got here is a poor-person version of Single Instruction Multiple Data (SIMD)...
+
+\end{frame}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Data Parallelism: Single Instruction, Multiple Data}
+
+  
+   SIMD, an overview:
+    \begin{itemize}
+    \item You can load a bunch of data and perform 
+      arithmetic.
+    \item Intructions process multiple data items simultaneously.
+      (Exact number is hardware-dependent).
+    \end{itemize}
+    For x86-class CPUs, MMX and SSE extensions provide SIMD instructions.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{One Command}
+
+SIMD provides an advantage by using a single control unit to command multiple processing units.
+
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/simd.png}
+\end{center}
+
+Example: consider I ask people to erase boards in class...
+
+Only works if we all do the same thing!
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Crossbeam}
+  \frametitle{SIMD Example}
+
+  
+  Consider the following code:
 
 \begin{lstlisting}[language=Rust]
-use std::thread;
+pub fn foo(a: &[f64], b: &[f64], c: &mut [f64]) {
+    for ((a, b), c) in a.iter().zip(b).zip(c) {
+        *c = *a + *b;
+    }
+}\end{lstlisting}
 
-fn main() {
-    let v = vec![1, 2, 3];
+    In this scenario, we have a regular operation over block data.\\[1em]
 
-    let handle = thread::spawn(|| {
-        println!("Here's a vector: {:?}", v);
-    });
+    We could use threads, but we'll use SIMD.
 
-    handle.join().unwrap();
-}
-\end{lstlisting}
-
-Remember this? Still doesn't work: the lifetime of \texttt{v} is a problem.
-
-For this situation, we used the \texttt{Arc} type sometimes.
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Crossbeam}
+  \frametitle{SIMD Example---Assembly}
 
- Crossbeam gives us the ability to create ``scoped'' threads. 
- 
- Scope is like a little container we are going to put our threads in.
- 
-\begin{lstlisting}[language=Rust]
-fn main() {
-    let v = vec![1, 2, 3];
-
-    crossbeam::scope(|scope| {
-        println!("Here's a vector: {:?}", v);
-    }).unwrap();
-
-    println!("Vector v is back: {:?}", v);
-}
-\end{lstlisting}
-
-Does this work?
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Did we forget something important?}
-
-If I add statements where we print the thread ID, I get this output:
-
-{\scriptsize 
+We can compile with \texttt{rustc} defaults
+and get something like this as core loop contents:
 \begin{verbatim}
-main thread has id 4583173568
-Here's a vector: [1, 2, 3]
-Now in thread with id 4583173568
-Vector v is back: [1, 2, 3]
+  movsd   xmm0, qword ptr [rcx]
+  addsd   xmm0, qword ptr [rdx]
+  movsd   qword ptr [rax], xmm0
 \end{verbatim}
-}
 
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/forgotsomething.png}
-\end{center}
-
-All we did was make the container, but we didn't spawn any threads.
-
-
+This uses the SSE and SSE2 instructions
+  
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Let's fix that...}
+  \frametitle{SIMD Example---Assembly}
 
-\begin{lstlisting}[language=Rust]
-fn main() {
-    let v = vec![1, 2, 3];
-    println!("main thread has id {}", thread_id::get());
-
-    crossbeam::scope(|scope| {
-        scope.spawn(|inner_scope| {
-            println!("Here's a vector: {:?}", v);
-            println!("Now in thread with id {}", thread_id::get());
-        });
-    }).unwrap();
-
-    println!("Vector v is back: {:?}", v);
-}
-\end{lstlisting}
-With output:
-
-{\scriptsize 
+  If you additionally specify \texttt{-O}, the compiler generates a number of variants, including this middle one:
 \begin{verbatim}
-main thread has id 4439997888
-Here's a vector: [1, 2, 3]
-Now in thread with id 123145430474752
-Vector v is back: [1, 2, 3]
+  movupd  xmm0, xmmword ptr [rdi + 8*rcx]
+  movupd  xmm1, xmmword ptr [rdi + 8*rcx + 16]
+  movupd  xmm2, xmmword ptr [rdx + 8*rcx]
+  addpd   xmm2, xmm0
+  movupd  xmm0, xmmword ptr [rdx + 8*rcx + 16]
+  addpd   xmm0, xmm1
+  movupd  xmmword ptr [r8 + 8*rcx], xmm2
+  movupd  xmmword ptr [r8 + 8*rcx + 16], xmm0
 \end{verbatim}
-}
+
+The \emph{packed} operations ({\tt p}) operate on multiple data
+elements at a time.
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
+\begin{frame}
+\frametitle{SIMD}
+
+The compiler uses SIMD instructions if the target architecture supports it.
+
+We can explicitly invoke the instructions, or use libraries
+
+It is complementary to using threads, and good for cases where loops operate over vectors of data.
+
+SIMD instructions also work well on small data sets, where thread startup
+cost is too high.
 
 \end{frame}
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Still not unlimited power...}
+  \frametitle{SIMD Pros and Cons}
 
-There are still rules, of course, and you cannot borrow the vector mutably into two threads in the same scope. 
+A more efficient (= less CPU resources) way to parallelize code than threads.
 
-This does, however, reduce the amount of ceremony required for passing the data back and forth.
-
-Wrapping everything in \texttt{Arc} is tedious, to be sure. 
+Data must be 16-byte aligned when loading to/storing from 128-bit registers.\\
+\quad Not required in SSE4.2... if your CPU supports it.
+  
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}
-\frametitle{Channels}
+\frametitle{Alignment}
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/kermit.jpg}
+	\includegraphics[width=0.8\textwidth]{images/superhero-alignment.png}
 \end{center}
 
-Rust: use message passing!
+Oh. Not this kind of alignment.
 
-Also Rust: doesn't give you a multiple-producer-multiple-consumer channel. 
+\end{frame}
 
 
-Good news: Crossbeam gives us one. 
+
+\begin{frame}
+\frametitle{Forcing Alignment}
+
+Rust will generally align primitives to their sizes. 
+
+Under the default representation, Rust promises nothing else about alignment.
+
+You can use the \texttt{repr(packed(N)} or \texttt{repr(align(N)} directives to express constraints on alignment.
 
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{Produce, Consume, Repeat}
-
-Recall the multi-producer multi-consumer example from earlier. 
-
-We had to define a shared buffer structure and use semaphores and a mutex to coordinate access.
-
-We saw it's possible to get it wrong in when we drop the mutex.
+\frametitle{Worked SIMD Example}
 
 \begin{lstlisting}[language=Rust]
-let (send_end, receive_end) = bounded(CHANNEL_CAPACITY);
-let send_end = Arc::new(send_end);
-let receive_end = Arc::new(receive_end);
-\end{lstlisting}
-
-This is the bounded channel.
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Consumer Code: Simpler!}
-
-\begin{lstlisting}[language=Rust]
-    for _j in 0 .. NUM_THREADS {
-        // create consumers
-        let receive_end = receive_end.clone();
-        threads.push(
-            thread::spawn(move || {
-                for _k in 0 .. ITEMS_PER_THREAD {
-                    let to_consume = receive_end.recv().unwrap();
-                    consume_item(to_consume);
-                }
-            })
-        );
-    }
-\end{lstlisting}
-
-Certainly that's a lot simpler and cleaner, but is it faster? 
-
-Original producer-consumer-opt version takes 372 ms to run for 10000 items consumed per thread, and the version with the channel takes 232. 
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Try Later}
-
-Another small thing that Crossbeam enables is an exponential backoff.
-
-\begin{center}
-	\includegraphics[width=0.7\textwidth]{images/reverse.png}
-\end{center}
-
-Resources might not be available right now; retry later?
-
-It's unhelpful to have a tight loop that simply retries as fast as possible. 
-
-Wait a little bit and try again; if the error occurs, next time wait a little longer.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Press F5 Until the Website Loads!}
-
-Repeatedly retrying doesn't help. 
-
-If it's down for maintenance, it could be quite a while before it's back.
-
-Or, if the resource is overloaded right now, the reaction of requesting it more will make it even more overloaded and makes the problem worse! 
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{It's Hopeless}
-
-Eventually, you may have to conclude that there's no point in further retries. 
-
-At that point you can block the thread or return an error, but setting a cap on the maximum retry attempts is reasonable.
-
-The \texttt{Backoff} util from Crossbeam gives you this functionality. 
-
-Each step of the backoff takes about double the amount of time of the previous, up to a certain maximum.
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Backoff in a Lock-Free Loop}
-
-Backoff in a lock-free loop:
-
-\begin{lstlisting}[language=Rust]
-use crossbeam_utils::Backoff;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
-
-fn fetch_mul(a: &AtomicUsize, b: usize) -> usize {
-    let backoff = Backoff::new();
-    loop {
-        let val = a.load(SeqCst);
-        if a.compare_and_swap(val, val.wrapping_mul(b), SeqCst) == val {
-            return val;
-        }
-        backoff.spin();
-    }
-}
-\end{lstlisting}
-
-The \texttt{spin()} function is used because we can try again immediately.
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{No, After You}
-
-
-If what we actually need is to wait for another thread to take its turn before we go, we don't want to spin, we want to ``snooze''.
-
-\begin{lstlisting}[language=Rust]
-fn spin_wait(ready: &AtomicBool) {
-    let backoff = Backoff::new();
-    while !ready.load(SeqCst) {
-        backoff.snooze();
-    }
-}
-\end{lstlisting}
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{We Give Up}
-
-In both cases, the \texttt{backoff} type has a function \texttt{is\_completed} which returns true if the maximum backoff time has been reached.
-
-An existing \texttt{backoff} can be re-used if it's reset with the unsurprisingly-named \texttt{reset} function.
-
-I think they forgot something: Jitter!
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Jitterbug Into My Brain?}
-
-\begin{center}
-	\includegraphics[width=0.6\textwidth]{images/jitterbug.jpg}
-\end{center}
-(``OK Boomer...'')
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Jitter}
-
-
-The exponential backoff with jitter strategy is good for a scenario where you have lots of independent clients accessing the same resource.
-
-If you have one client, maybe you want something like TCP congestion control.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Rayon}
-Let's revisit the nbody-bins-parallel program.
-
-It uses Rayon: a data parallelism library!
-
-In an ideal world, perhaps you've designed your application from the ground up to be easily parallelizable.
-
-
-Rayon: parallelize some spots without a full/major rewrite.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Thanks, Captain Obvious}
-
-\begin{center}
-	\includegraphics[width=0.6\textwidth]{images/captainobvious.jpg}
-\end{center}
-
-We have a vector of points, and if there are $N$ points we can calculate the force on each one independently. 
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Goal: Parallelize}
-
-My initial approach looked at spawning threads and moving stuff into the thread.
-
-Problem: borrowing the \texttt{accelerations} vector as mutable more than once.
-
-I know the operation I want to do is correct and won't have race conditions because each element in the vector is being modified only by the one thread.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Stop Reinventing the Wheel}
-
-You can use \texttt{split\_at\_mut()} and it divides the slice into two pieces...
-
-You have to do this a lot, and use recursion maybe?
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/code-reuse.jpg}
-\end{center}
-
-Why not use a library?
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Apply Directly to Hot Loop}
-It's reasonably common that computationally-intensive parts of the program happen in a loop, so parallelizing loops is likely to be quite profitable.
-
-The line in question where we apply the Rayon library is:
-\begin{lstlisting}[language=Rust]
-accelerations.par_iter_mut().enumerate().for_each(|(i, current_accel)| {
-\end{lstlisting}
-
-A lot happens in this line...
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Demonstration}
-
-Let's actually run the program and see the difference!
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Doing the Work}
-
-We covered how work-units are created, but not how work gets done.
-
-We need more workers to get it done faster!
-
-By default, the same number of threads are spawned as available (logical) CPUs.
-
-Work is balanced using a work-stealing technique.
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Diff}
-
-Here's how easy the Rayon change was:
-
-{\scriptsize 
-\begin{verbatim}
-diff live-coding/L14/nbody-bins/src/main.rs live-coding/L14/nbody-bins-parallel/src/main.rs
-2a3
-> use rayon::prelude::*;
-64c65
-<     for i in 0..NUM_POINTS {
----
->     accelerations.par_iter_mut().enumerate().for_each(|(i, current_accel)| {
-66d66
-<         let current_accel: &mut Acceleration = accelerations.get_mut(i).unwrap();
-79,80c79
-<     }
-< 
----
->     });
-\end{verbatim}
-}
-
-Why does the ease of doing this matter? 
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Ease of Use is Important}
-
-Every change has the possibility of introducing a nonzero number of bugs. 
-
-This change is minimal and easier for a reviewer to verify that it's correct than a big rearchitecting. 
-
-And it's less costly in dev time!
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/codeworks.jpg}
-\end{center}
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Warnings About Parallelism}
-
-Iterators do things in parallel, meaning the behaviour of the program can change a bit. 
-
-Printing to the console, for example, could be out of order.
-
-And you still have to satisfy the compiler there's no race conditions.
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Find the Max}
-
-Lets try to find the max of a randomly-filled array.
-
-\begin{lstlisting}[language=Rust]
-use rayon::prelude::*;
-use rand::Rng;
-use std::i64::MIN;
-use std::i64::MAX;
-use std::sync::atomic::{AtomicI64, Ordering};
-
-const VEC_SIZE: usize = 10000000;
-
-fn init_vector() -> Vec<i64> {
-    let mut rng = rand::thread_rng();
-    let mut vec = Vec::new();
-    for _i in 0 ..VEC_SIZE {
-        vec.push(rng.gen::<i64>())
-    }
-    vec
-}
-
-\end{lstlisting}
-\end{frame}
-\begin{frame}[fragile]
-\frametitle{Find the Max}
-
-
-\begin{lstlisting}[language=Rust]
+use simdeez::*;
+use simdeez::scalar::*;
+use simdeez::sse2::*;
+use simdeez::sse41::*;
+use simdeez::avx2::*;
+simd_runtime_generate!(
+// assumes that the input sizes are evenly divisible by VF32_WIDTH
+pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
+  let len = a.len();
+  let mut result: Vec<f32> = Vec::with_capacity(len);
+  result.set_len(len);
+  for i in (0..len).step_by(S::VF32_WIDTH) {
+    let a0 = S::loadu_ps(&a[i]);
+    let b0 = S::loadu_ps(&b[i]);
+    S::storeu_ps(&mut result[0], S::add_ps(a0, b0));
+  }
+  result
+});
 
 fn main() {
-    let vec = init_vector();
-    let max = AtomicI64::new(MIN);
-    vec.par_iter().for_each(|n| {
-        loop {
-            let old = max.load(Ordering::SeqCst);
-            if *n <= old {
-                break;
-            }
-            let returned = max.compare_and_swap(old, *n, Ordering::SeqCst);
-            if returned == old {
-                println!("Swapped {} for {}.", n, old);
-                break;
-            }
-        }
-    });
-    println!("Max value in the array is {}", max.load(Ordering::SeqCst));
-    if max.load(Ordering::SeqCst) == MAX {
-        println!("This is the max value for an i64.")
-    }
+  let a : [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+  let b : [f32; 4] = [5.0, 6.0, 7.0, 8.0];
+  unsafe {
+    println!("{:?}", add_sse2(&a, &b))
+  }
 }
 \end{lstlisting}
 
-We use an atomic type to prevent data races.
+
 
 \end{frame}
 
 
-\begin{frame}[fragile]
-\frametitle{What About a Mutex?}
 
-\begin{lstlisting}[language=Rust]
-fn main() {
-    let vec = init_vector();
-    let max = Mutex::new(MIN);
-    vec.par_iter().for_each(|n| {
-        let mut m = max.lock().unwrap();
-        if *n > *m {
-            *m = *n;
-        }
-    });
-    let m = max.lock().unwrap();
-    println!("Max value in the array is {}", m);
-    if *m == MAX {
-        println!("This is the max value for an i64.")
-    }
-}
-\end{lstlisting}
+\begin{frame}
+\frametitle{Single-Thread Performance}
 
-This increased the runtime from about 121.6~ms to about 871.7~ms.
+``Can you run faster just by trying harder?''
 
- The non-parallel code takes about 136.2~ms.
+\begin{center}
+\includegraphics[width=0.7\textwidth]{images/theflash.jpg}
+\end{center}
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Use Libs Wisely}
+\frametitle{Single-Thread Performance}
 
- This problem doesn't have enough work to parallelize effectively. 
- 
- While the lock-free version speeds it up a small amount, the mutex version was easier to write but made it much slower. 
- 
- So it's important to consider carefully when to apply the library, because a speedup is not guaranteed just by parallelizing a given loop.
+
+Performance improvements to date have \\
+used parallelism
+to improve throughput. 
+
+Decreasing latency is trickier---\\
+often requires domain-specific
+tweaks. 
+
+Today: one example of decreasing latency: \\
+\hspace*{2em} Stream VByte.
 
 
 \end{frame}
 
+
+\begin{frame}
+\frametitle{I have a cunning plan...}
+
+
+
+Even Stream VByte uses parallelism:\\
+\hspace*{2em}vector instructions. 
+
+But there
+are sequential improvements, \\
+e.g. Stream VByte takes care to be predictable
+for the branch predictor.
+
+
+\end{frame}
+\begin{frame}
+\frametitle{Inverted Indexes (like it's CS 137 again!)}
+
+
+
+\vspace*{-1em}
+Abstractly: store a sequence of small integers.
+
+
+Why Inverted indexes?
+
+\hspace*{1cm}allow fast lookups by term;\\
+\hspace*{1cm}support boolean queries combining terms.
+
+
+
+\end{frame}
+\begin{frame}
+\frametitle{Dogs, cats, cows, goats. In ur documents.}
+
+
+\begin{center}
+\begin{tabular}{r|l}
+docid & terms \\ \hline
+1 & dog, cat, cow\\
+2 & cat\\
+3 & dog, goat\\
+4 & cow, cat, goat\\
+\end{tabular}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Inverting the Index}
+
+
+Here's the index and the inverted index:
+\begin{center}
+\begin{tabular}{r|l}
+docid & terms \\ \hline
+1 & dog, cat, cow\\
+2 & cat\\
+3 & dog, goat\\
+4 & cow, cat, goat\\
+\end{tabular} \hspace*{2em}
+\begin{tabular}{r|l}
+term & docs \\ \hline
+dog & 1, 3 \\
+cat & 1, 2, 4 \\
+cow & 1, 4 \\
+goat & 3, 4
+\end{tabular}
+\end{center}
+
+Inverted indexes contain many small integers.
+
+Deltas typically small if doc ids are sorted.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Storing inverted index lists: VByte}
+
+
+\vspace*{-2em}
+VByte uses a variable number of bytes\\
+to store integers.  
+
+Why? Most integers are
+small,\\
+especially on today's 64-bit processors.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{How VByte Works}
+
+
+VByte works like this:
+
+\begin{itemize}
+\item $x$ between 0 and $2^7-1$ (e.g. $17 = 0b10001$):\\
+\hspace*{1em}$0xxx xxxx$, e.g. $0001 0001$;
+\item $x$ between $2^7$ and $2^{14}-1$ (e.g. $1729 = 0b110 11000001$):\\
+\hspace*{1em}                   $1xxx xxxx/0xxx xxxx$ (e.g. $1100 0001/0000 1101$);\\
+\item $x$ between $2^{14}$ and $2^{21}-1$: \\
+\hspace*{1em}$1xxx xxxx/1xxx xxxx/0xxx xxxx$;
+\item etc.
+\end{itemize}
+
+Control bit, or high-order bit, is:\\
+\hspace*{2em}0 once done representing the int,\\
+\hspace*{2em}1 if more bits remain.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Why VByte Helps}
+
+
+Isn't dealing with variable-byte integers harder?\\
+\hspace*{2em} $\bullet$~ Yup!
+
+But perf improves: \\
+\hspace*{2em} $\bullet$~  We are using fewer bits! 
+
+We fit more information into RAM and
+cache, and can get higher throughput. (think inlining)
+
+Storing and reading 0s isn't good use of resources. 
+
+However, a naive algorithm to decode VByte \\
+gives branch mispredicts.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Stream VByte}
+\vspace*{-2em}
+
+Stream VByte: a variant of VByte using SIMD.
+
+
+Science is incremental. \\
+Stream VByte builds on earlier work---\\
+\hspace*{2em}masked VByte, {\sc varint}-GB, {\sc varint}-G8IU. 
+
+Innovation in Stream VByte:\\
+\hspace*{2em}\emph{store the control and data streams separately}.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Control Stream}
+\vspace*{-4em}
+
+Stream VByte's control stream uses two bits per integer to represent the size of the integer:
+\begin{center}
+\vspace*{-3em}
+\begin{tabular}{ll@{~~~~~~~~}ll}
+00 & 1 byte & 10 & 3 bytes\\
+01 & 2 bytes & 11 & 4 bytes
+\end{tabular}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Decoding Stream VByte}
+
+
+Per decode iteration:\\
+\hspace*{2em} reads 1 byte from the control stream,\\
+\hspace*{2em} and 16 bytes of data.
+
+
+Lookup table on control stream byte: decide how many
+bytes it needs out of the 16 bytes it has read.
+
+SIMD instructions: \\
+\hspace*{2em}shuffle the bits each into their own integers. 
+
+Unlike VByte, \\
+Stream VByte uses all 8 bits
+of data bytes as data.
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Stream VByte Example}
+
+
+Say control stream contains $0b1000~1100$. \\
+Then the data stream
+contains the following sequence of integer sizes: $3, 1, 4, 1$. 
+
+Out of the 16 bytes read,
+this iteration uses 9 bytes; \\
+\hspace*{2em} $\Rightarrow$ it advances the data pointer by 9. 
+
+The SIMD
+``shuffle'' instruction puts decoded integers from data stream at known positions in the
+128-bit SIMD register.
+
+Pad the first 3-byte integer with 1 byte, then
+the next 1-byte integer with 3 bytes, etc. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Stream VByte: Shuffling the Bits}
+\vspace*{-1em}
+
+Say the data input is:\\
+{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. 
+
+The 128-bit output is:\\
+{\tt 0x00f8~23e1/0000~0027/2524 9748/0000~001b}\\
+/s denote separation
+between outputs. 
+
+Shuffle mask is precomputed and
+read from an array.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{SIMD Instructions}
+
+\vspace*{-1em}
+
+The core of the implementation uses\\
+three SIMD instructions:
+\begin{lstlisting}[language=C]
+  uint8_t C = lengthTable[control];
+  __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
+  __m128i Shuf = _mm_loadu_si128(shuffleTable[control]);
+  Data = _mm_shuffle_epi8(Data, Shuf);
+  databytes += C; control++;
+\end{lstlisting}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{But Does It Work?!}
+
+\vspace*{-1em}
+
+Stream VByte performs better than previous techniques on a realistic input.
+
+
+Why?
+
+\begin{itemize}
+\item control bytes are sequential:\\
+\hspace*{1em} CPU can always prefetch the next control byte, \\
+\hspace*{1em} because
+its location is predictable;
+\item data bytes are sequential \\
+\hspace*{1em}and loaded at high throughput;
+\item shuffling exploits the instruction set: \\
+\hspace*{1em}takes 1 cycle;
+\item control-flow is regular \\
+\hspace*{1em}(tight loop which retrieves/decodes control
+\& data;\\
+\hspace*{1em}no conditional jumps).
+\end{itemize}
+\end{frame}
 
 
 \end{document}

@@ -1,8 +1,9 @@
 \input{configuration}
 
-\title{Lecture 25 --- Profiling }
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\title{Lecture 25 --- Profiling: Observing Operations }
+
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -16,6 +17,16 @@
  \end{frame}
 
 
+
+\begin{frame}
+\frametitle{Watch and Learn}
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/watchandlearn.png}
+\end{center}
+
+\end{frame}
+
 \begin{frame}
 \frametitle{Remember the Initial Quiz}
 
@@ -24,8 +35,7 @@ Think back: what operations are fast and what operations are not?
 
 Takeaway: our intuition  is often wrong. 
 
-Not just at a macro level, \\
-but at a micro level. 
+Not just at a macro level, but at a micro level. 
 
 You may be able to narrow down that this computation of $x$ is slow, \\
 but if you examine it carefully\ldots what parts of it are slow?
@@ -54,7 +64,6 @@ but if you examine it carefully\ldots what parts of it are slow?
 \frametitle{That Saying You Were Expecting}
 
 
-\begin{changemargin}{1.5cm}
 Feeling lucky? \\
 Maybe you optimized a slow part. 
 
@@ -68,302 +77,308 @@ you need to find out what is currently slow and improve it (duh!).
 Up until now, it's mostly been about \\
 \qquad ``let's speed this up''.\\
 We haven't taken much time to decide what we should speed up.
-\end{changemargin}
 
 \end{frame}
 
 
-
 \begin{frame}
-\frametitle{Basic Overview}
-
-
-\begin{changemargin}{1.5cm}
-General idea:\\
-\qquad collect data on what parts of the code\\
-\qquad are taking up most of the time.
-
-\begin{itemize}
-\item What functions get called?
-\item How long do functions take?
-\item What's using memory?
-\end{itemize}
-\end{changemargin}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{\texttt{printf}}
-
-
-\begin{changemargin}{1.5cm}
-There is always the ``informal'' way: ``debug'' by print statements.
-
-On entry to \texttt{foo}, log ``entering function foo'', plus timestamp.
-
-On exit, log ``exiting foo'', also with timestamp.
-\end{changemargin}
+\frametitle{Why Observation?}
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/stringerbell.jpg}
+	\includegraphics[width=0.5\textwidth]{images/observe.jpg}
 \end{center}
 
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Console Profiling}
-
-
-\begin{changemargin}{1cm}
-Kind of works, and [JZ] has used it... But this approach is not necessarily good.  
-
-This is ``invasive'' profiling---change the source code of the program to add instrumentation (log statements). 
-
-Plus we have to do a lot of manual accounting.
-
-Doesn't really scale.
-\end{changemargin}
+Observation is a bit more than just measuring things.
 
 \end{frame}
 
 
-
 \begin{frame}
-\frametitle{Wizardry!}
+\frametitle{Kinds of Observation}
 
+\begin{enumerate}
+	\item Counters
+	\item Profiles
+	\item Traces
+\end{enumerate}
 
-\begin{changemargin}{2cm}
-Like debugging: if you get to be a wizard you can maybe do it by code inspection.
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/miracle.jpeg}
-\end{center}
-
-But speculative execution inside your head is harder for perf than debugging.
-
-So: we want to use tools \\ 
-and do this in a methodical way.
-\end{changemargin}
+We'll return to profiling later on.
 
 \end{frame}
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-  \frametitle{Introduction to Profiling}
+\frametitle{Tracing: Logging}
 
+Logging is an effective way of finding out what's happening.
 
+We have surely all used \texttt{printf} to debug!
 
-\begin{changemargin}{1.5cm}
-    So far we've been looking at small problems.\\[1em]
-    Must {\bf profile} to see what's slow in a
-      large program.\\[1em]
-    Two main outputs:
-      \begin{itemize}
-        \item flat;
-        \item call-graph.
-      \end{itemize}
+Logs need: timestamp, message, \& attributes.
 
-
-
-    Two main data gathering methods:
-      \begin{itemize}
-        \item statistical;
-        \item instrumentation.
-      \end{itemize}
-   \end{changemargin}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Profiler Outputs}
-
-
-\begin{changemargin}{.5cm}
-  
-  {\bf Flat Profiler:}
-
-  \begin{itemize}
-    \item Only computes average time in a particular function.
-    \item Does not include other (useful) information (callees).
-  \end{itemize}
-
-~\\[1em]
-
-  {\bf Call-graph Profiler:}
-
-  \begin{itemize}
-    \item Computes call times.
-    \item Reports frequency of function calls.
-    \item Gives a call graph: who called what function?
-  \end{itemize}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data Gathering Methods}
-
-
-\begin{changemargin}{1.5cm}
-  {\bf Statistical:}
-
-  Mostly, take samples of the system state, that is:
-  \begin{itemize}
-    \item every 100ms, check the system state.
-    \item will cause some slowdown, but not much.
-  \end{itemize}
-~\\[1em]
-
-  {\bf Instrumentation:}\\
-  Add instructions at specified program points:
-  \begin{itemize}
-    \item can do this at compile time or run time (expensive);
-    \item can instrument either manually or automatically;
-    \item like conditional breakpoints.
-  \end{itemize}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Guide to Profiling}
-
-  
-
-\begin{changemargin}{1cm}
-  When writing large software projects:\\[1em]
-
-     $\bullet$ First, write clear and concise code. \\
-      \qquad Don't do premature optimizations---\\
-      \qquad focus on correctness.\\
-     $\bullet$ Profile to get a baseline of your performance:\\[0em]
-      \begin{itemize}
-        \item allows you to easily track any performance changes;
-        \item allows you to re-design your program before it's too late.
-      \end{itemize}
-  Focus your optimization efforts on the code that matters.
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Things to Look For}
-
-
-\begin{changemargin}{1.5cm}
-  
-    Good signs:\\[0em]
-
-    \begin{itemize}
-      \item Time is spent in the right part of the system.
-      \item Most time should not be spent handling errors;\\
- in non-critical code; or in exceptional cases.
-      \item Time is not unnecessarily spent in OS.
-    \end{itemize}
-    \end{changemargin}
-    
-    \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/tobermory.jpg}\\
-	\hfill Kitchener driver follows GPS directions right into Lake Huron...
- 	\end{center}
-    
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}
-\frametitle{Development vs Prod}
+\frametitle{Logging} 
 
-You can always profile your systems in development, but that might not
-help with complexities in production. 
+If we get only one tool -- logging!
 
-The constraints on profiling 
-production systems are that the profiling must not affect the system's
-performance or reliability.
+How often to log, and what content?
+
+This may be our only shot to get that info...\\
+\quad But don't drown out relevant things!
 
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Per-Process}
+\frametitle{Ideas}
 
- We'll first talk about {\tt perf}, the profiler 
-recommended for use with Rust. This is Linux-specific, though.
+Log input and output?
 
-The \texttt{perf} tool is an interface to the Linux kernel's built-in
-sample-based profiling using CPU counters. 
+Want to be able to link things...
+
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{Previous Offering Profiling}
+\frametitle{Example}
 
-\begin{lstlisting}[basicstyle=\scriptsize]
-[plam@lynch nm-morph]$ perf stat ./test_harness
-
- Performance counter stats for './test_harness':
-
-       6562.501429 task-clock                #    0.997 CPUs utilized          
-               666 context-switches          #    0.101 K/sec                  
-                 0 cpu-migrations            #    0.000 K/sec                  
-             3,791 page-faults               #    0.578 K/sec                  
-    24,874,267,078 cycles                    #    3.790 GHz                     [83.32%]
-    12,565,457,337 stalled-cycles-frontend   #   50.52% frontend cycles idle    [83.31%]
-     5,874,853,028 stalled-cycles-backend    #   23.62% backend  cycles idle    [66.63%]
-    33,787,408,650 instructions              #    1.36  insns per cycle        
-                                             #    0.37  stalled cycles per insn [83.32%]
-     5,271,501,213 branches                  #  803.276 M/sec                   [83.38%]
-       155,568,356 branch-misses             #    2.95% of all branches         [83.36%]
-
-       6.580225847 seconds time elapsed
-\end{lstlisting} %$
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Do it with Rust}
-
-The first thing to do is to compile with debugging info, go to your \texttt{Cargo.toml} file and add:
+{\scriptsize
 \begin{verbatim}
-[profile.release]
-debug = true
+Received request: update plan of company 12345 to ULTIMATE
+Retrieving company 12345
+Verifying eligibility for upgrade of company 12345 from BASIC to ULTIMATE
+Company 12345 is not eligible for upgrade due to: unpaid invoices > 0
+Returning response: update of company 12345 to ULTIMATE is DECLINED
 \end{verbatim}
-
-This means that \texttt{cargo build --release} will now compile the version with debug info.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{I've got a Cunning Plan}
-
-Run the program using \texttt{perf record}, which will sample the execution of the program to produce a data set.
-
-
-Then there are three ways we can look at the code: \texttt{perf report}, \texttt{perf annotate}, and a flamegraph.
+}
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{CLion}
+\frametitle{Timestamp Precision}
 
-During development of some of the code exercises, I used the CLion built-in profiler for this purpose. 
+Timestamp precision depends on the timescale of execution.
 
-It generates a flamegraph for you too, and I'll show that for how to create the flamegraph as well.
+Time zones matter. Recommendation: UTC!
+
+Or Stardates?
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/captainslog.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Too Much Noise}
+
+Logging every request might be too noisy.
+
+Searching and sorting help!
+
+Too much detail is also bad...
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Personally Identifiable Information = No}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/redacted.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Over-logging}
+
+Is it too hard to get access to info other ways?
+
+Aim for a balance.
 
 
 \end{frame}
+
+
+\begin{frame}
+\frametitle{Overhead of Tracing}
+
+CPU trace tool: $20\times$ slowdown.
+
+Timestamp at function call: $1.2-1.5\times$ slowdown.
+
+Timestamp of system call entry/exit: $< 1\%$
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Other Overhead Tracing}
+
+Valgrind: Up to $100\times$ slowdown.
+
+Disk trace: pretty minimal!
+
+Can identify deadlocks and waiting for locks.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Space, the Final Frontier}
+
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/finalfrontier.jpg}
+\end{center}
+\hfill Image Credit: Revma Mahita
+
+The trace itself takes up space.
+
+20 GB/s bandwidth and 64-byte cache lines recording up to 8 bytes of data per trace entry could result in producing data at a rate of 2.4 GB per second.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Counters}
+
+Counters, as the name suggests, keep a count of events: interrupts, cache misses, data bytes written, calls to function \texttt{do\_magic()}.
+
+
+Counters are aggregation, because we're summing the number of occurrences.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Other Aggregation}
+
+Average response time is aggregation: total time and number of requests.
+
+Asking the computer to calculate the summary is sensible.
+
+Ideas: number of requests, requests broken down by type, average time to respond to a request, percentage of error responses...  
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Context is Key}
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/context.jpg}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Context to Aggregation}
+
+After my PR, login time $0.75s$ -- Good or bad?
+
+Depends on the baseline. Maybe it was $0.5s$?
+
+
+Okay, increased -- is that bad?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Another Example}
+
+Request takes on average $1.27s$ -- Good or Bad?
+
+What if the time limit is 1 second? 10 seconds?
+
+How hard is the deadline?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Averages Misleading}
+
+All of these are 7 requests per second on average:
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/burst1}\\
+	\includegraphics[width=\textwidth]{images/burst2}\\
+	\includegraphics[width=\textwidth]{images/burst3}\\
+\end{center}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Time Period}
+
+When we aggregate, we have to choose the period of time.
+
+Whole execution of the task?
+
+Indefinitely-running services?
+
+We might miss important things!
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Look at the Pretty Pictures}
+
+Graphs and visualizations help us see trends in data.
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/cpu-load.png}
+\end{center}
+
+Managers and non-techies love them!
+
+If we put together enough pretty pictures, we get a dashboard.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Dashboards}
+
+Dashboards are ideally more than just pretty pictures of LINE GOES UP.
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/stonks.jpg}
+\end{center}
+
+Should present an easily-digestible summary.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Drill Down}
+
+This is just a high level idea of identifying what's happening.
+
+As we proceed we need to get to lower level tools.
+
+Next: narrowing down where the bottleneck is.
+
+\end{frame}
+
+
+
 
 
 

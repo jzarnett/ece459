@@ -1,10 +1,9 @@
   fn main() {
-    let x = 5;
-    let y = x;
-    dbg!(x, y); // Works as you would expect!
-
-    let x = Vec::<u32>::new(); // similar to the std::vector type in C++
-    let y = x;
-    dbg!(x, y); // x has been moved, this is a compiler error!
+    let mut s1 = String::from("hello");
+      let len = calc_len(&mut s1);
+      println!("The length of '{}' is '{}'.", s1, len);
   }
 
+  fn calc_len(s: &mut String) -> usize {
+      s.len()
+  }
