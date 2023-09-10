@@ -1,30 +1,8 @@
 \input{configuration}
 
-% Custom packages
-\usepackage{xcolor}
-\definecolor{solarizedBase03}{HTML}{FFFFFF}
-\definecolor{solarizedBase02}{HTML}{000000}
-\definecolor{solarizedBase00}{HTML}{657B83}
-\definecolor{solarizedBase0}{HTML}{000000}
-\definecolor{solarizedBase1}{HTML}{93A1A1}
-\definecolor{solarizedBase3}{HTML}{FDF6E3}
+\title{Lecture 22 --- GPU Programming Continued }
 
-
-\usepackage[listings]{tcolorbox}
-\newtcbinputlisting{\codelisting}[2][]{
-    listing file={#2},
-    colback=solarizedBase03,
-    colframe=solarizedBase02,
-    colupper=solarizedBase0,
-    fonttitle=\bfseries\color{solarizedBase1},
-    listing options={basicstyle=\ttfamily\footnotesize},
-    listing only,
-    #1
-}
-
-\title{Lecture 22 --- GPU Programming }
-
-\author{Patrick Lam and Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -35,563 +13,281 @@
 \begin{frame}
   \titlepage
 
- \end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Introduction}
-
-
-     \structure{CUDA}: coding on a heterogeneous architecture.
-        No longer just programming the CPU; will also leverage the GPU.
-        
-      CUDA = Compute Unified Device Architecture.\\
-      Usable on NVIDIA GPUs.
-      
-    \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/gpu.jpg}
-	\end{center}
-	
-	Note: RTX 3080 not available at the time of writing.\\
-	People probably sell pictures of them on eBay.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{SIMT}
-
-
-
-  Another term you may see vendors using:
-
-  \begin{itemize}
-    \item {\bf S}ingle {\bf I}nstruction, {\bf M}ultiple {\bf T}hreads.
-    \item Runs on a vector of data.
-    \item Similar to SIMD instructions (e.g. SSE).\\
-     However, the vector is spread out over the GPU.
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Other Heterogeneous Programming Examples}
-
-
-\begin{itemize}
-\item PlayStation 3 Cell\\
-\item OpenCL
-\end{itemize}
-
-
-See \url{https://www.youtube.com/watch?v=zW3XawAsaeU} for details on why it was hard to program for the PS3!
-
-[PS4: back to a regular CPU/GPU system, albeit on one chip.]
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{(PS3) Cell Overview}
-
-
-  Cell consists of:
-  \begin{itemize}
-    \item a PowerPC core; and
-    \item 8 SIMD co-processors.
-  \end{itemize}
-
-
-  \begin{center}
-    \includegraphics[scale=0.5]{images/cell}
-  \end{center}
-  \hfill (from the Linux Cell documentation)
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{CUDA Overview}
-  
-
-     Compute Unified Device Architecture:\\
-     NVIDIA's architecture for processing on GPUs.\\[1em]
-
-     ``C for CUDA'' predates OpenCL,\\
-     NVIDIA supports it first and foremost.
-      \begin{itemize}
-        \item May be faster than OpenCL on NVIDIA hardware.
-        \item API allows you to use (most) C++ features in CUDA; \\
-          OpenCL has more restrictions.
-      \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{GPU Programming Model}
-
-
-
-  The abstract model is simple:
-
-  \begin{itemize}
-    \item Write the code for the parallel computation ({\it kernel}) \\
-      \qquad separately from main code.
-    \item Transfer the data to the GPU co-processor \\
-      \qquad (or execute it on the CPU).
-    \item Wait \ldots
-    \item Transfer the results back.
-  \end{itemize}
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Drive or Fly?}
-
-It makes sense to hand it over to the GPU because there are a lot of cores.
-
-\texttt{ecetesla2}: 4 core 3.6 GHz CPU; 1920 CUDA cores that run at about 1.8 GHz. 
-
-So, half the speed, but 480 times the workers. 
-
-\begin{center}
-	\includegraphics[width=0.7\textwidth]{images/units.jpg}
-\end{center}
-
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Drive or Fly?}
+\frametitle{The Host Code}
 
-There's significant runtime overhead but the GPU is fast once started.
+We've learned about how a kernel works and a bit about how to write one. 
 
-This is like driving vs flying. 
+The next part is the host code.
 
-\begin{center}
-	\includegraphics[width=0.45\textwidth]{images/ott-mtl.png}
-\end{center}
+Now, fortunately, we don't have to write the whole program in \CPP~ or C, even though the kernel has to be written in the CUDA variant. 
 
-\begin{center}
-	\includegraphics[width=0.6\textwidth]{images/waterloo-sfo.png}
-\end{center}
-
-
+We're going to use the Rustacuda library!
 \end{frame}
-
-
-\begin{frame}
-\frametitle{CUDA Parallelism}
-
-CUDA includes both task parallelism and data parallelism, as we've
-discussed earlier in this course.
-
-\emph{Data parallelism} is the central feature. 
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data Parallelism}
-
-
-  \begin{itemize}
-    \item Key idea: evaluate a function (or {\it kernel}) \\
-     \qquad over a set of points (data).\\
-
-\begin{center}
-\begin{tikzpicture}
-\foreach \x in {0,0.25,...,2}
-  \foreach \y in {0,0.25,...,2}
-    \draw (\x, \y) circle (0.25mm);
-\end{tikzpicture}
-\end{center}
-
-      Another example of data parallelism.\\[1em]
-    \item Another name for the set of points: {\it index space}.
-    \item Each point corresponds to a {\bf work-item}.
-  \end{itemize}~\\[1em]
-
-  Note: CUDA also supports {\it task parallelism} (using different kernels),
-  but we won't focus on that in this course.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Work-Items}
-
-
-    \structure{Work-item}: the fundamental unit of work in CUDA.
-    
- These work-items live on an $n$-dimensional grid (ND-Range).
-    
-    \begin{center}
-	\includegraphics[width=0.2\textwidth]{images/peon.jpeg}\\
-	\hfill ``Ready to work!''
-	\end{center}
-    
-\end{frame}
-    
-\begin{frame}
-\frametitle{Work-Items}
-    
-You get your choice about block size. 
-
-Usually, we say let the system decide. 
-
-However, for some computations it's better to specify.
-
-Ff you do, however, you want to make best use of the hardware and use a multiple of the size of the \textit{warp}.
-
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Shared Memory}
-
-
-  There are many different types of memory available to you:
-
-
-\begin{itemize}
-\item private
-\item local
-\item global
-\item constant
-\item texture
-\end{itemize}
-
-Choosing what kind of memory to use is important!
-
-There is also host memory (normal memory);\\ usually contains app data.
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}[fragile]
-\frametitle{A kernel of my very own...}
+\frametitle{Rust Host Code Example}
+\begin{lstlisting}[language=Rust]
+#[macro_use]
+extern crate rustacuda;
 
-Here's the \CPP~ code we start with:
+use rustacuda::prelude::*;
+use std::error::Error;
+use std::ffi::CString;
 
-\begin{lstlisting}[language=C++]
-void vector_add(int n, const float *a, const float *b, float *c) {
-  for (int i = 0; i < n; i++) {
-    c[i] = a[i] + b[i];
-}
+fn main() -> Result<(), Box<dyn Error>> {
+    // Set up the context, load the module, and create a stream to run kernels in.
+    rustacuda::init(CudaFlags::empty())?;
+    let device = Device::get_device(0)?;
+    let _ctx = Context::create_and_push(ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, device)?;
+
+    let ptx = CString::new(include_str!("../resources/add.ptx"))?;
+    let module = Module::load_from_string(&ptx)?;
+    let stream = Stream::new(StreamFlags::DEFAULT, None)?;
+    
+    // Create buffers for data
+    let mut in_x = DeviceBuffer::from_slice(&[1.0f32; 10])?;
+    let mut in_y = DeviceBuffer::from_slice(&[2.0f32; 10])?;
+    let mut out_1 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
 \end{lstlisting}
 
+\end{frame}
 
-The same code looks like this as a kernel:
-\begin{lstlisting}[language=C++]
-__global__ void vector_add(float* A, float* B, float* C)
-{
-    int i = threadIdx.x;
-    C[i] = A[i] + B[i];
-}
+
+\begin{frame}[fragile]
+\frametitle{Rust Host Code Example}
+\begin{lstlisting}[language=Rust]
+    // This kernel adds each element in `in_x` and `in_y` and writes the result into `out`.
+    unsafe {
+        // Launch the kernel with one block of one thread, no dynamic shared memory on `stream`.
+        let result = launch!(module.sum<<<1, 1, 0, stream>>>(
+            in_x.as_device_ptr(),
+            in_y.as_device_ptr(),
+            out_1.as_device_ptr(),
+            out_1.len()
+        ));
+        result?;
+    }
+
+    // Kernel launches are asynchronous, so we wait for the kernels to finish executing.
+    stream.synchronize()?;
 \end{lstlisting}
 
-The loop became implicit!
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Going Backwards?}
-
-You can write kernels in a variant of \CPP.
-
-
-A large number of features of more recent versions of the language are supported.
-
-How much will vary based on your release of the kernel compiler (\text{nvcc}).
-
-It's unlikely that we'll be doing too many things that are exotic enough to be forbidden by the compiler.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{The Compiled Kernel}
-
-The kernel is compiled into PTX -- Parallel Thread eXecution -- instructions.
-
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/hieroglyphics.jpg}
+	\includegraphics[width=0.4\textwidth]{images/launch-sw.jpg}
 \end{center}
-
-Can we write our own? Yes. Will we? No.
-
-Use the \texttt{nvcc} compiler.
-
-Recompile if you change machines!
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Running \texttt{nvcc}}
-
-The \texttt{nvcc} compiler has specific requirements for the underlying compiler it relies upon. 
-
-For example, on \texttt{ecetesla2} at the time of writing, \texttt{nvcc} fails without specifying \texttt{gcc} version 6 instead of the default. 
-
-With the command \texttt{nvcc --compiler-bindir /usr/bin/gcc-6 -ptx nbody.cu}, it will compile. 
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Danger! Danger!}
-
-\begin{center}
-	\includegraphics[width=0.3\textwidth]{images/unsafe.png}
-\end{center}
-
-The kernel has none of the safety guarantees that we normally get in Rust! 
-
-We can easily read off the end of an array, forget to initialize a variable, allocate memory that we forget to deallocate...
-
-So, just because it compiles, doesn't mean it will work.
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{I broke it...}
+\frametitle{Rust Host Code Example}
+\begin{lstlisting}[language=Rust]
 
-Here's something I got in testing:
-{\tiny
-\begin{verbatim}
-thread 'main' panicked at 'Failed to deallocate CUDA Device memory.: IllegalAddress', 
-/home/jzarnett/.cargo/registry/src/github.com-1ecc6299db9ec823/rustacuda-0.1.2/src/memory/device/device_buffer.rs:259:32
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-thread 'main' panicked at 'Failed to deallocate CUDA Device memory.: IllegalAddress', 
-/home/jzarnett/.cargo/registry/src/github.com-1ecc6299db9ec823/rustacuda-0.1.2/src/memory/device/device_buffer.rs:259:32
-stack backtrace:
-\end{verbatim}
+    // Copy the results back to host memory
+    let mut out_host = [0.0f32; 20];
+    out_1.copy_to(&mut out_host[0..10])?;
+
+    for x in out_host.iter() {
+        assert_eq!(3.0 as u32, *x as u32);
+    }
+
+    println!("Launched kernel successfully.");
+    Ok(())
 }
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{N-Body Problem Kernel}
-
-Let's take a look at a kernel for the N-Body problem!
-
-We'll also use that when we examine how to launch a CUDA program.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Practice Makes Perfect}
-Let's think about how to write the kernel well.
-
-We need to decide what sort of work belongs in the kernel to begin with.
-
-Loops good, as long as they're not sequential (some coordination is okay).
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Two-Dimensions?}
-
-What if we wanted to make the N-Body kernel a two-dimensional problem? 
-
-We could instead treat each pair of points $(i, j)$ as a point in the space, making it a two-dimensional problem. 
-
-Then you could think of it as a matrix rather than an array and provide it to CUDA like that. This might increase the parallelism! 
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Sounds Good, Doesn't Work}
-
-
+\end{lstlisting}
+\vspace{-1em}
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/soundsgood.jpg}
-\end{center}
-
-The calculation of body-body interaction for just one pair of points is a very small amount of work, tiny even. 
-
-Having one work-item for each such calculation means there's a lot of overhead to complete the calculation and it doesn't make sense. 
-
-But if the calculation of the interaction were more complex, then this transformation might be an improvement!
-
-\end{frame}
-
-\begin{frame}
-\frametitle{MORE DIMENSIONS!}
-
-You can have a three-dimensional problem, but no more.
-
-If you want something more than a three-dimensional, you have to have some loops in your code.
-
-The limit to three dimensions is probably because graphics cards were designed for rendering images in 3-D so it seems logical?
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Go the other way?}
-
-Of course, you can sometimes flatten the dimensions of your problem a bit. 
-
-A rectangular array in C/\CPP~is really stored as a linear array and the \texttt{[x][y]} is just notational convenience so you could easily just treat it as a linear array.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Brute Force a Password?}
-
-Consider something like brute-forcing a password of 6 characters (easy, but just for the purpose of an example).
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/hackerman2.png}
-\end{center}
-
-A one-dimensional approach: generate all possibilities in host code.
-
-Generate possibilities in kernel code
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Branches}
-
-The hardware will execute \emph{all} branches that any thread in a warp
-      executes---can be slow!\\[1em]
-
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/whynotboth.jpg}
+	\includegraphics[width=0.8\textwidth]{images/vader-rogue-one.png}
 \end{center}
 
 \end{frame}
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Branches in kernels}
+\frametitle{Corresponding Kernel}
 
-    \begin{lstlisting}
-__global__ void contains_branch(float *a, float *b) {
-    if (condition()) {
-        a[blockIdx.x] += 5.0;
-    } else {
-        b[blockIdx.x] += 5.0;
+\begin{lstlisting}[language=C]
+extern "C" __constant__ int my_constant = 314;
+
+extern "C" __global__ void sum(const float* x, const float* y, float* out, int count) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < count; i += blockDim.x * gridDim.x) {
+        out[i] = x[i] + y[i];
     }
 }
 \end{lstlisting}
 
-    
-    In other words: an {\tt if} statement will cause each thread to execute
-      both branches; we keep only the result of the taken branch.\\[1em]
 
-
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/tantive-iv.png}
+\end{center}
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-  \frametitle{Loops in kernels}
+\frametitle{N-Body Problem}
 
-
-    \begin{lstlisting}
-__device__ void foo(int *p1, int *p2) {
-  for (int i = 0; i < 12; ++i) {
-    p1[i] += p2[i]*2;
-  }
-}
-    \end{lstlisting}
-
-
-    A loop will cause the workgroup to wait for the maximum number of
-      iterations of the loop in any work-item.\\[1em]
-
-The compiler will try to unroll loops if it can.
+Let's take a look at the N-Body Problem code in the repo.
 
 \end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \begin{frame}
-\frametitle{Atomics}
+\frametitle{Results}
 
-Race conditions can still occur. 
+That's great, but how much does it speed up? 
 
-This means that if you want to, say, concurrently add to the same location, you need to use atomic functions. 
+I ran this on ecetesla1.
 
-The atomic operations are usable on the standard primitive types.
+With 100~000 points:
+\begin{itemize}
+	\item \texttt{nbody} (sequential, no approximations): 40.3 seconds
+	\item \texttt{nbody-parallel} (parallel, no approximations): 5.3 seconds
+	\item \texttt{nbody-cuda} (parallel, no approximations): 9.5 seconds
+\end{itemize}
 
-There are the usual operations: add, sub, min, inc, dec, compare-and-swap, bitwise.
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Wait a Minute}
+
+\begin{center}
+	\includegraphics[width=0.9\textwidth]{images/chosenone.png}
+\end{center}
+
+ That's worse than the CPU version. 
+ 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Kylo Ren is very Meme-Able}
+
+Theory: 100~000 points is not enough to overcome the overhead of setup and transferring data to and from the device. 
+  
+\begin{center}
+	\includegraphics[width=0.9\textwidth]{images/more.png}
+\end{center}
+  
+\end{frame}
+
+\begin{frame}
+\frametitle{Sequel Memes!}
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/wrong.png}
+\end{center}
+
+This turned out to be incorrect.
+
+Most of the time was going to the kernel execution of the \texttt{calculate\_forces} -- as expected?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Was Important}
+
+\begin{center}
+	\includegraphics[width=0.45\textwidth]{images/grid-of-thread-blocks.png}
+\end{center}
+
+The documentation isn't super great about how grids and blocks work.
+
+A lot of the guidance on the internet says is ``experiment and try''. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Grid Guidance}
+
+ The initial approach that I wrote had each work-item be its own grid. 
+ 
+ That's inefficient, because we're not taking advantage of all the hardware that's available (the warp hardware). 
+ 
+ The advice that I can find says the number of threads per block should always be a multiple of 32 with a maximum of 512 (or perhaps 1024). 
+ 
+ The second guidance I can find is that numbers like 256 and 128 are good ones to start with, and you can tweak it as you need. 
+ 
+ Then you have to adjust the grid size: divide the number of points by the threads per block to give the number of blocks.
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{Atomic Example}
+\frametitle{Change the Launch}
+
+\begin{lstlisting}[language=Rust]
+        let result = launch!(module.calculate_forces<<<(NUM_POINTS/256) + 1, 256, 0, stream>>>(
+            points.as_device_ptr(),
+            accel.as_device_ptr(),
+            points.len()
+        ));
+        result?;
+\end{lstlisting}
+
+I did have to add a +1 to the number of blocks, because 100~000 does not divide evenly by 256.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Kernel Crash}
+
+ But just running it as-is didn't work (and led to the kernel crashing. Why? 
+ 
+ Because the indexing strategy that I used contained only the reference to the block index \texttt{blockIdx.x}. 
+ 
+ That's fine in the scenario where every work-item gets its own block, but that's no longer the case now: 256 work-items (points) now share each block.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Updated Kernel}
 
 \begin{lstlisting}[language=C++]
-__device__ double atomicAdd(double* address, double val) {
-    unsigned long long int* address_as_ull =
-                              (unsigned long long int*)address;
-    unsigned long long int old = *address_as_ull, assumed;
+extern "C" __global__ void calculate_forces(const float4* positions, float3* accelerations, int num_points) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (idx >= num_points) {
+        return;
+    }
+    float4 current = positions[idx];
+    float3 acc = accelerations[idx];
 
-    do {
-        assumed = old;
-        old = atomicCAS(address_as_ull, assumed,
-                        __double_as_longlong(val +
-                               __longlong_as_double(assumed)));
-
-    // Note: uses integer comparison to avoid hang in case of NaN (since NaN != NaN)
-    } while (assumed != old);
-
-    return __longlong_as_double(old);
+    for (int i = 0; i < num_points; i++) {
+        body_body_interaction(current, positions[i], &acc);
+    }
+    accelerations[idx] = acc;
 }
 \end{lstlisting}
 
 \end{frame}
 
 
-
-
 \begin{frame}
-\frametitle{Launch?}
+\frametitle{Did it work?}
+
+With 100~000 points:
 
 \begin{center}
-	\includegraphics[width=0.3\textwidth]{images/launch.jpg}
+	\includegraphics[width=0.7\textwidth]{images/power.png}
 \end{center}
 
-So far, all we have covered is the theory and then how to write a kernel. 
+\begin{itemize}
+	\item \texttt{nbody} (sequential, no approximations): 40.3 seconds
+	\item \texttt{nbody-parallel} (parallel, no approximations): 5.3 seconds
+	\item \texttt{nbody-cuda} (parallel, no approximations): 9.5 seconds
+	\item \textbf{\texttt{nbody-cuda-grid} (parallel, no approx., grid): 1.65 seconds}
+\end{itemize}
 
-To make use of it, we'll have to look at the host code. That's our next topic. 
+ Now that's a lot better!
 
 \end{frame}
 

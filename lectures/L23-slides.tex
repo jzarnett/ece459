@@ -1,8 +1,31 @@
 \input{configuration}
 
-\title{Lecture 23 --- GPU Programming Continued }
+% Custom packages
+\usepackage{xcolor}
+\definecolor{solarizedBase03}{HTML}{FFFFFF}
+\definecolor{solarizedBase02}{HTML}{000000}
+\definecolor{solarizedBase00}{HTML}{657B83}
+\definecolor{solarizedBase0}{HTML}{000000}
+\definecolor{solarizedBase1}{HTML}{93A1A1}
+\definecolor{solarizedBase3}{HTML}{FDF6E3}
 
-\author{Jeff Zarnett \\ \small \texttt{jzarnett@uwaterloo.ca}}
+
+\usepackage[listings]{tcolorbox}
+\newtcbinputlisting{\codelisting}[2][]{
+    listing file={#2},
+    colback=solarizedBase03,
+    colframe=solarizedBase02,
+    colupper=solarizedBase0,
+    fonttitle=\bfseries\color{solarizedBase1},
+    listing options={basicstyle=\ttfamily\footnotesize},
+    listing only,
+    #1
+}
+\newtheorem{defn}{Definition}
+
+\title{Lecture 23 --- Password Cracking, Bitcoin Mining }
+
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -13,283 +36,328 @@
 \begin{frame}
   \titlepage
 
-\end{frame}
+ \end{frame}
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{The Host Code}
+  \frametitle{Reference: scrypt}
 
-We've learned about how a kernel works and a bit about how to write one. 
-
-The next part is the host code.
-
-Now, fortunately, we don't have to write the whole program in \CPP~ or C, even though the kernel has to be written in the CUDA variant. 
-
-We're going to use the Rustacuda library!
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Rust Host Code Example}
-\begin{lstlisting}[language=Rust]
-#[macro_use]
-extern crate rustacuda;
-
-use rustacuda::prelude::*;
-use std::error::Error;
-use std::ffi::CString;
-
-fn main() -> Result<(), Box<dyn Error>> {
-    // Set up the context, load the module, and create a stream to run kernels in.
-    rustacuda::init(CudaFlags::empty())?;
-    let device = Device::get_device(0)?;
-    let _ctx = Context::create_and_push(ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, device)?;
-
-    let ptx = CString::new(include_str!("../resources/add.ptx"))?;
-    let module = Module::load_from_string(&ptx)?;
-    let stream = Stream::new(StreamFlags::DEFAULT, None)?;
+  
+    scrypt is the algorithm behind DogeCoin. \\[1em] The reference:\\[1em]
     
-    // Create buffers for data
-    let mut in_x = DeviceBuffer::from_slice(&[1.0f32; 10])?;
-    let mut in_y = DeviceBuffer::from_slice(&[2.0f32; 10])?;
-    let mut out_1 = DeviceBuffer::from_slice(&[0.0f32; 10])?;
-\end{lstlisting}
+    Colin Percival, ``Stronger Key Derivation via Sequential Memory-Hard Functions''. \\
+    Presented at BSDCan'09, May~2009.\\[1em]
 
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Rust Host Code Example}
-\begin{lstlisting}[language=Rust]
-    // This kernel adds each element in `in_x` and `in_y` and writes the result into `out`.
-    unsafe {
-        // Launch the kernel with one block of one thread, no dynamic shared memory on `stream`.
-        let result = launch!(module.sum<<<1, 1, 0, stream>>>(
-            in_x.as_device_ptr(),
-            in_y.as_device_ptr(),
-            out_1.as_device_ptr(),
-            out_1.len()
-        ));
-        result?;
-    }
-
-    // Kernel launches are asynchronous, so we wait for the kernels to finish executing.
-    stream.synchronize()?;
-\end{lstlisting}
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/launch-sw.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Rust Host Code Example}
-\begin{lstlisting}[language=Rust]
-
-    // Copy the results back to host memory
-    let mut out_host = [0.0f32; 20];
-    out_1.copy_to(&mut out_host[0..10])?;
-
-    for x in out_host.iter() {
-        assert_eq!(3.0 as u32, *x as u32);
-    }
-
-    println!("Launched kernel successfully.");
-    Ok(())
-}
-\end{lstlisting}
-\vspace{-1em}
-\begin{center}
-	\includegraphics[width=0.8\textwidth]{images/vader-rogue-one.png}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Corresponding Kernel}
-
-\begin{lstlisting}[language=C]
-extern "C" __constant__ int my_constant = 314;
-
-extern "C" __global__ void sum(const float* x, const float* y, float* out, int count) {
-    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < count; i += blockDim.x * gridDim.x) {
-        out[i] = x[i] + y[i];
-    }
-}
-\end{lstlisting}
-
-
-\begin{center}
-	\includegraphics[width=0.8\textwidth]{images/tantive-iv.png}
-\end{center}
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{N-Body Problem}
-
-Let's take a look at the N-Body Problem code in the repo.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Results}
-
-That's great, but how much does it speed up? 
-
-I ran this on ecetesla1.
-
-With 100~000 points:
-\begin{itemize}
-	\item \texttt{nbody} (sequential, no approximations): 40.3 seconds
-	\item \texttt{nbody-parallel} (parallel, no approximations): 5.3 seconds
-	\item \texttt{nbody-cuda} (parallel, no approximations): 9.5 seconds
-\end{itemize}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Wait a Minute}
-
-\begin{center}
-	\includegraphics[width=0.9\textwidth]{images/chosenone.png}
-\end{center}
-
- That's worse than the CPU version. 
- 
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Kylo Ren is very Meme-Able}
-
-Theory: 100~000 points is not enough to overcome the overhead of setup and transferring data to and from the device. 
-  
-\begin{center}
-	\includegraphics[width=0.9\textwidth]{images/more.png}
-\end{center}
+    \url{http://www.tarsnap.com/scrypt.html}
   
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Acceptable Practices for Password Storage}
+  
+    \begin{itemize}
+    \item {\Huge \alert{{\bf not} plaintext!}}
+    \item \Large hashed and salted
+    \end{itemize}
+       
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Cryptographic hashing}
+  
+    One-way function:
+    \begin{itemize}
+    \item $x \mapsto f(x)$ ~~easy to compute; but
+      \item $f(x) \stackrel{?~}{\mapsto} x$ ~~hard to reverse.
+    \end{itemize}~\\
+    Examples: SHA1, scrypt.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 \begin{frame}
-\frametitle{Sequel Memes!}
+\frametitle{Not Secret}
+Perhaps passwords have already been leaked!
 
 \begin{center}
-	\includegraphics[width=0.8\textwidth]{images/wrong.png}
+	\includegraphics[width=0.75\textwidth]{images/haveibeenpwned.png}
 \end{center}
 
-This turned out to be incorrect.
-
-Most of the time was going to the kernel execution of the \texttt{calculate\_forces} -- as expected?
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{This Was Important}
+\frametitle{All Too Easy}
+
+The first thing is to try really common passwords.
+
+You just might get a hit!
 
 \begin{center}
-	\includegraphics[width=0.45\textwidth]{images/grid-of-thread-blocks.png}
+	\includegraphics[width=0.7\textwidth]{images/alltooeasy.jpg}
 \end{center}
 
-The documentation isn't super great about how grids and blocks work.
+``All too easy.''
 
-A lot of the guidance on the internet says is ``experiment and try''. 
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Breaking the Hash}
+  
+    How can we reverse the hash function?
+    \begin{itemize}
+    \item    Brute force.
+    \end{itemize}~\\
+    GPUs (or custom hardware) are good at that!
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{The Arms Race: Making Cracking Difficult}
+  
+    Historically: force repeated iterations of hashing.\\[1em]
+
+    Main idea behind scrypt (hence DogeCoin):
+    \begin{itemize}
+    \item make hashing expensive in time and space.
+    \end{itemize}~\\
+    Implication: require more circuitry to break passwords.\\
+    Increases both \# of operations and cost of brute-forcing.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Obligatory xkcd}
+
+Of course, there's always this form of cracking:
+\begin{center}
+\includegraphics[width=0.75\textwidth]{images/xkcd-538}\\
+\hfill (Source: xkcd 538)
+\end{center}
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Formalizing ``expensive in time and space''}
+  
+    Want to force use of the ``most memory possible'' for a given
+    number of operations.\\[1em]
+  
+    \begin{defn}
+      A \emph{memory-hard} algorithm on a Random Access Machine is an
+      algorithm which uses $S(n)$ space and $T(n)$ operations, where
+      $S(n) \in \Omega(T(n)^{1-\varepsilon})$.
+    \end{defn}~\\
+    
+      Such algorithms are expensive to implement in either hardware or software.
+    
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Generalizing to functions}
+  
+    Next, add a quantifier: \\move from particular algorithms to underlying functions.\\[1em]
+    A \emph{sequential memory-hard function} is one where:
+
+    \begin{itemize}
+      \item the fastest
+        sequential algorithm is memory-hard; and
+      \item it is impossible for a
+        parallel algorithm to asymptotically achieve lower cost.
+    \end{itemize}
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Not made of unicorn tears}
+  
+    \emph{Exhibit.} ReMix is a concrete example of a sequential memory hard function.\\[1em]
+    The scrypt paper concludes with an example of a more realistic (cache-aware) model and
+    a function in that context, BlockMix.
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Across the Rainbow Bridge}
+
+If designed well, hash functions aren't easy to brute force.
+
+What if we remembered some previous work? 
+
+It isn't practical, or possible, to store the hashes for every possible plaintext.
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Grid Guidance}
+\frametitle{Rainbow Table}
 
- The initial approach that I wrote had each work-item be its own grid. 
- 
- That's inefficient, because we're not taking advantage of all the hardware that's available (the warp hardware). 
- 
- The advice that I can find says the number of threads per block should always be a multiple of 32 with a maximum of 512 (or perhaps 1024). 
- 
- The second guidance I can find is that numbers like 256 and 128 are good ones to start with, and you can tweak it as you need. 
- 
- Then you have to adjust the grid size: divide the number of points by the threads per block to give the number of blocks.
+The rainbow table is a compromise between speed and space. 
 
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Change the Launch}
-
-\begin{lstlisting}[language=Rust]
-        let result = launch!(module.calculate_forces<<<(NUM_POINTS/256) + 1, 256, 0, stream>>>(
-            points.as_device_ptr(),
-            accel.as_device_ptr(),
-            points.len()
-        ));
-        result?;
-\end{lstlisting}
-
-I did have to add a +1 to the number of blocks, because 100~000 does not divide evenly by 256.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Kernel Crash}
-
- But just running it as-is didn't work (and led to the kernel crashing. Why? 
- 
- Because the indexing strategy that I used contained only the reference to the block index \texttt{blockIdx.x}. 
- 
- That's fine in the scenario where every work-item gets its own block, but that's no longer the case now: 256 work-items (points) now share each block.
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Updated Kernel}
-
-\begin{lstlisting}[language=C++]
-extern "C" __global__ void calculate_forces(const float4* positions, float3* accelerations, int num_points) {
-    int idx = threadIdx.x + blockIdx.x * blockDim.x;
-    if (idx >= num_points) {
-        return;
-    }
-    float4 current = positions[idx];
-    float3 acc = accelerations[idx];
-
-    for (int i = 0; i < num_points; i++) {
-        body_body_interaction(current, positions[i], &acc);
-    }
-    accelerations[idx] = acc;
-}
-\end{lstlisting}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Did it work?}
-
-With 100~000 points:
+The ``reduction'' function maps hashes to plaintext:
 
 \begin{center}
-	\includegraphics[width=0.7\textwidth]{images/power.png}
+	\includegraphics[width=0.7\textwidth]{images/rainbow-tables-reduce.png}
 \end{center}
+
+Example: \texttt{123456} $\rightarrow$ \texttt{d41d8cd98f00b204e9800998ecf8427e} $\rightarrow$ 418980
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Chain Formation}
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/rainbow-tables-reduce.png}
+\end{center}
+
+We should do this to develop some number of chains. 
+
+This is the sort of task you could do with a GPU, because they can do a reduction relatively efficiently. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Or, y'know, just download them}
+
+Once we have those developed for a specific input set and hash function, they can be re-used forever. 
+
+You do not even need to make them yourself anymore (if you don't want) because you can download them on the internet... they are not hard to find. 
+
+They are large, yes, but in the 25 - 900 GB range. 
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Rated `S' for Suck}
+
+\begin{center}
+\includegraphics[width=0.3\textwidth]{images/Fallout_76_box_cover.jpg}
+\end{center}
+
+I mean, Fallout 76 had a day one patch of 52 GB, and it was a disaster of a game.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{How to Use Rainbow Tables}
+
+\begin{enumerate}
+	\item Look for the hash in the list of final hashes; if there, we are done
+	\item If it's not there, reduce the hash into another plaintext and hash the new plaintext
+	\item Go back to step 1
+	\item If the hash matches a final hash, the chain with the match contains the original hash
+	\item Having identified the correct chain, we can start at the beginning of the chain with the starting plaintext and hash, check to see if we are successful (if so, we are done); if not, reduce and try the next plaintext. 
+\end{enumerate} 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Is it Fast?}
+
+Like generation, checking the tables can also be done efficiently by the GPU.
+
+Some numbers from \url{http://www.cryptohaze.com/gpurainbowcracker.php.html}: 
 
 \begin{itemize}
-	\item \texttt{nbody} (sequential, no approximations): 40.3 seconds
-	\item \texttt{nbody-parallel} (parallel, no approximations): 5.3 seconds
-	\item \texttt{nbody-cuda} (parallel, no approximations): 9.5 seconds
-	\item \textbf{\texttt{nbody-cuda-grid} (parallel, no approx., grid): 1.65 seconds}
+	\item Table generation on a GTX295 core for MD5 proceeds at around 430M links/sec.
+	\item Cracking a password 'K\#n\&r4Z': real: 1m51.962s, user: 1m4.740s. sys: 0m15.320s
 \end{itemize}
 
- Now that's a lot better!
+Yikes.
 
 \end{frame}
+
+
+\begin{frame}
+\frametitle{The World is Not Enough}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/bitcoin.png}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Bitcoin Consuption}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/Bitcoin-usage.png}\\
+	\hfill https://digiconomist.net/bitcoin-energy-consumption As of Dec 2019
+\end{center}
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Hash Calculations}
+
+Basis: SHA-256
+
+Started with CPU... then GPU... then what?
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Custom Hardware}
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/dragonmint.jpeg}
+\end{center}
+
+Custom hardware: optimize exactly what you need.
+
+First FPGA, then ASIC...
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Please Don't}
+
+We've uncovered why you should not mine Bitcoin.
+
+Not cost efficient; way too much competition.
+
+Not a hardware course, but this is the logical extension of GPU...
+
+\end{frame}
+
+
+
 
 \end{document}
 

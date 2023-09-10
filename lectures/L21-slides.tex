@@ -1,8 +1,30 @@
 \input{configuration}
 
-\title{Lecture 21 --- Performance Case Studies, Performance Culture}
+% Custom packages
+\usepackage{xcolor}
+\definecolor{solarizedBase03}{HTML}{FFFFFF}
+\definecolor{solarizedBase02}{HTML}{000000}
+\definecolor{solarizedBase00}{HTML}{657B83}
+\definecolor{solarizedBase0}{HTML}{000000}
+\definecolor{solarizedBase1}{HTML}{93A1A1}
+\definecolor{solarizedBase3}{HTML}{FDF6E3}
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+
+\usepackage[listings]{tcolorbox}
+\newtcbinputlisting{\codelisting}[2][]{
+    listing file={#2},
+    colback=solarizedBase03,
+    colframe=solarizedBase02,
+    colupper=solarizedBase0,
+    fonttitle=\bfseries\color{solarizedBase1},
+    listing options={basicstyle=\ttfamily\footnotesize},
+    listing only,
+    #1
+}
+
+\title{Lecture 21 --- GPU Programming }
+
+\author{Patrick Lam and Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -13,816 +35,563 @@
 \begin{frame}
   \titlepage
 
+ \end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Introduction}
+
+
+     \structure{CUDA}: coding on a heterogeneous architecture.
+        No longer just programming the CPU; will also leverage the GPU.
+        
+      CUDA = Compute Unified Device Architecture.\\
+      Usable on NVIDIA GPUs.
+      
+    \begin{center}
+	\includegraphics[width=0.5\textwidth]{images/gpu.jpg}
+	\end{center}
+	
+	Note: RTX 3080 not available at the time of writing.\\
+	People probably sell pictures of them on eBay.
+
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{SIMT}
 
 
-\part{Firefox}
+
+  Another term you may see vendors using:
+
+  \begin{itemize}
+    \item {\bf S}ingle {\bf I}nstruction, {\bf M}ultiple {\bf T}hreads.
+    \item Runs on a vector of data.
+    \item Similar to SIMD instructions (e.g. SSE).\\
+     However, the vector is spread out over the GPU.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Other Heterogeneous Programming Examples}
+
+
+\begin{itemize}
+\item PlayStation 3 Cell\\
+\item OpenCL
+\end{itemize}
+
+
+See \url{https://www.youtube.com/watch?v=zW3XawAsaeU} for details on why it was hard to program for the PS3!
+
+[PS4: back to a regular CPU/GPU system, albeit on one chip.]
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{(PS3) Cell Overview}
+
+
+  Cell consists of:
+  \begin{itemize}
+    \item a PowerPC core; and
+    \item 8 SIMD co-processors.
+  \end{itemize}
+
+
+  \begin{center}
+    \includegraphics[scale=0.5]{images/cell}
+  \end{center}
+  \hfill (from the Linux Cell documentation)
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{CUDA Overview}
+  
+
+     Compute Unified Device Architecture:\\
+     NVIDIA's architecture for processing on GPUs.\\[1em]
+
+     ``C for CUDA'' predates OpenCL,\\
+     NVIDIA supports it first and foremost.
+      \begin{itemize}
+        \item May be faster than OpenCL on NVIDIA hardware.
+        \item API allows you to use (most) C++ features in CUDA; \\
+          OpenCL has more restrictions.
+      \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{GPU Programming Model}
+
+
+
+  The abstract model is simple:
+
+  \begin{itemize}
+    \item Write the code for the parallel computation ({\it kernel}) \\
+      \qquad separately from main code.
+    \item Transfer the data to the GPU co-processor \\
+      \qquad (or execute it on the CPU).
+    \item Wait \ldots
+    \item Transfer the results back.
+  \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 \begin{frame}
-\frametitle{Case Study: Firefox Quantum}
+\frametitle{Drive or Fly?}
+
+It makes sense to hand it over to the GPU because there are a lot of cores.
+
+\texttt{ecetesla2}: 4 core 3.6 GHz CPU; 1920 CUDA cores that run at about 1.8 GHz. 
+
+So, half the speed, but 480 times the workers. 
 
 \begin{center}
-\includegraphics[width=.6\textwidth]{images/L19-logo-quantum.png}
+	\includegraphics[width=0.7\textwidth]{images/units.jpg}
 \end{center}
 
 \end{frame}
+
+
+\begin{frame}
+\frametitle{Drive or Fly?}
+
+There's significant runtime overhead but the GPU is fast once started.
+
+This is like driving vs flying. 
+
+\begin{center}
+	\includegraphics[width=0.45\textwidth]{images/ott-mtl.png}
+\end{center}
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/waterloo-sfo.png}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{CUDA Parallelism}
+
+CUDA includes both task parallelism and data parallelism, as we've
+discussed earlier in this course.
+
+\emph{Data parallelism} is the central feature. 
+
+\end{frame}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Data Parallelism}
+
+
+  \begin{itemize}
+    \item Key idea: evaluate a function (or {\it kernel}) \\
+     \qquad over a set of points (data).\\
+
+\begin{center}
+\begin{tikzpicture}
+\foreach \x in {0,0.25,...,2}
+  \foreach \y in {0,0.25,...,2}
+    \draw (\x, \y) circle (0.25mm);
+\end{tikzpicture}
+\end{center}
+
+      Another example of data parallelism.\\[1em]
+    \item Another name for the set of points: {\it index space}.
+    \item Each point corresponds to a {\bf work-item}.
+  \end{itemize}~\\[1em]
+
+  Note: CUDA also supports {\it task parallelism} (using different kernels),
+  but we won't focus on that in this course.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Work-Items}
+
+
+    \structure{Work-item}: the fundamental unit of work in CUDA.
+    
+ These work-items live on an $n$-dimensional grid (ND-Range).
+    
+    \begin{center}
+	\includegraphics[width=0.2\textwidth]{images/peon.jpeg}\\
+	\hfill ``Ready to work!''
+	\end{center}
+    
+\end{frame}
+    
+\begin{frame}
+\frametitle{Work-Items}
+    
+You get your choice about block size. 
+
+Usually, we say let the system decide. 
+
+However, for some computations it's better to specify.
+
+Ff you do, however, you want to make best use of the hardware and use a multiple of the size of the \textit{warp}.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Shared Memory}
+
+
+  There are many different types of memory available to you:
+
+
+\begin{itemize}
+\item private
+\item local
+\item global
+\item constant
+\item texture
+\end{itemize}
+
+Choosing what kind of memory to use is important!
+
+There is also host memory (normal memory);\\ usually contains app data.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 \begin{frame}[fragile]
-\frametitle{Some Firefox Perf Improvements, per Mike Conley}
+\frametitle{A kernel of my very own...}
 
-\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item don't animate out-of-view elements
-\item move db init off main thread
-\item keep better profiling data
-\item parallel painting for macOS
-\item lazily instantiate Search Service
-\end{itemize}
-\end{minipage}\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item halve size of the blocklist
-\item refactor to reduce main-thread IO
-\item don't hold all frames of animated GIFs/APNGs in memory
-\item eliminate unnecessary hash table
-\item use more modern compiler
-\end{itemize}
-\end{minipage}
+Here's the \CPP~ code we start with:
 
-\begin{center}
-\url{https://mikeconley.ca/blog/2018/02/14/firefox-performance-update-1/}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-\large
-\frametitle{We've seen this before:}
-\begin{itemize}
-\item do less work (or do it sooner/later);
-\item use threads (move work off main thread);
-\item measure performance;
-\end{itemize}
-Which of the updates fall into which categories?
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Some Firefox Perf Improvements, per Mike Conley}
-
-\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item don't animate out-of-view elements
-\item move db init off main thread
-\item keep better profiling data
-\item parallel painting for macOS
-\item lazily instantiate Search Service
-\end{itemize}
-\end{minipage}\begin{minipage}{.5\textwidth}
-\begin{itemize}
-\item halve size of the blocklist
-\item refactor to reduce main-thread IO
-\item don't hold all frames of animated GIFs/APNGs in memory
-\item eliminate unnecessary hash table
-\item use more modern compiler
-\end{itemize}
-\end{minipage}
-
-\begin{center}
-\begin{minipage}{.6\textwidth}
-\large How?
-\begin{itemize}
-\item do less work (or do it sooner/later);
-\item use threads (move work off main thread);
-\item measure performance;
-\end{itemize}
-\end{minipage}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Tab Warming}
-\begin{center}
-\url{https://mikeconley.ca/blog/2018/01/11/making-tab-switching-faster-in-firefox-with-tab-warming/}.
-\end{center}
-
-\begin{minipage}[t]{.5\textwidth}
-\vspace{0pt}
-\includegraphics[width=.95\columnwidth]{images/L19-hot-chocolate.jpg}
-\end{minipage}%
-\begin{minipage}[t]{.5\textwidth}
-\vspace{3em}
-``Maybe this is my Canadian-ness showing, but I like to think of it almost like coming in from shoveling snow off of the driveway, and somebody inside has \emph{already made hot chocolate for you}, because they knew you’d probably be cold.'' --- Mike Conley
-\end{minipage}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{How Can Tab Warming Work?}
-\Large
-
-Before: Firefox requests paint of newly-active tab,\\
-and then waits for the result before switching.
-
-Idea: reduce user-visible latency by predicting an imminent tab switch.
-
-Q: How can we predict the future?
-
-Q': How can we predict which tab will be switched to?
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Predicting the future}
-\large
-
-A: When the user has a mouse, then the mouse cursor will hover over the next tab.
-
-\vspace*{1em}
-\begin{quote}
-Assuming a sufficiently long delay between hover and click, the tab switch should be perceived as instantaneous. If the delay was non-zero but still not long enough, we will have nonetheless shaved that time off in eventually presenting the tab to you.
-
-And in the event that we were wrong, and you weren’t interested in seeing the tab, we eventually throw the uploaded layers away.
-\end{quote}
-
-Blog post does not report performance numbers.
-\end{frame}
-
-\begin{frame}
-\begin{center}
-\includegraphics[width=\textwidth]{images/L19-about-mozilla.png}
-\end{center}
-\end{frame}
-
-\begin{frame}
-\frametitle{Faster Firefox Step 1: Electrolysis}
-
-\Large
-Electrolysis (2017): multiple OS-level processes.\\
-(Think about threading models).
-
-\begin{center}
-\includegraphics[width=.9\textwidth]{images/L19-chrome-vs-firefox.png}
-\end{center}
-\end{frame}
-
-\begin{frame}
-\frametitle{Chrome vs Firefox}
-
-\Large
-Chrome: 1-process-per-tab.\\
-Firefox: 4 shared content processes.\\[1em]
-
-Firefox uses less memory (has less render state).
-
-Electrolysis challenges: \\
-\qquad internal architecture, and add-ons.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Electrolysis vs Flow}
-\large
-Two different Firefox projects:\\[1em]
-\begin{changemargin}{2em}
-Electrolysis = split across processes\\
-\begin{tabbing}
-Quantum Flow =~\=  leverage multithreading \\
-\> (using Rust's ``fearless concurrency''), \\
-\> plus other improvements.
-\end{tabbing}
-\end{changemargin}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Quantum Flow}
-\Large
-\begin{changemargin}{1cm}
-Steps:\\
-\begin{enumerate}
-\item Measure slowness \& prioritize
-\item Gather help
-\item Fix all (well, some of) the things!
-\end{enumerate}
-
-In 6 months:\\
-\qquad prioritized 895 bugs, fixed 369.\\
-Key tool: \\
-\qquad ``Quantum Flow Engineering Newsletter''.
-\end{changemargin}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{arewefastyet dot com}
-\includegraphics[width=.99\textwidth]{images/L19-arewefastyet.png}
-\end{frame}
-
-\begin{frame}
-\frametitle{about:telemetry}
-\includegraphics[width=.99\textwidth]{images/L19-about-telemetry.png}
-\end{frame}
-
-\begin{frame}
-\frametitle{About Telemetry}
-\Large
-Idea: Ask questions first, act second.
-
-Collect data about Firefox usage, then start hacking.
-
-100s of GBs of anonymous metrics/day, \\
-publicly available.
-
-Analogous to CPU profiling, but massively distributed.
-\begin{itemize}
-\item collected much less often than CPU profiling data,\\
-but at much broader scope.
-\end{itemize}
-\begin{center}
-\url{https://telemetry.mozilla.org/}
-\end{center}
-\end{frame}
-
-\begin{frame}
-\frametitle{Example Telemetry Questions}
-\Large
-\begin{itemize}
-\item Is Firefox the user's default browser? (69\% yes)
-\item Does e10s make startup faster? (no, slower)
-\item Which plugins tend to freeze the browser on load? (Silverlight and Flash)
-\end{itemize}
-Can also see evolution of data over time.
-\end{frame}
-
-\begin{frame}
-\frametitle{ama}
-\Large
-
-Devs can propose new probes;\\
-reviewed for data privacy plus normal code review.
-\end{frame}
-
-\begin{frame}
-\frametitle{ping!}
-
-\Large
-Firefox sends pings:
-\begin{itemize}
-\item ``main ping'' every 24 hours;
-\item upon shutdown;
-\item upon environment change;
-\item upon abnormal shutdown.
-\end{itemize}
-Presumably compressed JSON to Mozilla servers.
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{common ping structure}
-\begin{verbatim}
-{
-  type: <string>, // "main", "activation", "optout", ...
-  id: <UUID>, // a UUID that identifies this ping
-  creationDate: <ISO date>, // the date the ping was generated
-  version: <number>, // the version of the ping format
-
-  application: {
-    architecture: <string>, // build architecture, e.g. x86
-    buildId: <string>, // "20141126041045"
-    // etc
-  },
-
-  clientId: <UUID>, // optional
-  environment: { ... }, // optional, not all pings contain
-  payload: { ... }, // actual payload data for this ping type
+\begin{lstlisting}[language=C++]
+void vector_add(int n, const float *a, const float *b, float *c) {
+  for (int i = 0; i < n; i++) {
+    c[i] = a[i] + b[i];
 }
+\end{lstlisting}
+
+
+The same code looks like this as a kernel:
+\begin{lstlisting}[language=C++]
+__global__ void vector_add(float* A, float* B, float* C)
+{
+    int i = threadIdx.x;
+    C[i] = A[i] + B[i];
+}
+\end{lstlisting}
+
+The loop became implicit!
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Going Backwards?}
+
+You can write kernels in a variant of \CPP.
+
+
+A large number of features of more recent versions of the language are supported.
+
+How much will vary based on your release of the kernel compiler (\text{nvcc}).
+
+It's unlikely that we'll be doing too many things that are exotic enough to be forbidden by the compiler.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{The Compiled Kernel}
+
+The kernel is compiled into PTX -- Parallel Thread eXecution -- instructions.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/hieroglyphics.jpg}
+\end{center}
+
+Can we write our own? Yes. Will we? No.
+
+Use the \texttt{nvcc} compiler.
+
+Recompile if you change machines!
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Running \texttt{nvcc}}
+
+The \texttt{nvcc} compiler has specific requirements for the underlying compiler it relies upon. 
+
+For example, on \texttt{ecetesla2} at the time of writing, \texttt{nvcc} fails without specifying \texttt{gcc} version 6 instead of the default. 
+
+With the command \texttt{nvcc --compiler-bindir /usr/bin/gcc-6 -ptx nbody.cu}, it will compile. 
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Danger! Danger!}
+
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/unsafe.png}
+\end{center}
+
+The kernel has none of the safety guarantees that we normally get in Rust! 
+
+We can easily read off the end of an array, forget to initialize a variable, allocate memory that we forget to deallocate...
+
+So, just because it compiles, doesn't mean it will work.
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{I broke it...}
+
+Here's something I got in testing:
+{\tiny
+\begin{verbatim}
+thread 'main' panicked at 'Failed to deallocate CUDA Device memory.: IllegalAddress', 
+/home/jzarnett/.cargo/registry/src/github.com-1ecc6299db9ec823/rustacuda-0.1.2/src/memory/device/device_buffer.rs:259:32
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+thread 'main' panicked at 'Failed to deallocate CUDA Device memory.: IllegalAddress', 
+/home/jzarnett/.cargo/registry/src/github.com-1ecc6299db9ec823/rustacuda-0.1.2/src/memory/device/device_buffer.rs:259:32
+stack backtrace:
 \end{verbatim}
-\end{frame}
+}
 
-\begin{frame}
-\frametitle{Ping contents}
-\Large
-
-\begin{enumerate}
-\item Scalars (counts, booleans, strings)
-\item Histograms = bucketed data (like grade distributions)
-\end{enumerate}
-
-Both scalars and histograms can be keyed, \\
-e.g. how often searches happen for which search engines.
-\end{frame}
-
-\part{Laws of Performant Software}
-
-\begin{frame}
-\partpage
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Laws of Performant Software}
+\frametitle{N-Body Problem Kernel}
 
-Suppose you want to write fast programs...\\
-\quad And you like checklists and handy rules. 
+Let's take a look at a kernel for the N-Body problem!
 
-If so, you are in luck, because there is Crista's Five Laws of Performant Software!
+We'll also use that when we examine how to launch a CUDA program.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Practice Makes Perfect}
+Let's think about how to write the kernel well.
+
+We need to decide what sort of work belongs in the kernel to begin with.
+
+Loops good, as long as they're not sequential (some coordination is okay).
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Two-Dimensions?}
+
+What if we wanted to make the N-Body kernel a two-dimensional problem? 
+
+We could instead treat each pair of points $(i, j)$ as a point in the space, making it a two-dimensional problem. 
+
+Then you could think of it as a matrix rather than an array and provide it to CUDA like that. This might increase the parallelism! 
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Sounds Good, Doesn't Work}
+
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/thelaw.png}
+	\includegraphics[width=0.5\textwidth]{images/soundsgood.jpg}
+\end{center}
+
+The calculation of body-body interaction for just one pair of points is a very small amount of work, tiny even. 
+
+Having one work-item for each such calculation means there's a lot of overhead to complete the calculation and it doesn't make sense. 
+
+But if the calculation of the interaction were more complex, then this transformation might be an improvement!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{MORE DIMENSIONS!}
+
+You can have a three-dimensional problem, but no more.
+
+If you want something more than a three-dimensional, you have to have some loops in your code.
+
+The limit to three dimensions is probably because graphics cards were designed for rendering images in 3-D so it seems logical?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Go the other way?}
+
+Of course, you can sometimes flatten the dimensions of your problem a bit. 
+
+A rectangular array in C/\CPP~is really stored as a linear array and the \texttt{[x][y]} is just notational convenience so you could easily just treat it as a linear array.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Brute Force a Password?}
+
+Consider something like brute-forcing a password of 6 characters (easy, but just for the purpose of an example).
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/hackerman2.png}
+\end{center}
+
+A one-dimensional approach: generate all possibilities in host code.
+
+Generate possibilities in kernel code
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Branches}
+
+The hardware will execute \emph{all} branches that any thread in a warp
+      executes---can be slow!\\[1em]
+
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/whynotboth.jpg}
 \end{center}
 
 \end{frame}
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Branches in kernels}
+
+    \begin{lstlisting}
+__global__ void contains_branch(float *a, float *b) {
+    if (condition()) {
+        a[blockIdx.x] += 5.0;
+    } else {
+        b[blockIdx.x] += 5.0;
+    }
+}
+\end{lstlisting}
+
+    
+    In other words: an {\tt if} statement will cause each thread to execute
+      both branches; we keep only the result of the taken branch.\\[1em]
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Loops in kernels}
+
+
+    \begin{lstlisting}
+__device__ void foo(int *p1, int *p2) {
+  for (int i = 0; i < 12; ++i) {
+    p1[i] += p2[i]*2;
+  }
+}
+    \end{lstlisting}
+
+
+    A loop will cause the workgroup to wait for the maximum number of
+      iterations of the loop in any work-item.\\[1em]
+
+The compiler will try to unroll loops if it can.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 \begin{frame}
-\frametitle{Rule 1: Knowledge is Power}
+\frametitle{Atomics}
 
-\textbf{1. Programming language $<<$ Programmers' awareness of performance.}
+Race conditions can still occur. 
 
-There is no programming language that is magic, whether good or evil. 
+This means that if you want to, say, concurrently add to the same location, you need to use atomic functions. 
 
-All the major programming languages allow you to write programs that perform well or badly. 
+The atomic operations are usable on the standard primitive types.
 
-High level languages give you lots of options...\\
-\quad Do I use an array? A vector? A list? 
+There are the usual operations: add, sub, min, inc, dec, compare-and-swap, bitwise.
 
-What do they do behind the scenes?\\
-\quad Is there a better way?
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Atomic Example}
+
+\begin{lstlisting}[language=C++]
+__device__ double atomicAdd(double* address, double val) {
+    unsigned long long int* address_as_ull =
+                              (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed,
+                        __double_as_longlong(val +
+                               __longlong_as_double(assumed)));
+
+    // Note: uses integer comparison to avoid hang in case of NaN (since NaN != NaN)
+    } while (assumed != old);
+
+    return __longlong_as_double(old);
+}
+\end{lstlisting}
 
 \end{frame}
 
 
 
+
 \begin{frame}
-\frametitle{Rule 1 Asterisk}
+\frametitle{Launch?}
 
 \begin{center}
-	\includegraphics[width=0.2\textwidth]{images/lambda.png}
+	\includegraphics[width=0.3\textwidth]{images/launch.jpg}
 \end{center}
 
-Some languages lend themselves better to parallelization than others. 
+So far, all we have covered is the theory and then how to write a kernel. 
 
-A language may force a certain way of thinking, based on its rules (e.g., functional programming languages). 
-
-But there is no reason why the way of thinking can't be applied in another language.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Rule 2: Nonlinear Output}
-
-\textbf{2. $d(f^{\tau}(x), f^{\tau}(y)) > e^{\alpha\tau} d(x, y)$ or small details matter.}
-
-If two versions of the code are $x$ and $y$, the difference between the performance outcomes $f(x), f(y)$ is much larger than the difference between the code.
-
-Did you fix a memory leak? The addition of one \texttt{free()} call is a single line code change but can, in the long run, have a dramatic impact on performance. 
-
-Don't overlook the small stuff!
-
-\end{frame}
-
-
-
-
-\begin{frame}
-\frametitle{Rule 3: Establish Boundaries}
-
-\textbf{3. corr(performance degradation, unbounded resource usage) > 0.9.}
-
-There is a very high correlation between performance degradation and unbounded use of resources. 
-
-Often times we focus on functionality: the software must have the following 847~251 features! 
-
-But if you want a program that scales you need to think in terms of operation, not functionality.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Rule 3: Establish Boundaries}
-
-Resources need to be limited. 
-
-If there aren't hard limits, eventually a resource will be exhausted. 
-
-If the program starts threads, use a thread pool and the thread pool should have a fixed size. 
-
-Is there a cache? It needs a maximum size. 
-
-If you need to read input, don't use a function that reads an entire line (of arbitrary length). 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Rule 3: Establish Boundaries}
-
-Furthermore your program needs design effort given to what happens when resources are exceeded. 
-
-So you decide to set a request queue size; once that queue is full, further requests are rejected in some well-understood manner. 
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Rule 4: Do Experiments}
-
-\begin{center}
-	\includegraphics[width=0.3\textwidth]{images/ndg.jpg}
-\end{center}
-
-If you want your code to be faster you have to know why it is slow. 
-
-It's okay not to know the answers, but not knowing how to find out is a problem. 
-
-Don't guess; measure.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Rule 5: You Can't Outrun the Fork}
-
-\textbf{5. N*bad != good.}
-
-No amount of nodes, cores, memory, etc, will save you from poorly-written code.
-
-Throwing more hardware at the problem is expensive and ineffective in the long term. 
-
-Bad code is still bad no matter how much hardware it runs on. 
-
-\end{frame}
-
-\part{Performance Tips}
-
-\begin{frame}
-\partpage
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Magnitude}
-
-\textbf{Understand the order of magnitude that matters.} 
-
-Perhaps you are writing code where 100 CPU cycles matters. 
-
-If so, a function that will acquire a lock through some sort of shared-memory interlocked instruction then this instruction is performance murder. 
-
-And it might be even worse if lock acquisition fails and you get blocked for 100~000 cycles trying to acquire the lock... 
-
-On the other hand, if you have a network intensive code then 100 cycles do not matter even the smallest bit because it is lost in the noise of the network.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Worst Case Scenario}
-
-Plan for the worst case scenario (not the nuclear apocalypse).
-
-You can end up paying many more orders of magnitude in cost than you expected under ordinary circumstances.
-
-No doubt you have seen these sorts of things as well and it is an awful user experience. 
-
-The spinning beach ball of death and the ``Not Responding'' added to the title bar are all symptoms of this situation. 
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Acknowledge Asynchrony}
-
-A lot of things are asynchronous without declaring themselves to be.
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/patientbear.jpg}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Acknowledge Asynchrony}
-
-Suppose that Jordan is writing code to return a list of fonts to be used in the UI. 
-
-The code checks a local font cache, and if that is already initialized, returns the fonts found in the cache in a List object. 
-
-If the cache is not initialized, however, the data needs to be loaded, perhaps from the printer. 
-
-Morgan intends to use this list of fonts in the UI of the program but is unaware that in certain circumstances this call will take much longer.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Acknowledge Asynchrony}
-
-Supposing that the API just returns a \texttt{List<Font>}, it is not obvious to Morgan where these come from. 
-
-And in local testing on the dev machine with nothing on it and nothing else doing and the printer is always turned on.
-
-Thus even if the cache is not initialized it is ``fast enough''. 
-
-But in the real world, of course, the printer will be down and unicorns are nowhere to be found and it runs up against some hard timeout of 20 seconds. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Acknowledge Asynchrony}
-
-If Jordan's API now has a return type of \texttt{Task<List>} then it is obvious to Morgan that there is something asynchronous going on here some of the time. 
-
-With this information in hand, the UI won't wait for this task. 
-
-We might even convince Jordan to give us partial results (so we can draw the UI elements as backing data arrives) or at the very least, a progress bar. 
-
-Users love progress bars. 
-
-They are wildly inaccurate and not super informative even if they are accurate, but at least they give the user the impression that something is happening.
-
-\end{frame}
-
-\part{Performance Culture}
-
-\begin{frame}
-\partpage
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Would you work for him?}
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/drevil.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Performance Problem Check}
-
-The author's recommendations of warning signs that performance culture is off the rails:
-
-\begin{itemize}
-\item Answering the question, ``how is the product doing on my key performance metrics,'' is difficult.
-\item Performance often regresses and team members either don't know, don't care, or find out too late to act.
-\item Blame is one of the most common responses to performance problems (either people, infrastructure, or both).
-\end{itemize}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Performance Problem Check}
-
-The author's recommendations of warning signs that performance culture is off the rails:
-
-\begin{itemize}
-
-\item Performance tests swing wildly, cannot be trusted, and are generally ignored by most of the team.
-\item Performance is something one, or a few, individuals are meant to keep an eye on, instead of the whole team.
-\item Performance issues in production are common, and require ugly scrambles to address (and/or cannot be reproduced).
-\end{itemize}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Human After All}
-
-
-As tempting as it is to say these are all technical issues, they are really human problems. 
-
-It would obviously be preferable to start with a good performance culture in the first place, but that is not always going to happen. 
-
-But suppose you are already in a hole. The usual course of action is to stop and say to yourself ``I appear to be in a hole... I know, I'll dig my way out!''. 
-
-The right thing to do would be stop digging, of course...
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Change Comes From Within}
-
-Change has to come from both the top down and the bottom up. 
-
-Management needs to make performance a priority: ask questions, demand rigour... 
-
-While at the same time, people doing the development need to understand the performance of what they write, making practice improvements. 
-
-Both sides need to have zero tolerance for regression.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Run, Run Away}
-
-\begin{center}
-	\includegraphics[width=0.6\textwidth]{images/wouldbegreat.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{There Can't Be One}
-
-If only one person is responsible for performance, this will not work. One person could not reasonably keep up with the rest of the team. 
-
-If the other developers don't have performance in mind when writing, it is a big waste of time for the performance person.
-
-If this isn't convincing, think about unit tests. 
-
-Could you really ``outsource'' the writing of all unit tests to one person? And would code quality be the same if you did?
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Management Matters}
-
-Managers need to budget time, reward the work, and encourage performance work. 
-
-Managers who don't understand performance culture are likely to be caught by surprise and blame things. 
-
-Consider the story of Managers A and B (see the notes).
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Startup}
-
-
-But this is a startup, you object, why does it matter, because we need the minimum viable product and we needed it yesterday.
-
-And also, VCs like features. 
-
-Well maybe, but architecture matters. 
-
-There's time to fix things later, maybe, but you can really cripple your startup by choosing the wrong things early on. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Performance Tests}
-
-After a discussion of the why and the what, it is time to think about how to make it systematic. 
-
-If it is not systematic, it will not get done and it will be dropped when in a time crunch. And development teams are always in a time crunch! 
-
-This is why best practices have automated unit tests that run on every commit. 
-
-If something has significantly regressed performance, the build failed and the commit is no good. 
-
-This obviously requires that the tests be meaningful, testing effectively and not overly noisy. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Performance Tests}
-
-Performance tests may be a bit too large and difficult to run for every commit or every build. 
-
-Although it would be nice to know exactly which commit is the cause of the problem, you may want a test that runs overnight to see the long term trends. 
-
-And thus a 12-hour test is probably unsuitable for this. 
-
-The solution is, obviously, levels of test. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Zero Tolerance}
-
-A zero tolerance rules advocated: anything that significantly regresses performance is reverted and re-worked. 
-
-No exceptions, no questions, no pleading one's case, etc. 
-
-If exceptions are allowed, exceptions quickly become the rule, and promises to fix something later are procrastinated endlessly.
-
-Obviously when code does more it should be expected to take longer, but then the test(s) should be adjusted as well.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Metrics}
-
-There are, roughly speaking, two categories of metrics:
-
-\begin{itemize}
-	\item \textit{Consumption}: measure resources consumed by running a test.
-	\item \textit{Observational}: measure the outcomes of running the test, from the view of outside the system.
-\end{itemize}
-
-
-\end{frame}
-
-
-
-
-\begin{frame}
-\frametitle{Observational Metrics}
-
-It might seem like observational metrics are all that we care about. 
-
-End users care about the amount of time it takes to complete their work, or management/sales/marketing/C-levels care about the throughput and that's it. 
-
-This matters, sure, but it's not enough to know the outcome; the consumption metrics are necessary to break down why the total time is what it is.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Observational Metrics}
-
-Suppose a change is committed and the tests run and the total time it takes increases by 10\%. 
-
-If that's all you know, you know things got worse but have no data as to why. 
-
-If you see that memory allocations are reported and you have now allocated more memory than before,  at least you have a theory to start with.
-
-It might not be that, it might be something else entirely, but it's a place to start. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Printf Debugging}
-
-Does this remind you of \texttt{printf} debugging? It's a little bit like that. 
-
-But then again, you want to use this sort of thing for long running tests anyway. 
-
-If the test is going to run for 4h it would be helpful to know where exactly in that four hours it went off the rails (on a crazy train!). 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Variability}
-
-There's one more consideration and that is the variability between runs. In the ideal situation, there is consistent performance every run. 
-
-That is probably too much to ask for and there will be some natural variation due to nondeterminism in computers. 
-
-But a change that causes a wild change in the variance is also no good. 
-
-A test that sometimes finishes in 0.5$x$ time and sometimes in 2$x$ time has a high variance and this will not be acceptable. 
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Dig Deep}
-
-Be ready to dig deep: suppose a developer has introduced a change that is slow under rare circumstances. 
-
-Those rare circumstances are not triggered until $n$ years later when a second developer introduces another change. 
-
-The second change will be identified, at least initially, as the ``problem''. 
-
-There's two ways to go about it; either fix the initial change or work around it.
-
-It's not about blame or not about fault; it's about improving the performance of the software.
+To make use of it, we'll have to look at the host code. That's our next topic. 
 
 \end{frame}
 
