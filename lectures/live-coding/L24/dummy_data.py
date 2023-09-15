@@ -7,7 +7,7 @@ from transformers import TrainingArguments, Trainer, logging
 
 default_args = {
     "output_dir": "tmp",
-    "evaluation_strategy": "steps",
+    "evaluation_strategy": "no",
     "num_train_epochs": 1,
     "log_level": "error",
     "report_to": "none",
@@ -31,7 +31,7 @@ torch.ones((1, 1)).to("cuda")
 print("Initialized Torch; current GPU utilization:")
 print_gpu_utilization()
 
-model = AutoModelForSequenceClassification.from_pretrained("bert-large-uncased").to("cuda")
+model = AutoModelForSequenceClassification.from_pretrained("bert-base-uncased").to("cuda")
 print_gpu_utilization()
 
 logging.set_verbosity_error()
@@ -44,7 +44,7 @@ dummy_data = {
 ds = Dataset.from_dict(dummy_data)
 ds.set_format("pt")
 
-training_args = TrainingArguments(per_device_train_batch_size=1, **default_args)
+training_args = TrainingArguments(per_device_train_batch_size=8, **default_args)
 trainer = Trainer(model=model, args=training_args, train_dataset=ds)
 result = trainer.train()
 print_summary(result)
