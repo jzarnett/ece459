@@ -27,10 +27,172 @@ In discussing the optimizations we can make, we'll also need to consider what is
 
 The first one is easy to motivate and we have learned numerous techniques that could be applied here. Examples: Use more space to reduce CPU usage, optimize for common cases, speculate, et cetera. Some of these are more fun than others: given a particular question, can you guess what the followup might be? 
 
-Before we get into the subject of how, we should address the question of why you would wish to generate or customize a LLM rather than use an existing one. To start with, you might not want to send your (sensitive) data to a third party for analysis. Still, you can download and use some existing models. So generating a model or refining an existing one may make sense in a situation where you will get better results by creating a more specialized model than the generic one. To illustrate what I mean, ChatGPT will gladly make you a Dungeons \& Dragons campaign setting, but you don't need it to have that capability if you want it to analyze your customer behaviours to find the ones who are most likely to be open to upgrading their plan. That extra capability (parameters) takes up space and computational time and a smaller model that gives better answers is more efficient. 
+Before we get into the subject of how, we should address the question of why you would wish to generate or customize a LLM rather than use an existing one. To start with, you might not want to send your (sensitive) data to a third party for analysis. Still, you can download and use some existing models. So generating a model or refining an existing one may make sense in a situation where you will get better results by creating a more specialized model than the generic one. To illustrate what I mean, ChatGPT will gladly make you a Dungeons \& Dragons campaign setting, but you don't need it to have that capability if you want it to analyze your customer behaviours to find the ones who are most likely to be open to upgrading their plan. That extra capability (parameters) takes up space and computational time and a smaller model that gives better answers is more efficient.
 
-\subsection*{Techniques}
-Now we can discuss the techniques for optimizing the LLM training and talk about how they map to things that we've already discussed in the course. 
+Our first major optimization, and perhaps the easiest to do, is the batch size. The batch size is just telling the GPU how much to do at once. It's a little bit like when we discussed the idea of creating more threads to increase performance; you may see an improvement by having more workers active but you also may not get any additional benefit from worker $N+1$ over $N$ since there may not be enough work or other resource conflicts.
+
+I've used an example from Hugging Face~\cite{hf2} with some light modifications to see what we can do with a very simply example using dummy data. Let's go over and look at that example now. It's in Python (a lot of LLM, machine learning, etc. content is) but it shouldn't be too difficult to understand as we walk through it.
+
+\begin{lstlisting}[language=python]
+import numpy as np
+import torch
+from datasets import Dataset
+from pynvml import *
+from transformers import AutoModelForSequenceClassification
+from transformers import TrainingArguments, Trainer, logging
+
+default_args = {
+    "output_dir": "tmp",
+    "evaluation_strategy": "no",
+    "num_train_epochs": 1,
+    "log_level": "error",
+    "report_to": "none",
+}
+
+
+def print_gpu_utilization():
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(0)
+    info = nvmlDeviceGetMemoryInfo(handle)
+    print(f"GPU memory occupied: {info.used // 1024 ** 2} MB.")
+
+
+def print_summary(res):
+    print(f"Time: {res.metrics['train_runtime']:.2f}")
+    print(f"Samples/second: {res.metrics['train_samples_per_second']:.2f}")
+    print_gpu_utilization()
+
+
+print("Starting up. Initial GPU utilization:")
+print_gpu_utilization()
+torch.ones((1, 1)).to("cuda")
+print("Initialized Torch; current GPU utilization:")
+print_gpu_utilization()
+
+model = AutoModelForSequenceClassification.from_pretrained("bert-large-uncased").to("cuda")
+print_gpu_utilization()
+
+logging.set_verbosity_error()
+
+seq_len, dataset_size = 512, 512
+dummy_data = {
+    "input_ids": np.random.randint(100, 30000, (dataset_size, seq_len)),
+    "labels": np.random.randint(0, 1, dataset_size),
+}
+ds = Dataset.from_dict(dummy_data)
+ds.set_format("pt")
+
+training_args = TrainingArguments(per_device_train_batch_size=4, **default_args)
+trainer = Trainer(model=model, args=training_args, train_dataset=ds)
+result = trainer.train()
+print_summary(result)
+\end{lstlisting}
+
+The bert-large-uncased model~\cite{bert} is not a particularly large one -- it says on its data sheet that it's about 340 MB -- and it's trained on a bunch of English language data. It's uncased because it makes no distinction between capitals and lower-case letters, e.g., it sees ``Word'' and ``word'' as equivalent.
+
+First I tried to run it on my laptop, but that failed because it does not have any nvidia GPU, which is not surprising. Next I tried to run this on \texttt{ecetesla0} and I saw the following output (skipped some of the stack trace):
+
+{\small
+\begin{verbatim}
+jzarnett@ecetesla0:~/github/ece459/lectures/live-coding/L24$ python3 dummy_data.py 
+Starting up. Initial GPU utilization:
+GPU memory occupied: 0 MB.
+Initialized Torch; current GPU utilization:
+GPU memory occupied: 417 MB.
+Some weights of BertForSequenceClassification were not initialized from the model checkpoint at 
+bert-large-uncased and are newly initialized: ['classifier.bias', 'classifier.weight']
+You should probably TRAIN this model on a down-stream task to be able to use it for predictions 
+and inference.
+GPU memory occupied: 1705 MB.
+torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 20.00 MiB (GPU 0; 
+7.43 GiB total capacity; 6.90 GiB already allocated; 16.81 MiB free; 6.90 GiB 
+reserved in total by PyTorch) If reserved memory is >> allocated memory try setting 
+max_split_size_mb to avoid fragmentation.  See documentation for Memory Management
+and PYTORCH_CUDA_ALLOC_CONF
+\end{verbatim}
+}
+
+So the \texttt{ecetesla0} machine ran out of memory trying to process this. Using \texttt{nvidia-smi} I learned that the card has only \texttt{7611MiB} of VRAM available and that does not seem like a lot for the kind of work we are trying to do. The configuration we had asked for a batch size of 4 and it's possible that this is just too much to fit in memory at once for this old card. Reducing batch size to 2 did not help, nor 1. This is a clear indication that for the model that we want to use, the card isn't going to cut it. Scotty, we need more power.
+
+What I actually did next was change to a smaller version of the model, \texttt{bert-base-uncased} which was significantly smaller (110 MB) and something the small card could handle. Here's the output with batch size of 1:
+
+{\small
+\begin{verbatim}
+jzarnett@ecetesla0:~/github/ece459/lectures/live-coding/L24$ python3 dummy_data.py 
+Starting up. Initial GPU utilization:
+GPU memory occupied: 0 MB.
+Initialized Torch; current GPU utilization:
+GPU memory occupied: 417 MB.
+Some weights of BertForSequenceClassification were not initialized from the model checkpoint at 
+bert-base-uncased and are newly initialized: ['classifier.weight', 'classifier.bias']
+You should probably TRAIN this model on a down-stream task to be able to use
+ it for predictions and inference.
+GPU memory occupied: 887 MB.
+{'loss': 0.0028, 'learning_rate': 1.1718750000000001e-06, 'epoch': 0.98}
+{'train_runtime': 109.6152, 'train_samples_per_second': 4.671, 
+'train_steps_per_second': 4.671, 'train_loss': 0.0027378778694355788, 'epoch': 1.0}
+Time: 109.62
+Samples/second: 4.67
+GPU memory occupied: 3281 MB.
+\end{verbatim}
+}
+Then I needed to experiment some more with batch size to find the ideal for this card. To condense the results a little bit, see the results table below.
+
+\begin{center}
+\begin{tabular}{r|r|r|r|r}
+\textbf{Batch Size} & \textbf{Time (s)} & \textbf{Samples/s} & \textbf{Memory Occupied (MB)} & \textbf{Utilization (\%)} \\ \hline
+1 & 109.62 & 4.67 & 3~281 & 43.1 \\
+2 & 85.82 & 5.97 & 3~391 & 44.6 \\
+4 & 72.18 & 7.09 & 4~613 & 60.6 \\
+8 & 66.70 & 7.68 & 7~069 & 92.9 \\
+\end{tabular}
+\end{center}
+
+And given what we know about the GPU in this system, it's not surprising the OOM error returns when the batch size is increased to 9. The other thing that's nice is that the OOM is encountered very quickly on startup so it's easy to just binary search different batch sizes to find the maximum you can process in one go. 
+
+We can try some other optimization techniques to see if we can squeeze out a little more performance from this. There are a number of different techniques that we can focus on to try to optimize memory utilization since that's our limiting factor. Focusing on memory utilization is a part of what makes this topic a little different than most of the others we've covered in this course, which tend to be much more compute-focused. 
+
+\paragraph{Gradient Accumulation.} The idea behind gradient accumulation is to calculate gradients in small increments rather than for the whole batch; doing this can increase the effective batch size, at the risk of slowing down the total process by having too many compute steps~\cite{hf}.
+
+Experimenting with this and batch size fixed at 8:
+
+\begin{center}
+\begin{tabular}{r|r|r|r|r}
+\textbf{Gradient Accumulation Steps} & \textbf{Time (s)} & \textbf{Samples/s} & \textbf{Memory Occupied (MB)} & \textbf{Utilization (\%)} \\ \hline
+1 & 66.06 & 7.75 & 7~069 & 92.9 \\
+2 & 63.96 & 8.01 & 7~509 & 98s.7 \\
+4 & 62.81 & 8.15 & 7~509 & 98.7 \\
+8 & 62.65 & 8.17 & 7~509 & 98.7 \\
+16 & 62.42 & 8.20 & 7~509 & 98.7 \\
+32 & 62.44 & 8.20 & 7~509 & 98.7\\
+128 & 62.20 & 8.23 & 6~637 & 87.2\\
+1024 & 61.78 & 8.29 & 6~637 & 87.2 \\
+4096 & 62.16 & 8.24 & 6~637 & 87.2
+\end{tabular}
+\end{center}
+
+We can see that we very quickly hit diminishing returns on this, but it seems like increasing the number continues to have a marginal benefit, basically for free, up until we get to around 1024. However, I got suspicious about the 128 dropoff in memory usage and it made me think about other indicators -- is it getting worse somehow? The output talks about training loss...
+
+\begin{center}
+\begin{tabular}{r|r}
+\textbf{Gradient Accumulation Steps} & \textbf{Loss} \\ \hline
+1 & 0.029 \\
+2 & 0.070 \\
+4 & 0.163 \\
+8 & 0.169 \\
+16 & 0.447 \\
+32 & 0.445 \\
+128 & 0.435 \\
+1024 & 0.463 \\
+4096 & 0.014 \\
+\end{tabular}
+\end{center}
+
+Does that seem concerning? We won't really know unless we do some validation -- and this is random data so validating it seems a little bit silly -- but are we perhaps trading accuracy for time? I think the only way to find out is that we start having a validation data set. We could get through the first steps here of batch size without giving much thought to this part, but now we're kind of stuck. So let's find out.
+
+We'll follow another guide from~\cite{hf3} where will 
+
+
 
 \input{bibliography.tex}
 
