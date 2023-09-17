@@ -1,12 +1,13 @@
 import evaluate
-import torch
 import numpy as np
-from evaluate import evaluator
+import torch
 from datasets import load_dataset
-from transformers import AutoTokenizer
-from transformers import TrainingArguments, Trainer, logging
+from evaluate import evaluator
 from pynvml import *
 from transformers import AutoModelForSequenceClassification
+from transformers import AutoTokenizer
+from transformers import TrainingArguments, Trainer, logging
+
 
 def tokenize_function(examples):
     return tokenizer(examples["text"], padding="max_length", truncation=True)
@@ -18,12 +19,14 @@ def print_gpu_utilization():
     info = nvmlDeviceGetMemoryInfo(handle)
     print(f"GPU memory occupied: {info.used // 1024 ** 2} MB.")
 
+
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
     computed = metric.compute(predictions=predictions, references=labels)
     print(computed)
     return computed
+
 
 def print_summary(res):
     print(f"Time: {res.metrics['train_runtime']:.2f}")
@@ -48,6 +51,7 @@ small_eval_dataset = tokenized_datasets["test"].shuffle(seed=42).select(range(10
 model = AutoModelForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=5)
 training_args = TrainingArguments(
     per_device_train_batch_size=8,
+    gradient_accumulation_steps=1,
     evaluation_strategy="epoch",
     output_dir="test_trainer,"
 )
@@ -63,4 +67,3 @@ trainer = Trainer(
 
 result = trainer.train()
 print_summary(result)
-

@@ -88,7 +88,7 @@ result = trainer.train()
 print_summary(result)
 \end{lstlisting}
 
-The bert-large-uncased model~\cite{bert} is not a particularly large one -- it says on its data sheet that it's about 340 MB -- and it's trained on a bunch of English language data. It's uncased because it makes no distinction between capitals and lower-case letters, e.g., it sees ``Word'' and ``word'' as equivalent.
+The bert-large-uncased model~\cite{bert} is not a particularly large one -- it says on its data sheet that it's about 340~MB -- and it's trained on a bunch of English language data. It's uncased because it makes no distinction between capitals and lower-case letters, e.g., it sees ``Word'' and ``word'' as equivalent.
 
 First I tried to run it on my laptop, but that failed because it does not have any nvidia GPU, which is not surprising. Next I tried to run this on \texttt{ecetesla0} and I saw the following output (skipped some of the stack trace):
 
@@ -112,9 +112,9 @@ and PYTORCH_CUDA_ALLOC_CONF
 \end{verbatim}
 }
 
-So the \texttt{ecetesla0} machine ran out of memory trying to process this. Using \texttt{nvidia-smi} I learned that the card has only \texttt{7611MiB} of VRAM available and that does not seem like a lot for the kind of work we are trying to do. The configuration we had asked for a batch size of 4 and it's possible that this is just too much to fit in memory at once for this old card. Reducing batch size to 2 did not help, nor 1. This is a clear indication that for the model that we want to use, the card isn't going to cut it. Scotty, we need more power.
+So the \texttt{ecetesla0} machine ran out of memory trying to process this. Using \texttt{nvidia-smi} I learned that the card has only \texttt{7611MiB} of VRAM available and that does not seem like a lot for the kind of work we are trying to do. The configuration we had asked for a batch size of 4 and it's possible that this is just too much to fit in memory at once for this old card. Reducing batch size to 2 did not help, nor did 1. This is a clear indication that for the model that we want to use, the card isn't going to cut it. Scotty, we need more power.
 
-What I actually did next was change to a smaller version of the model, \texttt{bert-base-uncased} which was significantly smaller (110 MB) and something the small card could handle. Here's the output with batch size of 1:
+What I actually did next was change to a smaller version of the model, \texttt{bert-base-uncased} which was significantly smaller (110~MB) and something the small card could handle. Here's the output with batch size of 1:
 
 {\small
 \begin{verbatim}
@@ -188,11 +188,117 @@ We can see that we very quickly hit diminishing returns on this, but it seems li
 \end{tabular}
 \end{center}
 
-Does that seem concerning? We won't really know unless we do some validation -- and this is random data so validating it seems a little bit silly -- but are we perhaps trading accuracy for time? I think the only way to find out is that we start having a validation data set. We could get through the first steps here of batch size without giving much thought to this part, but now we're kind of stuck. So let's find out.
+Does that seem concerning? We won't really know unless we do some validation -- and this is random data so validating it won't really work for this scenario. Are we perhaps trading accuracy for time? I think the only way to find out is that we need to have a validation data set. We could get through the first steps here of batch size without giving much thought to this part, but now we're kind of stuck. So let's find out.
 
-We'll follow another guide from~\cite{hf3} where will 
+We'll follow another guide from~\cite{hf3} where the goal is to train and validate using some Yelp data. Yes, Yelp, the website that struggling restaurant owners blame for ruining their ``gourmet burger'' place that charges you \$22 for an unimpressive reheated Sysco hamburger with no side dish. Running this does take significantly longer, but that's to be expected. The training is divided into three epochs and accuracy is calculated at the end of each of those using a training and evaluation set.
+
+\begin{lstlisting}[language=python]
+import evaluate
+import numpy as np
+import torch
+from datasets import load_dataset
+from evaluate import evaluator
+from pynvml import *
+from transformers import AutoModelForSequenceClassification
+from transformers import AutoTokenizer
+from transformers import TrainingArguments, Trainer, logging
 
 
+def tokenize_function(examples):
+    return tokenizer(examples["text"], padding="max_length", truncation=True)
+
+
+def print_gpu_utilization():
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(0)
+    info = nvmlDeviceGetMemoryInfo(handle)
+    print(f"GPU memory occupied: {info.used // 1024 ** 2} MB.")
+
+
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    predictions = np.argmax(logits, axis=-1)
+    computed = metric.compute(predictions=predictions, references=labels)
+    print(computed)
+    return computed
+
+
+def print_summary(res):
+    print(f"Time: {res.metrics['train_runtime']:.2f}")
+    print(f"Samples/second: {res.metrics['train_samples_per_second']:.2f}")
+    print_gpu_utilization()
+
+
+print("Starting up. Initial GPU utilization:")
+print_gpu_utilization()
+torch.ones((1, 1)).to("cuda")
+print("Initialized Torch; current GPU utilization:")
+print_gpu_utilization()
+
+dataset = load_dataset("yelp_review_full")
+tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+
+tokenized_datasets = dataset.map(tokenize_function, batched=True)
+
+small_train_dataset = tokenized_datasets["train"].shuffle(seed=42).select(range(1000))
+small_eval_dataset = tokenized_datasets["test"].shuffle(seed=42).select(range(1000))
+
+model = AutoModelForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=5)
+training_args = TrainingArguments(
+    per_device_train_batch_size=8,
+    gradient_accumulation_steps=1,
+    evaluation_strategy="epoch",
+    output_dir="test_trainer,"
+)
+metric = evaluate.load("accuracy")
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=small_train_dataset,
+    eval_dataset=small_eval_dataset,
+    compute_metrics=compute_metrics,
+)
+
+result = trainer.train()
+print_summary(result)
+\end{lstlisting}
+
+
+And our results table with batch size of 8. I've skipped some intermediate results since at 9 minutes to calculate it takes a while to fill in all the values above. But jumping up some levels illustrates the trend.
+
+\begin{center}
+\begin{tabular}{r|r|r|r|r}
+\textbf{Gradient Accumulation Steps} & \textbf{Time (s)} & \textbf{Samples/s} & \textbf{Memory Occupied (MB)} & Final Accuracy\\ \hline
+1 & 538.37 & 5.56 & 7~069 & 0.621 \\
+8 & 501.89 & 5.98 & 7~509 & 0.554 \\
+32 & 429.70 & 6.98 & 7~509 & 0.347 \\
+1024 & 513.17 & 5.85 & 7~509 & 0.222 \\
+\end{tabular}
+\end{center}
+
+I ran the 32 case a few times to check if this was an outlier -- the one in the table is the best result. But it's still noticeably lower than that of the case where gradient accumulation is 1. Interesting, right? Increasing the gradient accumulation does change the effective batch size, and as you may know, increasing the batch size too large means less ability to generalize. Which is another way of saying that the model gets stuck at local minima or overfits the data.
+
+That's not to say that smaller batch sizes are always better; models are way more complicated than that -- we can also underfit the model. It's part of why it's important to have training and validation data, so we can optimize and find the right balance. In the Yelp example, I get worse accuracy with batch size of 1 than 4, and 4 is worse than 8. There really is no magic number.
+
+\subsection*{Other Ideas}
+Just in the interests of time, we won't be able to experiment with everything, but the source has some other ideas that are worth mentioning as they relate to other course concepts we've discussed~\cite{hf}.
+
+\paragraph{Gradient Checkpointing.} This approach is based around the idea of increasing CPU time to reduce memory usage. It might allow us to work with a bigger model even with our fairly limited card memory, but training will take longer; according to the source it might be about 20\%. By default, all activations from the forward-pass are saved so they can be used in the backward pass; we could not save them and recalculate them from scratch on the backward pass. That would save the most memory but take the most time. A compromise approach is to save some of the activations so that the total amount to recompute on the backward pass is less. 
+
+Trying this out with batch size of 8 and gradient accumulation turned off, the total time goes from 66.70 to 93.07s and the memory from 7~069 down to 3619 MB. As expected, we got slower but used less memory. Actually, more like half the memory. Maybe it means we can increase the batch size? Raising it to 16 means the time was  100.55s but still only 3731 MB.
+
+Increasing the batch size a lot to finish faster might work, although it might require a very large batch size and not really save us anything since it would take quite a lot to fall below the time taken when not using the checkpointing. And no, using this checkpointing even with a batch size of 1 is not sufficient to run the \texttt{bert-large-uncased} model on \texttt{ecetesla0}. 
+
+\paragraph{Mixed Precision.} This is a fairly straightforward tradeoff of accuracy for time; while the default for most things might be 32-bit floating point numbers, if we don't need that level of precision then some of the 32-bit types could be replaced with 16-bit ones and this can speed up calculations. 
+
+\paragraph{Data Preloading.} If your limiting factor is in getting work to the GPU, data pre-loading is about either pinned memory or multi-threads to get data to the GPU faster. If you recall from the operating systems course you (hopefully) took, pinned memory is pages of memory where the operating system is instructed not to swap those pages to disk (i.e., keep them in RAM) for faster access. And multiple threads, well, this is clear at this point. 
+
+This is by no means exhaustive -- the guide talks about other ideas that we haven't got time to cover, like Gradient Checkpointing and Mixture of Experts, which are very deep into the details and beyond what we want to cover here. And finally, we could consider doing things like buying a bigger (better) GPU, or using multiple GPUs for more parallelism. All the things we know about CPU work in this problem domain. 
+
+\subsection*{Tradeoffs}
+
+More than any other topic, the LLM topic shows the inherent tradeoffs in optimizing things. Do we trade memory for CPU? Do we trade accuracy for time? Do we prefer to err on the side of under- or over-fitting the model and how does that affect our choices on the other dimensions? I imagine that in the next few years our tools and ways of deciding these things will become much more sophisticated and best practices and known-good answers will emerge. But in the meantime, we can have a lot of fun experimenting and learning.
 
 \input{bibliography.tex}
 
