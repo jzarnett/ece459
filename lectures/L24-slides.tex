@@ -292,6 +292,241 @@ What I actually did next was change to a smaller version of the model, \texttt{b
 
 It's significantly smaller (110~MB) and something the card could handle. 
 
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Smaller Model Output}
+
+{\scriptsize
+\begin{verbatim}
+jzarnett@ecetesla0:~/github/ece459/lectures/live-coding/L24$ python3 dummy_data.py 
+Starting up. Initial GPU utilization:
+GPU memory occupied: 0 MB.
+Initialized Torch; current GPU utilization:
+GPU memory occupied: 417 MB.
+Some weights of BertForSequenceClassification were not initialized from the 
+model checkpoint at  bert-base-uncased and are newly initialized: 
+['classifier.weight', 'classifier.bias']
+You should probably TRAIN this model on a down-stream task to be able to use
+ it for predictions and inference.
+GPU memory occupied: 887 MB.
+{'loss': 0.0028, 'learning_rate': 1.1718750000000001e-06, 'epoch': 0.98}
+{'train_runtime': 109.6152, 'train_samples_per_second': 4.671, 
+'train_steps_per_second': 4.671, 'train_loss': 0.0027378778694355788, 'epoch': 1.0}
+Time: 109.62
+Samples/second: 4.67
+GPU memory occupied: 3281 MB.
+\end{verbatim}
+}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Results Table}
+
+Then I needed to experiment some more with batch size to find the ideal.
+
+\begin{center}
+\begin{tabular}{r|r|r|r|r}
+\textbf{Batch Size} & \textbf{Time (s)} & \textbf{Samples/s} & \textbf{Memory Used (MB)} & \textbf{Utilization (\%)} \\ \hline
+1 & 109.62 & 4.67 & 3~281 & 43.1 \\
+2 & 85.82 & 5.97 & 3~391 & 44.6 \\
+4 & 72.18 & 7.09 & 4~613 & 60.6 \\
+8 & 66.70 & 7.68 & 7~069 & 92.9 \\
+\end{tabular}
+\end{center}
+
+Unsurprisingly, choosing batch size of 9 leads to OOM.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Next Idea}
+
+We seem to be memory limited -- let's see what we can do?
+
+First idea: \alert{gradient accumulation}. 
+
+Calculate gradients in small increments rather than for the whole batch.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Experimenting with Gradient Accumulation}
+
+\begin{center}
+\begin{tabular}{r|r|r|r|r}
+\textbf{Steps} & \textbf{Time (s)} & \textbf{Samples/s} & \textbf{Memory Used (MB)} & \textbf{Utilization (\%)} \\ \hline
+1 & 66.06 & 7.75 & 7~069 & 92.9 \\
+2 & 63.96 & 8.01 & 7~509 & 98s.7 \\
+4 & 62.81 & 8.15 & 7~509 & 98.7 \\
+8 & 62.65 & 8.17 & 7~509 & 98.7 \\
+16 & 62.42 & 8.20 & 7~509 & 98.7 \\
+32 & 62.44 & 8.20 & 7~509 & 98.7\\
+128 & 62.20 & 8.23 & 6~637 & 87.2\\
+1024 & 61.78 & 8.29 & 6~637 & 87.2 \\
+4096 & 62.16 & 8.24 & 6~637 & 87.2
+\end{tabular}
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{I got Suspicious}
+
+I got suspicious about the 128 dropoff in memory usage and it made me think about other indicators -- is it getting worse somehow? 
+
+The output talks about training loss...
+
+\begin{center}
+\begin{tabular}{r|r}
+\textbf{Gradient Accumulation Steps} & \textbf{Loss} \\ \hline
+1 & 0.029 \\
+2 & 0.070 \\
+4 & 0.163 \\
+8 & 0.169 \\
+16 & 0.447 \\
+32 & 0.445 \\
+128 & 0.435 \\
+1024 & 0.463 \\
+4096 & 0.014 \\
+\end{tabular}
+\end{center}
+
+Is that concerning?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Let's Validate}
+
+We need to do some validation of how it's going...
+
+
+We'll train and validate using some Yelp data.
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/yelp.png}
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{More Code, More Review}
+
+The python code here is significantly different but we'll take a look.
+
+I've skipped some intermediate results since at 9 minutes to calculate it takes a while to fill in all the values above.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Accuracy Results}
+
+\begin{center}
+\begin{tabular}{r|r|r|r|r}
+\textbf{GA Steps} & \textbf{Time (s)} & \textbf{Samples/s} & \textbf{Memory Used (MB)} & \textbf{Final Accuracy}\\ \hline
+1 & 538.37 & 5.56 & 7~069 & 0.621 \\
+8 & 501.89 & 5.98 & 7~509 & 0.554 \\
+32 & 429.70 & 6.98 & 7~509 & 0.347 \\
+1024 & 513.17 & 5.85 & 7~509 & 0.222 \\
+\end{tabular}
+\end{center}
+
+Interesting results -- maybe a little concerning?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{More Isn't Always Better}
+
+Increasing the gradient accumulation does change the effective batch size...
+
+Batch size too large may mean less ability to generalize (overfitting).
+
+But smaller isn't always better either; can underfit the data.
+
+In the Yelp example, I get worse accuracy with batch size of 1 than 4, and 4 is worse than 8. There really is no magic number.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Gradient Checkpointing}
+
+\alert{Gradient Checkpointing}: increase compute time to save memory.
+
+Instead of saving activations, save only some, recompute the rest.
+
+Does it work?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Gradient Checkpointing}
+
+Trying this out with batch size of 8, the total time goes from 66.70 to 93.07s and the memory from 7~069 down to 3~619 MB. 
+
+As expected, we got slower but used less memory. 
+
+Maybe it means we can increase the batch size? 
+
+Raising it to 16 means the time was  100.55s but still only 3~731 MB
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Gradient Checkpointing}
+
+Increasing the batch size a lot to finish faster might work eventually. 
+
+And no, using this checkpointing even with a batch size of 1 is not sufficient to run the \texttt{bert-large-uncased} model on \texttt{ecetesla0}.
+
+And remember that excessively large batch sizes aren't good...
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Mixed Precision, Data Preloading}
+
+\alert{Mixed Precision}: Use less accurate types (16 vs 32-bit).
+
+\alert{Data Preloading}: Multithread to get data to GPU faster.
+
+Other ideas: Mixture of Experts, bigger GPU, multiple-GPU...
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Tradeoffs}
+\begin{multicols}{2}
+\includegraphics[width=0.35\textwidth]{images/tradeoffer.jpg}
+\columnbreak
+\begin{itemize}
+\item Accuracy for time? \\[5em]
+
+\item Memory for CPU? \\[5em]
+
+\item Err on the side of over- or under-fitting?
+\end{itemize}
+\end{multicols}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Tradeoffs}
+
+In the next few years, technologies and decision-making for this will become much more sophisticated.
+
+But in the meantime, we can have a lot of fun experimenting and learning.
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/funbegins.jpg}
+\end{center}
+
+
+
 
 \end{frame}
 
