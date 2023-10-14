@@ -17,18 +17,24 @@ notebook:
 
 prereqs: 
 	@echo building pthreads
-	@pdflatex -interaction=batchmode  pthreads.tex > /dev/null;
-	@bibtex pthreads > /dev/null;
-	@pdflatex -interaction=batchmode pthreads.tex > /dev/null;
-	@pdflatex -interaction=batchmode pthreads.tex > /dev/null;
+	@pdflatex -interaction=batchmode appendix-a-pthreads.tex > /dev/null;
+	@bibtex appendix-a-pthreads > /dev/null;
+	@pdflatex -interaction=batchmode appendix-a-pthreads.tex > /dev/null;
+	@pdflatex -interaction=batchmode appendix-a-pthreads.tex > /dev/null;
 	@echo building synchronization
-	@pdflatex -interaction=batchmode synchronization.tex > /dev/null;
-	@bibtex synchronization > /dev/null;
-	@pdflatex -interaction=batchmode synchronization.tex > /dev/null;
-	@pdflatex -interaction=batchmode synchronization.tex > /dev/null;
+	@pdflatex -interaction=batchmode appendix-b-synchronization.tex > /dev/null;
+	@bibtex appendix-b-synchronization > /dev/null;
+	@pdflatex -interaction=batchmode appendix-b-synchronization.tex > /dev/null;
+	@pdflatex -interaction=batchmode appendix-b-synchronization.tex > /dev/null;
+	@echo building crossbeam-rayon
+	@pdflatex -interaction=batchmode appendix-c-crossbeam-rayon.tex > /dev/null;
+	@bibtex appendix-c-crossbeam-rayon > /dev/null;
+	@pdflatex -interaction=batchmode appendix-c-crossbeam-rayon.tex > /dev/null;
+	@pdflatex -interaction=batchmode appendix-c-crossbeam-rayon.tex > /dev/null;
+
 
 clean:
-	rm -f *~ *.aux *.log *.bbl *.blg *.brf *.cb *.ind *.idx *.ilg *.pdfsync *.xdv  \
+	rm -f *~ *.aux *.log *.bbl *.blg *.brf *.cb *.ind *.idx *.ilg *.pdfsync *.xdv *.synctex.gz \
 		*.inx *.ps *.dvi *.toc *.out *.nav *.snm *.d *.bak _region* *.vrb *.fls *.fdb_latexmk \
 		makefileDependencies/*
 	rm -rf auto

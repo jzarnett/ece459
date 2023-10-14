@@ -66,6 +66,38 @@ for (index, file) in enumerate(tex_lectures):
 
             buf += '\n' + s
 
+buf += '\\begin{appendices}'
+tex_appendices = sorted(list(filter(lambda x: 'appendix' in x and '.tex' in x, files)))
+
+for (index, file) in enumerate(tex_appendices):
+    if (index < CUTOFF):
+        print('reading: ', file)
+        with open(file, 'r') as f:
+            s = f.read()
+            # Remove include header
+            s = s.replace('\\input{../common/header}', '')
+
+            s = s.replace('\\begin{document}', '') # Remove begin document
+
+            # Remove end of document tag and bibliography tag
+            s = s.replace('\\input{bibliography.tex}', '')
+            s = s.replace('\\end{document}', '')
+
+            # Get chapter title
+            title = re.findall(r'\\lectureappendix{(.+?)}', s)[0].strip()
+
+            # Find and replace lecture line
+            le = re.findall(r'^\\lectureappendix{.+$', s, re.MULTILINE)[0]
+
+            # replace with chapter and add line for putting in table of contents
+            s = s.replace(le, "\\chapter{{{0}}}".format(title)) # Double curly brackets used to escape
+            
+            # Use original \lecture{} command. Makes a bug with the TOC links - correct page numbers in TOC, breaks doc link
+            # s = s.replace(le, "\\clearpage\n\n{0}\n\n\\addcontentsline{{toc}}{{chapter}}{{{1}}}".format(le, title)) # Double curly brackets used to escape
+
+            buf += '\n' + s
+
+buf += '\\end{appendices}'
 buf += '\\input{bibliography.tex}\n\n\\end{document}'
 
 with open('notebook.tex', 'w') as f:
