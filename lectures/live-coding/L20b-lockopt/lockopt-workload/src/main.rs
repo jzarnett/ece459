@@ -10,13 +10,18 @@ use rand::Rng;
 fn main() {
     let mut rng = rand::thread_rng();
 
-    for _ in 0..6 {
+    for _ in 0..4 {
         let mut string = String::new();
+        /// So you know 'a' and 'b' always appear together
+        /// Thus only one lock for either is enough
+        /// increment to 'a' counter and be applied to 'b' counter as well
         for _ in 0..20 {
             string.push('a');
             string.push('b');
         }
 
+        /// only one string has 'c', so there will not be any race condition
+        /// no lock is needed for 'c'
         for _ in 0..10 {
             string.push('c');
         }
@@ -30,6 +35,9 @@ fn main() {
         println!("[\n{:?}", string);
 
         let mut string = String::new();
+        /// So you know 'a' and 'b' always appear together
+        /// Thus only one lock for either is enough
+        /// increment to 'a' counter and be applied to 'b' counter as well
         for _ in 0..20 {
             string.push('a');
             string.push('b');
