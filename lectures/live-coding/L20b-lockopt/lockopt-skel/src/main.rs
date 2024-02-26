@@ -9,26 +9,27 @@ use std::thread;
 /// Count 'a', 'b', and 'c' appearances
 ///
 /// Task: the program will create two threads. One thread will count the first
-/// string and the other will count the second. Try the program with different
-/// workloads and think how you can optimize the locks given the workloads.
+/// string and the other will count the second. However, they increment shared
+/// counters. Try the program with different workloads and think how you can
+/// optimize the locks given the workloads.
 fn main() {
     // workloads, each workload contains two strings
     let strings = [
         [
-            "acagcfaaafahbcabbbagachaaggbfbaabdbachbagaacbbhbcbbbbddgcacbhgbacefabb",
-            "hadabebddabbdbhdebbggbabdbaaafaeahfbbbbaagaaabhaaedbbadadgfaadhbeddebb",
+            "hcbacbafcbaccccefdfgabcbadbabaabchccgccgabcchabccgbaebafeababgc",
+            "bababaebaedeabbadgfdababdabhhabehabddfdabhbadabebahebafge",
         ],
         [
-            "addecfebbhaaaaacgahbabdbbdacbaabbgacbcfaaabadbbfhbbcbcfaeaabecfcabbebc",
-            "habagabaahabbhbhaebbbfahbdabgbgaadeagehahbaaggbgadgafffbgabbgaabgbdgbb",
+            "hdecabfcabcchebacbaddbaccdccfbaabhbacdcbaccgabab",
+            "hefhddhgfabgdebabafababhfababbagababhbahffabfebaba",
         ],
         [
-            "acbbhgcbbaaadabcbcdbaadccgabcgfbhbabbafcfacggbaahbgaacaahabhhbaagbgbbb",
-            "gbeabfagffedeaabgdabfbbaaafhgbbfahabfabhbabeghebbaabahfbgbhbaafabffaba",
+            "cdabchccfcbacdcccabcbaggabchbaeccehbacabeccdchefbabaabdcababgdcbaabeab",
+            "hehbabafhbaabegheddabbaababhbaabhbahfdefababbababaeddge",
         ],
         [
-            "bacbaeaecbhaahbebbfeabaahadbbahbefbcacbhcbachdahaebagbbbcaadadacbcabcb",
-            "edaggbfabgafagbfbafbfagdbahfabhhaabaabdbdbbgahfbefbbebgaahbgeaaabbafab",
+            "cgcfchababcdgcbahcabbacdfecfabccccbaabhdgfdabfbababahbacc",
+            "efeabbaeabbagggeeabegdbafbadefhfegbaabfefeab",
         ],
     ];
 

@@ -93,7 +93,7 @@ fn main() {
     }
 
     let elapsed_time = now.elapsed();
-    println!("Running time: {} ms", elapsed_time.as_millis());
+    println!("Running time: {} micro seconds", elapsed_time.as_micros());
     println!("Max length: {}", max_length);
 }
 
