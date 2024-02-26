@@ -48,9 +48,7 @@ impl fmt::Display for Action {
 }
 
 fn generate_action(rng:&mut ThreadRng) -> Action {
-    // interesting experiments: vec is slow on 1..3 and vecdeque is fast
-    // 4..6 is surprisingly fast for vecdeque, slow for vector
-    let a = rng.gen_range(4..6);
+    let a = 1;
     match a {
         0 => PushEnd(rng.gen::<i32>()),
         1 => PopStart,
@@ -62,44 +60,43 @@ fn generate_action(rng:&mut ThreadRng) -> Action {
     }
 }
 
-const N:i32 = 100000;
+const N:i32 = 10_000;
 fn main() {
     let mut v:Vec<i32> = vec![];
-    // ^ 542ms for {0,1}, 551ms for {2,3}, 544ms for {4,5}
+    // TODO: add times
 
     // let mut v:VecDeque<i32> = VecDeque::new();
-    // ^ 2ms for {0,1}, 4ms for {2,3}, 136ms for {4,5}
+    // TODO: add times
 
     // let mut v:Vector<i32> = Vector::new();
-    // ^ 4ms for {0,1}, 3ms for {2,3}, 6449ms for {4,5}
-
-    let now = Instant::now();
+    // TODO: add times
 
     let mut rng = rand::thread_rng();
     let mut v_length = 0;
     let mut max_length = 0;
 
-    for _ in 1..100000 {
-        v.insert(0, rng.gen::<i32>());
+    for _ in 0..100_000 {
+        v.insert(v_length, rng.gen::<i32>());
         v_length = v_length + 1;
     }
 
-    for _n in 1..N {
+    let now = Instant::now();
+
+    for _n in 0..N {
         let action = generate_action(&mut rng);
         match action {
             PushEnd(i) => { v.insert(v_length, i); v_length = v_length + 1; },
             PopEnd => { if ! v.is_empty() { v_length = v_length - 1; v.remove(v_length); } },
             PushStart(i) => { v.insert(0, i); v_length = v_length + 1 },
             PopStart => { if ! v.is_empty() { v_length = v_length - 1; v.remove(0); } },
-            PushRandom(i) => { v.insert(rng.gen_range(0..v_length+1), i); v_length = v_length + 1 },
+            PushRandom(i) => { v.insert(rng.gen_range(0..v_length), i); v_length = v_length + 1 },
             PopRandom => { if ! v.is_empty() { v.remove(rng.gen_range(0..v_length)); v_length = v_length - 1 } },
-            _ => {}
         }
         if v_length > max_length { max_length = v_length; }
     }
 
     let elapsed_time = now.elapsed();
-    println!("Running time: {} ms", elapsed_time.as_millis());
+    println!("Running time: {} micro seconds", elapsed_time.as_micros());
     println!("Max length: {}", max_length);
 }
 
