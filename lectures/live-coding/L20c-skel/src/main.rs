@@ -93,7 +93,7 @@ fn main() {
 
     // ...
 
-    // exercise 2: recompile
+    // exercise 2: change back "const INITIAL_CAPACITY:usize = 1" and rewrite it in runtime
     // Command::new(...);
 }
 

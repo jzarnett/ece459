@@ -86,14 +86,13 @@ fn main() {
 
     }
     let elapsed_time = now.elapsed();
-    // TODO: why the times are not printed before re-compile?
     println!("Running time: {} ms", elapsed_time.as_millis());
     println!("Max length: {}", max_length);
 
     // modify main.rs line "const INITIAL_CAPACITY:usize = 1";
 
     let target_line_start = "const INITIAL_CAPACITY:usize =";
-    let new_target_line = format!("{} {};\n", target_line_start, max_length);
+    let new_target_line = format!("{} {};", target_line_start, max_length);
 
     let mut new_lines: String = "".to_owned();
     if let Ok(lines) = read_lines("src/main.rs") {
@@ -105,16 +104,19 @@ fn main() {
                 } else {
                     new_lines.push_str(&ip);
                 }
+                new_lines.push_str("\n");
             }
         }
     }
     fs::write("src/main.rs", new_lines).expect("can't write output");
     // recompile
+    println!("-- recompile");
     Command::new("cargo")
             .arg("build")
             .arg("--release")
             .output()
             .expect("failed to execute process");
+    println!("-- done. rerun to inspect the time change");
 }
 
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
