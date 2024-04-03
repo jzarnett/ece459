@@ -49,10 +49,7 @@ impl fmt::Display for Action {
 
 fn generate_action(rng:&mut ThreadRng) -> Action {
     // TODO change workloads
-    // Workload 1: insert and remove at the end/start of a Vec (`rng.gen_range(0..2)`)
-    // Workload 2: ok, randomly select some elements that go in/come out at the start/end as well (`rng.gen_range(2..4)`)
-    // Workload 3: random access insertions/deletions (`rng.gen_range(4..6)`)
-    let a = rng.gen_range(0..2);
+    let a = 0; // 1, 2, 3, ...
     match a {
         0 => PushEnd(rng.gen::<i32>()),
         1 => PopStart,
@@ -67,20 +64,20 @@ fn generate_action(rng:&mut ThreadRng) -> Action {
 const N:i32 = 100000;
 fn main() {
     // TODO change data structures
-    // let mut v:Vec<i32> = vec![];
+    let mut v:Vec<i32> = vec![];
     // let mut v:VecDeque<i32> = VecDeque::new();
-    let mut v:Vector<i32> = Vector::new();
-
-    let now = Instant::now();
+    // let mut v:Vector<i32> = Vector::new();
 
     let mut rng = rand::thread_rng();
     let mut v_length = 0;
     let mut max_length = 0;
 
-    for _ in 1..100000 {
-        v.insert(0, rng.gen::<i32>());
+    for _ in 0..100_000 {
+        v.insert(v_length, rng.gen::<i32>());
         v_length = v_length + 1;
     }
+
+    let now = Instant::now();
 
     for _n in 1..N {
         let action = generate_action(&mut rng);
@@ -91,13 +88,12 @@ fn main() {
             PopStart => { if ! v.is_empty() { v_length = v_length - 1; v.remove(0); } },
             PushRandom(i) => { v.insert(rng.gen_range(0..v_length+1), i); v_length = v_length + 1 },
             PopRandom => { if ! v.is_empty() { v.remove(rng.gen_range(0..v_length)); v_length = v_length - 1 } },
-            _ => {}
         }
         if v_length > max_length { max_length = v_length; }
     }
 
     let elapsed_time = now.elapsed();
-    println!("Running time: {} ms", elapsed_time.as_millis());
+    println!("Running time: {} micro seconds", elapsed_time.as_micros());
     println!("Max length: {}", max_length);
 }
 

@@ -15,6 +15,6 @@ index (assuming tables have similar number of records). Of course, only if the
 statistics are up-to-date.
 
 * The overhead is that the query optimization is applied at runtime. If the
-original query is fast, then the optimization process may slow it
-down. Longer discussions can be about situations with insufficient memory,
-caching enabled, etc. Some optimizations may not work as expected.
+original query is fast, then the optimization process may slow it down. Longer
+discussions can be about situations with insufficient memory, caching enabled,
+etc. Some optimizations may not work as expected.

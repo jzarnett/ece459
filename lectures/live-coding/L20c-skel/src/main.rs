@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use std::collections::VecDeque;
 use rand::Rng;
 use rand::rngs::ThreadRng;
@@ -40,7 +41,7 @@ impl fmt::Display for Action {
 }
 
 fn generate_action(rng:&mut ThreadRng) -> Action {
-    let a = rng.gen_range(0..2);
+    let a = 0;
     match a {
         0 => PushEnd(rng.gen::<i32>()),
         1 => PopStart,
@@ -53,33 +54,32 @@ fn generate_action(rng:&mut ThreadRng) -> Action {
 }
 
 const OUTER:i32 = 200;
-const INITIAL_CAPACITY:usize = 5000000;
+const INITIAL_CAPACITY:usize = 1;
 const FIXED_INITIAL_VEC_SIZE:i32 = 5000000;
 const N:i32 = 100;
 fn main() {
     let mut max_length = 0;
     let now = Instant::now();
-    for _ in 1..OUTER {
-        let mut v:VecDeque<i32> = VecDeque::with_capacity(INITIAL_CAPACITY);
+    for _ in 0..OUTER {
+        let mut v:Vec<i32> = Vec::with_capacity(INITIAL_CAPACITY);
 
         let mut rng = rand::thread_rng();
         let mut v_length = 0;
 
-        for _ in 1..FIXED_INITIAL_VEC_SIZE {
-            v.insert(0, 2);
+        for _ in 0..FIXED_INITIAL_VEC_SIZE {
+            v.insert(v_length, rng.gen::<i32>());
             v_length = v_length + 1;
         }
 
-        for _n in 1..N {
+        for _n in 0..N {
             let action = generate_action(&mut rng);
             match action {
                 PushEnd(i) => { v.insert(v_length, i); v_length = v_length + 1; },
                 PopEnd => { if ! v.is_empty() { v_length = v_length - 1; v.remove(v_length); } },
                 PushStart(i) => { v.insert(0, i); v_length = v_length + 1 },
                 PopStart => { if ! v.is_empty() { v_length = v_length - 1; v.remove(0); } },
-                PushRandom(i) => { v.insert(rng.gen_range(0..v_length+1), i); v_length = v_length + 1 },
+                PushRandom(i) => { v.insert(rng.gen_range(0..=v_length), i); v_length = v_length + 1 },
                 PopRandom => { if ! v.is_empty() { v.remove(rng.gen_range(0..v_length)); v_length = v_length - 1 } },
-                _ => {}
             }
             if v_length > max_length { max_length = v_length; }
         }
@@ -89,14 +89,15 @@ fn main() {
     println!("Running time: {} ms", elapsed_time.as_millis());
     println!("Max length: {}", max_length);
 
-    // modify main.rs line "const INITIAL_CAPACITY:usize = 1";
+    // exercise 1: modify main.rs line "const INITIAL_CAPACITY:usize = 1";
 
     // ...
 
-    // recompile
+    // exercise 2: change back "const INITIAL_CAPACITY:usize = 1" and rewrite it in runtime
     // Command::new(...);
 }
 
+#[allow(dead_code)]
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
 where P: AsRef<Path>, {
     let file = File::open(filename)?;
