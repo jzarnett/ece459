@@ -2,303 +2,120 @@
 
 \begin{document}
 
-\lecture{24 --- Large Language Models}{\term}{Jeff Zarnett}
+\lecture{24 --- Profiling: Observing Operations}{\term}{Jeff Zarnett}
 
-\section*{Large Language Models and You}
+\section*{Observations Precede Conclusions}
 
-In November of 2022, OpenAI introduced ChatGPT to the world and suddenly everyone and their best friend was doing some combination of (1) writing news articles about how the advent of AI means we will all be unemployed and lead to the rise of Skynet; (2) founding a startup that used ChatGPT to do something something B2B/B2C SaaS something something profit; (3) rebranding themselves on LinkedIn as ``prompt engineering'' experts; or (4) generating lots social media cringe content about how to use it to get rich easily\footnote{Watch this video on the subject of ``Get Rich Easy'' schemes: \url{https://www.youtube.com/watch?v=2bq3SdfzcA4}}.
+Think back to the beginning of the course when we did a quiz on what operations are fast and what operations are not. The important takeaway was not that we needed to focus on how to micro-optimize this abstraction or that hash function, but that our intuition about what is fast and what is slow is often wrong. Not just at a macro level, but at a micro level. You may be able to narrow down that this computation of $x$ is slow, but if you examine it carefully\ldots what parts of it are slow?
 
-Such large language models have existed before, but ChatGPT ended up a hit because it's pretty good at being ``conversational'', which is to say that it does a good job of responding to input in a way that seems like how a human would respond. For this reason, it's referred to as NLP -- Natural Language Processing. In the words of some experts~\cite{gptforgood}: ``These models are trained on massive amounts of text data and are able to generate human-like text, answer questions, and complete other language-related tasks with high accuracy.'' That is only one of many kinds of large language models and there are many different kinds of machine learning systems out there that do other tasks like recognize images.
+If you don't use tools, then you end up guessing. You just make some assumptions about what you think is likely to be slow and try to change it. You've probably heard the famous quotation before, but here it is in its full form:
 
-Of course, just because such a tool can produce an answer to your question, doesn't mean it is necessarily true or correct. You may enjoy this Legal Eagle video about a lawyer who used ChatGPT for ``research'' and found that the system returned an answer with completely made-up references. These are sometimes called ``hallucinations''. We don't have time to watch the video in lecture, but I encourage you to watch it to get an understanding of what went wrong: \url{https://www.youtube.com/watch?v=oqSYljRYDEM} and why you should not rely on it without checking its output. Remember that in engineering, legally and professionally speaking, the engineer is responsible for understanding how a given tool works and verifying the output is reasonable or correct; a civil engineer who says that the software told them the building was fine will be held liable (both in discipline and legally) if the building was not safe and falls down...
+\begin{quote}
+\textit{Programmers waste enormous amounts of time thinking about, or worrying about, the speed of noncritical parts of their programs, and these attempts at efficiency actually have a strong negative impact when debugging and maintenance are considered. We should forget about small efficiencies, say about 97\% of the time: premature optimization is the root of all evil. Yet we should not pass up our opportunities in that critical 3\%.}
+\end{quote}
+	\hfill -- Donald Knuth
 
-Part of what makes the GPT-3 and GPT-4 models better at producing output that matches our expectations is that it relies on pre-training (it's the PT part of GPT) on a a very large data set, specifically a lot of stuff just out there on the internet~\cite{gptforgood}. This course is not one on neural networks, large language models, AI, or similar -- there are other such technical electives which you may be taking. This does connect to the course content, however, because generating or updating a pre-trained model is computationally challenging... so performance increases matter here.
+So going about this blindly is probably a waste of time. You might be fortunate and optimize a slow part, but we should really follow one of my favourite rules: ``don't guess, measure!'' So, to make your programs or systems fast, you need to find out what is currently slow and improve it (duh!). Up until now in the course it's mostly been about ``let's speed this up'', but we did not take much time to decide what we should speed up (though you maybe did this on an assignment\ldots?).
 
-\paragraph{Parameters.} One factor, but certainly not the only one, in how good the model is at responding to requests is the number of parameters. To explain a bit about why it matters, consider this quote from~\cite{msllm}: ``LLM AI models are generally compared by the number of parameters — where bigger is usually better. The number of parameters is a measure of the size and the complexity of the model. The more parameters a model has, the more data it can process, learn from, and generate. However, having more parameters also means having more computational and memory resources, and more potential for overfitting or underfitting the data. Parameters are learned or updated during the training process, by using an optimization algorithm that tries to minimize the error or the loss between the predicted and the actual outputs. By adjusting the parameters, the model can improve its performance and accuracy on the given task or domain.''
+The general idea is, collect some data on what parts of the code are taking up the majority of the time. This can be broken down into looking at what functions get called, or how long functions take, or what's using memory\ldots
 
-\subsection*{Optimizing LLMs}
-The content from this section is based on a guide from ``Hugging Face'' which describes itself as an AI community that wants to democratize the technology. The guide in question is about methods and tools for training using one GPU~\cite{hf} (but we can discuss multi-GPU also). Indeed, you may have guessed by the placement of this topic in the course material that the GPU is the right choice for how to generate or train a large language model. 
+\paragraph{Why Observation?} We're talking here about the idea of observation of our program, which is a little bit more inclusive than just measuring things, because we may observe things that are hard or impossible to quantify. Observing the behaviour of the program will obviously be super helpful in terms of figuring out what -- if anything -- to change. We have several different ways of looking at the situation, including logs, counters, profiling, and traces. Differences between them, briefly~\cite{usd}:
 
-Okay, but why a GPU? In this case we're talking about Transformers and there are three main groups of optimizations that it does~\cite{hf2}: Tensor Contractions, Statistical Normalizations, and Element-Wise Operators. Contractions involve matrix-matrix multiplications and are the most computationally challenging part of the transform; statistical normalizations are a mapping and reduction operation; and element-wise operators are things like dropout and biases and these are not very computationally-intensive. We don't need to repeat the reasoning as to why GPUs are good at matrix-matrix multiplication and reduction operations since that's already been discussed. 
+\begin{itemize}
+	\item \textbf{Counters} are, well, a stored count of the occurrences of something: how many times we had a cache miss, how many times we called \texttt{foo()}, how many times a user logged in...
+	\item \textbf{Profiles} are higher-level overviews of what the program is doing, where time is going in aggregate, and how long certain operations take.
+	\item \textbf{Traces} are recordings that show the sequence of events that the program is doing, so we can understand the runtime behaviour and how we got to the state we are in.
+\end{itemize}
 
-In discussing the optimizations we can make, we'll also need to consider what is in memory, since it's possible that our training of a model might be limited by available GPU memory rather than compute time. Things like the number of parameters and temporary buffers count towards this limit.
+We'll return to profilers later, because it's a big topic, but for now we'll start with traces and counters.
 
-\paragraph{Optimizing.}There are two kinds of optimizations that are worth talking about. The first one is the idea of model performance: how do we generate a model that gives answers or predictions quickly? The second is how can we generate or train the model efficiently.
+\subsection*{Tracing: Logging}
+We'll start with the idea of logging. It's an effective way of finding out what's going on in your program as it executes, and probably all of us have use print statements as a form of debugging, but also as a form of tracing. When we're running a small program, we don't always make the log messages very nice, but in a production system, logs typically have a timestamp, a message, and some attributes. The timestamp is helpful for organizing and searching the logs. 
 
-The first one is easy to motivate and we have learned numerous techniques that could be applied here. Examples: Use more space to reduce CPU usage, optimize for common cases, speculate, et cetera. Some of these are more fun than others: given a particular question, can you guess what the followup might be? 
+In~\cite{usd} it's recommended that if there can be only one tool for observing your program's execution, it is logging. This is because logging can tell you things about how much work the software did in a time period, when things are busy, which transactions are slow, when the service is down, etc. This probably matches well with our intuition that printf debugging or tracing is a good first option to figure out what's going on.
 
-Before we get into the subject of how, we should address the question of why you would wish to generate or customize a LLM rather than use an existing one. To start with, you might not want to send your (sensitive) data to a third party for analysis. Still, you can download and use some existing models. So generating a model or refining an existing one may make sense in a situation where you will get better results by creating a more specialized model than the generic one. To illustrate what I mean, ChatGPT will gladly make you a Dungeons \& Dragons campaign setting, but you don't need it to have that capability if you want it to analyze your customer behaviours to find the ones who are most likely to be open to upgrading their plan. That extra capability (parameters) takes up space and computational time and a smaller model that gives better answers is more efficient.
+Given that we want to log, we do have to consider how often to log, and what should be in the content of it. If we don't log the information, there may not be any good way to recover that information again. But we could also drown out useful information if we log too many (irrelevant) things. Logs typically have levels, like error, warning, info, debug... These can make it easier to spot just the information that is relevant.
 
-Our first major optimization, and perhaps the easiest to do, is the batch size. The batch size is just telling the GPU how much to do at once. It's a little bit like when we discussed the idea of creating more threads to increase performance; you may see an improvement by having more workers active but you also may not get any additional benefit from worker $N+1$ over $N$ since there may not be enough work or other resource conflicts.
+A typical approach is to log an incoming request (input) and the outgoing response (output), and maybe some steps in between. We want to link the different things together (perhaps with attributes) so that we can see what happened. Here's a made-up example that doesn't show the time stamps or attributes:
 
-I've used an example from Hugging Face~\cite{hf2} with some light modifications to see what we can do with a very simply example using dummy data. Let's go over and look at that example now. It's in Python (a lot of LLM, machine learning, etc. content is) but it shouldn't be too difficult to understand as we walk through it.
-
-\begin{lstlisting}[language=python]
-import numpy as np
-import torch
-from datasets import Dataset
-from pynvml import *
-from transformers import AutoModelForSequenceClassification
-from transformers import TrainingArguments, Trainer, logging
-
-default_args = {
-    "output_dir": "tmp",
-    "evaluation_strategy": "no",
-    "num_train_epochs": 1,
-    "log_level": "error",
-    "report_to": "none",
-}
-
-
-def print_gpu_utilization():
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(0)
-    info = nvmlDeviceGetMemoryInfo(handle)
-    print(f"GPU memory occupied: {info.used // 1024 ** 2} MB.")
-
-
-def print_summary(res):
-    print(f"Time: {res.metrics['train_runtime']:.2f}")
-    print(f"Samples/second: {res.metrics['train_samples_per_second']:.2f}")
-    print_gpu_utilization()
-
-
-print("Starting up. Initial GPU utilization:")
-print_gpu_utilization()
-torch.ones((1, 1)).to("cuda")
-print("Initialized Torch; current GPU utilization:")
-print_gpu_utilization()
-
-model = AutoModelForSequenceClassification.from_pretrained("bert-large-uncased").to("cuda")
-print_gpu_utilization()
-
-logging.set_verbosity_error()
-
-seq_len, dataset_size = 512, 512
-dummy_data = {
-    "input_ids": np.random.randint(100, 30000, (dataset_size, seq_len)),
-    "labels": np.random.randint(0, 1, dataset_size),
-}
-ds = Dataset.from_dict(dummy_data)
-ds.set_format("pt")
-
-training_args = TrainingArguments(per_device_train_batch_size=4, **default_args)
-trainer = Trainer(model=model, args=training_args, train_dataset=ds)
-result = trainer.train()
-print_summary(result)
-\end{lstlisting}
-
-The bert-large-uncased model~\cite{bert} is not a particularly large one -- it says on its data sheet that it's about 340~MB -- and it's trained on a bunch of English language data. It's uncased because it makes no distinction between capitals and lower-case letters, e.g., it sees ``Word'' and ``word'' as equivalent.
-
-First I tried to run it on my laptop, but that failed because it does not have any nvidia GPU, which is not surprising. Next I tried to run this on \texttt{ecetesla0} and I saw the following output (skipped some of the stack trace):
-
-{\small
 \begin{verbatim}
-jzarnett@ecetesla0:~/github/ece459/lectures/live-coding/L24$ python3 dummy_data.py 
-Starting up. Initial GPU utilization:
-GPU memory occupied: 0 MB.
-Initialized Torch; current GPU utilization:
-GPU memory occupied: 417 MB.
-Some weights of BertForSequenceClassification were not initialized from the model checkpoint at 
-bert-large-uncased and are newly initialized: ['classifier.bias', 'classifier.weight']
-You should probably TRAIN this model on a down-stream task to be able to use it for predictions 
-and inference.
-GPU memory occupied: 1705 MB.
-torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 20.00 MiB (GPU 0; 
-7.43 GiB total capacity; 6.90 GiB already allocated; 16.81 MiB free; 6.90 GiB 
-reserved in total by PyTorch) If reserved memory is >> allocated memory try setting 
-max_split_size_mb to avoid fragmentation.  See documentation for Memory Management
-and PYTORCH_CUDA_ALLOC_CONF
+Received request: update plan of company 12345 to ULTIMATE
+Retrieving company 12345
+Verifying eligibility for upgrade of company 12345 from BASIC to ULTIMATE
+Company 12345 is not eligible for upgrade due to: unpaid invoices > 0
+Returning response: update of company 12345 to ULTIMATE is DECLINED
 \end{verbatim}
-}
 
-So the \texttt{ecetesla0} machine ran out of memory trying to process this. Using \texttt{nvidia-smi} I learned that the card has only \texttt{7611MiB} of VRAM available and that does not seem like a lot for the kind of work we are trying to do. The configuration we had asked for a batch size of 4 and it's possible that this is just too much to fit in memory at once for this old card. Reducing batch size to 2 did not help, nor did 1. This is a clear indication that for the model that we want to use, the card isn't going to cut it. Scotty, we need more power.
+We can see the various steps of the process and quickly understand what happened, because the logs show us the request, the stages of handling the request, and the response. In this example I intentionally added a decision and logged the reason for the decision. That's preferable to making someone guess why the answer was no when looking at the logs.
 
-What I actually did next was change to a smaller version of the model, \texttt{bert-base-uncased} which was significantly smaller (110~MB) and something the card could handle. Here's the output with batch size of 1:
+Choosing the timestamps strategy is also interesting; the level of precision you need in the logging depends on the timescales of your execution. When running processes that take tens of seconds, you could probably be satisfied with down to the thousandth of a second; if things run super fast then we might need microsecond or nanosecond resolution~\cite{usd}. Time zones also matter, but I'm going to recommend using UTC because it doesn't have weird things like Daylight Savings Time where you can get a jump in the time forward or back. And back is worse because it means a certain minute appears to happen more than once (defeating our normal expectation of linear time). It also avoids issues where the California team thinks it's Monday and the Singapore team thinks it's Tuesday. UTC might be weird, though, if your application is running on a Mars Rover; at that point you might as well use Stardates (Captain's Log, Stardate 46119.1...).
 
-{\small
-\begin{verbatim}
-jzarnett@ecetesla0:~/github/ece459/lectures/live-coding/L24$ python3 dummy_data.py 
-Starting up. Initial GPU utilization:
-GPU memory occupied: 0 MB.
-Initialized Torch; current GPU utilization:
-GPU memory occupied: 417 MB.
-Some weights of BertForSequenceClassification were not initialized from the model checkpoint at 
-bert-base-uncased and are newly initialized: ['classifier.weight', 'classifier.bias']
-You should probably TRAIN this model on a down-stream task to be able to use
- it for predictions and inference.
-GPU memory occupied: 887 MB.
-{'loss': 0.0028, 'learning_rate': 1.1718750000000001e-06, 'epoch': 0.98}
-{'train_runtime': 109.6152, 'train_samples_per_second': 4.671, 
-'train_steps_per_second': 4.671, 'train_loss': 0.0027378778694355788, 'epoch': 1.0}
-Time: 109.62
-Samples/second: 4.67
-GPU memory occupied: 3281 MB.
-\end{verbatim}
-}
-Then I needed to experiment some more with batch size to find the ideal for this card. To condense the results a little bit, see the results table below.
+As I already said, logging every request might be too noisy to actually find anything in the resulting data. The ability to search and sort helps, but it can still be going by too fast to realistically assess in real-time. Log aggregation services exist and they can help, especially when trying to do a retrospective.
 
-\begin{center}
-\begin{tabular}{r|r|r|r|r}
-\textbf{Batch Size} & \textbf{Time (s)} & \textbf{Samples/s} & \textbf{Memory Occupied (MB)} & \textbf{Utilization (\%)} \\ \hline
-1 & 109.62 & 4.67 & 3~281 & 43.1 \\
-2 & 85.82 & 5.97 & 3~391 & 44.6 \\
-4 & 72.18 & 7.09 & 4~613 & 60.6 \\
-8 & 66.70 & 7.68 & 7~069 & 92.9 \\
-\end{tabular}
-\end{center}
+Typically, adding any relevant attributes is very helpful to identify what has happened or to correlate knowledge. If we can see in the attributes that updates for plans of companies always take ten times longer if the company's address is in Portugal, that's actually a useful observation. We can take that information and put it in the bug ticket and ideally help the developer -- even if it's our future selves -- to find the issue and resolve it.
 
-And given what we know about the GPU in this system, it's not surprising the OOM error returns when the batch size is increased to 9. The other thing that's nice is that the OOM is encountered very quickly on startup so it's easy to just binary search different batch sizes to find the maximum you can process in one go. 
+With that said: there's such a thing as too much detail in logging. Logs should always redact personally-identifiable information such as people's names, contact information, medical records, etc. Unless the logs are really kept in secure storage with appropriate access controls, they can be seen by people who shouldn't have that information. Why should, for example, a developer on the website team have access to the banking details of a customer? My opinion: they shouldn't. And it's not just my opinion, but also the opinion of people like the Privacy Commissioner of Canada, whom you probably do not want to anger.
 
-We can try some other optimization techniques to see if we can squeeze out a little more performance from this. There are a number of different techniques that we can focus on to try to optimize memory utilization since that's our limiting factor. Focusing on memory utilization is a part of what makes this topic a little different than most of the others we've covered in this course, which tend to be much more compute-focused. 
+One way that we get into the situation of over-logging is if it's difficult or impossible to use other tools on the program or to have (read-)access to the database. If someone is trying to debug the behaviour of the program it might seem sensible to log just about everything because it's frustrating to try to debug a problem with incomplete information. 
 
-\paragraph{Gradient Accumulation.} The idea behind gradient accumulation is to calculate gradients in small increments rather than for the whole batch; doing this can increase the effective batch size, at the risk of slowing down the total process by having too many compute steps~\cite{hf}.
+So we are aiming for a balance: include the relevant information that would let us spot patterns or correlate with other data sources, but not so much that the important information is lost or that PII is exposed.
 
-Experimenting with this and batch size fixed at 8:
+There is a third way that a program logging too much, beyond drowning out key info or logging PII, and that's if the overhead of tracing is significant. Normally we're happy to accept some small slowdown in our program to have traceability, but let's try to put some numbers to tracing overhead. 
 
-\begin{center}
-\begin{tabular}{r|r|r|r|r}
-\textbf{Gradient Accumulation Steps} & \textbf{Time (s)} & \textbf{Samples/s} & \textbf{Memory Occupied (MB)} & \textbf{Utilization (\%)} \\ \hline
-1 & 66.06 & 7.75 & 7~069 & 92.9 \\
-2 & 63.96 & 8.01 & 7~509 & 98.7 \\
-4 & 62.81 & 8.15 & 7~509 & 98.7 \\
-8 & 62.65 & 8.17 & 7~509 & 98.7 \\
-16 & 62.42 & 8.20 & 7~509 & 98.7 \\
-32 & 62.44 & 8.20 & 7~509 & 98.7\\
-128 & 62.20 & 8.23 & 6~637 & 87.2\\
-1024 & 61.78 & 8.29 & 6~637 & 87.2 \\
-4096 & 62.16 & 8.24 & 6~637 & 87.2
-\end{tabular}
-\end{center}
+Some quick, off-the-cuff figures from~\cite{usd}:
+\begin{itemize}
+	\item If we ask the CPU trace tool to track every conditional branch taken, that would be about a $20\times$ slowdown. This amount of overhead would be acceptable if we're debugging the program on a development machine (own laptop or testing deployment), but certainly not in a production environment.
+	\item If we ask for a timestamp at every function call and return in our program the slowdown is around $1.2-1.5\times$. This may (emphasis on may) be acceptable in a production environment if the task is not time-critical, but only temporarily while experimenting or observing.
+	\item If we ask for a timestamp of every system call entry and exit (user-space to kernel transition and back), that might be much less than $1\%$ overhead. This would likely be acceptable in a production environment for all but the most time-critical of operations and could remain in place at all times.
+\end{itemize}
 
-We can see that we very quickly hit diminishing returns on this, but it seems like increasing the number continues to have a marginal benefit, basically for free, up until we get to around 1024. However, I got suspicious about the 128 dropoff in memory usage and it made me think about other indicators -- is it getting worse somehow? The output talks about training loss...
+That covers tracing the CPU. What about memory? If you've used Valgrind\footnote{So, we used to cover Valgrind in this course. That made sense when it was C and \CPP~but we used to discuss it in Rust too. While the Helgrind part might help you find lock acquisition issues, for the most part students found that there were too many false positives around memcheck and it was just causing students to stress about losing marks. So... away with it.} before, you know it. If you haven't, as I say to the ECE~252 students: The target program then runs under the ``supervision'' of the tool. This results in running dramatically slower than normal, but you get additional checks and monitoring of the program. Why? Valgrind checks every memory read and write for validity (is the variable initialized? Is it off the end of an array? All those fun things that we, fortunately, no longer think about in Rust), but also records information about where memory is allocated to help the programmer in tracking down the genesis of a memory leak. When execution of the program ends, Valgrind shows the stack trace of the path that led to the allocation that was leaked. That's pretty neat!
+
+A disk trace tool would most likely have extremely tiny overhead because the speed of the disk as compared to the CPU is very slow. Something similar goes for the network; the latency is high and speed of the network are slow compared to what the CPU can do~\cite{usd}. 
+
+Tracing also can play a role in identifying deadlocks and delays in threads caused by waiting for locks: simply log every lock and unlock. But we might really be only interested in the locks where there is contention, i.e., threads are sometimes or often failing to acquire the lock because it's held by another thread~\cite{usd}. After all, if our intention is to observe the behaviour of the program with the intention of improving performance, the part where a thread isn't getting what it wants immediately and must wait is much more interesting than the part where everything is fine and there are no delays.
+
+\paragraph{Space, the Final Frontier.} Whatever trace strategy we choose, the trace itself takes up space. If we are producing a very large amount of data, it won't all fit in memory and has to go on disk. It's possible that the amount of data that we produce will fill up the disk very quickly, or arrive so fast that the disk cannot keep up. In~\cite{usd} there's a quick calculation that says a main memory system with 20 GB/s bandwidth and 64-byte cache lines that records up to 8 bytes of data per trace entry could result in producing data at a rate of 2.4 GB per second! That's a rather overwhelming amount of data -- even if you could write it all out to disk fast enough, it would fill up an 8 TB hard drive in just under an hour. Either we need to capture less data by recording fewer things or by recording for a shorter time. Just add this to the reasons why we need to be judicious about how much trace data to capture.
+
+\subsection*{Aggregate Measures (Counters)}
+Many profiling tools rely heavily on counters. Counters, as the name suggests, keep a count of events: interrupts, cache misses, data bytes written, calls to function \texttt{do\_magic()}. Keeping track of these numbers is relatively inexpensive (specially when compared to other approaches) so counting every occurrence of an event is actually plausible. Counters are a form of aggregation, because we're summing the number of occurrences and at the end of the program we have a total number. The counter and any data derived from it certainly takes much less space than a trace.
+
+The sum is the simplest kind, but other aggregate measures are exactly what they sound like: summaries of data. Calculating the average response time of a request is an aggregate measure: we've summed up the total time per request and divided it by the number of requests in the given period and hopefully the resulting value is a useful one. Asking the computer to calculate the summary is sensible, of course, because it's not realistic to ask a human to look at 50~000 requests and calculate their average time. Some obvious aggregate measures are things like: number of requests, requests broken down by type, average time to respond to a request, percentage of error responses...  
+
+Whatever aggregate measures we use, they are useful only with context.  Suppose that after my pull request is merged, the average login time for a user is 0.75 seconds; is that a problem? Without a baseline to compare against, I'm not sure. If before my PR it was 0.5 seconds, I made performance much worse and that doesn't sound good; should I revert it and re-work it? Maybe, unless I am intentionally making login slower to make a brute-force password attack more expensive for an attacker. Context is key: the summary tells you some data, but not the reasons.
+
+Another example: if I tell you that a request takes, on average, 1.27 seconds to get a response, is that good or bad? There's, again, no way to say anything about it without a point of reference. Are we being asked to approve or deny a transaction and there's a time limit of 1 second to give our answer (or else a default answer is assumed)? We're missing the target and that's a problem. If instead I said the time limit is 10 seconds, then we have plenty of room. Or do we?
+
+Average time isn't quite enough to know if we're doing well when it comes to time limits. If the average time is 1.27 seconds it does not preclude the possibility that the maximum time is outside the 10 second time limit and that means for some percentage of requests, possibly a large percentage, we're not making the deadline. How hard of a deadline are we talking about? To address this we can look at maximum and 95th percentile kind of aggregate measures as well.
+
+The other way that averages can be misleading is that they misrepresent the bursty nature of the data. If your service receives, on average, 7 requests per second, does that mean it looks like the first, second, or third row below (all from~\cite{usd})?
 
 \begin{center}
-\begin{tabular}{r|r}
-\textbf{Gradient Accumulation Steps} & \textbf{Loss} \\ \hline
-1 & 0.029 \\
-2 & 0.070 \\
-4 & 0.163 \\
-8 & 0.169 \\
-16 & 0.447 \\
-32 & 0.445 \\
-128 & 0.435 \\
-1024 & 0.463 \\
-4096 & 0.014 \\
-\end{tabular}
+	\includegraphics{images/burst1}\\
+	\includegraphics{images/burst2}\\
+	\includegraphics{images/burst3}\\
 \end{center}
 
-Does that seem concerning? We won't really know unless we do some validation -- and this is random data so validating it won't really work for this scenario. Are we perhaps trading accuracy for time? I think the only way to find out is that we need to have a validation data set. We could get through the first steps here of batch size without giving much thought to this part, but now we're kind of stuck. So let's find out.
+While the first scenario is really nice and very predictable, is that realistic? Later on in the course we'll talk more about queueing theory and we'll learn that random arrivals and what it means for things to arrive.
 
-We'll follow another guide from~\cite{hf3} where the goal is to train and validate using some Yelp data. Yes, Yelp, the website that struggling restaurant owners blame for ruining their ``gourmet burger'' place that charges you \$22 for an unimpressive reheated Sysco hamburger with no side dish. Running this does take significantly longer, but that's to be expected. The training is divided into three epochs and accuracy is calculated at the end of each of those using a training and evaluation set.
+When we choose to aggregate our data in some way, we must make a decision about the period of time in question. If our program is going to, say encode a video, the period of time is probably the whole execution time of the task: it took 3h 21 minutes to encode the video and that results in a processing rate of 210.9 frames per second. For services that run indefinitely or when we're impatient, we might want to look at a shorter period of time and consider that. But if we choose the wrong period we'll miss important things: if we look at purchases per hour, if we look at Sunday night that might be misleading as compared to Monday at noon.
 
-\begin{lstlisting}[language=python]
-import evaluate
-import numpy as np
-import torch
-from datasets import load_dataset
-from evaluate import evaluator
-from pynvml import *
-from transformers import AutoModelForSequenceClassification
-from transformers import AutoTokenizer
-from transformers import TrainingArguments, Trainer, logging
+\paragraph{Look at the pretty pictures.} 
+Often, we want to not just see the raw data, but also the trend in the data; choosing the right visualization is really helpful. Digital speedometers in cars are more accurate than a sweep one in terms of showing you the speed of your vehicle, but the sweeping analog speedometer makes it easier for a person to understand the acceleration (rate of change of that speed). Representing changes in data over time in a graph makes it easier to identify trends or alarming things, and as a bonus, managers and non-technical people love them and love to rely on them. 
 
-
-def tokenize_function(examples):
-    return tokenizer(examples["text"], padding="max_length", truncation=True)
-
-
-def print_gpu_utilization():
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(0)
-    info = nvmlDeviceGetMemoryInfo(handle)
-    print(f"GPU memory occupied: {info.used // 1024 ** 2} MB.")
-
-
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    computed = metric.compute(predictions=predictions, references=labels)
-    print(computed)
-    return computed
-
-
-def print_summary(res):
-    print(f"Time: {res.metrics['train_runtime']:.2f}")
-    print(f"Samples/second: {res.metrics['train_samples_per_second']:.2f}")
-    print_gpu_utilization()
-
-
-print("Starting up. Initial GPU utilization:")
-print_gpu_utilization()
-torch.ones((1, 1)).to("cuda")
-print("Initialized Torch; current GPU utilization:")
-print_gpu_utilization()
-
-dataset = load_dataset("yelp_review_full")
-tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-
-tokenized_datasets = dataset.map(tokenize_function, batched=True)
-
-small_train_dataset = tokenized_datasets["train"].shuffle(seed=42).select(range(1000))
-small_eval_dataset = tokenized_datasets["test"].shuffle(seed=42).select(range(1000))
-
-model = AutoModelForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=5)
-training_args = TrainingArguments(
-    per_device_train_batch_size=8,
-    gradient_accumulation_steps=1,
-    evaluation_strategy="epoch",
-    output_dir="test_trainer,"
-)
-metric = evaluate.load("accuracy")
-
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=small_train_dataset,
-    eval_dataset=small_eval_dataset,
-    compute_metrics=compute_metrics,
-)
-
-result = trainer.train()
-print_summary(result)
-\end{lstlisting}
-
-
-And our results table with batch size of 8. I've skipped some intermediate results since at 9 minutes to calculate it takes a while to fill in all the values above. But jumping up some levels illustrates the trend.
+Consider just a simple example of the CPU usage graph from my laptop when I compile and run the nbody-parallel code; the blue represents user-space execution and red represents kernel execution:
 
 \begin{center}
-\begin{tabular}{r|r|r|r|r}
-\textbf{Gradient Accumulation Steps} & \textbf{Time (s)} & \textbf{Samples/s} & \textbf{Memory Occupied (MB)} & \textbf{Final Accuracy}\\ \hline
-1 & 538.37 & 5.56 & 7~069 & 0.621 \\
-8 & 501.89 & 5.98 & 7~509 & 0.554 \\
-32 & 429.70 & 6.98 & 7~509 & 0.347 \\
-1024 & 513.17 & 5.85 & 7~509 & 0.222 \\
-\end{tabular}
+	\includegraphics[width=0.3\textwidth]{images/cpu-load.png}
 \end{center}
 
-I ran the 32 case a few times to check if this was an outlier -- the one in the table is the best result. But it's still noticeably lower than that of the case where gradient accumulation is 1. Interesting, right? Increasing the gradient accumulation does change the effective batch size, and as you may know, increasing the batch size too large means less ability to generalize. Which is another way of saying that the model gets stuck at local minima or overfits the data.
+It is obvious in this picture at what point the simulation starts running for real. If we see this and we can identify an operation that starts around the time the CPU is maxed out, we have found something useful.
 
-That's not to say that smaller batch sizes are always better; models are way more complicated than that -- we can also underfit the model. It's part of why it's important to have training and validation data, so we can optimize and find the right balance. In the Yelp example, I get worse accuracy with batch size of 1 than 4, and 4 is worse than 8. There really is no magic number.
+\paragraph{Dashboards.} If we put together enough pretty pictures, we get a... dashboard! Dashboards are (ideally) more than just pretty pictures of LINE GOES UP. It is instead intended to be a collection of useful graphs (time trends, histograms, etc) that present an easily-digestible summary of the situation. Good dashboards make it clear what's happening and what things need attention. Of course, dashboards tend to make more sense when we have many things to measure; not so much if we're just trying to optimize one specific thing.
 
-\subsection*{Other Ideas}
-Just in the interests of time, we won't be able to experiment with everything, but the source has some other ideas that are worth mentioning as they relate to other course concepts we've discussed~\cite{hf}.
+\subsection*{Drill-down}
+All of this introduction to profiling has really been focused around the higher level ideas for identifying what's happening and what operations, if any, are slow (or slower than expected). Once we know that, for example, importing CSV files with tax rates is slow, we can start to use some profiling tools to identify what is slow inside that functionality.  In the next topic, we'll start by narrowing down what area is the bottleneck. 
 
-\paragraph{Gradient Checkpointing.} This approach is based around the idea of increasing compute time to reduce memory usage. It might allow us to work with a bigger model even with our fairly limited card memory, but training will take longer; according to the source it might be about 20\%. By default, all activations from the forward-pass are saved so tShey can be used in the backward pass; we could not save them and recalculate them from scratch on the backward pass. That would save the most memory but take the most time. A compromise approach is to save some of the activations so that the total amount to recompute on the backward pass is less. 
-
-Trying this out with batch size of 8 and gradient accumulation turned off, the total time goes from 66.70 to 93.07s and the memory from 7~069 down to 3619 MB. As expected, we got slower but used less memory. Actually, more like half the memory. Maybe it means we can increase the batch size? Raising it to 16 means the time was  100.55s but still only 3731 MB.
-
-Increasing the batch size a lot to finish faster might work, although it might require a very large batch size and not really save us anything since it would take quite a lot to fall below the time taken when not using the checkpointing. And no, using this checkpointing even with a batch size of 1 is not sufficient to run the \texttt{bert-large-uncased} model on \texttt{ecetesla0}. And remember that excessively large batch sized make things worse.
-
-\paragraph{Mixed Precision.} This is a fairly straightforward tradeoff of accuracy for time; while the default for most things might be 32-bit floating point numbers, if we don't need that level of precision then some of the 32-bit types could be replaced with 16-bit ones and this can speed up calculations. 
-
-\paragraph{Data Preloading.} If your limiting factor is in getting work to the GPU, data pre-loading is about either pinned memory or multi-threads to get data to the GPU faster. If you recall from the operating systems course you (hopefully) took, pinned memory is pages of memory where the operating system is instructed not to swap those pages to disk (i.e., keep them in RAM) for faster access. And multiple threads, well, this is clear at this point. 
-
-This is by no means exhaustive -- the guide talks about other ideas that we haven't got time to cover, like Mixture of Experts, which are very deep into the details and beyond what we want to cover here. And finally, we could consider doing things like buying a bigger (better) GPU, or using multiple GPUs for more parallelism. All the things we know about CPU work in this problem domain. 
-
-\subsection*{Tradeoffs}
-
-More than any other topic, the LLM topic shows the inherent tradeoffs in optimizing things. Do we trade memory for CPU? Do we trade accuracy for time? Do we prefer to err on the side of under- or over-fitting the model and how does that affect our choices on the other dimensions? I imagine that in the next few years our tools and ways of deciding these things will become much more sophisticated and best practices and known-good answers will emerge. But in the meantime, we can have a lot of fun experimenting and learning.
 
 \input{bibliography.tex}
 
