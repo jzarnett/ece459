@@ -35,6 +35,19 @@ You will probably:
 
 \end{frame}
 
+\begin{frame}
+\frametitle{Feeling Lost?}
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/gandalf.png}
+\end{center}
+
+We're focusing on step two here.
+
+The database is just a concrete example of the idea.
+
+\end{frame}
+
 
 \begin{frame}
 \frametitle{Query Processing}
@@ -46,6 +59,16 @@ The procedure for the database server to carry out the query are the same
 	\item Optimization
 	\item Evaluation
 \end{enumerate}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Adapt, Improvise, and Overcome}
+
+The DB server does not just execute a pre-planned series of steps.
+
+Yes, it's executing the (unchanging) binary code...\\
+\quad But the path taken varies based on factors known only at runtime!
 
 \end{frame}
 
@@ -256,16 +279,20 @@ Remember: the lowest cost approach is not necessarily the fastest!
 
 
 \begin{frame}
-\frametitle{Query Optimization}
+\frametitle{Equivalents: Alternative Routes}
 
+There are many rules to transform a query into an alternative/equivalent.
 
-The query optimizer is likely to focus first on join relations since that is potentially the biggest area in which we can make some gains.
+We aren't going to learn the rules here.
 
-\begin{center}
-	\includegraphics[width=\textwidth]{images/joinus.jpg}
-\end{center}
+Analogy: in math class you would have learned...\\
+\quad $3 \times 10 \times 7$ is the same as $7 \times 10 \times 3$;\\
+\quad $14 \times 13$ is the same as $14 \times 10 + 14 \times 3$.
+
 
 \end{frame}
+
+
 
 \begin{frame}
 \frametitle{Query Optimization}
@@ -301,17 +328,128 @@ It is likely that the optimizer does not consider every possibility and will tak
 
 Idea: re-use common subexpressions to reduce the amount of space used by representing the expressions during evaluation.
 
+\end{frame}
+
+\begin{frame}
+\frametitle{Evaluation Plan Selection}
+
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/overthink.jpg}
+\end{center}
+
+These operations are not free in terms of CPU usage or time and it is possible to waste more time on analysis than choosing a better algorithm would save. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Evaluation Plan Selection - Join Focus}
+
+A simplified approach, then, focuses just on what order in which join operations are done and then how those joins are carried out. 
+
+The theory is that the join operations are likely to be the slowest and take the longest, so any optimization here is going to have the most potential benefit.
+
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/joinus.jpg}
+\end{center}
 
 \end{frame}
 
 \begin{frame}
-\frametitle{Estimating Statistics}
+\frametitle{Focus on the Join}
 
-In the previous example I used exact numbers, 300... 1... 12000... etc.,
+The order of joins in a statement like $r_{1} \bowtie r_{2} \bowtie r_{3}$ is something the optimizer can choose. 
 
-But for the database server to get those it can either look them up, or it can guess about them. 
+In this case there are 3 relations and there are 12 different join orderings. 
 
-As mentioned earlier, sometimes certain numbers, like the number of tuples in a relation, are easily available by looking at metadata. 
+For $n$ relations there are $\dfrac{(2(n-1))!}{(n-1)!}$ possible orderings (some symmetric).
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Why Are We Doing This?}
+
+Why joining so many tables? Is this a design issue?
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/zoidberg.jpg}
+\end{center}
+
+
+It cannot examine all (non-symmetric) approaches and choose the optimal one. It would take too long.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Remember Your History}
+
+We can create an algorithm that can ``remember'' subsets of the choices. 
+
+Request  $r_{1} \bowtie r_{2} \bowtie r_{3} \bowtie r_{4} \bowtie r_{5}$? Compute the best order for $(r_{1} \bowtie r_{2} \bowtie r_{3})$. 
+
+Then re-use that repeatedly for any further joins with $r_{4}$ and $r_{5}$. 
+
+This ``saved'' result can be re-used repeatedly.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Make the DB Server Sad}
+
+The resultant approach may not be globally optimal (just locally optimal). 
+
+If $r_{1} \bowtie r_{4}$ produces very few tuples, it may be maximally efficient to do that join computation first.
+
+That will never be tried in an algorithm where $r_{1}$, $r_{2}$, and $r_{3}$ are combined to a subexpression for evaluation. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{It's Not Hard Data}
+
+Remember though, this is as estimating process. 
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/guessing.png}
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{May You Live In Interesting Times}
+
+The sort order in which tuples are generated is important if the result will be used in another join. 
+
+A sort order is called \alert{interesting} if it is useful in a later operation. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{May You Live In Interesting Times}
+
+Suppose $r_{1}$ and $r_{2}$ are being computed for a join with $r_{3}$.
+
+It is advantageous if the combined result $r_{1} \bowtie r_{2}$ is sorted on attributes that match to $r_{3}$ to make that join more efficient.
+
+If it is sorted by an attribute not in $r_{3}$, an additional sort will be necessary.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Generalizations Are Always Wrong}
+
+The best plan for computing a particular subset of the join query is not necessarily the best plan overall. 
+
+That extra sort may cost more than was saved by doing the join itself faster. 
+
+This increases the complexity, obviously, of deciding what is optimal. 
+
+Fortunately there are, usually anyway, not too many interesting sort orders...
 
 \end{frame}
 
@@ -415,8 +553,9 @@ The more exact values we have, the better our guesses. But things start to get i
 
 \end{frame}
 
+
 \begin{frame}
-\frametitle{Query Optimization}
+\frametitle{Join Elimination}
 
 Slight digression on \alert{Join Elimination}.
 
@@ -434,7 +573,7 @@ You may ask, of course, why should the optimizer do this work at all?
 
 Why not simply count on the developers who wrote the SQL in the first place to refactor/change it so that it is no longer so inefficient? 
 
-That would be nice but would you also like a pony? 
+Grind leetcode (please no) and git gud (seriously wtf).
 
 
 \begin{center}
@@ -529,177 +668,6 @@ As soon as you have found the single copy of that book, you can stop looking.
 
 \end{frame}
 
-
-\begin{frame}
-\frametitle{Evaluation Plan Selection}
-
-It was perhaps oversimplifying to have said earlier that choosing a plan was just as simple as picking the one with the lowest cost. 
-
-
-There about choosing the one with the lowest cost is correct (generally) but the difficulty is in devising and calculating all possible evaluation plans. 
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Evaluation Plan Selection}
-
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/overthink.jpg}
-\end{center}
-
-These operations are not free in terms of CPU usage or time and it is possible to waste more time on analysis than choosing a better algorithm would save. 
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Evaluation Plan Selection - Join Focus}
-
-A simplified approach, then, focuses just on what order in which join operations are done and then how those joins are carried out. 
-
-The theory is that the join operations are likely to be the slowest and take the longest, so any optimization here is going to have the most potential benefit.
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Focus on the Join}
-
-The order of joins in a statement like $r_{1} \bowtie r_{2} \bowtie r_{3}$ is something the optimizer can choose. 
-
-In this case there are 3 relations and there are 12 different join orderings. 
-
-For $n$ relations there are $\dfrac{(2(n-1))!}{(n-1)!}$ possible orderings (some symmetric).
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Why Are We Doing This?}
-
-Why joining so many tables? Is this a design issue?
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/zoidberg.jpg}
-\end{center}
-
-
-It cannot examine all (non-symmetric) approaches and choose the optimal one. It would take too long.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Remember Your History}
-
-We can create an algorithm that can ``remember'' subsets of the choices. 
-
-Request  $r_{1} \bowtie r_{2} \bowtie r_{3} \bowtie r_{4} \bowtie r_{5}$? Compute the best order for $(r_{1} \bowtie r_{2} \bowtie r_{3})$. 
-
-Then re-use that repeatedly for any further joins with $r_{4}$ and $r_{5}$. 
-
-This ``saved'' result can be re-used repeatedly.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Make the DB Server Sad}
-
-The resultant approach may not be globally optimal (just locally optimal). 
-
-If $r_{1} \bowtie r_{4}$ produces very few tuples, it may be maximally efficient to do that join computation first.
-
-That will never be tried in an algorithm where $r_{1}$, $r_{2}$, and $r_{3}$ are combined to a subexpression for evaluation. 
-
-\end{frame}
-
-\begin{frame}
-\frametitle{It's Not Hard Data}
-
-Remember though, this is as estimating process. 
-
-\begin{center}
-	\includegraphics[width=0.7\textwidth]{images/guessing.png}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{May You Live In Interesting Times}
-
-The sort order in which tuples are generated is important if the result will be used in another join. 
-
-A sort order is called \alert{interesting} if it is useful in a later operation. 
-
-\end{frame}
-
-\begin{frame}
-\frametitle{May You Live In Interesting Times}
-
-Suppose $r_{1}$ and $r_{2}$ are being computed for a join with $r_{3}$.
-
-It is advantageous if the combined result $r_{1} \bowtie r_{2}$ is sorted on attributes that match to $r_{3}$ to make that join more efficient.
-
-If it is sorted by an attribute not in $r_{3}$, an additional sort will be necessary.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Generalizations Are Always Wrong}
-
-The best plan for computing a particular subset of the join query is not necessarily the best plan overall. 
-
-That extra sort may cost more than was saved by doing the join itself faster. 
-
-This increases the complexity, obviously, of deciding what is optimal. 
-
-Fortunately there are, usually anyway, not too many interesting sort orders...
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Generating Alternatives}
-
-Join order optimization is a big piece of the puzzle but it's not the only thing we can do in query evaluation. 
-
-Too many to consider them all, but we can generate some alternatives.
-\begin{center}
-	\includegraphics[width=0.3\textwidth]{images/toomany.jpg}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{To Generate Alternatives}
-
-\begin{enumerate}
-	\item Efficient Storage of Expressions
-	\item Duplicate Detection
-	\item Remembering optimal plans
-	\item Early-terminating algorithm
-\end{enumerate}
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Nested Subqueries}
-
-If possible, nested subqueries will be transformed into a join query. 
-
-If evaluated the ``slow'' way the subquery needs to be run a lot of times. 
-
-
-If really necessary we can run the subquery once and use that temporary relation in a join (where exists or ``in'' predicates may fall into this category).
-
-
-\end{frame}
-
 \begin{frame}
 \frametitle{Shortcuts}
 
@@ -749,6 +717,18 @@ In any busy system, common queries may be repeated over and over again with slig
 A student wishes to query what courses they are enrolled in. 
 
 If one student does this query with a particular value for student ID number, we can re-use that same evaluation plan in the future.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Estimating Statistics}
+
+In the previous example I used exact numbers, 300... 1... 12000... etc.,
+
+But for the database server to get those it can either look them up, or it can guess about them. 
+
+As mentioned earlier, sometimes certain numbers, like the number of tuples in a relation, are easily available by looking at metadata. 
 
 \end{frame}
 
