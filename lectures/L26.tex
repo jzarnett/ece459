@@ -6,14 +6,16 @@
 
 \section*{Characterizing Performance \& Scalability Problems}
 
-Most of our upcoming discussion will be around the idea of CPU profiling, which is to say, examining where CPU time is going. That's generally predicated on the idea that CPU time is limiting factor. But maybe it isn't, and before we go about focusing on how to improve this aspect, let's check that assumption and consider what else it could be.
+Studies show that poor mobile app performance, whether that's by high usage of resources (e.g., battery, memory) or just being slow, is a major complaint that users write about in app stores~\cite{free-apps}. The paper is somewhat older at this point, and while we might like to think that developers are doing a better job of proactively identifying issues, chances are it's still the case that a distressing number of issues are first discovered when someone posts a negative review. \textit{``One star, because it's not possible to give zero!''}.
+
+Given that, a user might be able to give a vague idea of what's wrong, or point out a workflow where they're dissatisfied with the performance. Then it's up to the development team to figure out what's the cause of the problem. Most of our next topics in profiling will be around the idea of CPU profiling, which is to say, examining where CPU time is going. That's generally predicated on the assumption that CPU time is limiting factor. But maybe it isn't, and before we go about focusing on how to examine CPU usage, let's check that assumption -- because it could be something else.
 
 \begin{quote}
 \textit{It is a capital mistake to theorize before one has data. Insensibly one begins to twist facts to suit theories, instead of theories to suit facts.}
 \end{quote}
 \hfill - Sherlock Holmes (\textit{A Scandal in Bohemia}; Sir Arthur Conan Doyle)
 
-Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before reaching conclusions. At a high level we probably have five potential culprits to start with:
+Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before reaching conclusions. At a high level we probably have the following potential culprits to start with:
 \begin{enumerate}
 	\item CPU
 	\item Memory
@@ -22,9 +24,15 @@ Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before rea
 	\item Locks
 \end{enumerate}
 
-These are, obviously, more categories than specific causes, but they are starting points for further investigation. They are listed in some numerical order, but there is no reason why one would have to investigate them in the order defined there.
+\paragraph{Caveats.}
+The list above is, obviously, categories, but they are starting points for further investigation. They are listed in some numerical order, but there is no reason why one would have to investigate them in the order defined there. We'll go in that order in this topic, just for convenience.
 
-\paragraph{CPU.} CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that used to donate its free CPU cycles to world community grid (I'm singlehandedly saving the world, you see.):
+If we get to the end of a particular investigative avenue, fixing it is a separate issue involving the application of the techniques covered elsewhere in the course. That might be really difficult, and sometimes the cause of the problem is simply that the user's device/hardware is too old (or lacking important hardware for acceleration). Games are likely the most obvious example of situations where the ``minimum'' and ``recommended'' hardware configurations are published and if you don't meet those requirements, you're going to have a bad time (if the game runs at all). That applies to apps too, though dropping older devices from the supported set is more likely a result of the device no longer getting OS/API upgrades rather than being ``too slow''. All of which is to say, at the end of the analysis, sometimes the correct solution is to advise the user to upgrade their hardware.
+
+Another possible outcome of finding the bottleneck when reported by the user is that it actually isn't a performance problem as much as a programming error. For example, the user may report the GUI lagging or the application not responding (up to and including the actual system not-responding dialog), but these scenarios are not the result of low computational power on the device; they are caused instead by doing some slow or computationally-intensive task in the UI thread rather than in the background~\cite{bottlenecks-android}. The fix there is just to, well, fix the bug.
+
+
+\paragraph{CPU.} CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that used to donate its free CPU cycles to world community grid (I was singlehandedly saving the world, you see. I mean. I did stop in 2016, and look at what's happened since then.):
 
 \begin{verbatim}
 top - 07:28:19 up 151 days, 23:38,  8 users,  load average: 0.87, 0.92, 0.91
@@ -51,14 +59,16 @@ Being at or above 1.00 isn't necessarily bad, but you should be concerned if the
 Now this is for a single CPU -- if you have a load of 3.00 and a quad core CPU, this is okay. You have, in the traffic analogy, four lanes of traffic, of which 3 are being used to capacity. So we have a fourth lane free and it's as if we're at 75\% utilization on a single CPU.
 
 
-\paragraph{Memory and Disk.} Next on the list is memory. One way to tell if memory is the limiting factor is actually to look at disk utilization. If there is not enough RAM in the box, there will be swapping and then performance goes out the window and scalability goes with. That is of course, the worst case. You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
+\paragraph{Memory and Disk.} Next on the list is memory. If you are using some garbage-collected language or framework, you will find lots of runs of the garbage collector, or at least very long ones when it does run; in the worst case scenario you'll see your application run out of memory and either crash or recover from it~\cite{bottlenecks-android}.
+
+One way to tell if memory is the limiting factor is actually to look at disk utilization. If there is not enough RAM in the system, there will be swapping and then performance goes out the window and scalability goes with. That is of course, the worst case. You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
 
 \begin{verbatim}
 KiB Mem:   8167736 total,  6754408 used,  1413328 free,   172256 buffers
 KiB Swap:  8378364 total,  1313972 used,  7064392 free.  2084336 cached Mem
 \end{verbatim}
 
-This can be misleading though, because memory being ``full'' does not necessarily mean anything bad. It means the resource is being used to its maximum potential, yes, but there is no benefit to keeping a block of memory open for no reason. Things will move into and out of memory as they need to, and nobody hands out medals to indicate that you did an awesome job of keeping free memory. It's not like going under budget in your department for the year.  Also, memory is not like the CPU; if there's nothing for the CPU to do, it will just idle (or go to a low power state, which is nice for saving the planet). But memory won't ``forget'' data if it doesn't happen to be needed right now - data will hang around in memory until there is a reason to move or change it. So freaking out about memory appearing as full is kind of like getting all in a knot about how ``System Idle Process'' is hammering the CPU\footnote{Yes, a tech journalist named John Dvorak really wrote an article about this, and I will never, ever forgive him for it.}.
+This can be misleading though, because memory being ``full'' does not necessarily mean anything bad. It means the resource is being used to its maximum potential, yes, but there is no benefit to keeping a block of memory open for no reason. Things will move into and out of memory as they need to, and nobody hands out medals to indicate that you did an awesome job of keeping free memory. It's not like going under budget in your department for the year.  Also, memory is not like the CPU; if there's nothing for the CPU to do, it will just idle (or go to a low power state, which is nice for saving the planet). But memory won't ``forget'' data if it doesn't happen to be needed right now - data will hang around in memory until there is a reason to move or change it. So freaking out about memory appearing as full is kind of like getting all in a knot about how ``System Idle Process'' is hammering the CPU\footnote{Yes, a tech journalist named John Dvorak really wrote an article about this, and here I am roasting him about it decades later because it's just so ridiculous a theory that I can't help it.}.
 
 You can also ask about page faults, with the command \texttt{ps -eo min\_flt,maj\_flt,cmd} which will give you the major page faults (had to fetch from disk) and minor page faults (had to copy a page from another process). The output of this is too big even for the notes, but try it yourself (or I might be able to do a demo of it in class). But this is lifetime and you could have a trillion page faults at the beginning of your program and then after that everything is fine. What you really want is to ask Linux for a report on swapping:
 
@@ -108,6 +118,44 @@ Avg: 2.95 kBit/s
 Min: 1.02 kBit/s
 Max: 12.60 kBit/s
 Ttl: 39.76 GByte                                                                                       \end{verbatim}
+
+So if you saw here, for example, that data was leaving at 100 Megabits per second you'd have a pretty good idea that was the limitation, but you may still be network limited at lower speeds. Intermediary devices or other non-optimal hardware can get in the way. For example, it's possible to run a wired network over power lines -- this is not optimal, but it's effective in older buildings where it would be difficult or expensive to run network cables through the walls. This will limit your speed based on the condition of the wires in the wall, alongside any other devices on the same circuit adding noise to the signal. So what should be 1000 or 100 MBit might actually only be more like 32 Mbit. Wireless networks have the same problem, being affected by walls, floors, electromagnetic interference, humidity...
+
+Testing network speed can be done using tools like speedtest.net, which gives some indication of what the network connection speed is like from a given device (upload and download). You may need to test multiple times to get a realistic picture of speed. The test validates the speed of connection to the upstream system (e.g., some server operated by the speed test service), but not necessarily to your own data centre. Both locations can have good network connections to the outside world, but might not be easily able to talk to each other well.
+
+In my [JZ] experience, I've seen network speed issues for people working in Hong Kong using an application that has the backend deployed in a Frankfurt (Germany) data centre. The problem here is not bandwidth but latency. Tools like speedtest can tell you the latency of communication alongside the bandwidth. If you want to get an idea of the path and the latency to a particular remote system, you can use the \texttt{traceroute} tool. Here is an example from Catchpoint \url{https://www.catchpoint.com/network-admin-guide/how-to-read-a-traceroute}, which also provides some guidance on how to interpret a traceroute result: 
+
+{\scriptsize
+\begin{verbatim}
+Microsoft Windows [Version 10.0.19043.1288]
+(c) Microsoft Corporation. All rights reserved.
+C:\Users\Michael>tracert catchpoint.com
+Tracing route to catchpoint.com [64.79.149.76]
+Over a maximum of 30 hops: 
+1	2ms	1ms	1ms 10.0.0.1
+2 	10ms	10ms	10ms 96.120.40.245
+3	10ms	11ms	12ms	96.110.175.85
+4	10ms	16ms	10ms 	162.151.63.57
+5	19ms	16ms	20ms	96.108.21.57
+6	15ms	19ms	14ms	96.216.134.10
+7          	19ms 	22ms 	21ms 	be-32121-cs02.350ecermak.il.ibone.comcast.net [96.110.42.181]
+8          	22ms 	34ms 	22ms 	be-2204-pe04.350ecermak.il.ibone.comcast.net [96.110.37.38]
+9          	22ms 	20ms 	20ms 	50.208.234.106
+10       	51ms 	50ms 	49ms 	ae18-0.cr02.dlls02-tx.us.windstream.net [40.128.10.135]
+11       	73ms 	72ms 	72ms 	ae4-0.agr03.phnd01-az.us.windstream.net [169.130.193.231]
+12       	84ms 	73ms 	75ms 	ae1-0.pe05.phnd01-az.us.windstream.net [169.130.169.31]
+13       	85ms 	84ms 	85ms 	h241.23.132.40.static.ip.windstream.net [40.132.23.241]
+14       	*         	82ms 	78ms 	be181.las-n10s1-core1.switch.com [66.209.64.121]
+15       	79ms 	77ms 	80ms 	bell011.las-agg7s5-1.switch.com [66.209.72.26]
+16       	79ms 	77ms 	79ms 	64.79.139.18
+17       	77ms 	77ms 	87ms 	64.19.149.76
+Trace complete
+\end{verbatim}
+}
+
+Remember that communication latency can never be truly eliminated, because it takes non-zero time for packets to get processed through network hardware (e.g., switches), and, more importantly, the speed of light. I looked up some data on \url{https://wondernetwork.com/pings/New\%20York} -- use with a grain of salt --  that says the ping from New York to Lyon is 73.21ms which is something like 83.79\% of the speed of light in fibre-optic cable (as of August 2024). Even if we got it up to 100\% of the speed of light in fibre-optic cable, or used some other material that had a higher speed of light in it, it can't ever get down to nothing. 
+
+One more thing that can cut into your effective bandwidth is packet loss: data getting dropped or corrupted en route. That requires some device along the line to identify that the packets are not as they should be, re-request the needed packets, and wait for them to arrive. Packet loss may be environmental, but it also might mean a device needs replacing.
 
 \paragraph{Locks.}
 The last possibility we'll consider is that your code is slow because we're waiting for locks, either frequently or for lengthy periods of time. We've already discussed appropriate use of locks, so we won't repeat that. The discussion here is about how to tell if there is a locking problem in the first place.
