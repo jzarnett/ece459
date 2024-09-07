@@ -12,18 +12,12 @@
 \hfill ---Wikipedia
 \end{center}
 
-Today we'll look at what support the architecture provides for memory ordering, in
-particular in the form of cache coherence. Since this isn't an
-architecture course, we'll look at this material more from the point
-of view of a user, not an implementer.
+Today we'll look at what support the architecture provides for memory ordering, in particular in the form of cache coherence. We'll be talking about cache coherence strategies that work for CPUs, where we don't get much choice. But what we're going to talk about works equally well for something like \texttt{redis} (\texttt{redict}) in a situation where we have a distributed cache in software. In a software scenario we might get to choose the configuration that we want; when it comes to the CPU we get whatever the hardware designers have provided to us.
 
 The problem is, of course, that each CPU likely has its own cache. If it does, then the data in these may be out of sync---the value that CPU 1 has for a particular piece of data might be different from the value that CPU 4 has. The simplest method, and a horrible solution, would be the ability to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?\ldots). The compiler and OS and such will require the data to be read from main memory, always. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is \textit{coherency}.
 
-Cache coherency means that:
-  \begin{itemize}
-    \item the values in all caches are consistent; and
-    \item to some extent, the system behaves as if all CPUs are using shared memory.
-  \end{itemize}
+Cache coherency means that (1) the values in all caches are consistent; and
+ (2) to some extent, the system behaves as if all CPUs are using shared memory.
   
 In modern CPUs with three or four levels of cache, we frequently find that the level 3 cache isn't much faster than going to main memory. But this level is where the cache coherency communication can take place. This can be by making the cache shared between the different CPUs. And the L4 cache is frequently used for sharing data with the integrated graphics hardware on CPUs that have this feature. But for the most part we will imagine that caches are not shared, and we have to figure out how to get coherency between them. This is the case with a L1/L2 cache in a typical modern CPU as they are unique to the given core (i.e., not shared).
   
@@ -46,14 +40,13 @@ Outside of a computing context, imagine you and several co-workers have some sha
 
 The notification may contain the updated information in its entirety, such as ``Event title changed to `Discuss User Permissions and Roles''', or it may just tell you ``something has changed; please check''. In transportation, you can experience both\ldots in the same day. I [JZ] was flying to Frankfurt and going to catch a train. Air Canada sent me an e-mail that said ``Departure time revised to 22:00'' (20 minute delay); when I landed the Deutsche Bahn (German railways) sent me an e-mail that said ``Something on your trip has changed; please check and see what it is in the app''\ldots it was my train being cancelled. I don't know why they couldn't have e-mailed me that in the first place! It's not like I was any less annoyed by finding out after taking a second step of opening an app.
 
-Regardless of which method is chosen, we have to pick one. We can't pick none of those and expect to get the right answers.
+Regardless of which method is used, we have to pick one. Otherwise, we won't get the right answers.
 
 
-\paragraph{Snoopy Caches.} The simplest way to ``do something''
-is to use Snoopy caches~\cite{snoopycache}. No, not this kind of Snoopy (sadly):
+\paragraph{Snoopy Caches.} The simplest strategy is Snoopy caches~\cite{snoopycache}. No, not this kind of Snoopy (sadly):
 
 \begin{center}
-	\includegraphics[width=0.3\textwidth]{images/peanuts-snoopy1.jpg}
+	\includegraphics[width=0.2\textwidth]{images/peanuts-snoopy1.jpg}
 \end{center}
 
 It's called Snoopy because the caches are, in a way, spying on each other: they are observing what the other ones are doing. This way, they are kept up to date on what's happening and they know whether they need to do anything. They do not rely on being notified explicitly. This is a bit different from the transportation analogy, of course, but workable in a computer with a shared bus.
@@ -174,7 +167,7 @@ Initially in main memory: {\tt x = 7}.
 
 \subsection*{An Extension to MSI: MESI}
     The most common protocol for cache coherence is MESI.
-    This protocol adds yet another state:
+    This protocol adds yet another state: \vspace{-1em}
       \begin{itemize}
         \item {\bf Modified}---only this cache has a valid copy; 
  main memory is {\bf out-of-date}.
@@ -188,40 +181,118 @@ Initially in main memory: {\tt x = 7}.
     having to communicate with the bus.  MESI is safe. The key is that
     if memory is in the E state, no other processor has the data. The transition from E to M does not have to be reported over the bus, which potentially saves some work and reduces bus usage. 
 
-\subsection*{MESIF: Even More States!}
-
-    MESIF (used in latest i7 processors):
-      \begin{itemize}
-        \item {\bf Forward}---basically a shared state; but, current
-          cache is the only one that will respond to a request to
-          transfer the data.
-      \end{itemize}
+\paragraph{MESIF: Even More States!} MESIF (used in latest i7 processors):{\bf Forward}---basically a shared state; but, current cache is the only one that will respond to a request to          transfer the data.
 
     Hence: a processor requesting data that is already shared or exclusive will
       only get one response transferring the data. Under a more simple MESI scheme you could get multiple caches trying to answer, with leads to bus arbitration or contention. The existence of a F state permits more efficient usage of the bus.
       
       
 \subsection*{False Sharing}
-False sharing is something that happens when our program has two unrelated data elements that are mapped to the same cache line/location. Let's consider an example from~\cite{falsesharing}:
+False sharing is something that happens when our program has two unrelated data elements that are mapped to the same cache line/location. That can be because of bad luck (hash collision kind of problem), but it often takes place because the data elements are stored consecutively. Let's consider an example from~\cite{falsesharing}:
 
 \begin{lstlisting}[language=C]
 char a[10];
 char b[10];
 \end{lstlisting}
-These don't overlap but are almost certainly allocated next to each other in memory. If a thread is writing to \texttt{a} and they share a cache line, then \texttt{b} will be invalidated and the CPU working on \texttt{b} will be forced to fetch the newest value from memory. This can be avoided by seeing to it that there is some separation between these two arrays.
+\vspace{-1em}
 
-One way would be to heap allocate both arrays. You can find where things are located, if you are curious, by printing the pointer (or the address of a regular variable). Usually if you do this you will find that they are not both located at the same location. But you are provided no guarantee of that. So the other alternative is to make both arrays bigger than they need to be such that we're sure they don't overlap.
+These don't overlap, but are almost certainly allocated next to each other in memory. If a thread is writing to \texttt{a} and they share a cache line or block, then \texttt{b} will be invalidated and a CPU working on \texttt{b} will be forced to fetch the newest value from memory. This can be avoided by forcing some separation between these two arrays. One way would be to heap allocate both arrays. Usually if you do this you will find that they are not both located at the same location (but it's not guaranteed). So the other alternative is to make both arrays bigger than they need to be such that we're sure they don't overlap.
 
 Consider the graph below that shows what happens in a sample program reading and writing these two arrays, as you increase the size of arrays \texttt{a} and \texttt{b} (noting that byte separation of 11 means they are adjacent; anything less than that and they overlap). This does waste space, but is it worth it?
 
 \begin{center}
-\includegraphics[width=0.6\textwidth]{images/falsesharing.png}\\
+\includegraphics[width=0.4\textwidth]{images/falsesharing.png}\\
 Execution time graph showing 5x speedup by ``wasting'' some space~\cite{falsesharing}.
 \end{center}
 
-At separation size 51 there is a huge drop in execution time because now we are certainly putting the two arrays in two locations that do not have the false sharing problem. Is wasting a little space worth it? Yes!
+At separation size 51 there is a huge drop in execution time because now we are certainly putting the two arrays in two locations that do not have the false sharing problem. Is wasting a little space worth it? Yes! Also -- putting these arrays in a struct and padding the struct can also help with enabling future updates to the struct.
 
-P.S. putting these arrays in a struct and padding the struct can also help with enabling future updates to the struct.
+\subsection*{Software Implementation}
+A previous exam question on caching asked students to write a pseudocode description of behaviour for a distributed software cache that uses the MESI states and has write-back behaviour. This cache is for data items retrieved from a database, so if the item is not in any node's cache, write down \texttt{retrieve item i from database}.
+
+You can assume the cache to be of significant size and while the question said you can assume that the least-recently-used (LRU) algorithm is used for replacement, you don't really have to consider replacement in this situation at all. As a practice problem for consideration, think about what modification(s) you would need to make for that scenario.
+
+As the cache is distributed, we do need to consider what happens if a node comes online and joins the cluster, and what happens if a node is going to shut down and leave the cluster. You may ignore situations like crashes or network outages and you can assume all sent messages are reliably delivered/received.
+
+\begin{multicols}{2}
+\begin{lstlisting}
+Current Node Shutdown { 
+  for i in items {
+    if i is in state M {
+      write i to the database
+    }
+  }
+  for node n in known_nodes {
+    send leaving message to n
+  }
+}
+
+Node Leaves ( node n ) {
+  Remove n from known_nodes
+}
+
+Get Item ( item i ) {
+  if i is in local cache {
+    return i
+  } else {
+    for node n in known_nodes {
+      if n has item i
+        add to cache ( i )
+        set i state to S
+        return i
+      }
+    }
+  }
+  retrieve i from database
+  add to cache ( i )
+  set i state to E
+  return i
+}
+\end{lstlisting}
+\columnbreak
+
+\begin{lstlisting}
+Other Node Searching ( item i ) {
+  if i is in local cache {
+    if i is in state M {
+      write i to the database
+      set i state to S
+      return i
+    } else if i is in state E {
+      set i state to S
+      return i
+    } else if i is in state S {
+      return i    
+	}
+  } 
+  return null //Or other indicator of not-found
+}
+
+Update Item ( item i ) {
+  if i is in local cache {
+    if i is in state S {
+      for node n in known_nodes {
+        send invalidate i message to n
+      }
+      set i state to M
+    } else if i is in state E {
+      set i state to M
+      return
+    } else if i is in state M {
+      return // Nothing to do
+    }
+  }
+  add i to the cache in state M
+}
+
+Invalidate ( item i ) {
+  if i is in local cache {
+    set i state to I
+  }
+}
+\end{lstlisting}
+\end{multicols}
+
 
 \input{bibliography.tex}
 
