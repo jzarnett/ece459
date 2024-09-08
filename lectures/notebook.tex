@@ -364,7 +364,9 @@ secure systems programming language used by Mozilla's Project Quantum. A design 
 \paragraph{Tips and caveats.}
 Like any designed artifact, Rust makes trade-offs. Sometimes the trade-offs will work out in your favour, and sometimes they won't. In particular, you will find some things harder to code in Rust than in C/\CPP. However, they are also more likely to be correct. Is that worth it? Depends on the context: are you writing throwaway code? A prototype? Code that is destined for production in a critical system?
 
-Even though you've been writing code for at least a couple of years, if you are new to Rust, you will have frustrating moments. As I write this, it doesn't seem like Winter 2021 will be a good time to program together in a room with your non-roommate friends. It may seem like Rust is out to frustrate you, but Rust's developers have put a lot of effort into producing error messages that try to help. And, as always, please use Piazza and otherwise ask colleagues and course staff for help.
+Even though you've been writing code for at least a couple of years, if you are new to Rust, you will have frustrating moments.
+%As I write this, it doesn't seem like Winter 2021 will be a good time to program together in a room with your non-roommate friends.
+It may seem like Rust is out to frustrate you, but Rust's developers have put a lot of effort into producing error messages that try to help. And, as always, please use Piazza and otherwise ask colleagues and course staff for help.
 
 There's the saying ``If you know one programming language, you know them all''. This saying is true to a first approximation, at least for first-year programming. C/\CPP/C\#/Java are reasonably similar and it's possible to write the same sort of code in at least the object-oriented languages. But the saying is not fully true, for a bunch of reasons. Writing \emph{idiomatic} code in a language is different from writing working code, and I'll encourage you to learn Rust as it is and to write Rust code rather than \CPP~code masquerading as Rust code. In particular, Rust also admits influences from functional languages like Haskell and OCaml\footnote{Yes, \CPP, C\# and Java all have incorporated functional features now too, but they're not central to how people write in these languages typically.}
 
@@ -884,7 +886,7 @@ Okay, we have to take a detour here onto the subject of Traits. As the previous 
 
 \begin{lstlisting}[language=Rust]
 pub trait FinalGrade {
-	fun final_grade(&self) -> f32;
+	fn final_grade(&self) -> f32;
 }
 
 impl FinalGrade for Enrolled_Student {
@@ -1103,6 +1105,11 @@ You can also use raw pointers when you need to write to a particular memory addr
 You might need this if you are calling into a C library or function. The Rust universe of packages (``crates'') is getting larger all the time, but sometimes you'll have to interact with a library in C\ldots or write a part of your application in Rust that is called from C. There is a crate for cURL, but it might be interesting to learn what one would have to do to use the C library for it\ldots
 
 \paragraph{Rust vs \CPP.} Now that you know all about Rust, you can see a discussion of the \CPP~equivalents here: \url{https://reberhardt.com/cs110l/spring-2020/slides/lecture-18.pdf#page=27}. Basically everything in Rust also exists in \CPP, but \CPP~doesn't make you use these things in a safe way.
+
+\section*{Use Libs Wisely!}
+In previous courses, such as a concurrency course, there was a lot of expectation to do most things the hard way: write your own implementation and don't use libraries. In this course, such restrictions don't apply. In industry, you'll use libraries that have appropriate functionality, assuming the license for them is acceptable to your project. It's strange that hiring interviews might ask you to implement a linked list, when in reality we would always expect that you would use one in a (standard) library...
+
+Although the topic of using libraries used to have its own lecture, we've now moved that subject matter to the appendices for the course. It's worth taking a look at, though some examples relate to topics covered later in the course. Libraries like Crossbeam and Rayon are very useful and they are worth taking a look at -- but not in the main lecture material. Use them as appropriate in the course examples, assignments, et cetera.
 
 
 
@@ -2182,18 +2189,12 @@ Researchers discovered and published a paper~\cite{portsmash} detailing the atta
 \hfill ---Wikipedia
 \end{center}
 
-Today we'll look at what support the architecture provides for memory ordering, in
-particular in the form of cache coherence. Since this isn't an
-architecture course, we'll look at this material more from the point
-of view of a user, not an implementer.
+Today we'll look at what support the architecture provides for memory ordering, in particular in the form of cache coherence. We'll be talking about cache coherence strategies that work for CPUs, where we don't get much choice. But what we're going to talk about works equally well for something like \texttt{redis} (\texttt{redict}) in a situation where we have a distributed cache in software. In a software scenario we might get to choose the configuration that we want; when it comes to the CPU we get whatever the hardware designers have provided to us.
 
 The problem is, of course, that each CPU likely has its own cache. If it does, then the data in these may be out of sync---the value that CPU 1 has for a particular piece of data might be different from the value that CPU 4 has. The simplest method, and a horrible solution, would be the ability to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?\ldots). The compiler and OS and such will require the data to be read from main memory, always. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is \textit{coherency}.
 
-Cache coherency means that:
-  \begin{itemize}
-    \item the values in all caches are consistent; and
-    \item to some extent, the system behaves as if all CPUs are using shared memory.
-  \end{itemize}
+Cache coherency means that (1) the values in all caches are consistent; and
+ (2) to some extent, the system behaves as if all CPUs are using shared memory.
   
 In modern CPUs with three or four levels of cache, we frequently find that the level 3 cache isn't much faster than going to main memory. But this level is where the cache coherency communication can take place. This can be by making the cache shared between the different CPUs. And the L4 cache is frequently used for sharing data with the integrated graphics hardware on CPUs that have this feature. But for the most part we will imagine that caches are not shared, and we have to figure out how to get coherency between them. This is the case with a L1/L2 cache in a typical modern CPU as they are unique to the given core (i.e., not shared).
   
@@ -2216,14 +2217,13 @@ Outside of a computing context, imagine you and several co-workers have some sha
 
 The notification may contain the updated information in its entirety, such as ``Event title changed to `Discuss User Permissions and Roles''', or it may just tell you ``something has changed; please check''. In transportation, you can experience both\ldots in the same day. I [JZ] was flying to Frankfurt and going to catch a train. Air Canada sent me an e-mail that said ``Departure time revised to 22:00'' (20 minute delay); when I landed the Deutsche Bahn (German railways) sent me an e-mail that said ``Something on your trip has changed; please check and see what it is in the app''\ldots it was my train being cancelled. I don't know why they couldn't have e-mailed me that in the first place! It's not like I was any less annoyed by finding out after taking a second step of opening an app.
 
-Regardless of which method is chosen, we have to pick one. We can't pick none of those and expect to get the right answers.
+Regardless of which method is used, we have to pick one. Otherwise, we won't get the right answers.
 
 
-\paragraph{Snoopy Caches.} The simplest way to ``do something''
-is to use Snoopy caches~\cite{snoopycache}. No, not this kind of Snoopy (sadly):
+\paragraph{Snoopy Caches.} The simplest strategy is Snoopy caches~\cite{snoopycache}. No, not this kind of Snoopy (sadly):
 
 \begin{center}
-	\includegraphics[width=0.3\textwidth]{images/peanuts-snoopy1.jpg}
+	\includegraphics[width=0.2\textwidth]{images/peanuts-snoopy1.jpg}
 \end{center}
 
 It's called Snoopy because the caches are, in a way, spying on each other: they are observing what the other ones are doing. This way, they are kept up to date on what's happening and they know whether they need to do anything. They do not rely on being notified explicitly. This is a bit different from the transportation analogy, of course, but workable in a computer with a shared bus.
@@ -2344,7 +2344,7 @@ Initially in main memory: {\tt x = 7}.
 
 \subsection*{An Extension to MSI: MESI}
     The most common protocol for cache coherence is MESI.
-    This protocol adds yet another state:
+    This protocol adds yet another state: \vspace{-1em}
       \begin{itemize}
         \item {\bf Modified}---only this cache has a valid copy; 
  main memory is {\bf out-of-date}.
@@ -2358,40 +2358,118 @@ Initially in main memory: {\tt x = 7}.
     having to communicate with the bus.  MESI is safe. The key is that
     if memory is in the E state, no other processor has the data. The transition from E to M does not have to be reported over the bus, which potentially saves some work and reduces bus usage. 
 
-\subsection*{MESIF: Even More States!}
-
-    MESIF (used in latest i7 processors):
-      \begin{itemize}
-        \item {\bf Forward}---basically a shared state; but, current
-          cache is the only one that will respond to a request to
-          transfer the data.
-      \end{itemize}
+\paragraph{MESIF: Even More States!} MESIF (used in latest i7 processors):{\bf Forward}---basically a shared state; but, current cache is the only one that will respond to a request to          transfer the data.
 
     Hence: a processor requesting data that is already shared or exclusive will
       only get one response transferring the data. Under a more simple MESI scheme you could get multiple caches trying to answer, with leads to bus arbitration or contention. The existence of a F state permits more efficient usage of the bus.
       
       
 \subsection*{False Sharing}
-False sharing is something that happens when our program has two unrelated data elements that are mapped to the same cache line/location. Let's consider an example from~\cite{falsesharing}:
+False sharing is something that happens when our program has two unrelated data elements that are mapped to the same cache line/location. That can be because of bad luck (hash collision kind of problem), but it often takes place because the data elements are stored consecutively. Let's consider an example from~\cite{falsesharing}:
 
 \begin{lstlisting}[language=C]
 char a[10];
 char b[10];
 \end{lstlisting}
-These don't overlap but are almost certainly allocated next to each other in memory. If a thread is writing to \texttt{a} and they share a cache line, then \texttt{b} will be invalidated and the CPU working on \texttt{b} will be forced to fetch the newest value from memory. This can be avoided by seeing to it that there is some separation between these two arrays.
+\vspace{-1em}
 
-One way would be to heap allocate both arrays. You can find where things are located, if you are curious, by printing the pointer (or the address of a regular variable). Usually if you do this you will find that they are not both located at the same location. But you are provided no guarantee of that. So the other alternative is to make both arrays bigger than they need to be such that we're sure they don't overlap.
+These don't overlap, but are almost certainly allocated next to each other in memory. If a thread is writing to \texttt{a} and they share a cache line or block, then \texttt{b} will be invalidated and a CPU working on \texttt{b} will be forced to fetch the newest value from memory. This can be avoided by forcing some separation between these two arrays. One way would be to heap allocate both arrays. Usually if you do this you will find that they are not both located at the same location (but it's not guaranteed). So the other alternative is to make both arrays bigger than they need to be such that we're sure they don't overlap.
 
 Consider the graph below that shows what happens in a sample program reading and writing these two arrays, as you increase the size of arrays \texttt{a} and \texttt{b} (noting that byte separation of 11 means they are adjacent; anything less than that and they overlap). This does waste space, but is it worth it?
 
 \begin{center}
-\includegraphics[width=0.6\textwidth]{images/falsesharing.png}\\
+\includegraphics[width=0.4\textwidth]{images/falsesharing.png}\\
 Execution time graph showing 5x speedup by ``wasting'' some space~\cite{falsesharing}.
 \end{center}
 
-At separation size 51 there is a huge drop in execution time because now we are certainly putting the two arrays in two locations that do not have the false sharing problem. Is wasting a little space worth it? Yes!
+At separation size 51 there is a huge drop in execution time because now we are certainly putting the two arrays in two locations that do not have the false sharing problem. Is wasting a little space worth it? Yes! Also -- putting these arrays in a struct and padding the struct can also help with enabling future updates to the struct.
 
-P.S. putting these arrays in a struct and padding the struct can also help with enabling future updates to the struct.
+\subsection*{Software Implementation}
+A previous exam question on caching asked students to write a pseudocode description of behaviour for a distributed software cache that uses the MESI states and has write-back behaviour. This cache is for data items retrieved from a database, so if the item is not in any node's cache, write down \texttt{retrieve item i from database}.
+
+You can assume the cache to be of significant size and while the question said you can assume that the least-recently-used (LRU) algorithm is used for replacement, you don't really have to consider replacement in this situation at all. As a practice problem for consideration, think about what modification(s) you would need to make for that scenario.
+
+As the cache is distributed, we do need to consider what happens if a node comes online and joins the cluster, and what happens if a node is going to shut down and leave the cluster. You may ignore situations like crashes or network outages and you can assume all sent messages are reliably delivered/received.
+
+\begin{multicols}{2}
+\begin{lstlisting}
+Current Node Shutdown { 
+  for i in items {
+    if i is in state M {
+      write i to the database
+    }
+  }
+  for node n in known_nodes {
+    send leaving message to n
+  }
+}
+
+Node Leaves ( node n ) {
+  Remove n from known_nodes
+}
+
+Get Item ( item i ) {
+  if i is in local cache {
+    return i
+  } else {
+    for node n in known_nodes {
+      if n has item i
+        add to cache ( i )
+        set i state to S
+        return i
+      }
+    }
+  }
+  retrieve i from database
+  add to cache ( i )
+  set i state to E
+  return i
+}
+\end{lstlisting}
+\columnbreak
+
+\begin{lstlisting}
+Other Node Searching ( item i ) {
+  if i is in local cache {
+    if i is in state M {
+      write i to the database
+      set i state to S
+      return i
+    } else if i is in state E {
+      set i state to S
+      return i
+    } else if i is in state S {
+      return i    
+	}
+  } 
+  return null //Or other indicator of not-found
+}
+
+Update Item ( item i ) {
+  if i is in local cache {
+    if i is in state S {
+      for node n in known_nodes {
+        send invalidate i message to n
+      }
+      set i state to M
+    } else if i is in state E {
+      set i state to M
+      return
+    } else if i is in state M {
+      return // Nothing to do
+    }
+  }
+  add i to the cache in state M
+}
+
+Invalidate ( item i ) {
+  if i is in local cache {
+    set i state to I
+  }
+}
+\end{lstlisting}
+\end{multicols}
+
 
 
 
@@ -4287,6 +4365,159 @@ You can actually look at the fix applied to the lock-free queue at \url{https://
 
 
 
+\chapter*{15 --- Rate Limits}
+
+\addcontentsline{toc}{chapter}{15 --- Rate Limits}
+
+\section*{It's Not Me, It's You}
+
+Sometimes the limiting factor in our application is something that's not under our control. Whenever your application connects to some other application (whether external or not), we may run up against a rate limit.
+
+A \emph{rate limit} represents the maximum rate at which a requester can make requests of the service---it is exactly what it sounds like. In other words, how many requests can be submitted in a given unit of time? Requests above the limit are rejected. If we are making HTTP requests, we are supposed to get a response code of 429 for a request rejected due to a rate limit.
+
+Rate limits can be more complicated than just a simple measurement of requests per unit time. For example, there can be multiple thresholds (e.g., A requests per hour or B requests per day), and it may be segmented by request type/responses (e.g., max C requests to change your user data per day, and a max of D requests of any type per day in total). Responses can be more complicated than just rejection also---the service could intentionally delay or deprioritize requests that exceed a threshold---but for our discussion we'll just stick with simple rejection.
+
+Rejected requests can be a huge problem for your application or service. An obvious example here is something like ChatGPT: if you're using that as a service in your application and you run up against the rate limit for that, some aspect of your application (maybe the critical one?) is unavailable or not working as well as expected. I [JZ] have even got a fun story about getting rate limited by a payment processing platform because they would (1) generate an invoice and notify a service via a webhook, (2) our service would then validate the webhook notification is valid by calling the platform, and (3) our service would then get rate limit errors saying it is calling the validation endpoint too often in a short period of time. Wait, they're calling us and we're just checking that the call is valid---but unfortunately, they don't care, HTTP 429---Too Many Requests! 
+
+\paragraph{Why is this happening to me?} Rate limits exist because every request has a certain cost associated with it. It takes work, however small or large this might be, to respond to the request. The cost may or may not be measured in a currency---if you are paying for CPU time at a cloud provider, then it literally is measured in monetary units---but it can also be measured in opportunity cost. What do I mean? If the system is busy, responding to one request may mean a delay in responding to other requests. If some of those requests are fraudulent or otherwise invalid, it's taking away time or resources from other, legitimate requests. If the system is overprovisioned, rate limits aren't necessary, but here we're talking about systems that are running closer to the edge.
+
+Denial-of-Service (DoS) attacks are ways that attackers can negatively impact the functioning of a service by simply sending in many invalid requests. The regular DoS attack becomes a Distributed Denial of Service (DDoS) attack when the attacker sends in those requests from numerous clients. This not only allows the attacker much more capacity to send in requests, but also prevents simple solutions like blocking the IP of the offending system. Given enough invalid requests, it can overwhelm the service which will either cause it to crash, exhaust its resources (e.g., network handles), or be so slow as to be unusable.
+
+An example of a rate limit that I [PL] encountered was in using a system that allowed Ontarians to write letters to the Minister of the Environment about allowing rock climbing in provincial parks. We were encouraging people at climbing gyms to send letters (well, emails), but then the climbing gym IP address got rate limited because people were sending letters from the gym's wifi. We never did get a satisfactory resolution from the letter writing service. (I'd claim this is also an example of knowing the local context: we think that Canadians have lower data limits than Americans, and thus more likely to be on public wifi rather than just sending from their own connections; the letter writing service didn't consider that local context.)
+
+In another illustration of how requests can take up resources, we can also consider a proposed, and later retracted, approach that the Unity engine wanted to take in 2023~\cite{unity}. Unity makes a game engine that people use to make fun games. The company's licensing model didn't really take into account the Live-Service kind of game (think Fortnite or Diablo 4 or similar) where the game is ``free to play'' but the company that makes it gets the money though selling cosmetic items, power boosts, or just generally preying on people with gambling addictions (via lootboxes which are legally considered gambling in some countries). Unity doesn't get a cut of that, so they wanted money and they wanted to charge per installation. It sounds reasonable, but of course people immediately realized that if you don't like the company who made a game, you could bankrupt them by just repeatedly installing and uninstalling the game. Even if it's only one cent at a time, automate it and do this enough times and you are a major line item on the balance sheet. Unity walked it back and said they want it to be first-install but per device, but a clever enough person would have no trouble making each install seem like it's a different machine (just lie to the application about hardware IDs or something). Suffice it to say, game developers using the engine revolted and some of them decided they might like to switch to a different engine. So if every request to your service is costing you, there's got to be a way to control that cost.
+
+
+Even if it's not about preventing a DoS attack or monetary costs, rate limits also prevent someone from scraping all your data. This really happened in early 2021 to the openly-political social media site ``Parler''. I would certainly forgive you for not being familiar with the site since it was only popular amongst conservative Americans and mostly in the year 2020 before all major companies refused to do business with them. But in any case, according to~\cite{parler} it was trivially easy for people to download all the content from the site because of two very bad decisions. The first was that all posts had sequential identifiers, so it is trivial to just enumerate all posts (don't do this!). The second is that there was no rate limiting so a single person could then get all the data with a simple script. Okay, you might not be so worried about URLs being completely predictable because that is a very silly thing to implement. Still, it is concerning if others can scrape all your content for their own benefit at your cost, even if it's intended as non-malicious training some machine learning model. 
+
+The reference to training the machine learning model is an oblique reference to ChatGPT and how it got its data set. Yes, OpenAI did scan the internet to train ChatGPT, although probably not as invasively as how people were pulling the data out of Parler. We can discuss whether it's fair or reasonable for OpenAI to request large amounts of data from others (getting each site to serve up their data at their own execution costs) for OpenAI to then monetize in their model, but that's for another course. Ethics around AI is a big topic indeed---one that you will likely have to wrestle with in your careers.
+
+
+\subsection*{Dealing With Limits}
+
+%It's possible that some other system that you rely on does not have a rate limit (that sounds like an oversight).
+OK, let's assume that some system you're dealing with has a rate limit, and that we need to address this limitation if we want to increase the performance of the code that is under our control. If the rate limit is super high as compared to our usage of it (e.g., you can do 1000 requests per hour and you are sending 10) then there's no problem right now, but maybe there will be in the future. Probably that is a problem best handled by Future You. Hitting the rate limit regularly, however, is not only frustrating for normal workflows we're trying to run, but could also get us banned as a customer, if it happens too often. 
+
+If we start seeing requests rejected with an error that says the rate limit is exceeded, then we are certain it's a problem. It's not always obvious what the limit is, though.
+
+In some scenarios, the documentation tells you the limit, or perhaps there's an API to query it, or API responses for other requests include information about the remaining capacity available to you. 
+
+Sometimes, though, the other service does not publish or give information about the rate limit, fearing that it might be exploited or encourage bad behaviour, or because they don't want to commit to anything. Atlassian (they make JIRA, if you're familiar with that) says ``REST API rate limits are not published because the computation logic is evolving continuously to maximize reliability and performance for customers'' which feels a little bit like they don't want to commit to specific numbers because then someone might be mad if those numbers aren't met. There is an argument that it does allow more freedom to change the API if there's no commitment to a specific rate. Testing for the limit (spam until we get rejections) might work, but it might also get you banned and, given the above, may give you a number that quickly becomes out of date.
+
+
+This section would be short indeed if the answer is to shrug our shoulders and say there's nothing we can do. Of course there is! And yet, when I [JZ] was conducting a system design interview for a candidate in 2022, I presented with a scenario with a rate limit. I got the answer that there was nothing that we could do to solve it. That's defeatist and false, as evidenced by the remainder of this section. As you may imagine, we did not make an offer to that candidate. One or more of the things below would have been a much better answer.
+
+
+
+\paragraph{Do Less Work.}
+Not the first time you've heard this answer! The first strategy we can imagine is that we should simply reduce the number of our API calls. If the service is pay-per-request, then this also has the benefit of saving money. While I do not imagine that you are intentionally calling the service more than you need, it's possible that there are some redundant calls you could discover through a review. If that's the case, just eliminate them, avoid the rate limit, and reduce latency in your application by avoiding network calls. As said, though, this is likely to be limited in benefit since there's only so much redundancy you are likely to find. Unless we find that a significant number of calls are redundant, we almost certainly need one of the other solutions in this section. 
+
+\paragraph{Caching.}
+An easy way to reduce the number of calls to a remote system is to remember the answers that we've previously received. Again, we've covered caching on more than one occasion in the past, so we do not need to discuss the concepts, just where it is applicable and the limitations. The simplest caching strategy would just be used for requests for data and not updates, but we've learned previously about write-through and write-back caches to handle updates. It's possible to make the caching invisible from the point of view of the calling system with something like Redis; a cache that sits outside of the service and can handle requests/responses. 
+
+If we do not control the remote system, it may be more difficult to identify when a particular piece of data has changed and a fresh response is needed rather than the cached one. Domain-specific knowledge is helpful here, like with exchange rates. Exchange rates are a price, to some extent: if I'm going to Frankfurt then I need to buy some Euro with my Canadian Dollars. So to buy 100 Euro, the purchase price for me might be \$143. Exchange rates vary throughout the day, but perhaps if you request a rate, you get a quote that is valid for 20 minutes. If that's the case, you can add the item to the cache with an expiry of 20 minutes and you can use this value during the validity period without needing to query it again. Other items are harder to manage, of course.
+
+
+\paragraph{Group Up.}
+The next strategy to consider is whether we can group up requests into one larger request. So instead of, say, five separate requests to update each employee, use one request that updates five employees. The remote API has to allow this; if there is no mass-update API then we're stuck doing them one at a time. The benefit of this may also be limited by how users use the application; if they usually only edit one employee at a time then it does not help because there is nothing else to group the request with. Waiting for other requests might be okay if it's a relatively short wait, but the latency increase does become noticeable for users eventually.
+
+We aren't limited to only grouping related requests, if the remote API will let us combine them. If that's the case, then we can keep a buffer of requests. When we have enough requests ready to go, we can just send them out together. A typical REST-like API does not necessarily give you the ability to do this sort of thing.    And again, it also requires something else to group a given request with; if there's nothing else going on, then how long are we willing to wait?
+
+Grouping requests also overlaps with caching if you choose a write-back style cache or another strategy that allows multiple modifications before the eventual call to update the remote system. 
+
+Grouping requests may also make it hard to handle what happens if there's a problem with one of the elements in it. If we asked to update five employees and one of the requests is invalid, is the whole group rejected or just the one employee update? It also makes it more likely that such an error occurs, since the logic to build a larger request is almost certainly significantly more complex than the logic to build a small request. Similarly, the logic to unpack and interpret a larger response is more complex and more prone to bugs. Misunderstanding a response can easily cause inconsistent data or repeated requests.
+
+These strategies, as with a lot of programming for performance, involve adding implementation complexity in exchange for improved performance. Don't use them when not needed! Simpler implementations are easier to maintain.
+
+
+\paragraph{Patience.}
+If the problem is that too many requests are happening in a short period of time, maybe our best solution is to distribute the requests over more time. Assuming time travel hasn't been invented yet and we aren't travelling at relativistic speeds or anything weird like that, the only way for there to be more time is to simply wait. This ultimately means delaying requests to stay under the rate limit. That sounds like the opposite of what we want when we want to go faster, but if we get rate-limit responses the requests are not getting serviced, so we could say that delayed is better than denied.
+
+Outside of the computer context, when there is a more demand for something than capacity, what do we do? That's right, we queue (line up) for it. Here, this means that requests should be added to a queue and a request gets processed when it gets to the front of the queue. Simply controlling the rate at which requests leave the queue is sufficient to ensure that the rate limit is not exceeded. If all requests go through this queue, then it is also a central place to adjust the rate of outgoing requests if the limit changes. 
+
+Unsurprisingly, multiple Rust crates do what we want. Below are some examples from the documentation of the \texttt{ratelimit} crate\footnote{\url{https://docs.rs/ratelimit/latest/ratelimit/}} version 0.7.1. This is not especially fancy and we could certainly have considered other ones, but it's sufficient for our purposes. The documentation examples cover some implementation details worth talking about. But onward.
+
+\begin{lstlisting}[language=Rust]
+use ratelimit::Ratelimiter;
+use std::time::Duration;
+
+// Constructs a ratelimiter that generates 1 tokens/s with no burst. This
+// can be used to produce a steady rate of requests. The ratelimiter starts
+// with no tokens available, which means across application restarts, we
+// cannot exceed the configured ratelimit.
+let ratelimiter = Ratelimiter::builder(1, Duration::from_secs(1))
+    .build()
+    .unwrap();
+
+// Another use case might be admission control, where we start with some
+// initial budget and replenish it periodically. In this example, our
+// ratelimiter allows 1000 tokens/hour. For every hour long sliding window,
+// no more than 1000 tokens can be acquired. But all tokens can be used in
+// a single burst. Additional calls to `try_wait()` will return an error
+// until the next token addition.
+//
+// This is popular approach with public API ratelimits.
+let ratelimiter = Ratelimiter::builder(1000, Duration::from_secs(3600))
+    .max_tokens(1000)
+    .initial_available(1000)
+    .build()
+    .unwrap();
+
+// For very high rates, we should avoid using too short of an interval due
+// to limits of system clock resolution. Instead, it's better to allow some
+// burst and add multiple tokens per interval. The resulting ratelimiter
+// here generates 50 million tokens/s and allows no more than 50 tokens to
+// be acquired in any 1 microsecond long window.
+let ratelimiter = Ratelimiter::builder(50, Duration::from_micros(1))
+    .max_tokens(50)
+    .build()
+    .unwrap();
+
+// constructs a ratelimiter that generates 100 tokens/s with no burst
+let ratelimiter = Ratelimiter::builder(1, Duration::from_millis(10))
+    .build()
+    .unwrap();
+
+for _ in 0..10 {
+    // a simple sleep-wait
+    if let Err(sleep) = ratelimiter.try_wait() {
+           std::thread::sleep(sleep);
+           continue;
+    }
+    // do some ratelimited action here    
+}
+\end{lstlisting}
+
+Enqueueing a request is not always suitable if the user is sitting at the screen and awaiting a response to their request, because it takes a synchronous flow and makes it asynchronous. Rearchitecting the workflows of a user-interactive application may be a larger undertaking than we're willing to do right now in this topic, but it could be a long-term goal for reducing pressure on systems. And even if we can't move all requests to asynchronous, every request that we do make asynchronous takes the pressure off for the ones that need to be synchronous.
+
+For requests that are not urgent, then another option is to schedule the requests for a not-busy time. Applications usually have usage patterns that have busier and less-busy times. So if you know that your application is not used very much overnight, that's a great time to do things that count against your rate limit. 
+
+Imagine that you have a billing system where the monthly invoicing procedure uses the majority of the rate limit. If that happens during the day, then there's no capacity for adding new customers, updating them, paying invoices, etc. The solution then is to run the invoicing procedure overnight instead. Or maybe you can even convince management to make it so not all users are billed on the first of the month, but that might require some charisma. Which leads us to the next idea\ldots
+
+\paragraph{Roll Persuasion.}
+A final option that you may consider is how to get the other side to raise your limit. Sometimes this just means upgrading to a higher billing tier and you get the higher limit immediately. Sometimes it's something you can simply pay for on top of your existing subscription or agreement. You may also be able to negotiate it with the other side if they're open to that, although you might have to be a sufficiently-important customer to even get in the (Zoom) room for that conversation. Throwing money at the problem can actually work so it's worth considering, but it isn't always a realistic option or is maybe just too expensive. (But don't forget: engineer time is expensive too.)
+
+\subsection*{It Happened Anyway?}
+
+Despite our best efforts to reduce it, we might still encounter the occasional rate limit. That's not a disaster, as long as we handle it the right way. The right way is not try harder or try more; if we are being rate limited then we need to try again later, but how much later?
+
+It's possible the API provides the answer in the rate-limit response where it says you may try again after a specific period of time. Waiting that long is then the correct thing to do. If we don't know, though, it makes sense to try an exponential backoff strategy. This strategy is to wait a little bit and try again, and if the error occurs, next time wait a little longer than last time, and repeat this procedure until it succeeds.
+
+Exponential backoff is also applicable to unsuccessful requests even if it's not due to rate limiting. If the resource is not available, repeatedly retrying doesn't help. If it's down for maintenance, it could be quite a while before it's back and calling the endpoint 10 times every second doesn't make it come back faster and just wastes effort. Or, if the resource is overloaded right now, the reaction of requesting it more will make it even more overloaded and makes the problem worse! And the more failures have occurred, the longer the wait, which gives the service a chance to recover. Eventually, though, you may have to conclude that there's no point in further retries. At that point you can block the thread or return an error, but setting a cap on the maximum retry attempts is reasonable.
+
+Having read a little bit of the source code of the Crossbeam (see Appendix C) implementation of backoff,  they don't seem to have any jitter in the request. This is an improvement on the algorithm that prevents all threads or callers from retrying at the exact same time. Let me explain with an example: I once wrote a little program that tried synchronizing its threads via the database and had an exponential backoff if the thread in question did not successfully lock the item it wanted. I got a lot of warnings in the log about failing to lock, until I added a little randomness to the delay. It makes sense; if two threads fail at time $X$ and they will both retry at time $X+5$ then they will just fight over the same row. If one thread retries at $X+9$ and another $X+7$, they won't conflict. % Appendix C of what?
+
+The exponential backoff with jitter strategy is good for a scenario where you have lots of independent clients accessing the same resource. If you have one client accessing the resource lots of times, you might want something else; something resembling TCP congestion control. See~\cite{expbackoff} for details. 
+
+
+
+
+
+
+
+
+
+
 \chapter*{16 --- Mostly Data Parallelism}
 
 \addcontentsline{toc}{chapter}{16 --- Mostly Data Parallelism}
@@ -5399,15 +5630,17 @@ and where you can really make a difference.
 
 Imagine you are given an assignment in a course and you are going to do it now. To get the assignment done, you will probably (1) figure out what exactly the assignment is asking you to do; (2) figure out how you are going to do it (e.g., must do part 1 first because part 2 depends on it...); and finally (3) do it! 
 
-The goal of this topic is focused on step two of the process: figuring out how to do the assignment. We use the database and query optimization as an example, even though the topic is applicable in different contexts. This topic will not require you to have taken a databases course, though some familiarity with a SQL database will likely help with understanding. And depending on how the topic was covered in your database course\footnote{Or, you referred to my ECE 356 notes on Github to study for it...}, this might be entirely familiar. Okay, digression over. 
+This topic is focused on step two of the process: figuring out how to do the assignment. We use the database and query optimization as an example, but the underlying idea of choosing the approach at run-time is applicable to other contexts. This topic will not require you to have taken a databases course, though some familiarity with a SQL database will likely help with understanding. And depending on how the topic was covered in your database course\footnote{Or, you referred to my ECE 356 notes on Github to study for it...}, this might be entirely familiar.
 
-The procedure for the database server to carry out the query are the same~\cite{dsc}:
+The steps for the database server to carry out the query are the same as the steps for how you would do an assignment~\cite{dsc}:
 
 \begin{enumerate}
 	\item Parsing and translation---interpreting the SQL query in a form the computer can work with.
 	\item Optimization---figuring out how best to carry out the query.
 	\item Evaluation---execution of the query according to the plan just developed.
 \end{enumerate}
+
+The new and interesting part here is that the database server does not just execute the a pre-planned series of steps to get the result, but will adapt its approach at run-time based on what it thinks will be most efficient. It is, yes, still executing the executable code of its binary file and that does not change, but the path taken for a given request can and does vary wildly based on factors known only at run-time. How does that happen?
 
 Usually a query is expressed in SQL, and that must then be translated into an equivalent internal expression using relational algebra. Relational algebra, super briefly, is just the set theory representation of database operations. Complex SQL queries are typically turned into \textit{query blocks}, which are translatable into relational algebra expressions. A query block has a single select-from-where expression, as well as related group-by and having clauses; nested queries are a separate query block~\cite{fds}.
 
@@ -5425,11 +5658,9 @@ If you are asked to drive a car from point A to point B and there are multiple r
 
 Of course, it may turn out that real life gets in the way: if there is a crash on the highway, traffic really sucks and your conclusion that taking this particular route would be fastest turns out to be wrong. Short of being able to see into the future, this is more or less inevitable: estimates are just informed opinions, and things may be worse (or better) than expected. 
 
-Where does the time go in executing a query? The biggest component is most likely loading blocks from disk, considering how slow the disk operations are. Although we can improve this via use of SSDs, many large databases still use hard disk drives. CPU speeds are pretty fast, to the point even where memory accesses seem slow from the perspective of the CPU. So, no matter what we do, disk accesses likely account for far more of the time than CPU computation. In reality, CPU time is a nonzero part of query optimization, but we will ignore this (as does~\cite{dsc}) for simplicity's sake and use only the disk accesses to assess cost.
+Where does the time go in executing a query? The biggest component is most likely loading blocks from disk, considering how slow the disk operations are. In reality, CPU time is a nonzero part of query optimization, but we will ignore this (as does~\cite{dsc}) for simplicity's sake and use only the disk accesses to assess cost. The number of block transfers (data moved in and out of memory) and the number of disk seeks (repositioning where on the disk we are reading from) are the important measures of interest here. 
 
-The number of block transfers (data moved in and out of memory) and the number of disk seeks (repositioning where on the disk we are reading from) are the important measures of interest here. SSDs have no seek time and have faster transfer speeds, but the number of block transfers is still relevant. To compute the estimate of how long we think it will take to perform an operation, the formula is $b \times t_{T} + S \times t_{s}$ where $b$ is the number of block transfers, $t_{T}$ is the time to transfer, $S$ is the number of seeks, and $t_{s}$ the time it takes to seek~\cite{dsc}. For a hard drive, transfer times are on the order of 0.1~ms and seek times are about 4~ms.
-
-We will follow the estimating strategy in~\cite{dsc} which comes with a few caveats, explained in this paragraph. Sometimes writes can be twice as expensive as reads. This is because the disk subsystem may read back the written data to check that the write succeeded, but we will assume that does not happen here. Similarly, at this first level we are not including the amount of time it takes to write a final result back (that depends on the query... a select, for example, may not need it, where an update will). That cost would be accounted for separately. And the asterisk here is that the size of memory makes a big difference---if the buffer is large enough that all of the database fits in it, then disk reads are almost never needed. We will imagine the worst case scenario, that is, only one block per relation can be in memory at a time. If we are ``wrong'' and the data we need is already in memory, the actual cost is less than the estimated cost (which is better than the reverse). 
+We will follow the estimating strategy in~\cite{dsc}. We will imagine the worst case scenario, that is, only one block per table can be in memory at a time. If we are ``wrong'' and more data can be in memory, the actual cost is less than the estimated cost (which is better than the reverse). 
 
 The estimates calculate only the amount of work that we think it will take to complete the operation. Unfortunately, there are several factors that will potentially affect the actual wall-clock time it takes to carry out the plan:
 
@@ -5439,91 +5670,23 @@ The estimates calculate only the amount of work that we think it will take to co
 	\item Data layout---if the data is packed well on disk then we need to do fewer seek operations (or shorter ones, perhaps); likewise, if the data is distributed over multiple physical disks we can sometimes do some reads in parallel, but it's hard to know exactly how much parallelization is possible.
 \end{itemize}
 
-You can probably think of various other factors that will affect the time it takes to execute the query in reality. The estimate is just an educated guess that we will use to plan how to do the work; it's not a promise of exactly how long it will take.
+You can probably think of various other factors. Remember, the estimate is just used to plan how to do the work; it's not a promise of exactly how long it will take.
 
 Note also that the lowest cost approach is not necessarily the fastest. Sometimes we can go faster by using more resources, but the approach the database often takes is the lowest cost (specifically, fewest disk reads). Recalling the earlier driving analogy, you can think of this as perhaps driving a longer route that involves more highway driving and therefore less time, even if it means more fuel consumption due to the increased distance and speed. When driving, we generally prefer to choose the lowest time estimate, but there are also people (``hypermilers'') who are really obsessed with getting maximum fuel economy... and the database is one of those people!
 
 \subsection*{Alternative Routes}
-There exist many different rules that allow transformation of a query into an equivalent. We're not focusing, here, on learning the rules as that would take us too far into the details about how the database actually works (or be redundant if you took a databases course that covered this already). But equivalency rules exist and resemble expression transformations that we learned in math class. Some of the equivalents are simple, multiplication commutes (e.g., $3 \times 10 \times 7$ is the same thing as $7 
+There exist many different rules that allow transformation of a query into an equivalent. We're not focusing, here, on learning the rules, as that would take us too far into the details about how the database actually works (or be redundant if you took a databases course that covered this already). But equivalency rules exist and resemble expression transformations that we learned in math class. Some of the equivalents are simple, analogous to, for example, multiplication commutes (e.g., $3 \times 10 \times 7$ is the same thing as $7 
 \times 10 \times 3$) and others seemingly add extra complexity, but might be a useful way to approach the problem (e.g., $14 \times 13$ is equivalent to $14 \times 10 + 14 \times 3$). 
 
 Suppose our query involves a selection and a join: we want to select the employee number, salary, and address for an employee with an ID of 385. Suppose number and salary are in the employee table with 300 entries, and the address information is in another table with 12000 entries. We have a join query, and if we do this badly, we will compute the join of employees and addresses, producing some 300 results, and then we need to do a selection and a projection on that intermediate relation. If done efficiently, we will do the selection and projection first, meaning the join needs to match exactly one tuple of employees rather than all 300. 
 
-The query optimizer should systematically generate equivalent expressions, but since performing all possible transformations and then evaluating each option may itself take non-trivial time, it is likely that the optimizer does not consider every possibility and will take some ``shortcuts'' rather than brute force this. One technique that helps on top of that is to re-use common subexpressions to reduce the amount of space used by representing the expressions during evaluation~\cite{dsc}.
+The query optimizer should systematically generate equivalent expressions, but since performing all possible transformations and then evaluating each option may itself take non-trivial time, it is likely that the optimizer does not consider every possibility and will take some ``shortcuts'' rather than brute force this. One technique that helps on top of that is to re-use common subexpressions to reduce the amount of space used by representing the expressions during evaluation~\cite{dsc}. That's an application of the strategy of remembering already-computed results.
 
-\subsection*{Estimating Statistics}
-
-For all the discussion about how it might make sense to swap this or change that or do this rather than that, we have not yet really talked about how the system may guess about how many results are going to be returned. In the previous example I used exact numbers, 300... 1... 12000... etc., but for the database server to get those it can either look them up, or it can guess about them. As mentioned earlier, sometimes certain numbers, like the number of tuples in a relation, are easily available by looking at metadata. If we want to know, however, how many employees have a salary between \$40~000 and \$50~000, the only way to be sure\footnote{Other than nuking it from orbit...} is to actually do the query, and we most certainly do not want to do the query when estimating the cost, since at that point we might as well not bother optimizing at all.
-
-If we cannot measure, then, well, we need to guess. Estimates are based on assumptions, and those assumptions are very often wrong. That is okay. We do not need to be perfect. All we need is to be better than not optimizing. And even if we pick the second or third or fifth best option, that is acceptable as long as we are close to the best option, more often than not.
-
-There are five major areas where costs for actually performing a query accumulates. Some methods of estimation treat accessing disk storage as much larger than any other costs to the point where it's the only thing that is considered. That is not quite accurate, and modern query optimizers are capable of a more nuanced view. The list from~\cite{fds} below is more complete:
-
-\begin{enumerate}
-	\item \textbf{Disk I/O}: the previously-discussed costs of seeking and data transfer to get data from the disk or other secondary storage.
-	\item \textbf{Disk Additional Storage}: the costs, if any, of storing intermediate relations on disk during processing of the query.
-	\item \textbf{Computation}: The CPU usage that will be required to do the operations including sorting, merging, and arithmetic operations.
-	\item \textbf{Memory}: The memory usage for the buffers necessary to do the desired operations.
-	\item \textbf{Communication}: The cost of sending the results back to the requester, or in  a distributed database, the cost of transferring data between the different nodes.
-\end{enumerate}
-
-We will generally proceed on the basis that disk I/O is the largest cost and outweighs everything else. That may not be true in a particular use case (e.g., the database server has tons of RAM and a lot of data can be kept in memory). The principles of assessing cost and choosing a strategy still apply, even if we are optimizing faster queries or constrained by CPU instead of disk.
-
-\paragraph{Metadata.} As previously mentioned, there is some metadata stored in the database that we could look at to find out some data that we know has some high accuracy. Some items that might be in the metadata, from~\cite{dsc} and ~\cite{fds}:
-
-\begin{itemize}
-	\item $n_{r}$: the number of tuples in a relation $r$ 
-	\item $b_{r}$: The number of blocks containing a relation $r$ 
-	\item $l_{r}$: the size in bytes of relation $r$
-	\item $f_{r}$: the number of tuples of $r$ that fit into one block
-	\item $V(A, r)$: the number of distinct values in $r$ of attribute $A$
-	\item $h_{r, i}$: the height of an index $i$ defined on relation $r$
-\end{itemize}
-
-Some of these values can be computed, notably $l_{r}$ is the number of blocks times the size of a block, and $f_{r}$ is the number of tuples divided by the number of blocks. The value of $V(A, r)$ may or may not be maintained for all attributes, or for groups if that is so desired. If it is on a key field, every value is unique, so we know it is the same as the number of tuples for that field. There can also be metadata about index information as well... which might make it metametadata? 
-
-There are obviously tradeoffs when it comes to maintaining metadata. The more often it is updated, the more effort is spent updating it. If every insertion or update or deletion resulted in an update, that may mean a nontrivial amount of time is spent updating this data. If we only do periodic updates, it likely means that the statistic data will be outdated when we go to retrieve it for use in a query optimization context. Perhaps some amount of balance is necessary: updates can be done during times of lower system load with some maximum limit for how long an update can wait before it gets enough priority. This is, in some small way, a callback to scheduling algorithms you have surely learned about in an OS class. 
-
-A database may also be interested in keeping some statistical information in a histogram. The values are divided into ranges and we have some idea of how many tuples are in those ranges. You have almost certainly seen a histogram before in something like a population pyramid diagram. An example from~\cite{dsc}:
-
-\begin{center}
-\includegraphics[width=0.4\textwidth]{images/histogram}
-\end{center}
-
-That should also tell you that they do not necessarily have an even distribution. A histogram does not take up a lot of space and it can help us to figure out certain problems: if we have a histogram of salaries and the largest bucket is 100~000+ and there are 10 people in this category, and there is a query asking how many employees have a salary greater than or equal to \$100~000 we will know at least that the number of tuples to be returned is 10. Nice.
-
-The above numbers are exact values which we can know and, hopefully, trust although they could be slightly out of date depending on when exactly metadata updates are performed. The more exact values we have, the better our guesses. But things start to get interesting when, in the previous example, we ask something that does not have a category, such as how many people have a salary larger than \$150~000, where there isn't an obvious answer found in the metadata?
-
-\subsection*{Join Elimination}
-
-You may ask, of course, why should the optimizer do this work at all? Why not simply count on the developers who wrote the SQL in the first place to refactor/change it so that it is no longer so inefficient? That would be nice but would you also like a pony?  Developers make mistakes, as you know, or perhaps some legacy code cannot be changed for some reason. Regardless, SQL is a language in which you specify the result that you want, not specifically how to get it. If there is a more efficient route, then it's worth taking from the point of view of the database server. The same logic applies in the compiler, incidentally; if you ask for some operation that the compiler knows it can replace with an equivalent but faster operation, why wouldn't you want that? Compilers don't admonish the user for writing code that it has to transform into a faster equivalent, they just do that transparently. You're welcome!
-
-Our guide in this is~\cite{joinelim}. We will examine some real SQL queries to see how we can get rid of a totally unnecessary join. This join can only be removed if the database server can prove that the join is not needed and that therefore the removal of this operation has no impact on the outcome.
-
-
-Consider a statement that looks like this: \texttt{SELECT c.* FROM customer AS c JOIN address AS a ON c.address\_id = a.address\_id;} This gets customer information and joins with those where there are addresses on file. This is an inner join and as presented, we cannot do any elimination with this information. We need to make sure that the customer data has a matching row.
-
-If, however, a new piece of information is considered, it changes everything entirely. Suppose that we have a foreign key defined from customer's \texttt{address\_id} to the address \texttt{id} field. If nulls are not permitted then we know for sure that every customer has exactly one record in the address table and therefore the join condition is not useful and may be eliminated. This means we could in fact replace that query with \texttt{select * from customer;} with no need for any references to the join table at all. That would be much, much faster since it is a simple select with no conditions.
-
-The foreign key and not null constraints on the address ID field of the customer make it possible for the optimization of the join elimination to occur.
-
-An outer join constraint can be removed as well. Imagine the query said this: \texttt{SELECT c.* FROM customer AS c LEFT OUTER JOIN address AS a ON c.address\_id = a.address\_id;}. All tuples are fetched from customer whether or not there is an associated address. Once again, if the foreign key constraint and not-null properties hold for this field it means that we can perform the equivalent transformation and replace the join query with a simple unqualified select. 
-
-Suppose the foreign key constraint is removed. Does that change anything? No---a unique constraint on the address would be sufficient for us to conclude that the join means no duplication of rows in customer will take place. Therefore it can once again be replaced with the simple \texttt{select * from customer;}.
-
-If, however, both constraints are removed and we cannot be sure that there is at most one address corresponding to a customer, then we have no choice but to do the join.
-
-Obviously, the more complex the query, the harder it is to determine whether or not a particular join may be eliminated. More than that, the same queries written exactly the same on a database in which the constraints have not been added would not be eligible for the join elimination optimization. In the inner join example, the foreign key and not null constraints, for example, are beneficial. This reveals a second purpose why constraints are valuable in the database. In addition to allowing us to enforce logical rules of the application inside of the database, it allows queries to be completed more efficiently.
-
-Perhaps an analogy helps. You are asked to search through the library to find all copies of the book ``Harry Potter and the pthread House Elves''. That is a plausible task. But, suppose that you know as well there is a rule that this library will keep only one copy of that book ever. If that is the case, as soon as you have found the single copy of that book, you can stop looking (no need to check more ``just in case''). This sort of optimization is very similar in that the rules let us avoid doing unnecessary work and that is a big part of the optimization routine.
-
-\subsection*{Evaluation Plan Selection}
-
-It was perhaps oversimplifying to have said earlier that choosing a plan was just as simple as picking the one with the lowest cost. There is a little bit more to it than that. The point about choosing the one with the lowest cost is correct (generally), but the difficulty is in devising and calculating all possible evaluation plans. Neither devising nor analyzing alternatives is free in terms of CPU usage or time, and it is possible to waste more time on analysis than a better plan would save. 
+It was oversimplifying to have said that choosing a plan was just as simple as picking the one with the lowest cost. There is a little bit more to it than that. The point about choosing the one with the lowest cost is correct (generally), but the difficulty is in devising and calculating all possible evaluation plans. Neither devising nor analyzing alternatives is free in terms of CPU usage or time, and it is possible to waste more time on analysis than a better plan would save. 
 
 A simplified approach, then, focuses just on what order in which join operations are done and then how those joins are carried out. The theory is that the join operations are likely to be the slowest and take the longest, so any optimization here is going to have the most potential benefit.
 
-We already know that the order of joins in a statement like $r_{1} \bowtie r_{2} \bowtie r_{3}$ is something the optimizer can choose. In this case there are 3 relations and there are 12 different join orderings. In fact, for $n$ relations there are $\dfrac{(2(n-1))!}{(n-1)!}$ possible orderings~\cite{dsc}. Some of them, are symmetric, which reduces the number that we have to calculate, since $r_{1} \bowtie r_{2}$ is not different from $r_{2} \bowtie r_{1}$ (in relational algebra). In any case, even if we can cut down the symmetrical cases the problem grows out of hand very quickly when $n$ gets larger. 
+We already know that the order of joins in a statement like $r_{1} \bowtie r_{2} \bowtie r_{3}$ (the bowtie symbol means join) is something the optimizer can choose. In this case there are 3 relations and there are 12 different join orderings. In fact, for $n$ relations there are $\dfrac{(2(n-1))!}{(n-1)!}$ possible orderings~\cite{dsc}. Some of them, are symmetric, which reduces the number that we have to calculate, since $r_{1} \bowtie r_{2}$ is not different from $r_{2} \bowtie r_{1}$ (in relational algebra). In any case, even if we can cut down the symmetrical cases the problem grows out of hand very quickly when $n$ gets larger. 
 
 Once more than three relations are affected by a join query it may be an opportunity to stop and think very hard about what is going on here, because this is quite unusual if the database design is good. The database server may want to ask why do you have a join query that goes across six or eight or twelve relations, but the database server (sadly) does not get to write the developers a nasty resignation letter saying that it can't continue to work this hard due to the negative effects on its health. It will dutifully do the work you asked it to and even try to make the best of this inefficient situation by optimizing it. But clearly it cannot examine all (non-symmetric) approaches and choose the optimal one. It would take too long.
 
@@ -5537,33 +5700,53 @@ The sort order in which tuples are generated is important if the result will be 
 
 With this in mind it means that the best plan for computing a particular subset of the join query is not necessarily the best plan overall, because that extra sort may cost more than was saved by doing the join itself faster. This increases the complexity, obviously, of deciding what is optimal. Fortunately there are, usually anyway, not too many interesting sort orders~\cite{dsc}. 
 
-\subsubsection*{Generating Alternatives}
+\subsection*{Estimating Statistics}
 
-Join order optimization is a big piece of the puzzle but it's not the only thing we can do in query evaluation. Let's briefly revisit the subject of how equivalent queries are formed. We already decided it is too expensive to try out all equivalent queries, but perhaps we are determined to try to at least generate lots of alternatives. The textbook~\cite{dsc} summarizes some strategies from the Volcano research project that would make it possible to generate a larger number of plans than we might otherwise be able to. We need four things.
+For all the discussion about how it might make sense to swap this or change that or do this rather than that, we have not yet really talked about how the system may guess about how many results are going to be returned. In the previous example I used exact numbers, 300... 1... 12000... etc., but for the database server to get those it can either look them up, or it can guess about them. As mentioned earlier, sometimes certain numbers, like the number of rows in a table, are easily available by looking at metadata. If we want to know, however, how many employees have a salary between \$40~000 and \$50~000, the only way to be sure\footnote{Other than nuking it from orbit...} is to actually do the query, and we most certainly do not want to do the query when estimating the cost, since at that point we might as well not bother optimizing at all.
 
-\begin{enumerate}
-	\item A way of storing expressions that reduces duplication and therefore keeps down the amount of space needed to store the various queries.
-	\item A way of detecting duplicate derivations of the same expression.
-	\item A way of storing optimal subexpression evaluation plans so that we don't have to recompute them.
-	\item An algorithm that will terminate the evaluation of a particular plan early if it is already worse than the cheapest plan found so far.
-\end{enumerate}
+If we cannot measure, then, well, we need to guess. Estimates are based on assumptions, and those assumptions are very often wrong. That is okay. We do not need to be perfect. All we need is to be better than \textit{not} optimizing. And even if we pick the second or third or fifth best option, that is acceptable as long as we are close to the best option, more often than not.
 
-The details are obviously a bit complex. Most of this is beyond what we will discuss in this course, but some of those things we have already seen. For example, the algorithm earlier has got a way of storing evaluations of sub expressions so that we can re-use them. It could be modified to terminate earlier if, for example, the individual costs of \texttt{r1} or \texttt{r2} were already larger than the known stored plan.
+\paragraph{Metadata.} As previously mentioned, there is some metadata stored in the database that we could look at to find out some data that we know has some high accuracy. Some items that might be in the metadata, from~\cite{dsc} and ~\cite{fds}:
 
-\subsubsection*{Nested Subqueries}
+\begin{itemize}
+	\item $n_{r}$: the number of rows in a table $r$ 
+	\item $b_{r}$: The number of blocks containing a table $r$ 
+	\item $l_{r}$: the size in bytes of table $r$
+	\item $f_{r}$: the number of rows of $r$ that fit into one block
+	\item $V(A, r)$: the number of distinct values in $r$ of attribute $A$
+	\item $h_{r, i}$: the height of an index $i$ defined on table $r$
+\end{itemize}
 
-On the subject of generating alternatives, if possible, nested subqueries will be transformed into an alternative representation: a join query. To summarize the rather long story, if evaluated the ``slow'' way the subquery needs to be run a lot of times. Thus, to make it faster, we would prefer to turn it into a join (which we already know how to handle). If really necessary we can run the subquery once and use that temporary relation in a join (where exists or ``in'' predicates may fall into this category).
+Some of these values can be computed, notably $l_{r}$ is the number of blocks times the size of a block, and $f_{r}$ is the number of rows divided by the number of blocks. The value of $V(A, r)$ may or may not be maintained for all attributes, or for groups if that is so desired. If it is on a key field, every value is unique, so we know it is the same as the number of rows for that field. There can also be metadata about index information as well... which might make it metametadata? 
 
-Suffice it to say that transformation of nested queries is complicated and it may mean that the optimizer is unable to find some efficient route for executing the desired query if the query is complex. If possible, nested queries should be avoided. Sometimes you don't have much choice however. Amusingly, many years ago, MySQL did not support subqueries and that was one way to force people to come to grips with how to use joins. But somehow I do not think MySQL was intentionally doing anyone a favour, any more than having a terrible optimizer ``forces'' developers to write better queries. 
+A database may also be interested in keeping some statistical information in a histogram. The values are divided into ranges and we have some idea of how many tuples are in those ranges. You have almost certainly seen a histogram before in something like a population pyramid diagram. An example from~\cite{dsc}:
 
+\begin{center}
+\includegraphics[width=0.4\textwidth]{images/histogram}
+\end{center}
+
+That should also tell you that they do not necessarily have an even distribution. A histogram does not take up a lot of space and it can help us to figure out certain problems: if we have a histogram of salaries and the largest bucket is 100~000+ and there are 10 people in this category, and there is a query asking how many employees have a salary greater than or equal to \$100~000 we will know at least that the number of tuples to be returned is 10. Nice.
+
+The above numbers are exact values which we can know and, hopefully, trust although they could be slightly out of date depending on when exactly metadata updates are performed. The more exact values we have, the better our guesses. But things start to get interesting when, in the previous example, we ask something that does not have a category, such as how many people have a salary larger than \$150~000, where there isn't an obvious answer found in the metadata?
+
+\subsection*{Join Elimination and Making a Nested Suqbery: I know a shortcut}
+Join elimination is simply the idea of replacing a query that has a join (expected to be expensive) with an equivalent that does not (expected to be better). It can also turn a join query into a one with a nested subquery, on the theory that two smaller queries might be easier to carry out than a big join. This is a small extension of the idea of choosing the best route to complete the request, because it's more like rewriting the original request to be a little different.
+
+You may ask, of course, why should the optimizer do this work at all? Why not simply count on the developers who wrote the SQL in the first place to refactor/change it so that it is no longer so inefficient? Grind leetcode\footnote{For the record, I don't think grind leetcode to get hired is a great plan, and I don't like it when companies expect that of you. It's very artificial. In my experience, most of the time, the challenge lies in understanding the requirements of the work and delivering a good experience (to users in the UI, other developers via API, to your future self/team if you want to build on this, etc...), not writing a provably optimal implementation. I get the impression leetcode interviews are as much hazing as actual assessment of your skills.} and use a better algorithm.
+
+SQL is a language in which you specify the result that you want, not the steps for how to get it. If there is a more efficient route, then it's worth taking from the point of view of the database server. The same logic applies in the compiler; if you ask for some operation that the compiler knows it can replace with an equivalent but faster operation, why wouldn't you want that? Compilers don't admonish the user for writing code that it has to transform into a faster equivalent, they just do that transparently. You're welcome!
+
+Obviously, the more complex the query, the harder it is to determine whether or not a particular join may be eliminated. Both foreign key and not null constraints, for example, are beneficial. This reveals a second purpose why constraints are valuable in the database: they enforce logical rules of the application inside of the database, and they allow queries to be completed more efficiently.
+
+Perhaps an analogy helps. You are asked to search through the library to find all copies of the book ``Harry Potter and the pthread House Elves''. That is a plausible task. But, suppose that you know as well there is a rule that this library will keep only one copy of that book ever. If that is the case, as soon as you have found the single copy of that book, you can stop looking (no need to check more ``just in case''). This sort of optimization is very similar in that the rules let us avoid doing unnecessary work and that is a big part of the optimization routine.
 
 \subsubsection*{Shortcuts}
 
-Now we will talk about some heuristic rules (guidelines, really) that we have definitely mentioned earlier when we talked about, for example, how to perform a selection. Now we can actually discuss them more formally.
+To close out the topic, let's talk about some heuristic rules (guidelines, really) for how the database will make decisions about path to choose. Remember that selection means choosing only the rows that we want and projection is getting rid of the columns that we don't want. 
 
 \paragraph{Perform selection early.} No surprises here: the sooner we do a selection, the fewer tuples are going to result and the fewer tuples are input to any subsequent operations. Performing the selection is almost always an improvement. Chances are we get a lot of benefit out of selection: it can cut a relation down from a very large number of tuples to relatively few (or even one). 
 
-There are exceptions, however. One from~\cite{dsc}: suppose the query is $\sigma_{\theta}( r \bowtie s )$ where $\theta$ refers only to attributes in $s$. If we do the selection first and (1) $r$ is small compared to $s$ and (2) there is an index on the join attributes of $s$ but not on those used by $\theta$ then the selection is not so nice. It would throw away some useful information and force a scan on $s$; it may be better to do the join using the index and then remove tuples with the selection.
+There are exceptions, however. One from~\cite{dsc}: suppose the query is a selection on $r \bowtie s$ where we only want attributes that are in $s$. If we do the selection first and (1) $r$ is small compared to $s$ and (2) there is an index on the join attributes of $s$, but not on any of the columns we want, then the selection is not so nice. It would throw away some useful information and force a scan on $s$; it may be better to do the join using the index and then remove the rows we don't want afterwards.
 
 \paragraph{Perform projection early.} Analogous to the idea of doing selection early, performing projection early is good because it tosses away information we do not need and means less input to the next operations. Just like selection, however, it is possible the projection throws away an attribute that will be useful. If the query does not ask for the join attribute in the output (e.g., does it matter what a person's address ID is?) then that join attribute will need to be removed from the output but if removed too soon it makes it impossible to do the join.
 
@@ -5576,8 +5759,6 @@ The results will be different and this query may be more expensive on the second
 \subsection*{Applicability}
 If we're not planning on implementing or understanding a database, is any of this useful? Yes! The database is just a specific example of an implementation and something that we're familiar with. The real lesson is about how to programmatically generate, evaluate, and choose amongst alternative options for accomplishing a goal. 
 
-\section*{Future TODO}
-Work in this content: \url{https://wizardzines.com/comics/explain/}.
 
 
 
@@ -5877,7 +6058,7 @@ extern "C" __global__ void calculate_forces(const float4* positions, float3* acc
 
 Let's break it down. The calculation of forces between bodies takes some \texttt{float4} and \texttt{float3} arguments. In the Rust example, I made my own \texttt{Point} and \texttt{Acceleration} types. CUDA uses \textit{vector types}, which are a group of $n$ of that primitive type. So a \texttt{float4} is a grouping of four \texttt{float}s where the components are referred to as \texttt{x, y, z, w}. There exist vector types for the standard C primitives (e.g., \texttt{int, uint, float, double, char}, and some more) in sizes of 1 through 4. It's just a nice way to package up related values without needing a custom structure (although you can send structures in to kernels). When we get to the host code you'll see that I've had to modify its representation of the data as well.
 
-The function also is prefixed with \texttt{\_\_device\_\_} which indicates that it will be called from another function when running on the GPU. A \texttt{\_\_global\_\_} function (as the calculation of forces is called from the host, and such global functions can call device functions but not other global functions. Device functions can call only other device functions. So it makes it clear where the entry points are from host code. In some OOP-sense, you could consider the device functions to be ``private'', not that I encourage you to think that way.
+The function also is prefixed with \texttt{\_\_device\_\_} which indicates that it will be called from another function when running on the GPU. A \texttt{\_\_global\_\_} function (as the calculation of forces is called from the host, and such global functions can call device functions but not other global functions). Device functions can call only other device functions. So it makes it clear where the entry points are from host code. In some OOP-sense, you could consider the device functions to be ``private'', not that I encourage you to think that way.
 
 The only other thing that really stands out is the \texttt{extern "C"} declaration at the beginning of the global function. This disables what is called \textit{name mangling} or \textit{name decoration}, which is to say a compiler trying to differentiate between multiple functions with the same name. If this is too compiler-magic to worry about, just place this magic spell in front of the function call and it prevents the compiler from telling you it can't find the function by the name you specified. More modern versions of \texttt{nvcc} may not have this problem, mind you.
 
@@ -6240,6 +6421,16 @@ extern "C" __global__ void calculate_forces(const float4* positions, float3* acc
 
 The full version of the improved code is in the course repository as \texttt{nbody-cuda-grid}. But what you want to know is, did these changes work? Yes! It sped up the calculation to about 1.65 seconds (still with 100~000 points, still on the same server). Now that's a lot better! We are finally putting the parallel compute power of the GPU to good use and it results in an excellent speedup.
 
+\paragraph{Trading Accuracy for Performance?}
+Thanks to previous ECE 459 student Tony Tascioglu who contributed this section. We've covered on numerous occasions that trading accuracy for performance is often a worthwhile endeavour. You might even say it's a crowd favourite. It's an instructor favourite, at lea1st.
+
+Most of the gaming-oriented NVIDIA GeForce GPUs don't natively support FP64 (double-precision floating point numbers). Native support for that requires expensive datacentre GPUs; it used to be locked in software and is missing in the hardware in more modern cards. Instead of running in hardware, the 64-bit operations are emulated in software and that is significantly slower.  How much slower? Using 32-bit floats rather than 64-bit doubles is typically a 16, 32 or even 64x speedup depending on the GPU! We can even push that a bit farther because using a 16-bit float might typically be another 2x faster. For many applications (gaming?) this level of precision isn't necessary. 
+
+How dramatic is the difference? See this table from\cite{fp3264}, which although its date says 2014, has clearly been updated since then since the GeForce RTX 3080 did not come out until September of 2020:
+
+	\begin{center}
+		\includegraphics[width=\textwidth]{images/gpu-fp32-fp64-table.png}
+	\end{center}
 
 
 
@@ -6248,9 +6439,11 @@ The full version of the improved code is in the course repository as \texttt{nbo
 
 
 
-\chapter*{23 --- Password Cracking, Bitcoin Mining}
 
-\addcontentsline{toc}{chapter}{23 --- Password Cracking, Bitcoin Mining}
+
+\chapter*{23 --- Password Cracking, Bitcoin Mining, LLMs}
+
+\addcontentsline{toc}{chapter}{23 --- Password Cracking, Bitcoin Mining, LLMs}
 
 \section*{GPU Application: Password Cracking}
 
@@ -6373,7 +6566,7 @@ Like generation, checking the tables for a hit can also be done efficiently by t
 Yikes. There is obviously a little bit more complexity to how the rainbow tables work (such as dealing with collisions and loops), but it is clear just how devastatingly effective GPU computations are on breaking passwords.
 
 \section*{The World is Not Enough}
-GPUs are great at this, but there are some problems where even the GPU isn't quite the right choice. You have probably guessed it; we're going to talk about Bitcoin. Let's get it out there: I don't think you should mine Bitcoin. This tweet sums up how I would explain Bitcoin to my parents: \url{https://twitter.com/theophite/status/1030225104234373121?lang=en}... and in any case it's pretty uneconomic to mine it and it's terrible for the environment. At the time of writing, the Bitcoin network's carbon footprint is comparable to that of the entire country of Denmark and it uses electricity comparable to the entire power consumption of the country of Austria (source, and for updated figures, see: \url{https://digiconomist.net/bitcoin-energy-consumption}). Alright, enough of that: if you want to know more about why you shouldn't mine Bitcoin, talk to me after class. 
+GPUs are great at this, but there are some problems where even the GPU isn't quite the right choice. You have probably guessed it; we're going to talk about Bitcoin. Let's get it out there: I don't think you should mine Bitcoin. This tweet sums up how I would explain Bitcoin to my parents: \url{https://twitter.com/theophite/status/1030225104234373121?lang=en}... and in any case it's pretty uneconomic to mine it and it's terrible for the environment. At the time of writing, the Bitcoin network's carbon footprint is comparable to that of the entire country of Uzbekistan and it uses electricity comparable to the entire power consumption of the country of Poland (source, and for updated figures, see: \url{https://digiconomist.net/bitcoin-energy-consumption}). Alright, enough of that: if you want to know more about why you shouldn't mine Bitcoin, talk to me after class. 
 
 Our guide in this section is~\cite{bitcoin}, a paper that roughly overviews the history of Bitcoin, how it works, and the trend of mining rigs. 
 
@@ -6386,19 +6579,6 @@ That's right---they start looking at hardware. Specifically, custom hardware. Th
 So now we've uncovered why you shouldn't mine Bitcoin. If you want to do so in a cost-effective manner (otherwise what's the point), you have to spend money on a mining rig of some sort (which is a significant investment), and pay for the power consumption of it (which is also not zero), and some maintenance is required. And because the difficulty is high and new technology is constantly being released to mine more efficiently, it is quite likely that before long your mining setup costs more to run than is earned in Bitcoin. At which point: don't bother.
 
 This isn't a hardware course so we're not going to invest a lot of time in talking about how one might cleverly design hardware. There are other courses for that, but it's the logical extension of using the GPU, so I thought it might be worth a mention.
-
-
-
-
-
-
-
-
-
-
-\chapter*{24 --- Large Language Models}
-
-\addcontentsline{toc}{chapter}{24 --- Large Language Models}
 
 \section*{Large Language Models and You}
 
@@ -6704,9 +6884,11 @@ More than any other topic, the LLM topic shows the inherent tradeoffs in optimiz
 
 
 
-\chapter*{25 --- Profiling: Observing Operations}
 
-\addcontentsline{toc}{chapter}{25 --- Profiling: Observing Operations}
+
+\chapter*{24 --- Profiling: Observing Operations}
+
+\addcontentsline{toc}{chapter}{24 --- Profiling: Observing Operations}
 
 \section*{Observations Precede Conclusions}
 
@@ -6829,17 +7011,54 @@ All of this introduction to profiling has really been focused around the higher 
 
 
 
-\chapter*{26 --- Profiling and Scalability}
+\chapter*{25 --- Load Testing}
 
-\addcontentsline{toc}{chapter}{26 --- Profiling and Scalability}
+\addcontentsline{toc}{chapter}{25 --- Load Testing}
 
-\section*{Profiling and Scalability}
+\section*{Load Testing}
 
-We've had a long look at the subject of observation -- identifying areas in the execution of our program that are a potential issue. Most of our upcoming discussion will be around the idea of CPU profiling, which is to say, examining where CPU time is going. That's generally predicated on the idea that CPU time is limiting factor. But maybe it isn't, and before we go about focusing on how to improve this aspect, let's check that assumption and consider what else it could be.
+We've had a long look at the subject of observation -- identifying areas in the execution of our program that are a potential issue. Now, we will also take some time to relate performance to scalability. Very early on in the course we mentioned the idea that what we want in scalability is to take our software from 1 user to 100 to 10 million. To scale up, we probably need to do some profiling to find out what's slow and make a decision about what to change. It's also useful in terms of making an estimate of our maximum number of users or transactions could be. 
 
-While we're discussing this, we will also take some time to relate performance to scalability. Very early on in the course we mentioned the idea that what we want in scalability is to take our software from 1 user to 100 to 10 million. To scale up, we probably need to do some profiling to find out what's slow and make a decision about what to change. It's also useful in terms of making an estimate of our maximum number of users or transactions could be. That's not a hypothetical scenario either; I [JZ] was asked by a C-Level (company executive) whether a particular system could handle 10$\times$ as many users -- and that answer had to be supported with some numbers.
+That's not a hypothetical scenario either; I [JZ] was asked by a C-Level (company executive) whether a particular system could handle 10$\times$ as many users -- and that answer had to be supported with some numbers. How would I make that determination? Analysis and testing, of course.
 
-With that said, if you identify a problem in a production system and we want to experiment on it with a dev machine, or if we have an application developed and we want to estimate what its performance and limiting factors would be, there are a few things we need to worry about.  So we should respect the following principles, as outlined in~\cite{swps}.
+\paragraph{Start with why.} The most important question when we want to start doing some load testing is: why are we doing this? A few possible answers~\cite{hitchhiking}:
+\begin{itemize}
+	\item A new system is being developed, and management wants to understand the limits and the risks.
+	\item The workload is expected to increase, and we (the CFO) want(s) to be sure the system can handle it.
+	\item A sudden spike in workload is expected, like tax season, and we want to know we can handle it.
+	\item The system has high uptime requirements, like 99.99\%, and must work over an extended period of time. 
+	\item The project plan has a checkbox ``performance testing'', even though nobody has a real idea of what it means.
+\end{itemize}
+
+Leaving aside the last ``reason'', each of the actual reasons why implies a different kind of testing is required. If it's a new system, maybe we just need to understand the average workload (plus, perhaps, a buffer for safety) and make a plan for that. If the workload is expected to increase, like having ten times the number of users, we just need to establish our bottlenecks as in the next topic to identify what we think the limit is. If it's the spike situation, we need to find a way to generate that spike behaviour to see how the system responds, and the hardest part might actually be in how to create the test. If our reason is uptime requirements, then in addition to putting a lot of load on the system, we have to maintain it for an extended period to make sure there's no performance degradation -- a test of endurance.
+
+\paragraph{Stress Tests?} Load testing is not the same thing as \textit{stress testing}. Load testing involves having a specific target and the goal is to demonstrate that the application can handle that amount. Stress testing is about turning up the pressure (load) until things break, or at least stop working well. We are not going to go into stress testing in this topic, though it should be possible to take the load testing lessons and repurpose them by simply turning the setting up to even-bigger numbers.
+
+\subsection*{Plans Are Useless, Planning Is Essential} The previously-cited book suggests making a plan that answers the questions of \textit{who, what, where, when, \& why}. We just covered the ``why'' question, and understood how it points us towards the answer of ``what'' -- what kind of load testing are we intending to do here. That leaves ``who'' and ``when''. In a company (or FYDP) situation, there might be reason for debate or discussion around who should do the tests and when they should take place. For our purposes the answers are: we are going to do them, and we're going to do them now.
+
+How detailed the plan needs to be is going to depend on your organization, and the same applies for how many sign-offs (if any!) you need on the plan. Some companies have a high need for justification of the time invested in this, after all, because time is money (developer salary) and there are opportunity costs (what work are we not doing in favour of this). There's lots of literature out there about how to justify technical investments to senior management and let's not get sidetracked.
+
+The load testing plan needs at least a definition of what will be tested, how it will be tested, and how we'll know if the test passes or fails. A simple scenario could look something like: we will test saving things to the database by generating 10~000 update-account requests, submit them all at once, and the the total time to complete all transactions should not exceed 15 seconds. That's all made up and probably even a little bit silly, but it meets the important criteria of explaining what to test, how to test it, and how to evaluate success. Let's expand on this.
+
+
+\subsection*{What Workflows to Test?}
+While we might have a clear direction about the kind of test we want from why, the question still remains about what workflows are going to be tested. We cannot test everything -- aiming for 100\% coverage is unnecessary, but load testing should be reserved for only where it's truly needed because of its high cost and effort requirements.
+
+If we already know which ones are slow (rate-limiting) or on the critical path, then we can certainly start there. Ideally, the observability/monitoring  (you have it, right?) gives us the guidance needed here. If monitoring doesn't exist, that might need to get addressed first. 
+
+If it's a new (as-yet-unimplemented) system, which are the critical workflows for this application? Critical is determined by the nature of the product and what you want it to do. If something is computationally intensive, like compiling analytical data, then that workflow is important. In other scenarios, user experience determines what's critical for load testing: if we have information that says users quit the signup process if the signup page takes more than two seconds to load, we care about making sure the signup time doesn't exceed that limit even when the system is busy. There can also be external requirements that require load testing: if you are processing a transaction and you must return a yes or no response within 1 second, anything that is part of coming up with this answer is critical and worth testing.
+
+If your current utilization is low, you might not know what the rate-limiting steps are at a glance. You can take a guess, but be prepared to revise those guesses partway through the process as you ramp up the load. Actually, you might need to do that even if utilization isn't low; you may find new things along the way that turn out to be the real limiting factors. 
+
+In the event of the uptime requirements, the tests likely look the same as the increased-workload situation -- we just run them for longer. Endurance tests have significant overlap with load tests, but are not exactly the same. We'll come back to figuring out how long an endurance test should be shortly.
+
+
+\subsection*{How to Test Them}
+
+Given a workflow and the kind of test that we want to do, then we just need to think about how to test it. Carrying out these tests might require provisioning additional (virtual) hardware, particularly if they are long-running. The typical test harness tools used for unit testing aren't always intended for this purpose, so you may need different tools, or just write a custom script to execute the tests.
+
+If we want to run these tests to evaluate or experiment, or if we have an application developed and we want to estimate what its performance and limiting factors would be, there are some things we need to consider to make sure that the results we get are meaningful.  So we should respect the following principles, as outlined in~\cite{swps}.
+
 
 \paragraph{Hardware Principle.} 
 Scalability testing is very different from  QA testing (you test your code, right?) in that you will do development and QA on your local computer and all you really care about is whether the program produces the correct output ``fast enough''. That's fine, but it's no way to test if it scales. If you actually want to test for scalability and real world performance, you should be doing it on the machines that are going to run the program in the live/production environment. Why? Well, low-end systems have very different limiting factors. You might be limited by the 16GB of RAM in your laptop and that would go away in the 64GB of RAM server you're using. So you might spend a great deal of time worrying about RAM usage when it turns out it doesn't matter.
@@ -6861,16 +7080,74 @@ Why not? The issue isn't so much the test as it is what you're not seeing. If I 
 These tests, incidentally, are of great interest to the customers and C-Levels, who would like to know that you can deliver promised levels of performance or throughput, or what the current maximum is.
 
 \paragraph{Reproducibility and Regression Testing.}
-Your results will need to be reproducible. Remember that good programming practice says that tests should be run, and re-run to make sure it all works. The same is true in your performance tests. Just as we don't want to see old bugs cropping up again, old (solved) performance issues are not nice to see either. Or a new change that slows the whole program down is not a success either. So please, have regression testing and performance regression testing. Real-life example: \url{https://arewefastyet.com} tracks regressions/improvements in Firefox performance.
+Your results will need to be reproducible. That is, two different runs of the load testing on the same code should produce results that are very similar. Unlike unit tests where we expect results to be the same every time, load testing often has a larger degree of randomness and variance in execution because of the nature of the workload (e.g., randomly generate 10~000 customers) and the normal random factors caused by the operating system, scheduler, luck, and so on. 
+
+
+\subsection*{Endurance Tests: How Long?}
+Chances are you're familiar with the idea of endurance being different from peak workload. Can I [JZ] run at 10 km/h for 1 minute? Sure -- I can run much faster than that for 1 minute! Can I run 30 minutes (5 km) at 10 km/h? Yes. 60 minutes (10 km)? Yes, but with difficulty. Four hours (40 km)? No, I'll get tired and slow down, stop, or maybe hurt myself. Okay, so we've found a limit here -- I can endure an hour at this workload but things break down after that. If we only studied my running for a time period that was less than half an hour, we might conclude that I could run at 10 km/h forever (or at least indefinitely), even though that's absolutely not true\footnote{That's a common fallacy in the media, too -- you may notice, if you're looking for it, a plethora of journalists writing opinion pieces that say ``the current situation is the new normal and will go on forever'' -- even though that's almost certainly not true. Things change all the time -- political parties that win an election are often voted out again after a few years; rough job markets improve and good ones get tighter; high interest rates come down or low rates increase, etc. New and unprecedented things happen a lot, and change is constant.}. The problem is that if our sample period is 15 minutes, that is not long enough to reflect the cumulative negative effects that contribute to my eventual slowing down and being forced to stop. 
+
+Is this analogy suitable for software, though? CPUs don't get ``tired'', nor do their parts accumulate fatigue at anywhere near the same rate as a runner's muscles. Yes, it's still valid! A process that has a data hoarding problem is slowly accumulating memory usage and when its memory space is exhausted, we might encounter a hard stop (e.g., encountering the error \texttt{java.lang.OutOfMemoryError: Java heap space}) or just a degradation of performance based on the increasing amount of swapping memory to disk that is required. Same for filling up disk, exhausting file handles, log length, accumulated errors, whatever it is. That's a little bit like fatigue for the executing application, whether it's building in the program or its environment: it builds over time, and eventually the effects of it force a slowdown or stoppage of execution. 
+
+Accumulated ``fatigue'' for an application is not just a hypothetical, either. I [JZ] have personally seen services that encountered a problem due to running out of some internal resources as a result of a code freeze over the holiday season. That wasn't a load test in the sense of applying a higher load to validate execution rate -- it was just an endurance test, even though it was not planned as one. The solution to getting the error rate down involved restarting the instances one-by-one and things got back on track. This example calls back what I said about how endurance tests are not exactly the same as load tests, in that we can have an endurance test with low load and it's still valid.
+
+With that said, how do we identify what is the relevant period for the endurance test -- or in the running analogy, how do I know if 30 minutes is the right running length to get a real idea? Should it be 3 hours? Once again, our first guide might be the product requirements for what we're building (testing) might give an idea. If it's an e-commerce platform then the endurance test might be something like five days to cover the period of US Thanksgiving, Black Friday, the weekend, and then Cyber Monday. 
+
+Other ideas for choosing endurance targets might consider the maintenance windows for the platform. Suppose you have a scheduled maintenance window that takes place on Sundays from 02:00 -- 03:00 and there can be downtime during that period, according to the contracts (service level agreements) the company has signed. In that case, you want to validate that the system will work correctly and consistently long enough that it can be restarted (or updated) only during that maintenance window. 
+
+Unfortunately, there are no universal rules we can offer that give you the exact length of time to evaluate. You'll have to consider the requirements, the likely scenarios, and use your judgement.
+
+\subsection*{How to Evaluate Success}
+There are two kinds of answers that load testing can give you (and they're related). The first is "Yes or no, can the system handle a load of $X$?"; the second is "What is the maximum load $Y$ our current system can handle?". If we know $Y$ then we can easily answer whether $X$ is higher or lower. Between the two of them, this suggests we might prefer to find $Y$ rather than answer the first question. But it might be hard to find the maximum limit. The difficulty of generating test data or load might increase much faster than the rate of load added to the system, and we might be crossing over into stress testing. Sometimes answering the first question is all that is necessary.
+
+The value of $Y$ may have some nuance above. The maximum rate we can handle may imply a hard stop -- if the load exceeds $Y$ then we crash, run out of memory, reject requests, or something else. It may also be a degradation of service: this is the point at which performance degrades below our target or minimum. 
+
+Observability has come up previously and it might have been present to help decide what's important. We might also need to add some monitoring or logging that tracks when events start and end, so we can gather that data needed to make the overall evaluation. Examples that we are looking for are things like the following. Is the total work completed within the total time limit? Did individual items get completed within the item time limit 99\% of the time or more? 
+
+As you might expect, the raw load test results are not always sufficient to make the call as to whether a test has passed or succeeded. Then there is post-processing to aggregate and analyze the data. Some manual work might also be necessary to correlate the data with other known factors, particularly if it had not been possible to test on separate hardware or separate instances~\cite{hitchhiking}. At the end of this process, hopefully you can look at the outcomes and conclude whether a given scenario is passed or failed.
+
+Finally, success in an endurance test is not just answering whether the system was able handle a load of $X$, but is about whether that answer continued to be yes, consistently, across a long period of time. In an endurance test especially, looking at the trend may be more instructive as to how well things are working.
+
+
+\subsection*{So You Failed the Load Test...}
+Like a software program, when it comes to running, I [JZ] can get better -- I just need to make some changes. To get better at endurance running, chances are I mostly just need to increase (slowly) the running distances and practice more and I'll get better. Or as the internet might say, git gud (get good).
+
+The idea works for the programs too -- if the load test has failed, we'll have one or more specific scenarios to improve and we can apply techniques from this course (or elsewhere) to make that part better. Then re-run the test and re-evaluate. If all is well, done; otherwise, repeat as necessary until we've passed the scenario.
+
+And also like a software program, there is a point at which I can make no more improvements. At the time of writing, Google says that the world record for marathon running is 2:01:09, held by Eliud Kipchoge, or an average speed of 21.02 km/h. There is absolutely no chance I can get to that level, no matter how hard I train. So I am not getting selected for the Canadian Olympic team.
+
+If we've reached the limits of what we can do in the software, it might not be the right tool for your needs and a major redesign or replacement is needed. Designing the system with higher load in mind is sometimes possible, though even in situations where it's possible the cost might be prohibitive.  Are we stuck?
+
+No! You can have different expectations. A four-hour marathon seems achievable for me if I worked on it.  If it's unrealistic to bill all your customers on the same day, why not convince the company to let billing be spread across the whole month? Think about the problem outside the constraints that are currently given.
+
+\subsection*{Constant Vigilance}
+You may have heard the saying ``constant vigilance'' around the topic of defending against the dark arts. Load testing at a given moment in time captures the state of things at that time only. The load testing procedure needs to be repeated regularly to catch performance degradations that would make your software fail to meet its targets or design load. These are rarely intentional, but the tendency of software is to grow in complexity and in functionality, both of which are likely to make it slower.  Improved hardware does, over time, offset some of the slowdown of added complexity. However, at the time of writing, this is an era of small, incremental improvements year-to-year, not big leaps and bounds forward \footnote{Considering the previous footnote, it would be thoroughly foolish to now fall into the trap of saying ``the current situation will go on forever'' and say that there will never be revolutionary change in execution hardware that offsets the increases in complexity. But that's not where we are right now.}. So, for now, it is still a priority to repeat the load tests often enough to catch major regressions before they become a problem.
+
+Real-life example: \url{https://arewefastyet.com} tracks regressions/improvements in Firefox performance.
+
+
+
+
+
+
+
+
+
+\chapter*{26 --- Finding Bottleneck Devices}
+
+\addcontentsline{toc}{chapter}{26 --- Finding Bottleneck Devices}
 
 \section*{Characterizing Performance \& Scalability Problems}
+
+Studies show that poor mobile app performance, whether that's by high usage of resources (e.g., battery, memory) or just being slow, is a major complaint that users write about in app stores~\cite{free-apps}. The paper is somewhat older at this point, and while we might like to think that developers are doing a better job of proactively identifying issues, chances are it's still the case that a distressing number of issues are first discovered when someone posts a negative review. \textit{``One star, because it's not possible to give zero!''}.
+
+Given that, a user might be able to give a vague idea of what's wrong, or point out a workflow where they're dissatisfied with the performance. Then it's up to the development team to figure out what's the cause of the problem. Most of our next topics in profiling will be around the idea of CPU profiling, which is to say, examining where CPU time is going. That's generally predicated on the assumption that CPU time is limiting factor. But maybe it isn't, and before we go about focusing on how to examine CPU usage, let's check that assumption -- because it could be something else.
 
 \begin{quote}
 \textit{It is a capital mistake to theorize before one has data. Insensibly one begins to twist facts to suit theories, instead of theories to suit facts.}
 \end{quote}
 \hfill - Sherlock Holmes (\textit{A Scandal in Bohemia}; Sir Arthur Conan Doyle)
 
-Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before reaching conclusions. At a high level we probably have five potential culprits to start with:
+Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before reaching conclusions. At a high level we probably have the following potential culprits to start with:
 \begin{enumerate}
 	\item CPU
 	\item Memory
@@ -6879,9 +7156,15 @@ Keeping the wisdom of Mr. Holmes in mind, we need to collect evidence before rea
 	\item Locks
 \end{enumerate}
 
-These are, obviously, more categories than specific causes, but they are starting points for further investigation. They are listed in some numerical order, but there is no reason why one would have to investigate them in the order defined there.
+\paragraph{Caveats.}
+The list above is, obviously, categories, but they are starting points for further investigation. They are listed in some numerical order, but there is no reason why one would have to investigate them in the order defined there. We'll go in that order in this topic, just for convenience.
 
-\paragraph{CPU.} CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that used to donate its free CPU cycles to world community grid (I'm singlehandedly saving the world, you see.):
+If we get to the end of a particular investigative avenue, fixing it is a separate issue involving the application of the techniques covered elsewhere in the course. That might be really difficult, and sometimes the cause of the problem is simply that the user's device/hardware is too old (or lacking important hardware for acceleration). Games are likely the most obvious example of situations where the ``minimum'' and ``recommended'' hardware configurations are published and if you don't meet those requirements, you're going to have a bad time (if the game runs at all). That applies to apps too, though dropping older devices from the supported set is more likely a result of the device no longer getting OS/API upgrades rather than being ``too slow''. All of which is to say, at the end of the analysis, sometimes the correct solution is to advise the user to upgrade their hardware.
+
+Another possible outcome of finding the bottleneck when reported by the user is that it actually isn't a performance problem as much as a programming error. For example, the user may report the GUI lagging or the application not responding (up to and including the actual system not-responding dialog), but these scenarios are not the result of low computational power on the device; they are caused instead by doing some slow or computationally-intensive task in the UI thread rather than in the background~\cite{bottlenecks-android}. The fix there is just to, well, fix the bug.
+
+
+\paragraph{CPU.} CPU is probably the easiest of these to diagnose. Something like \texttt{top} or Task Manager will tell you pretty quickly if the CPU is busy. You can look at the \%CPU columns and see where all your CPU is going. Still, that tells you about right now; what about the long term average? Checking with my machine ``Loki'', that used to donate its free CPU cycles to world community grid (I was singlehandedly saving the world, you see. I mean. I did stop in 2016, and look at what's happened since then.):
 
 \begin{verbatim}
 top - 07:28:19 up 151 days, 23:38,  8 users,  load average: 0.87, 0.92, 0.91
@@ -6908,14 +7191,16 @@ Being at or above 1.00 isn't necessarily bad, but you should be concerned if the
 Now this is for a single CPU -- if you have a load of 3.00 and a quad core CPU, this is okay. You have, in the traffic analogy, four lanes of traffic, of which 3 are being used to capacity. So we have a fourth lane free and it's as if we're at 75\% utilization on a single CPU.
 
 
-\paragraph{Memory and Disk.} Next on the list is memory. One way to tell if memory is the limiting factor is actually to look at disk utilization. If there is not enough RAM in the box, there will be swapping and then performance goes out the window and scalability goes with. That is of course, the worst case. You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
+\paragraph{Memory and Disk.} Next on the list is memory. If you are using some garbage-collected language or framework, you will find lots of runs of the garbage collector, or at least very long ones when it does run; in the worst case scenario you'll see your application run out of memory and either crash or recover from it~\cite{bottlenecks-android}.
+
+One way to tell if memory is the limiting factor is actually to look at disk utilization. If there is not enough RAM in the system, there will be swapping and then performance goes out the window and scalability goes with. That is of course, the worst case. You can ask via \texttt{top} about how much swap is being used, but that's probably not the interesting value. 
 
 \begin{verbatim}
 KiB Mem:   8167736 total,  6754408 used,  1413328 free,   172256 buffers
 KiB Swap:  8378364 total,  1313972 used,  7064392 free.  2084336 cached Mem
 \end{verbatim}
 
-This can be misleading though, because memory being ``full'' does not necessarily mean anything bad. It means the resource is being used to its maximum potential, yes, but there is no benefit to keeping a block of memory open for no reason. Things will move into and out of memory as they need to, and nobody hands out medals to indicate that you did an awesome job of keeping free memory. It's not like going under budget in your department for the year.  Also, memory is not like the CPU; if there's nothing for the CPU to do, it will just idle (or go to a low power state, which is nice for saving the planet). But memory won't ``forget'' data if it doesn't happen to be needed right now - data will hang around in memory until there is a reason to move or change it. So freaking out about memory appearing as full is kind of like getting all in a knot about how ``System Idle Process'' is hammering the CPU\footnote{Yes, a tech journalist named John Dvorak really wrote an article about this, and I will never, ever forgive him for it.}.
+This can be misleading though, because memory being ``full'' does not necessarily mean anything bad. It means the resource is being used to its maximum potential, yes, but there is no benefit to keeping a block of memory open for no reason. Things will move into and out of memory as they need to, and nobody hands out medals to indicate that you did an awesome job of keeping free memory. It's not like going under budget in your department for the year.  Also, memory is not like the CPU; if there's nothing for the CPU to do, it will just idle (or go to a low power state, which is nice for saving the planet). But memory won't ``forget'' data if it doesn't happen to be needed right now - data will hang around in memory until there is a reason to move or change it. So freaking out about memory appearing as full is kind of like getting all in a knot about how ``System Idle Process'' is hammering the CPU\footnote{Yes, a tech journalist named John Dvorak really wrote an article about this, and here I am roasting him about it decades later because it's just so ridiculous a theory that I can't help it.}.
 
 You can also ask about page faults, with the command \texttt{ps -eo min\_flt,maj\_flt,cmd} which will give you the major page faults (had to fetch from disk) and minor page faults (had to copy a page from another process). The output of this is too big even for the notes, but try it yourself (or I might be able to do a demo of it in class). But this is lifetime and you could have a trillion page faults at the beginning of your program and then after that everything is fine. What you really want is to ask Linux for a report on swapping:
 
@@ -6966,6 +7251,44 @@ Min: 1.02 kBit/s
 Max: 12.60 kBit/s
 Ttl: 39.76 GByte                                                                                       \end{verbatim}
 
+So if you saw here, for example, that data was leaving at 100 Megabits per second you'd have a pretty good idea that was the limitation, but you may still be network limited at lower speeds. Intermediary devices or other non-optimal hardware can get in the way. For example, it's possible to run a wired network over power lines -- this is not optimal, but it's effective in older buildings where it would be difficult or expensive to run network cables through the walls. This will limit your speed based on the condition of the wires in the wall, alongside any other devices on the same circuit adding noise to the signal. So what should be 1000 or 100 MBit might actually only be more like 32 Mbit. Wireless networks have the same problem, being affected by walls, floors, electromagnetic interference, humidity...
+
+Testing network speed can be done using tools like speedtest.net, which gives some indication of what the network connection speed is like from a given device (upload and download). You may need to test multiple times to get a realistic picture of speed. The test validates the speed of connection to the upstream system (e.g., some server operated by the speed test service), but not necessarily to your own data centre. Both locations can have good network connections to the outside world, but might not be easily able to talk to each other well.
+
+In my [JZ] experience, I've seen network speed issues for people working in Hong Kong using an application that has the backend deployed in a Frankfurt (Germany) data centre. The problem here is not bandwidth but latency. Tools like speedtest can tell you the latency of communication alongside the bandwidth. If you want to get an idea of the path and the latency to a particular remote system, you can use the \texttt{traceroute} tool. Here is an example from Catchpoint \url{https://www.catchpoint.com/network-admin-guide/how-to-read-a-traceroute}, which also provides some guidance on how to interpret a traceroute result: 
+
+{\scriptsize
+\begin{verbatim}
+Microsoft Windows [Version 10.0.19043.1288]
+(c) Microsoft Corporation. All rights reserved.
+C:\Users\Michael>tracert catchpoint.com
+Tracing route to catchpoint.com [64.79.149.76]
+Over a maximum of 30 hops: 
+1	2ms	1ms	1ms 10.0.0.1
+2 	10ms	10ms	10ms 96.120.40.245
+3	10ms	11ms	12ms	96.110.175.85
+4	10ms	16ms	10ms 	162.151.63.57
+5	19ms	16ms	20ms	96.108.21.57
+6	15ms	19ms	14ms	96.216.134.10
+7          	19ms 	22ms 	21ms 	be-32121-cs02.350ecermak.il.ibone.comcast.net [96.110.42.181]
+8          	22ms 	34ms 	22ms 	be-2204-pe04.350ecermak.il.ibone.comcast.net [96.110.37.38]
+9          	22ms 	20ms 	20ms 	50.208.234.106
+10       	51ms 	50ms 	49ms 	ae18-0.cr02.dlls02-tx.us.windstream.net [40.128.10.135]
+11       	73ms 	72ms 	72ms 	ae4-0.agr03.phnd01-az.us.windstream.net [169.130.193.231]
+12       	84ms 	73ms 	75ms 	ae1-0.pe05.phnd01-az.us.windstream.net [169.130.169.31]
+13       	85ms 	84ms 	85ms 	h241.23.132.40.static.ip.windstream.net [40.132.23.241]
+14       	*         	82ms 	78ms 	be181.las-n10s1-core1.switch.com [66.209.64.121]
+15       	79ms 	77ms 	80ms 	bell011.las-agg7s5-1.switch.com [66.209.72.26]
+16       	79ms 	77ms 	79ms 	64.79.139.18
+17       	77ms 	77ms 	87ms 	64.19.149.76
+Trace complete
+\end{verbatim}
+}
+
+Remember that communication latency can never be truly eliminated, because it takes non-zero time for packets to get processed through network hardware (e.g., switches), and, more importantly, the speed of light. I looked up some data on \url{https://wondernetwork.com/pings/New\%20York} -- use with a grain of salt --  that says the ping from New York to Lyon is 73.21ms which is something like 83.79\% of the speed of light in fibre-optic cable (as of August 2024). Even if we got it up to 100\% of the speed of light in fibre-optic cable, or used some other material that had a higher speed of light in it, it can't ever get down to nothing. 
+
+One more thing that can cut into your effective bandwidth is packet loss: data getting dropped or corrupted en route. That requires some device along the line to identify that the packets are not as they should be, re-request the needed packets, and wait for them to arrive. Packet loss may be environmental, but it also might mean a device needs replacing.
+
 \paragraph{Locks.}
 The last possibility we'll consider is that your code is slow because we're waiting for locks, either frequently or for lengthy periods of time. We've already discussed appropriate use of locks, so we won't repeat that. The discussion here is about how to tell if there is a locking problem in the first place.
 
@@ -6980,6 +7303,8 @@ I did some reading about \texttt{perf lock} but the problem is, as above, that i
 
 \subsection*{But it's probably CPU...}
 Most profiling tools, and most of our discussion, will be about CPU profiling. It's the most likely problem we'll face and something that we are hopefully able to do something about. 
+
+
 
 
 
@@ -8284,7 +8609,7 @@ practical queueing theory:  https://www.youtube.com/watch?v=IPxBKxU8GIQ
 
 Think back to calculus class. Remember when we talk about limits: $\lim_{x\to\infty} f(x)$. There is an answer for this if the function does (somehow) converge on some value, such as the function $f(x) = 1/x^{2}$ converging to 0.
 
-We would like to see that our random variables converge. You might flip a coin four times and all four times it comes up heads. That doesn't match our expectation that we should have about half heads and half tails. We have convergence if, given enough samples and enough sample paths, it will converge to the 0.5 we expect. There may be some sample paths that don't converge (e.g., continually coming up heads), but they have a ``probability mass'' of zero (i.e., they are incredibly unlikely).  There are in fact uncountably many ``bad paths'', each with probability zero (but that's okay). Zero probability doesn't mean it can't happen, mind you.
+We would like to see that our random variables converge. You might flip a coin four times and all four times it comes up heads. That doesn't match our expectation that we should have about half heads and half tails. We have convergence if, given enough samples and enough sample paths, it will converge to the 0.5 we expect. There may be some sample paths that don't converge (e.g., continually coming up heads), but they have a ``probability mass'' of zero (i.e., they are incredibly unlikely).  There are in fact an infinite number of ``bad paths'', each with probability approaching zero as the number of flips approaches infinity (but that's okay). Probability approaching zero doesn't mean it can't happen, mind you.
 
 An image of what convergence looks like~\cite{pmd}:
 
@@ -8406,7 +8731,7 @@ An example from~\cite{williams-q}: we have a server that completes a request, on
 
 The service time $s$ is given as $0.01s$ and the arrival rate is 65 requests per second. So we can calculate $\rho = 0.01 \times 65 = 0.65$. So we have what we need to plug and chug using the formul\ae\ from above to find the time to complete the average request is 28.6~ms and the average length of the queue is 1.21.
 
-What about the number of jobs in the system? The value $\dfrac{\rho^{2}}{1-\rho}$ gives the average number of jobs, including the waiting jobs and the ones being served. It is an average, of course. The probability that there are exactly $x$ jobs in the system at any time is given by the formula: $(1-\rho)\rho^{x}$. The probability that the number of jobs is less than or equal to $n$ is then given by: $\sum\limits_{i=0}^{n}(1-\rho)\rho^{i}$ (the sum of the probabilities of each of the numbers from 0 up to $n$). If you want to know the probability that there are more then $n$ at a time, then you can compute the sum from $n+1$ up to infinity. That might be unpleasant to calculate, but remember that probabilities sum to 1, so you can say that the probability of more than $n$ requests at once is simply $1 - \sum\limits_{i=0}^{n}(1-\rho)\rho^{i}$.
+What about the number of jobs in the system? The value $\dfrac{\rho}{1-\rho}$ gives the average number of jobs, including the waiting jobs and the ones being served. It is an average, of course. The probability that there are exactly $x$ jobs in the system at any time is given by the formula: $(1-\rho)\rho^{x}$. The probability that the number of jobs is less than or equal to $n$ is then given by: $\sum\limits_{i=0}^{n}(1-\rho)\rho^{i}$ (the sum of the probabilities of each of the numbers from 0 up to $n$). If you want to know the probability that there are more then $n$ at a time, then you can compute the sum from $n+1$ up to infinity. That might be unpleasant to calculate, but remember that probabilities sum to 1, so you can say that the probability of more than $n$ requests at once is simply $1 - \sum\limits_{i=0}^{n}(1-\rho)\rho^{i}$.
 
 \section*{M/M/k}
 
@@ -8998,8 +9323,32 @@ Sadly, when there is an updated version of a library, there may be breaking chan
 As with the other parts of managing your application, like build and deployment, checking for vulnerabilities should be an automatic process as part of your build and release procedures. 
 
 
+\paragraph{Near-Miss? \texttt{xz} and \texttt{ssh}.} Early in 2024, a vulnerability was discovered in the \texttt{xz} library and Andres Freund posted about it on the mailing list~\cite{xzlib}. The library itself is used for data compression but some versions of \texttt{openssh} rely on it. This is a strong example of what's termed a ``supply chain attack''. 
 
+The term comes from the logistical supply chain. Supply chains for physical products are often complicated; if you want to build a gaming PC you need a large number of different components and you only get the end product when you've got all the pieces at hand. The problem is recursive, though: how many different components and pieces did, for example, nvidia require to make your graphics card? If one of the components -- however small or seemingly-insignificant -- is unavailable for whatever reason, the device (or computer) can't be built. 
 
+Similarly, almost any modern piece of software that isn't a toy or academic assignment is built in a compositional way (app $A$ uses libraries $B, C, D$ each of which has dependencies $E, F, G, H...$), compromising any one of the dependencies $F$ could result in a vulnerability in $A$. But if $A$ is \texttt{openssh}, you know, the \textit{secure} shell daemon, being able to exploit that means being able to have root access on the vulnerable server and execute arbitrary code. 
+
+Part of what makes this example so relevant for this course is that the problem was discovered via performance profiling! The backdoor makes the \texttt{openssh} server run much slower due to the injected code that is running before the authentication actually takes place; see the example from~\cite{xzlib}:
+
+\begin{verbatim}
+before:
+nonexistant@...alhost: Permission denied (publickey).
+
+before:
+real	0m0.299s
+user	0m0.202s
+sys	0m0.006s
+
+after:
+nonexistant@...alhost: Permission denied (publickey).
+
+real	0m0.807s
+user	0m0.202s
+sys	0m0.006s
+\end{verbatim}
+
+The slides contain a graphic that gives a breakdown of the vulnerability in a (hopefully) concise way. There's a lot of obfuscation in the implementation and the conditions needed to trigger the vulnerability are very specific, to reduce the likelihood of discovery. The details of the vulnerability and the social engineering needed to land it in a library are better suited for a security course than this one -- but this is an important lesson in how it's not enough to just defend against vulnerabilities in the libraries or tools we know we use.
 
 
 
