@@ -13,12 +13,12 @@
 To motivate the need for non-blocking I/O, consider some standard I/O code:
 
 \begin{lstlisting}[language=Rust]
-fn main() -> io::Result<()> {
-  let mut file = File::open("hello.txt")?;
-  let mut s = String::new();
-  file.read_to_string(&mut s)?;
-  Ok(()) 
-}
+    fn main() -> io::Result<()> {
+      let mut file = File::open("hello.txt")?;
+      let mut s = String::new();
+      file.read_to_string(&mut s)?;
+      Ok(()) 
+    }
 \end{lstlisting}
 (The ? operator ``for easier error handling'' is an alternative to
 \texttt{try!} and \texttt{unwrap}.)
@@ -63,8 +63,8 @@ Let's run through these steps in order, following \url{https://docs.rs/mio/0.7.0
 
 \paragraph{Creating a {\tt Poll} instance.} Just use the API:
     \begin{lstlisting}[language=Rust]
-let poll = Poll::new()?;
-let events = Events::with_capacity(128);
+    let poll = Poll::new()?;
+    let events = Events::with_capacity(128);
     \end{lstlisting}
 We're going to proactively create \texttt{events}; this data structure is used by
 \texttt{Poll::poll} to stash the relevant \texttt{Event} objects.
@@ -79,9 +79,9 @@ a socket (or lower-level networking source); on UNIX it can be also be
 a file descriptor.
 
 \begin{lstlisting}[language=Rust]
-let mut listener = TcpListener::bind(address)?;
-const SERVER: Token = Token(0);
-poll.registry().register(&mut listener, SERVER, Interest::READABLE)?;
+    let mut listener = TcpListener::bind(address)?;
+    const SERVER: Token = Token(0);
+    poll.registry().register(&mut listener, SERVER, Interest::READABLE)?;
 \end{lstlisting}
 
 The payload is the \texttt{register} call. Parameters, going right-to-left:
@@ -102,27 +102,27 @@ but can be a \texttt{host:port} string).
 \paragraph{Waiting on an {\tt Poll} instance.} Having completed
 the setup, we're ready to wait for events on any registered listener.
     \begin{lstlisting}[language=Rust]
-loop {
-    poll.poll(&mut events, Some(Duration::from_millis(100)))?;
+    loop {
+        poll.poll(&mut events, Some(Duration::from_millis(100)))?;
 
-    for event in events.iter() {
-        match event.token() {
-            SERVER => loop {
-                match listener.accept() {
-                    Ok((connection, address)) => {
-                        println!("Got a connection from: {}", address);
-                    },
-                    Err(ref err) if would_block(err) => break,
-                    Err(err) => return Err(err),
+        for event in events.iter() {
+            match event.token() {
+                SERVER => loop {
+                    match listener.accept() {
+                        Ok((connection, address)) => {
+                            println!("Got a connection from: {}", address);
+                        },
+                        Err(ref err) if would_block(err) => break,
+                        Err(err) => return Err(err),
+                    }
                 }
             }
         }
     }
-}
 
-fn would_block(err: &io::Error) -> bool {
-    err.kind() == io::ErrorKind::WouldBlock
-}    \end{lstlisting}
+    fn would_block(err: &io::Error) -> bool {
+        err.kind() == io::ErrorKind::WouldBlock
+    }    \end{lstlisting}
 As foreshadowed, \texttt{poll.poll} will populate \texttt{events}, and
 waits for at most 100 milliseconds. A timeout of \texttt{None} will block
 until an event occurs.
@@ -142,12 +142,12 @@ the \texttt{reqwest} library (\url{https://docs.rs/reqwest/0.10.8/reqwest/}),
 which has both blocking and non-blocking interfaces. Here's the
 non-blocking interface:
     \begin{lstlisting}[language=Rust]
-let body = reqwest::get("https://www.rust-lang.org")
-    .await?
-    .text()
-    .await?;
+    let body = reqwest::get("https://www.rust-lang.org")
+        .await?
+        .text()
+        .await?;
 
-println!("body = {:?}", body);
+    println!("body = {:?}", body);
 \end{lstlisting}
 (If you are doing multiple requests,
 you should create your own \texttt{Client} and \texttt{get} from it instead of
@@ -187,19 +187,19 @@ provides \texttt{futures::executor::block\_on} with that
 simplest functionality.
 
 \begin{lstlisting}[language=Rust]
-use futures::executor::block_on;
+    use futures::executor::block_on;
 
-async fn hello_world() {
-  println!("hello");
-}
+    async fn hello_world() {
+      println!("hello");
+    }
 
-fn main() {
-  let future = hello_world();
-  block_on(future);
-}
+    fn main() {
+      let future = hello_world();
+      block_on(future);
+    }
 \end{lstlisting}
 Even that executor requires you to declare dependency \texttt{futures = "0.3"}
-in Cargo.toml; Build with \texttt{cargo build} and run with \texttt{cargo run}. The full code is in the course repo under \texttt{live-coding/L05/block-on}.
+in Cargo.toml; build with \texttt{cargo build} and run with \texttt{cargo run}. The full code is in the course repo under \texttt{live-coding/L05/block-on}.
 
 \texttt{tokio} includes a more sophisticated executor as well; e.g. when
 there are multiple active \texttt{await}s, \texttt{tokio} can multiplex them onto
@@ -208,10 +208,10 @@ tag above {\tt main()} and by declaring \texttt{main()} to be \texttt{async},
 instead of what we did above with explicitly calling \texttt{block\_on}.
 There are other tags to choose other executors (e.g. \texttt{async\_std}).
 \begin{lstlisting}[language=Rust]
-#[tokio::main]
-async fn main() {
-    // do async stuff
-}
+    #[tokio::main]
+    async fn main() {
+        // do async stuff
+    }
 \end{lstlisting}
 You can read more about tokio here:
 \begin{center}
@@ -227,18 +227,18 @@ that uses callbacks. Here's some code from the Rust bindings documentation
 (\url{https://docs.rs/curl/0.4.33/curl/}):
 
 \begin{lstlisting}[language=Rust]
-use std::io::{stdout, Write};
+    use std::io::{stdout, Write};
 
-use curl::easy::Easy;
+    use curl::easy::Easy;
 
-// Write the contents of rust-lang.org to stdout
-let mut easy = Easy::new();
-easy.url("https://www.rust-lang.org/").unwrap();
-easy.write_function(|data| {
-    stdout().write_all(data).unwrap();
-    Ok(data.len())
-}).unwrap();
-easy.perform().unwrap();
+    // Write the contents of rust-lang.org to stdout
+    let mut easy = Easy::new();
+    easy.url("https://www.rust-lang.org/").unwrap();
+    easy.write_function(|data| { // callback function
+        stdout().write_all(data).unwrap();
+        Ok(data.len())
+    }).unwrap();
+    easy.perform().unwrap();
 \end{lstlisting}
 Note that we provide a lambda as a callback function. This lambda is to be invoked
 when the library receives data from the network (i.e. \texttt{write\_function()}).
@@ -342,8 +342,8 @@ How well does this scale? The developer claims that you can have multiple thousa
 \section*{Building Servers: Concurrent Socket I/O}
 
 \paragraph{Your Choices.} The first two both use blocking I/O, while the second two use
-non-blocking I/O~~\cite{gplus:concurrent}:
-    \begin{itemize}
+non-blocking I/O~~\cite{gplus:concurrent}:\\[-3em]
+    \begin{itemize}[noitemsep]
       \item Blocking I/O; 1 process per request.
       \item Blocking I/O; 1 thread per request.
       \item Asynchronous I/O, pool of threads, callbacks, each thread handles multiple connections.
@@ -352,21 +352,21 @@ non-blocking I/O~~\cite{gplus:concurrent}:
     \end{itemize}
 
 \paragraph{Blocking I/O; 1 process per request.}
-This is the old Apache model.
-  \begin{itemize}
+This is the old Apache model.\\[-3em]
+  \begin{itemize}[noitemsep]
     \item The main thread waits for connections.
     \item Upon connect, the main thread forks off a new process, which completely
       handles the connection.
     \item Each I/O request is blocking, e.g., reads wait until more data arrives.
   \end{itemize}
 
-Advantage: 
-  \begin{itemize}
-    \item ``Simple to undertand and easy to program.''
+Advantage:\\[-3em]
+  \begin{itemize}[noitemsep]
+    \item ``Simple to understand and easy to program.''
   \end{itemize}
 
-Disadvantage:
-  \begin{itemize}
+Disadvantage:\\[-3em]
+  \begin{itemize}[noitemsep]
     \item High overhead from starting 1000s of processes.
       (We can somewhat mitigate this using process pools).
   \end{itemize}
@@ -378,13 +378,13 @@ uses many more resources than the alternatives.
 of processes. Otherwise, this is the same as 1 process per request, but with less overhead.
 I/O is the same---it is still blocking.
 
-    Advantage:
-    \begin{itemize}
+    Advantage:\\[-3em]
+    \begin{itemize}[noitemsep]
       \item Still simple to understand and easy to program.
     \end{itemize}
 
-    Disadvantages:
-    \begin{itemize}
+    Disadvantages:\\[-3em]
+    \begin{itemize}[noitemsep]
       \item Overhead still piles up, although less than processes.
       \item New complication: race conditions on shared data.
     \end{itemize}
@@ -406,7 +406,7 @@ I/O on lighttpd~\cite{lttpd}.
 (Workload: $2\times 7200$ RPM in RAID1, 1GB RAM, transferring 10GBytes on a 100MBit network).
 
 The basic workflow is as follows: 
-   \begin{enumerate}
+   \begin{enumerate}[noitemsep]
      \item enqueue a request;
      \item \ldots ~do something else;
      \item (if needed) periodically check whether request is done; and
