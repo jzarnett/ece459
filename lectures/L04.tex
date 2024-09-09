@@ -22,26 +22,26 @@ It is important to note that reference types can leak memory! If you've chosen t
 
 What you can't do, unlike \CPP's analogous \texttt{shared\_ptr}, is keep a reference to the value after the \texttt{Rc} or \texttt{Arc} goes out of scope. That's because the value is still owned by the pointer and is definitely freed when the pointer goes away.
 
-Right, so we have everything we need now to pass the mutex around, right? Well, almost. \texttt{Rc<T>} won't work when we try to pass it between threads, because the compiler says it cannot be sent between threads safely. This is because the management of its internal counter is not done in a thread-safe way. If we want that, we need the \textit{atomic} reference counted type, which is \texttt{Arc<T>}. It is perhaps slightly slower than the regular reference counted type, so you won't want to choose it in every scenario, but it's exactly what we need here.
+Right, so we have everything we need now to pass the mutex around, right? Well, almost. \texttt{Rc<T>} won't work when we try to pass it between threads, because the compiler says it cannot be sent between threads safely, because it does not implement the special \texttt{Send} trait. This is because the management of its internal counter is not done in a thread-safe way. If we want that, we need the \textit{atomic} reference counted type, which is \texttt{Arc<T>}. It is perhaps slightly slower than the regular reference counted type, so you won't want to choose it in every scenario, but it's exactly what we need here.
 
 Here's an example of using an atomic reference counted type for setting up a handler for the Ctrl-C (SIGINT); this is modified from a program I wrote that listens for connections and spawns threads if a client connects: 
 
 \begin{lstlisting}[language=Rust]
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-fn main() {
-   let quit = Arc::new(Mutex::new(false));
-    let handler_quit = Arc::clone(&quit);
-    ctrlc::set_handler(move || {
-        let mut b = handler_quit.lock().unwrap();
-        *b = true;
-    }).expect("Error setting Ctrl-C handler");
- 
-    while !(*quit.lock().unwrap()) {
-    	// Do things
+    fn main() {
+       let quit = Arc::new(Mutex::new(false));
+        let handler_quit = Arc::clone(&quit);
+        ctrlc::set_handler(move || {
+            let mut b = handler_quit.lock().unwrap();
+            *b = true;
+        }).expect("Error setting Ctrl-C handler");
+     
+        while !(*quit.lock().unwrap()) {
+        	// Do things
+        }
     }
-}
 \end{lstlisting}
 
 In this example, I use a mutex to protect a boolean that's used concurrently (even if it's not in two threads): once in main and once in the handler. 
@@ -54,21 +54,21 @@ We've covered the idea that in Rust, the compiler can make a determination about
 Here's a simple program in the official docs that won't compile because the type system can't figure out what's correct~\cite{rustdocs}:
 
 \begin{lstlisting}[language=Rust]
-fn main() {
-    let string1 = String::from("abcd");
-    let string2 = "xyz";
+    fn main() {
+        let string1 = String::from("abcd");
+        let string2 = "xyz";
 
-    let result = longest(string1.as_str(), string2);
-    println!("The longest string is {}", result);
-}
-
-fn longest(x: &str, y: &str) -> &str {
-    if x.len() > y.len() {
-        x
-    } else {
-        y
+        let result = longest(string1.as_str(), string2);
+        println!("The longest string is {}", result);
     }
-}
+
+    fn longest(x: &str, y: &str) -> &str {
+        if x.len() > y.len() {
+            x
+        } else {
+            y
+        }
+    }
 \end{lstlisting}
 
 The compiler says it can't figure out whether the return value is the borrowing of \texttt{x} or \texttt{y} and therefore it's not sure how long those strings live. It might look like it's obvious at this point, because the two strings are known at compile time. The compiler, however, makes decisions based on local information only (that is, what it finds in the current function it is evaluating). For that reason, it treats \texttt{longest} as if it could take any two string references. Alright, that's fine for now, because it was an example to show what happens when we can't know the answer at compile time anyway.
@@ -80,18 +80,18 @@ If you'd like an analogy, think of it as saying something like ``I will only buy
 Lifetime annotations are written with an apostrophe \texttt{'} followed by a name, and names are usually short like \texttt{'a} or \texttt{'b}. Let's correct the \texttt{longest} function:
 
 \begin{lstlisting}[language=Rust]
-fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
-    if x.len() > y.len() {
-        x
-    } else {
-        y
+    fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+        if x.len() > y.len() {
+            x
+        } else {
+            y
+        }
     }
-}
 \end{lstlisting}
 
-This does what we need! The first appearance, after the name of the function, of our lifetime annotation says that all parameters and return value must have the same lifetime. Then we say we will accept strings that live at least as long as our designated \texttt{'a} lifetime. That is, it's got to live at least as long as the smallest of \texttt{x} and \texttt{y}. The actual lifetime isn't as important, all that matters is that it follows the rule of being at least that long.
+This does what we need! The first appearance of our lifetime annotation \texttt{'a}, after the name of the function, says that all parameters and return value must have the same lifetime. Then we say we will accept strings that live at least as long as our designated \texttt{'a} lifetime. That is, it's got to live at least as long as the smallest of \texttt{x} and \texttt{y}. The actual lifetime isn't as important, all that matters is that it follows the rule of being at least that long.
 
-In early versions of Rust, lifetime annotations had to be specified everywhere. That was somewhat annoying, but fortunately the compiler can identify a lot of common scenarios, so the borrow checker can read them in where they're needed most of the time.
+In early versions of Rust, lifetime annotations had to be specified everywhere. That was somewhat annoying. Fortunately the compiler can identify a lot of common scenarios, so the borrow checker can read now them in where they're needed most of the time.
 
 
 But we're not breaking rules here, we're applying more rules. What gives? The rule-breaking thing is the ability to grant a particular piece of memory immortality. If you specify as a lifetime the special one \texttt{'static}, you grant the ability for this memory to live the entire duration of the program. Just because it can doesn't mean it necessarily will live forever---only that it could. 
@@ -100,16 +100,17 @@ This can be used correctly to tell the compiler that a particular reference will
 
 For the record, the kind of immortality we are talking about here is the Tolkien-Elf kind, where they won't die of old age, but can die in violence or grief. Threads can exit and be cancelled and such in Rust, and static variables can get dropped if the compiler is sure it's safe to do. But they \textit{could} hang around indefinitely.
 
-You can use the static lifetime to bandaid a couple of compiler errors, and the compiler might even suggest it. You shouldn't, though, you should really apply the correct lifetime annotations or fix the would-be dangling reference. The compiler can lead you down the wrong path if it says that it wants a vector being passed to a thread to be annotated as static. What you might think is that it means you should annotate the function parameter with this lifetime, but that just moves the pain to where the function is called. So you modify those and it goes up the chain until you're at creation of the vector and you're left wondering how to make it have a static lifetime. Really, what the compiler means is that a reference isn't appropriate and you need to either move the data, copy the data, or use some other construct like the \texttt{Arc} (atomic reference counter) that is appropriate to the situation. 
+You can use the static lifetime to bandaid a couple of compiler errors, and the compiler might even suggest it. You shouldn't, though. You should really apply the correct lifetime annotations or fix the would-be dangling reference. The compiler can lead you down the wrong path if it says that it wants a vector being passed to a thread to be annotated as static. What you might think is that it means you should annotate the function parameter with this lifetime. But that just moves the pain to where the function is called. So you modify those and it goes up the chain until you're at creation of the vector and you're left wondering how to make it have a static lifetime. Really, what the compiler means is that a reference isn't appropriate and you need to either move the data, copy the data, or use some other construct like the \texttt{Arc} (atomic reference counter) that is appropriate to the situation. 
 
 Memory that's kept around forever that is no longer useful is fundamentally very much like a memory leak, even if it is still possible to deallocate it in a hypothetical sense.
 
 \section*{Holodeck Safeties are Offline}
-There's one last thing that we need, and it is dark and terrible magic. It is \textit{unsafe}. Unsafe exists because it has to. The compiler would rather err on the side of caution and say no to a program that is correct, than say yes to one that isn't. You might also need to interact with some other library or do some very low-level stuff. For this reason, we can override this and tell the compiler that you promise you know this is okay. You do so at your own risk, though, because you can get it wrong and if you do you get all the same problems Rust tries to avoid, like segmentation faults and memory leaks.
+There's one last thing that we need, and it is dark and terrible magic. It is \textit{unsafe}. Unsafe exists because it has to. The compiler would rather err on the side of caution and say no to a program that is correct, than say yes to one that isn't. You might also need to interact with some other library or do some very low-level stuff. For this reason, we can override this and tell the compiler that you promise you know this is okay. You do so at your own risk, though, because you can get it wrong and if you do you get all the same problems Rust tries to avoid (``undefined behaviour''), like race conditions, segmentation faults and memory leaks.
 
-To do anything that qualifies as unsafe, you can go one of two ways. Either you declare a block as \texttt{unsafe}, or you specify that a given function is \texttt{unsafe} by putting that in the function signature. Inside an unsafe block or function, you can do the following things that you are not normally allowed to do~\cite{rustdocs}:
+To do anything that qualifies as unsafe, you declare a block as \texttt{unsafe}. 
+Inside an unsafe block, you can do the following things that you are not normally allowed to do~\cite{rustdocs}:
 
-\begin{enumerate}
+\begin{enumerate}[noitemsep]
 	\item Call an unsafe function/method
 	\item Access or modify a mutable static variable
 	\item Implement an unsafe trait
@@ -119,28 +120,36 @@ To do anything that qualifies as unsafe, you can go one of two ways. Either you 
 
 That list is probably less extensive than you were expecting. Declaring a block as unsafe does not grant you unlimited power, sadly. The borrow checker still does its thing and there are still rules. 
 
-The design intentions for unsafe blocks are that they are supposed to be small (this reduces the chance of an error and makes it easier to find) and ideally are abstracted away a bit behind some interface\ldots
+Unsafe blocks are supposed to be small (this reduces the chance of an error and makes it easier to find) and their safety conditions should be well-documented\ldots
+
+There are also unsafe functions and traits, which do not grant superpowers, but instead impose additional restrictions. An unsafe function can only be called from inside an unsafe block. 
+You specify that a given function is \texttt{unsafe} by putting that in the function signature; similarly, you say a trait is \texttt{unsafe} by putting \texttt{unsafe} before the trait declaration.
+But what's really going on is that an \texttt{unsafe} function is saying that its caller is responsible for ensuring some safety conditions, which it must document. For whatever reason,
+the Rust compiler cannot verify these safety conditions. Dually, if you implement a function from an unsafe trait, you have to ensure extra safety conditions. (Failing to do so
+when implementing the unsafe \texttt{Sync} trait has caused many unsound Rust bugs!)
 
 \paragraph{Danger Zone.} The easiest example to show is what happens when you want to call a function that is unsafe. Suppose we have a function \texttt{do\_unsafe\_thing()}; its function signature will be something like \texttt{unsafe fn do\_unsafe\_thing()} and to call it, we must wrap it in an unsafe block:
 
 \begin{lstlisting}[language=Rust]
-unsafe {
-  do_unsafe_thing();
-}
+    unsafe {
+      do_unsafe_thing();
+    }
 \end{lstlisting}
 
-Unsafe things are clearly designated in both ways: when you write a function that is unsafe, you declare to the world that this function is unsafe. Then, anyone who wants to use it also has to acknowledge that they know the function in question is unsafe. (Readbacks are a safety convention used in aviation, among other places.)
+Anyone who wants to use an unsafe function also has to sign away their life, or at least their safety, by acknowledging that they know the function in question is unsafe (by enclosing the call in an
+unsafe block), and promising to ensure the necessary safety condtions. (Readbacks are a safety convention used in aviation, among other places.)
 
 If you try to use an unsafe function without it being in an unsafe block, the compiler will, naturally, forbid such a thing. Just smashing the unsafe block around it is enough to make the compiler quiet, but not a thorough code reviewer. They would ask about whether you've read carefully the documentation of the function in question and whether you are sure you're calling it with the right arguments\ldots You did read the documentation, right? Right?
 
+Conversely, unsafe blocks don't have to be in unsafe functions; if not in an unsafe function, you're saying
+that the function is uncondtionally safe to call, i.e. you are encapsulating the unsafety.
+
 \paragraph{Mutable static variables.} Rust tries pretty hard to discourage you from using global variables, and they are right to do so. It's a quick shortcut and we do it a lot in course assignments, exercises, labs, and even exam questions. On an exam question, the thing I want to test is something like how you use the mutex and queue constructs to solve the problem, not how well you pass the mutex and queue pointers from the main thread to the newly created threads. In production code, though, global variables are really not recommended because of how harmful it is to good software engineering principles. 
 
-But anyway, you can make global variables mutable in Rust, if you must, and do so you have to mark this as unsafe. But if you find yourself doing such a thing, please stop and think very carefully about why.
-
-\paragraph{Implement an unsafe trait.} Appropriately, if the trait (interface) you want to implement has unsafe in the function signature, the compiler forces you to admit that your code is unsafe. If you do, it mostly means that you have to guarantee that what you're doing does in fact meet the requirements the interface specifies (like \texttt{Send}).
+But anyway, you can make global variables mutable in Rust, if you must, and do so you have to mark this as unsafe. If you find yourself doing such a thing, please stop and think very carefully about why.
 
 \paragraph{Unions.}
-In C, there exists the concept of the \texttt{union}\footnote{\url{https://en.wikipedia.org/wiki/Union_type}}. You might not have heard of it because a lot of people don't like it (and I'm one of them). You might have to contend with it in a particular API.  It's like a \texttt{struct}, except where a \texttt{struct} is all of the contents (e.g., an integer and a floating point number and a pointer), a \texttt{union} is only one of those at a time (an integer or a floating point number or a pointer). Because there's no way to be totally sure that the \texttt{union} you're looking at is in fact the type you expect it to contain, you can only access the members in an unsafe block. 
+In C, there exists the concept of the \texttt{union}\footnote{\url{https://en.wikipedia.org/wiki/Union_type}}. You might not have heard of it because a lot of people don't like it (and I'm one of them). You might have to contend with it in a particular API.  It's like a \texttt{struct}, except where a \texttt{struct} is all of the contents (e.g., an integer and a floating point number and a pointer), a \texttt{union} is only one of those at a time (an integer or a floating point number or a pointer). Because there's no way to be totally sure that the \texttt{union} you're looking at is in fact the type you expect it to contain, you can only access the members in an unsafe block. (``Type punning'' is what you can do when you are messing with the types in a union.)
 
 
 \paragraph{Raw pointers.}
@@ -148,18 +157,17 @@ You can create raw pointers anywhere you like, but to dereference them, that has
 
 Here's an example from the official docs~\cite{rustdocs}:
 \begin{lstlisting}[language=Rust]
-let mut num = 5;
+    let mut num = 5;
+    let r1 = &num as *const i32;
+    let r2 = &mut num as *mut i32;
 
-let r1 = &num as *const i32;
-let r2 = &mut num as *mut i32;
-
-unsafe {
-    println!("r1 is: {}", *r1);
-    println!("r2 is: {}", *r2);
-}
+    unsafe {
+        println!("r1 is: {}", *r1);
+        println!("r2 is: {}", *r2);
+    }
 \end{lstlisting}
 
-You can also use raw pointers when you need to write to a particular memory address, which sometimes happens for memory-mapped I/O. You just assign your value to an integer (i.e., \texttt{let add = 0xDEADBEEF}) and then cast it to a raw pointer (which is of type \texttt{*const}). When you want to write some data to that address, use the unsafe block and write it.
+You can also use raw pointers when you need to write to a particular memory address, which sometimes happens for memory-mapped I/O. You just assign your value to an integer (i.e., \texttt{let add = 0xDEADBEEF}) and then cast it to a raw pointer (which is of type \texttt{*const}). To write some data to that address, use the unsafe block and write it.
 
 You might need this if you are calling into a C library or function. The Rust universe of packages (``crates'') is getting larger all the time, but sometimes you'll have to interact with a library in C\ldots or write a part of your application in Rust that is called from C. There is a crate for cURL, but it might be interesting to learn what one would have to do to use the C library for it\ldots
 
