@@ -17,34 +17,34 @@ This material is mostly based off the official Rust documentation~\cite{rustdocs
 not so. Semicolons separate expressions. The last expression in a function is its return value. You can use \texttt{return} to get
 C-like behaviour, but you don't have to.
 \begin{lstlisting}[language=Rust]
-  fn return_a_number() -> u32 {
-    let x = 42;
-    x+17
-  }
+    fn return_a_number() -> u32 {
+      let x = 42;
+      x+17
+    }
 
-  fn also_return() -> u32 {
-    let x = 42;
-    return x+17;
-  }
+    fn also_return() -> u32 {
+      let x = 42;
+      return x+17;
+    }
 \end{lstlisting}
 
 \paragraph{Change is painful.}
 Variables in Rust are, by default, immutable (maybe it's strange to call them ``variables'' if they don't change?). That is, when a value has been assigned to this name, you cannot change the value anymore.
 \begin{lstlisting}[language=Rust]
-  fn main() {
-    let x = 42; // NB: Rust infers type "i32" for x.
-    x = 17;     // compile-time error!
-  }
+    fn main() {
+      let x = 42; // NB: Rust infers type "i32" for x.
+      x = 17;     // compile-time error!
+    }
 \end{lstlisting}
 
 For performance, immutability by default is a good thing because it helps the compiler to reason about whether or not a race condition may exist. Recall from previous courses that a data race occurs when you have multiple concurrent accesses to the same data, where at least one of those accesses is a write. No writes means no races! 
 
 If you don't believe me, here's an example in C of where this could go wrong:
 \begin{lstlisting}[language=C]
-if ( my_pointer != NULL ) {
-    int size = my_pointer->length; // Segmentation fault occurs!
-    /* ... */
-}
+    if ( my_pointer != NULL ) {
+      int size = my_pointer->length; // Segmentation fault occurs!
+      /* ... */
+    }
 \end{lstlisting}
 
 What happened? We checked if \texttt{my\_pointer} was null? And most of the time we would be fine. But if something (another thread, an interrupt/signal, etc) changed global variable \texttt{my\_pointer} out from under us we would have a segmentation fault at this line. And it would be difficult to guard against, because the usual mechanism of checking if it is \texttt{NULL}... does not work. This kind of thing has really happened to me in production Java code. Put all the if-not-null blocks you want, but if the thing you're looking at can change out from under you, this is a risk\footnote{OK, let's hedge a bit. Rust prevents data races on shared memory locations, but not all race conditions---for instance, you can still race on the filesystem. In this case, if \texttt{my\_pointer} was a global pointer, it would also have to be immutable (because not unique), and then why are we here at all; we wouldn't need to do the check. Aha! But it could be an \texttt{AtomicPtr}. Then you can modify it atomically but still get races between the first and second reads, which aren't atomic. More on that later.}
@@ -117,21 +117,21 @@ These rules draw a distinction between the value itself and the variable that ow
 
 When \texttt{x} goes out of scope, then the memory will be deallocated (``dropped''). (This is very much like the RAII (Resource Acquisition Is Initialization) pattern in languages like \CPP). Variable scope rules look like scope rules in other C-like languages. We won't belabour the point by talking too much about scope rules. But keep in mind that they are rigidly enforced by the compiler. See a brief example:
 \begin{lstlisting}[language=Rust]
-  fn foo() {
-    println!("start");
-    { // s does not exist
-      let s = "Hello World!";
-      println!("{}", s);
-    } // s goes out of scope and is dropped
-  }
+    fn foo() {
+      println!("start");
+      { // s does not exist
+        let s = "Hello World!";
+        println!("{}", s);
+      } // s goes out of scope and is dropped
+    }
 \end{lstlisting}
 
 The same principle applies in terms of heap allocated memory (yes, in Rust you cannot just pretend there's no difference between stack and heap, but ownership helps reduce the amount of mental energy you need to devote to this). Let's learn how to work with those! The example we will use is \texttt{String} which is the heap allocated type and not a string literal. We create it using the 
 \begin{lstlisting}[language=Rust]
-  fn main() {
-    let s1 = String::from("hello");
-    println!("s1 = {}", s1);
-  }
+    fn main() {
+      let s1 = String::from("hello");
+      println!("s1 = {}", s1);
+    }
 \end{lstlisting}
 
 A string has a stack part (left) and a heap part (right) that look like~\cite{rustdocs}:
@@ -149,19 +149,19 @@ In fact, everything we've said so far could also be true for much \CPP~code usin
 Move semantics have to do with transferring ownership from one variable to another. But ownership is overkill for simple types\footnote{Specifically, types with the \texttt{Copy} trait have copy semantics by default; this trait is mutually exclusive with the \texttt{Drop} trait. \texttt{Copy} types have known size at compile time and can be stack-allocated.} (see the docs for a list---stuff like integers and booleans and floating point types), and such types don't need to follow move semantics; they follow copy semantics. Copy semantics are great when copies are cheap and moving would be cumbersome. So the following code creates two integers and they both have the same value (5).
 
 \begin{lstlisting}[language=Rust]
-  fn main() {
-   	let x = 5;
-	let y = x;
-  }
+    fn main() {
+     	let x = 5;
+  	let y = x;
+    }
 \end{lstlisting}
 
 But simple types are the exception and not the rule. Let's look at what happens with types with a heap component:
 
 \begin{lstlisting}[language=Rust]
-  fn main() {
-    let s1 = String::from("hello");
-    let s2 = s1;
-  }
+    fn main() {
+      let s1 = String::from("hello");
+      let s2 = s1;
+    }
 \end{lstlisting}
 
 Here, no copy is created. For performance reasons, Rust won't automatically create a copy if you don't ask explicitly. (You ask explicitly by calling \texttt{clone()}). Cloning an object can be very expensive since it involves an arbitrary amount of memory allocation and data copying. This point is a thing that students frequently get wrong in ECE~252: when doing a pointer assignment like \texttt{ thing* p = (thing*) ptr;}, no new heap memory was allocated, and we have \texttt{p} and \texttt{ptr} pointing to the same thing. But that's not what happens in Rust~\cite{rustdocs}:
@@ -173,15 +173,15 @@ Here, no copy is created. For performance reasons, Rust won't automatically crea
 If both \texttt{s1} and \texttt{s2} were pointing to the same heap memory, it would violate the second rule of ownership: there can be only one! So when the assignment statement happens of \texttt{let s2 = s1;} that transfers ownership of the heap memory to \texttt{s2} and then \texttt{s1} is no longer valid. There's no error yet, but an attempt to use \texttt{s1} will result in a compile-time error. Let's see what happens.
 
 \begin{lstlisting}[language=Rust]
-  fn main() {
-    let x = 5;
-    let y = x;
-    dbg!(x, y); // Works as you would expect!
+    fn main() {
+      let x = 5;
+      let y = x;
+      dbg!(x, y); // Works as you would expect!
 
-    let x = Vec<u32>::new(); // similar to the std::vector type in C++
-    let y = x;
-    dbg!(x, y); // x has been moved, this is a compiler error!
-  }
+      let x = Vec<u32>::new(); // similar to the std::vector type in C++
+      let y = x;
+      dbg!(x, y); // x has been moved, this is a compiler error!
+    }
 \end{lstlisting}
 
 The compiler is even kind enough to tell you what went wrong and why (and is super helpful in this regard compared to many other compilers)~\cite{rustdocs}:
@@ -210,30 +210,30 @@ To learn more, run the command again with --verbose.
 Move semantics also make sense when returning a value from a function. In the example below, the heap memory that's allocated in the \texttt{make\_string} function still exists after the reference \texttt{s} has gone out of scope because ownership is transferred by the \texttt{return} statement to the variable \texttt{s1} in \texttt{main}.
 
 \begin{lstlisting}[language=Rust]
-  fn make_string() -> String {
-    let s = String::from("hello");
-    return s;
-  }
+    fn make_string() -> String {
+      let s = String::from("hello");
+      return s;
+    }
 
-  fn main() {
-    let s1 = make_string();
-    println!("{}", s1);
-  }
+    fn main() {
+      let s1 = make_string();
+      println!("{}", s1);
+    }
 \end{lstlisting}
 
 This works in the other direction, too: passing a variable as an argument to a function results in either a move or a copy (depending on the type). You can have them back when you're done only if the function in question explicitly returns it! 
 
 \begin{lstlisting}[language=Rust]
-  fn main() {
-    let s1 = String::from("world");
-	use_string( s1 ); // Transfers ownership to the function being called
-	// Can't use s1 anymore!
-  }
-  
-fn use_string(s: String) {
-    println!("{}", s); 
-    // String is no longer in scope - dropped
-}
+    fn main() {
+      let s1 = String::from("world");
+  	use_string( s1 ); // Transfers ownership to the function being called
+  	// Can't use s1 anymore!
+    }
+    
+    fn use_string(s: String) {
+      println!("{}", s); 
+      // String is no longer in scope - dropped
+    }
 \end{lstlisting}
 
 This example is easy to fix because we can just add a return type to the function and then return the value so it goes back to the calling function. Great, but what if the function takes multiple arguments that we want back? We can \texttt{clone()} them all\ldots which kind of sucks. We can put them together in a package (structure/class/tuple) and return that. Or, we can let the function borrow it rather than take it\ldots But that's for next time!

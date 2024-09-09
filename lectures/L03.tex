@@ -12,15 +12,15 @@ Rust's compiler analyzes all the borrowing that takes place in the program using
 The feature that we need for the concept of borrowing is the \textit{reference}. To indicate that you want to use a reference, use the \texttt{\&} operator. The reference operator appears both on the function definition and the invocation, to make sure there's no possibility of confusion as to whether a reference is being expected/provided or ownership is to be transferred.  Consider this example from the official docs~\cite{rustdocs}:
 
 \begin{lstlisting}[language=Rust]
-fn main() {
-    let s1 = String::from("hello");
-    let len = calculate_length(&s1);
-    println!("The length of '{}' is {}.", s1, len);
-}
+    fn main() {
+        let s1 = String::from("hello");
+        let len = calculate_length(&s1);
+        println!("The length of '{}' is {}.", s1, len);
+    }
 
-fn calculate_length(s: &String) -> usize {
-    s.len()
-}
+    fn calculate_length(s: &String) -> usize {
+        s.len()
+    }
 \end{lstlisting}
 
 When we invoke the \texttt{calculate\_length} function, ownership of the string is not transferred, but instead a reference to it is provided. The reference goes out of scope at the end of the function where it was used, removing it from consideration. A reference is not the same as ownership and the reference cannot exist without the original owner continuing to exist. That is represented in the official docs by this diagram:
@@ -38,15 +38,15 @@ Of course, in real life, you would be much more agreeable to letting people borr
 Mutable references do exist, but they have to be declared explicitly as such by tagging them as \texttt{\&mut}:
 
 \begin{lstlisting}[language=Rust]
-fn main() {
-    let mut s1 = String::from("hello");
-    let len = calculate_length(&mut s1);
-    println!("The length of '{}' is {}.", s1, len);
-}
+    fn main() {
+        let mut s1 = String::from("hello");
+        let len = calculate_length(&mut s1);
+        println!("The length of '{}' is {}.", s1, len);
+    }
 
-fn calculate_length(s: &mut String) -> usize {
-    s.len()
-}
+    fn calculate_length(s: &mut String) -> usize {
+        s.len()
+    }
 \end{lstlisting}
 
 Mutable references come with  some big restrictions: (1) while a mutable reference exists, the owner can't change the data, and (2) there can be only one mutable reference at a time, and while there is, there can be no immutable references. This is, once again, to prevent the possibility of a race condition. These two restrictions ensure that there aren't concurrent accesses to the data when writes are possible. There's also a potential performance increase where values can be cached (including in CPU registers; we'll come to that later) without worry that they will get out of date.
@@ -56,30 +56,30 @@ As long as there are no mutable references, there can be arbitrarily many immuta
 References cannot outlive their underlying objects. Below is an example from the official docs that will be rejected by the borrow checker, because the reference returned by \texttt{dangle} refers to memory whose owner \texttt{s} goes out of scope at the end of the function:
 
 \begin{lstlisting}[language=Rust]
-fn main() {
-    let reference_to_nothing = dangle();
-}
+    fn main() {
+        let reference_to_nothing = dangle();
+    }
 
-fn dangle() -> &String {
-    let s = String::from("hello");
-    &s
-}
+    fn dangle() -> &String {
+        let s = String::from("hello");
+        &s // returning a thing that no longer exists upon return
+    }
 \end{lstlisting} 
 
-In C this would be a ``dangling pointer'' (a pointer that's pointing to a location that is no longer valid). I see this kind of error a lot in C programs where someone has stack allocated a structure and then wants to pass it to another thread and does so with the address-of operator. It compiles and might even work sometimes at runtime, but is still wrong and can eventually be exposed as a bug that bites you.
+In C this would be a ``dangling pointer'' (a pointer that's pointing to a location that is no longer valid). I see this kind of error a lot in C programs where someone has stack allocated a structure and then wants to pass it to another thread and does so with the address-of operator. It compiles and might even work sometimes at runtime, but is still wrong (technically, undefined behaviour) and can eventually be exposed as a bug that bites you.
 
 If we actually try to compile the previous code example, the compiler says something about giving the value a lifetime. We'll come back to the idea of lifetimes soon.
 
 \paragraph{Non-Lexical Lifetimes.} A more recent improvement to Rust's borrow checking is called non-lexical lifetimes. Consider the small block of code below:
 \begin{lstlisting}[language=Rust]
-fn main() {
-    let mut x = 5;
+    fn main() {
+        let mut x = 5;
 
-    let y = &x;
-    println!("{}", y);
+        let y = &x;
+        println!("{}", y);
 
-    let z = &mut x;
-}
+        let z = &mut x;
+    }
 \end{lstlisting}
 
 Under the old rules, the compiler would not allow creation of the mutable reference \texttt{z} because \texttt{y} has not gone out of scope. It would consider \texttt{y} to be valid until the end of the function. The improvement of NLL is that the compiler can see that \texttt{y} is no longer used after the \texttt{println!} macro and hence the \texttt{z} reference is okay to create. \texttt{y} can be dropped as soon as it's no longer needed; the \texttt{z} reference will not exist at the same time; and all is fine.
@@ -88,11 +88,11 @@ Under the old rules, the compiler would not allow creation of the mutable refere
 The \textit{slice} concept exists in a few other programming languages, and if you have experience with them this will certainly help. A slice is a reference (yes, a reference in the sense of the previous section) to a contiguous subset of the elements of a collection. This is what you do if you need a part of an array (the typical example for that being a substring of an existing string). If our code looks like this:
 
 \begin{lstlisting}[language=Rust]
-fn main() {
-    let s = String::from("hello world");
-    let hello = &s[0..5];
-    let world = &s[6..11];
-}
+    fn main() {
+        let s = String::from("hello world");
+        let hello = &s[0..5];
+        let world = &s[6..11];
+    }
 \end{lstlisting}
 
 The representation of the slice looks like~\cite{rustdocs}:
@@ -100,7 +100,7 @@ The representation of the slice looks like~\cite{rustdocs}:
 	\includegraphics[width=0.3\textwidth]{images/string-slice.png}
 \end{center}
 
-Slices can also apply to vectors and other collections, not just strings. As with the other kinds of references we've learned about, the existence of a slice prevents modification of the underlying data. Just as with references, slices prevent race conditions on collections but also avoid (as much as possible) the need to copy data (slow).
+Slices can also apply to vectors and other collections, not just strings. As with the other kinds of references we've learned about, the existence of a slice prevents modification of the underlying data. Just as with references, slices prevent race conditions on collections but also avoid (as much as possible) the need to copy data (which is slow).
 
 \subsection*{Unwrap the Panic}
 A quick digression: a lot of functions we use return \texttt{Result} types. These return either \texttt{Ok} with the type we expected, or \texttt{Err} with an error description. To get the type you want, you need to unpack the result.
@@ -122,27 +122,27 @@ If the compiler can help with making sure your concurrent program is correct, it
 
 \paragraph{Threads.} Rust uses threads for concurrency, with a model that resembles the create/join semantics of the POSIX pthread. If you are unfamiliar with pthreads, the course repository has a PDF refresher of the topic (\texttt{pthreads.pdf}). We will talk about the Rust way, but the background material will provide context.
 
-So you want to create a thread! The mechanism for doing so is referred to as spawning a thread. Here's a quick example from the official docs~\cite{rustdocs}:
+OK, so you want to create a thread! The mechanism for doing so is referred to as spawning a thread. Here's a quick example from the official docs~\cite{rustdocs}:
 
 \begin{lstlisting}[language=Rust]
-use std::thread;
-use std::time::Duration;
+    use std::thread;
+    use std::time::Duration;
 
-fn main() {
-    let handle = thread::spawn(|| {
-        for i in 1..10 {
-            println!("hi number {} from the spawned thread!", i);
+    fn main() {
+        let handle = thread::spawn(|| {
+            for i in 1..10 {
+                println!("hi number {} from the spawned thread!", i);
+                thread::sleep(Duration::from_millis(1));
+            }
+        });
+
+        for i in 1..5 {
+            println!("hi number {} from the main thread!", i);
             thread::sleep(Duration::from_millis(1));
         }
-    });
 
-    for i in 1..5 {
-        println!("hi number {} from the main thread!", i);
-        thread::sleep(Duration::from_millis(1));
+        handle.join().unwrap();
     }
-
-    handle.join().unwrap();
-}
 \end{lstlisting}
 
 A few things make this significantly different from the pthread model that we are used to. First of all, the thread being created takes as its argument a \textit{closure}---an anonymous function that can capture some bits of its environment. The spawn call creates a \texttt{JoinHandle} type and that's what we use to call \texttt{join}, which is to say, wait for that thread to be finished. As we expect from pthreads, if calling join on a thread that is not finished, the caller waits until the thread is finished.
@@ -153,24 +153,24 @@ This is a simple example that works, but fails to capture the complexity of actu
 The notion of ``capturing'' calls back to the earlier mention that a closure captures some of its environment. That is, the body of the function can reference variables that were declared outside of that function and in the context where \texttt{thread::spawn} was called. The compiler will analyze the request and try to figure out what needs to happen to make it work, such as borrowing the value, as in this example (also from the docs):
 
 \begin{lstlisting}[language=Rust]
-use std::thread;
+    use std::thread;
 
-fn main() {
-    let v = vec![1, 2, 3];
+    fn main() {
+        let v = vec![1, 2, 3];
 
-    let handle = thread::spawn(|| {
-        println!("Here's a vector: {:?}", v);
-    });
+        let handle = thread::spawn(|| {
+            println!("Here's a vector: {:?}", v); // can't do this
+        });
 
-    handle.join().unwrap();
-}
+        handle.join().unwrap();
+    }
 \end{lstlisting}
 
 The only problem is: this example does not work. The compiler is not sure how long the thread is going to live and therefore there's a risk that a reference to \texttt{v} held by the thread outlives the actual vector \texttt{v} in the main function. How do we fix that?
 
 Well, I had the idea that if I put something after the \texttt{join()} call that uses \texttt{v}, then the compiler should know that \texttt{v} has to remain in existence until after the thread in question. Yet, it still reports the error E0373 that says the thread might outlive the borrowed value. This actually got me thinking about why this didn't work and I decided to ask some of the compiler devs. It has to do with the fact that a thread isn't really a first-class construct in Rust, and the ``lifetime'' of arguments that you pass has to be sufficiently long. We'll learn about lifetimes soon.
 
-Anyway, the error message suggests what you actually want in this scenario: to move the variables into the thread. To do so, specify \texttt{move} before the closure: \texttt{let handle = thread::spawn(move || \{}\ldots~ This addition results in the transfer of ownership to the thread being created. You can also copy if you need. 
+Anyway, the error message suggests what you actually want in this scenario: to move the variables into the thread. To do so, specify \texttt{move} before the closure: \texttt{let handle = thread::spawn(move || \{}\ldots~ This addition results in the transfer of ownership to the thread being created. You can also copy (i.e. clone-and-move) if you need. 
 
 One thing you don't want to do is try to make the lifetime of your vector or other construct \texttt{static}, even though the compiler might suggest this. We can revisit that when we talk about lifetimes as well.
 
@@ -178,24 +178,24 @@ One thing you don't want to do is try to make the lifetime of your vector or oth
 
 The ownership mechanic of message passing is like that of postal mail. When you write a physical letter and mail it to someone, you relinquish your ownership of the letter when it goes in the mailbox, and when it is delivered to the recipient, the recipient takes ownership of that letter and can then do with it as they wish.
 
-So you want to have two threads communicate. The Rust metaphor for this is called a \textit{channel}. It has a transmit end (where messages are submitted) and a receive end (where messages arrive). The standard model is multiple-producer, single-consumer: that is, lots of threads can send data via the sending end, but in the end it all gets delivered to one place. Think of that like postal mail as well: I can drop a letter to you in any postbox or post office, but they will all be delivered to your mailbox where you collect them in the end.
+So you want to have two threads communicate. The metaphor that Rust (and many others) use for this is called a \textit{channel}. It has a transmit end (where messages are submitted) and a receive end (where messages arrive). The standard model is multiple-producer, single-consumer: that is, lots of threads can send data via the sending end, but in the end it all gets delivered to one place. Think of that like postal mail as well: I can drop a letter to you in any postbox or post office, but they will all be delivered to your mailbox where you collect them in the end.
 
 Okay, enough talk, let's make one~\cite{rustdocs}:
 \begin{lstlisting}[language=Rust]
-use std::sync::mpsc;
-use std::thread;
+    use std::sync::mpsc;
+    use std::thread;
 
-fn main() {
-    let (tx, rx) = mpsc::channel();
+    fn main() {
+        let (tx, rx) = mpsc::channel();
 
-    thread::spawn(move || {
-        let val = String::from("hi");
-        tx.send(val).unwrap();
-    });
+        thread::spawn(move || {
+            let val = String::from("hi");
+            tx.send(val).unwrap();
+        });
 
-    let received = rx.recv().unwrap();
-    println!("Got: {}", received);
-}
+        let received = rx.recv().unwrap();
+        println!("Got: {}", received);
+    }
 \end{lstlisting}
 
 The channel constructor returns a tuple with the transmitting end \texttt{tx} and receiving end \texttt{rx}. We'll then send the transmitting end into the thread and have it send a message to the main thread. The main thread will wait until the message is there and then get it. This does mean that \texttt{recv()} is blocking and there is a corresponding \texttt{try\_recv()} which is nonblocking. You may have already covered nonblocking I/O in a previous course; if not, we will return to that subject soon.
@@ -209,15 +209,15 @@ As a small technical note, the type you want to send via a channel has to implem
 Okay, we have to take a detour here onto the subject of Traits. As the previous paragraph said, traits are a lot like interfaces. You specify a trait as a set of function signatures that you expect that the type in question to implement. A very simple trait and its usage are shown below:
 
 \begin{lstlisting}[language=Rust]
-pub trait FinalGrade {
-	fn final_grade(&self) -> f32;
-}
+    pub trait FinalGrade {
+    	fn final_grade(&self) -> f32;
+    }
 
-impl FinalGrade for Enrolled_Student {
-    fn final_grade(&self) -> f32 {
-        // Calculation of average according to syllabus rules goes here
-    }	
-}  
+    impl FinalGrade for Enrolled_Student {
+        fn final_grade(&self) -> f32 {
+            // Calculation of average according to syllabus rules goes here
+        }	
+    }  
 \end{lstlisting}
 
 A couple of other notes about traits are worth mentioning. One, you can only define traits on your own types, not on external (from other packages/crates) types, so that you don't break someone else's code. Two, you can add a default implementation to the trait if you want (something Java lacked for a long time). Third, as in other languages with interfaces, a trait can be used as a return type or method parameter, so it is a kind of generic. Finally, you can use \texttt{+} to combine multiple traits (which is nice when you need a parameter to be two things)
@@ -228,26 +228,26 @@ Iterator is the easiest one to explain. You put it on a collection and it allows
 
 Send was already introduced. It's necessary to transfer ownership between threads. There are some Rust built-in or standard-library types that very specifically choose not to implement this interface to give you a hint that they are not intended for this purpose. If the compiler tells you no, it's a hint that you want to use a different type. As previously mentioned, if your programmer-defined type is made entirely of types that have the Send trait, then it too has the trait. If you really must use something that is inherently not safe to send, though, you can implement this trait on your type manually and guarantee the thread-safe transfer of ownership yourself, but it's not a good idea if you can avoid it.
 
-Sync is the last one, and it means that a particular type is thread-safe. That means it can be referenced from multiple threads without issue. The primitive types have this trait, as do any programmer-defined types that are composed entirely of Sync types. It's important to just mention here that this does not mean all operations on a Sync type are safe and that no race conditions are possible; it just means that \textit{references} to the type can be in different threads concurrently, and we can't have multiple mutable references. No, if we want more than one thread to be able to modify the value, we need mutual exclusion...
+Sync is the last one, and it means that a particular type is thread-safe. That means it can be referenced from multiple threads without issue. The primitive types have this trait, as do any programmer-defined types that are composed entirely of Sync types\footnote{If you are yourself implementing something that implements Sync---not by composition---and you do it wrong, you can cause undefined behaviour. But if you are doing that you will be forced to tag your implementation with the \texttt{unsafe} keyword, which is beyond the scope of this course.}. It's important to just mention here that this does not mean all operations on a Sync type are safe and that no race conditions are possible; it just means that \textit{references} to the type can be in different threads concurrently, and we can't have multiple mutable references. No, if we want more than one thread to be able to modify the value, we need mutual exclusion...
 
 \subsection*{Back to the Mutex...}
 If you don't want to use message passing for some reason (and performance is a reason, if it's borne out by your testing/data) then there is fortunately the ability to use a mutex for mutual exclusion. We know how these work, so let's skip the part where I make some analogy about them. 
 
-What's different about the mutex in Rust is that the Mutex wraps a particular type. So it is defined as \texttt{Mutex<T>} and if you want an integer counter, you create it as \texttt{Mutex::new(0);}. This way, the mutex goes with the value it is protecting, making it much more obvious what mutex goes with what data, and making it so you have to have the mutex to access the data. And sample from the docs~\cite{rustdocs}:
+What's different about the mutex in Rust is that the Mutex wraps a particular type. So it is defined as \texttt{Mutex<T>} and if you want an integer counter initialized to 0, you create it as \texttt{Mutex::new(0);}. This way, the mutex goes with the value it is protecting, making it much more obvious what mutex goes with what data, and making it so you have to have the mutex to access the data. A sample from the docs~\cite{rustdocs}:
 
 \begin{lstlisting}[language=Rust]
-use std::sync::Mutex;
+    use std::sync::Mutex;
 
-fn main() {
-    let m = Mutex::new(5);
+    fn main() {
+        let m = Mutex::new(5);
 
-    {
-        let mut num = m.lock().unwrap();
-        *num = 6;
+        {
+            let mut num = m.lock().unwrap();
+            *num = 6;
+        }
+
+        println!("m = {:?}", m);
     }
-
-    println!("m = {:?}", m);
-}
 \end{lstlisting}
 
 In addition to forcing you to acquire the mutex before you can make any use of the internal value, the lock is automatically released when the \texttt{num} variable goes out of scope; the type of \texttt{num} is a \texttt{MutexGuard} which is our ``possession'' of the lock; when that possession ends, the mutex is automatically unlocked. This means you want, generally, to use the manual-scoping \texttt{ \{ } and \texttt{ \} } braces to ensure that the lock is released when you're done with it and not just at the end of the function or loop.
