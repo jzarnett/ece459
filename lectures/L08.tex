@@ -9,12 +9,12 @@
 \begin{center}
     \includegraphics[width=0.5\textwidth]{images/coherency}
 
-\hfill ---Wikipedia
+\hfill ---Careless hx, CC BY-SA 4.0, via Wikimedia Commons
 \end{center}
 
 Today we'll look at what support the architecture provides for memory ordering, in particular in the form of cache coherence. We'll be talking about cache coherence strategies that work for CPUs, where we don't get much choice. But what we're going to talk about works equally well for something like \texttt{redis} (\texttt{redict}) in a situation where we have a distributed cache in software. In a software scenario we might get to choose the configuration that we want; when it comes to the CPU we get whatever the hardware designers have provided to us.
 
-The problem is, of course, that each CPU likely has its own cache. If it does, then the data in these may be out of sync---the value that CPU 1 has for a particular piece of data might be different from the value that CPU 4 has. The simplest method, and a horrible solution, would be the ability to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?\ldots). The compiler and OS and such will require the data to be read from main memory, always. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is \textit{coherency}.
+The problem is, of course, that each CPU likely has its own cache(s). If it does, then the data in these may be out of sync---the value that CPU 1 has for a particular piece of data might be different from the value that CPU 4 has. The simplest method, and a horrible solution, would be the ability to declare some read/write variables as being non-cacheable (is that a word? Uncacheable?\ldots). The compiler and OS and such will require the data to be read from main memory, always. This will obviously result in lower cache hit ratios, increased bus traffic, and terrible, terrible performance. Let's avoid that. What we want instead is \textit{coherency}.
 
 Cache coherency means that (1) the values in all caches are consistent; and
  (2) to some extent, the system behaves as if all CPUs are using shared memory.
@@ -26,7 +26,7 @@ different cache coherence algorithms and how they handle the same situation.
 
 Initially in main memory: {\tt x = 7}.
 
-  \begin{enumerate}
+  \begin{enumerate}[noitemsep]
     \item {\tt CPU1} reads x, puts the value in its cache.
     \item {\tt CPU3} reads x, puts the value in its cache.
     \item {\tt CPU3} modifies {\tt x := 42}
@@ -58,7 +58,7 @@ What does action mean? In the flight plus train example, both kinds of action oc
 \subsection*{Write-Through Caches}
 Let's put that into practice using write-through caches, the simplest type of
 cache coherence.
-  \begin{itemize}
+  \begin{itemize}[noitemsep]
     \item All cache writes are done to main memory.
     \item All cache writes also appear on the bus.
     \item If another CPU snoops and sees it has the same location in
@@ -94,11 +94,11 @@ We then implement the following state machine.
 
 Initially in main memory: {\tt x = 7}.
 
-  \begin{enumerate}
+  \begin{enumerate}[noitemsep]
     \item {\tt CPU1} reads x, puts the value in its cache. {(valid)}
     \item {\tt CPU3} reads x, puts the value in its cache. {(valid)}
     \item {\tt CPU3} modifies {\tt x := 42}. {(write to memory)}
-      \begin{itemize}
+      \begin{itemize}[noitemsep]
         \item {{\tt CPU1} snoops and marks data as invalid.}
       \end{itemize}
     \item {\tt CPU1} reads x, {from main memory. (valid)}
@@ -110,7 +110,7 @@ Let's try to improve performance. What if, in our example, {\tt CPU3} writes to 
 
 \paragraph{Write-Back Implementation.}
      The simplest type of write-back protocol (MSI) uses 3 states instead of 2:
-      \begin{itemize}
+      \begin{itemize}[noitemsep]
         \item {\bf Modified}---only this cache has a valid copy; 
           main memory is {\bf out-of-date}.
         \item {\bf Shared}---location is unmodified, 
@@ -148,16 +148,16 @@ Exclusive read on the bus is {\bf BusRdX}.
 
 Initially in main memory: {\tt x = 7}.
 
-  \begin{enumerate}
+  \begin{enumerate}[noitemsep]
     \item {\tt CPU1} reads x from memory. {(BusRd, shared)}
     \item {\tt CPU3} reads x from memory. {(BusRd, shared)}
     \item {\tt CPU3} modifies {\tt x = 42}: {(PrWr, shared)}
-      \begin{itemize}
+      \begin{itemize}[noitemsep]
         \item {Generates a BusRdX.}
         \item {{\tt CPU1} snoops and invalidates x.}
       \end{itemize}
     \item {\tt CPU1} reads x: {(PrRd, invalid)}
-      \begin{itemize}
+      \begin{itemize}[noitemsep]
         \item {Generates a BusRd.}
         \item {{\tt CPU3} writes back the data and sets x to shared.}
         \item {{\tt CPU1} reads the new value from the bus as shared.}
@@ -168,7 +168,7 @@ Initially in main memory: {\tt x = 7}.
 \subsection*{An Extension to MSI: MESI}
     The most common protocol for cache coherence is MESI.
     This protocol adds yet another state: \vspace{-1em}
-      \begin{itemize}
+      \begin{itemize}[noitemsep]
         \item {\bf Modified}---only this cache has a valid copy; 
  main memory is {\bf out-of-date}.
         \item {\bf Exclusive}---only this cache has a valid copy; 
@@ -181,7 +181,7 @@ Initially in main memory: {\tt x = 7}.
     having to communicate with the bus.  MESI is safe. The key is that
     if memory is in the E state, no other processor has the data. The transition from E to M does not have to be reported over the bus, which potentially saves some work and reduces bus usage. 
 
-\paragraph{MESIF: Even More States!} MESIF (used in latest i7 processors):{\bf Forward}---basically a shared state; but, current cache is the only one that will respond to a request to          transfer the data.
+\paragraph{MESIF: Even More States!} MESIF (used in latest i7 processors): {\bf Forward}---basically a shared state; but, current cache is the only one that will respond to a request to          transfer the data.
 
     Hence: a processor requesting data that is already shared or exclusive will
       only get one response transferring the data. Under a more simple MESI scheme you could get multiple caches trying to answer, with leads to bus arbitration or contention. The existence of a F state permits more efficient usage of the bus.
@@ -196,7 +196,7 @@ char b[10];
 \end{lstlisting}
 \vspace{-1em}
 
-These don't overlap, but are almost certainly allocated next to each other in memory. If a thread is writing to \texttt{a} and they share a cache line or block, then \texttt{b} will be invalidated and a CPU working on \texttt{b} will be forced to fetch the newest value from memory. This can be avoided by forcing some separation between these two arrays. One way would be to heap allocate both arrays. Usually if you do this you will find that they are not both located at the same location (but it's not guaranteed). So the other alternative is to make both arrays bigger than they need to be such that we're sure they don't overlap.
+These don't overlap, but are almost certainly allocated next to each other in memory. If a thread is writing to \texttt{a} and they share a cache line or block, then \texttt{b} will be invalidated; any CPU working on \texttt{b} will be forced to fetch the newest value from memory. This can be avoided by forcing some separation between these two arrays. One way would be to heap allocate both arrays. Usually if you do this you will find that they are not both located at the same location (but it's not guaranteed). So the other alternative is to make both arrays bigger than they need to be such that we're sure they don't overlap.
 
 Consider the graph below that shows what happens in a sample program reading and writing these two arrays, as you increase the size of arrays \texttt{a} and \texttt{b} (noting that byte separation of 11 means they are adjacent; anything less than that and they overlap). This does waste space, but is it worth it?
 
@@ -205,7 +205,7 @@ Consider the graph below that shows what happens in a sample program reading and
 Execution time graph showing 5x speedup by ``wasting'' some space~\cite{falsesharing}.
 \end{center}
 
-At separation size 51 there is a huge drop in execution time because now we are certainly putting the two arrays in two locations that do not have the false sharing problem. Is wasting a little space worth it? Yes! Also -- putting these arrays in a struct and padding the struct can also help with enabling future updates to the struct.
+At separation size 51 there is a huge drop in execution time because now we are certainly putting the two arrays in two locations that do not have the false sharing problem. Is wasting a little space worth it? Yes! Also---putting these arrays in a struct and padding the struct can also help with enabling future updates to the struct.
 
 \subsection*{Software Implementation}
 A previous exam question on caching asked students to write a pseudocode description of behaviour for a distributed software cache that uses the MESI states and has write-back behaviour. This cache is for data items retrieved from a database, so if the item is not in any node's cache, write down \texttt{retrieve item i from database}.
