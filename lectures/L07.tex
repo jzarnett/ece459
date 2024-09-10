@@ -8,7 +8,16 @@
 As I've alluded to earlier, multicore processors came about because
 clock speeds just aren't going up anymore. We'll discuss technical
 details today. Each processor \emph{core} executes instructions; a processor with more than one core can therefore simultaneously execute multiple
-(unrelated) instructions. 
+(unrelated) instructions.
+
+\vspace*{-1em}
+\paragraph{Speed and Heat.}
+The whole reason we're here with multicores is that it's impossible to continue to
+crank up clock rates, because the chips get too hot. Back in the 2000s, before
+they figured to put thermal sensors, I would occasionally hear about CPUs catching fire.
+These days, Intel and AMD chips support burst speeds which are faster than normal clock rates,
+and which can be used until the chips get too hot. So the base rate hasn't gotten much above 3GHz
+in recent decades, but burst rates are higher.
 
 \paragraph{Chips and cores.} Multiprocessor (usually SMP, or symmetric
 multiprocessor) systems have been around for a while. Such systems
@@ -71,7 +80,8 @@ This above Symmetric Multithreading (SMP) design is especially good for the 1:1 
 this case, the design of the cores don't need to change much, but they
 still need to communicate with each other and the rest of the system.
 
-Or, we can have a design that works well for the N:1 model:
+\newpage
+Or, we can have a design that works well for the N:1 model (typically called hyperthreading):
 \begin{center}
 \begin{tikzpicture}
 \draw (-1.4, -1.5) rectangle ++(1.7, 1.9);
@@ -93,12 +103,12 @@ Or, we can have a design that works well for the N:1 model:
 
 One would expect that executing two threads on one core might
 mean that each thread would run more slowly. It depends on the instruction
-mix. If the threads are trying to access the same resource, then each
+mix. If the threads are trying to access the same resource (e.g. Arithmetic Logic Units), then each
 thread would run more slowly. If they're doing different things, there's 
 potential for speedup.
 
-Finally, it's possible to both use multiple cores and put multiple threads
-onto one core, as in the M:N model:
+Finally, one can both use many cores and many threads
+on one core, as in the M:N model (also hyperthreading):
 
 \begin{center}
 \begin{tikzpicture}
@@ -125,16 +135,22 @@ onto one core, as in the M:N model:
 \end{tikzpicture}
 \end{center}
 Here we have four hardware threads; pairs of threads share hardware
-resources. One example of a processor which supports chip multi-threading
-(CMT) is the UltraSPARC T2, which has 8 cores, each of which supports 8 
-threads. All of the cores share a common level 2 cache.
+resources. Looking at the specs of the AMD Ryzen 5 7600 (Zen 4), I see that it has
+6 cores and 12 threads. Everyone does this nowadays.
+On the Zen 4 chips, each core has its own L1 and L2 caches, while the L3 caches are
+shared among the cores on the same so-called ``Core Complex Die''.
 
 \paragraph{Non-SMP systems.} The designs we've seen above have been
 more or less SMP designs; all of the cores are mostly alike.
 A very non-SMP system is the Cell, which contains a PowerPC main core
 (the PPE) and 7 Synergistic Processing Elements (SPEs), which are
 small vector computers.
-
+Recent Intel and AMD processors do have cores that provide the same
+programming interface but have different performance characteristics.
+Intel chips specifically have P (performance) and E (efficient) cores.
+Thinking back to bandwidth vs latency, E cores are higher-latency, but
+they're smaller and so Intel can put more of them on the chip. P cores are
+good for low-latency. AMD has c-cores which seem to do the same thing as Intel's E cores.
 
 \paragraph{Non-Uniform Memory Access.}
 In SMP systems, all CPUs have approximately the same access time for resources
@@ -147,9 +163,8 @@ can access resources faster.  Since memory is commonly the bottleneck,
 each CPU has its own memory bank.
 
 \paragraph{Using CMT effectively.} Typically, a CPU will expose its
-hardware threads using virtual CPUs.
-In current hardware designs, each of the hardware threads has the same
-performance. 
+hardware threads using virtual CPUs. It is also the responsibility of the scheduler
+to make sure that tasks are scheduled on the best cores/virtual CPUs.
 
 However, performance varies depending on context. In the above
 example, two threads running on the same core will most probably run
@@ -431,7 +446,7 @@ prediction table) can be a problem, but processors are pretty good at
 dealing with that too.
 
 \section*{Side-channel attacks}
-There's been a lot happening lately in terms of exploiting the hardware of CPU architectures to get access to privileged data, and unfortunately these things have performance implications!
+A few years ago, a lot happened in terms of exploiting the hardware of CPU architectures to get access to privileged data, and unfortunately these things have performance implications!
 
 \subsection*{Cache Attacks}
 In early 2018, the Spectre~\cite{Kocher2018spectre} and Meltdown~\cite{Lipp2018meltdown} attacks were disclosed. These attacks leverage performance features of modern CPUs to break process isolation guarantees---in principle, a process shouldn't be able to read memory that belongs to the kernel or to other processes.
