@@ -26,18 +26,19 @@ println!("x = {}", x);
 \end{lstlisting}
 \end{multicols}
 
-We'll talk about other compiler optimizations soon, but we don't want to get away from the topic of reordering. 
+By the way, if you have any undefined behaviour in your program, the compiler is allowed to do anything it wants when it reorders or otherwise optimizes it; maybe you can see why that makes sense. We'll talk about other compiler optimizations soon, but we don't want to get away from the topic of reordering. 
 
 \paragraph{Hardware Reordering.} In addition to the compiler reordering, the hardware can do some reordering of its own. A sequence of instructions is provided to the CPU, and it can decide it would rather do them in an order it finds more convenient. That is fairly straightforward.
 
 There is another possibility we have to consider, and it is updates from other threads. When a thread is doing a check on a variable, such as a quit condition (exit the loop if \texttt{quit} is now true), how do we know if we have the most up-to-date value for \texttt{quit}? We know from the discussion of cache coherence that the cache will be updated via snooping, but we need a bit more reassurance that the value we're seeing is the latest one. How could we get the wrong order? If the read by thread $A$ is reordered by the hardware so that it's after the write by thread $B$, then we'll see the ``wrong'' answer. 
 
-Different hardware provides different guarantees about what reorderings it won't do. Old 386 CPUs didn't do any; x86 usually won't (except where there are some specific violations of that; but ARM has weak ordering except where there are data dependencies~\cite{weakvsstrong}. ARM is getting pretty popular, so we do have to care about hardware reorderings, unfortunately.
+Different hardware provides different guarantees about what reorderings it won't do. Old 386 CPUs didn't do any; modern x86 usually won't (except where there are some specific violations of that); ARM has weak ordering except where there are data dependencies~\cite{weakvsstrong}. ARM is getting pretty popular, so we do have to care about hardware reorderings, unfortunately.
 
 \paragraph{I have a plan, but it's a bad one.}
 
 There are some reorderings where we are easily able to conclude that it is okay and safe to do, but not every reordering is. In an obvious case, if the lines of code are \texttt{ z *= 2 } and \texttt {z += 1} then neither the compiler nor hardware will reorder those because it knows that it would change the outcome and produce the wrong answer. There's a clear data dependency there, so the reordering won't happen. There are a couple of hardware architectures where that isn't respected, but we'll ignore them for now.
 
+\newpage
 But what if there's no such clear dependency? Consider something like this pseudocode:
 
 \begin{multicols}{2}
@@ -58,7 +59,7 @@ point.z = 0;
 \end{verbatim}
 \end{multicols}
 
-Wait a minute --- that's not an okay reordering, because now an element of the point is being accessed outside of the critical section and we don't want that. It's a reordering, alright, in that the store of \texttt{point.z} has been moved to after the store of state of the mutex (unlock does, after all, change its state). What we need is a way to tell the compiler (and hardware) that this is not okay.
+Wait a minute---that's not an okay reordering, because now an element of the point is being accessed outside of the critical section and we don't want that. (Not undefined behaviour!) It's a reordering, alright, in that the store of \texttt{point.z} has been moved to after the store of state of the mutex (unlock does, after all, change its state). What we need is a way to tell the compiler (and hardware) that this is not okay.
 
 
 \paragraph{Sequential Consistency.} In a sequential program, you expect
