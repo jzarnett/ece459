@@ -57,11 +57,11 @@ There is the downside, though, that because there's only the one control unit, a
 By default your compiler will assume a particular target architecture; which one exactly is dependent on what the Rust team decided some time in the past. Choosing a too-new architecture will cause your code to fail on older machines. The choice of architecture can be overridden in your compile-time options with the \texttt{target} parameter. Let's look at some SSE code to add two slices and put the result in a third slice:
 
 \begin{lstlisting}[language=Rust]
-pub fn foo(a: &[f64], b: &[f64], c: &mut [f64]) {
-    for ((a, b), c) in a.iter().zip(b).zip(c) {
-        *c = *a + *b;
-    }
-}\end{lstlisting}
+    pub fn foo(a: &[f64], b: &[f64], c: &mut [f64]) {
+        for ((a, b), c) in a.iter().zip(b).zip(c) {
+            *c = *a + *b;
+        }
+    }\end{lstlisting}
 
 %% Compiling this without SIMD on a 32-bit x86 ({\tt --target=i586-unknown-linux-gnu}, decidedly not the default) might give this core loop contents:
 %% \begin{verbatim}
@@ -98,7 +98,7 @@ implication is that the loop only needs to loop half as many times.
 The compiler includes more variants, not shown, to handle cases where
 there are odd numbers of elements in the slices.
 
-So this is a piece of good news, for once: there's automatic use of the SSE instructions if your compiler knows the target machine architecture supports them. However, we can also explicitly invoke these instructions, or use libraries\footnote{A discussion of libraries available as of May 2020: \url{https://www.mdeditor.tw/pl/pdnr}; your choices are \texttt{packed\_simd} (nightly Rust only), \texttt{faster} (unmaintained), or \texttt{simdeez} (must use unsafe Rust).}, although we won't do that much. Instead, we'll learn more about how they work and then do some measures as to whether they really do.
+So this is a piece of good news, for once: there's automatic use of the SSE instructions if your compiler knows the target machine architecture supports them. However, we can also explicitly invoke these instructions, or use libraries\footnote{A discussion of libraries available as of May 2020: \url{https://www.mdeditor.tw/pl/pdnr}; your choices are \texttt{packed\_simd} (nightly Rust only), \texttt{faster} (unmaintained), or \texttt{simdeez} (must use unsafe Rust).}, although we won't do that much. Instead, we'll learn more about how they work and then do some measurement as to whether they really do.
 
 SIMD is different from the other types of parallelization we're
 looking at, since there aren't multiple threads working at once.
@@ -113,9 +113,10 @@ instructions are, in general, a more efficient way to parallelize code
 than threads. That is, when applicable, they use less overall CPU
 resources (cores and power) and run faster.
 
-Data alignment, however, can be an issue with SIMD. According to~\cite{sse}: ``Data must be 16-byte aligned when loading to and storing from the 128-bit XMM registers used by SSE/SSE2/SSE3/SSSE3. This must be done to avoid severe performance penalties.''. That's a pretty harsh restriction. SSE4.2 lifts it, if your machine is new enough.
+%% Data alignment, however, can be an issue with SIMD. According to~\cite{sse}: ``Data must be 16-byte aligned when loading to and storing from the 128-bit XMM registers used by SSE/SSE2/SSE3/SSSE3. This must be done to avoid severe performance penalties.''. That's a pretty harsh restriction. SSE4.2 lifts it, and was released in 2008, so you're almost surely good now.
 
-But in any case, Rust will generally align primitives to their sizes. Under the default representation, Rust promises nothing else about alignment. You can use the \texttt{repr(packed(N)} or \texttt{repr(align(N)} directives to express constraints on alignment, and you can specify the C representation, which allows you more control over data layout.
+%But in any case,
+Rust will generally align primitives to their sizes. On some architectures, this may have performance implications (ARM Cortex), but perhaps not on x86 since you were in elementary school. Under the default representation, Rust promises nothing else about alignment. You can use the \texttt{repr(packed(N)} or \texttt{repr(align(N)} directives to express constraints on alignment, and you can specify the C representation, which allows you more control over data layout.
 
 %% This is not all quite true for Rust.
 %% If you've heard me talk about the dangers of unaligned data before, I usually give you something that looks like this as an example.
@@ -136,37 +137,37 @@ But in any case, Rust will generally align primitives to their sizes. Under the 
 
 %% Alignment headaches can be reduced by using the SSE specific types (and there are some) as the compiler will automatically see to it that the memory is allocated in accordance with this requirement. But then we're sort of back to packing our larger types ourselves, or at least writing them as a smaller type array and telling the compiler to pretend it's now a 128-bit type.
 
-\paragraph{Worked Example.} So let's say that you actually wanted to try it out. Let's consider a \texttt{simdeez} example, which I've put in the repo's live coding subdir under \texttt{lectures/live-coding/L18}.
+\paragraph{Worked Example.} So let's say that you actually wanted to try it out. Let's consider a \texttt{simdeez} example, which I've put in the repo's live coding subdir under \texttt{lectures/live-coding/L16}.
 
 \begin{lstlisting}[language=Rust]
-use simdeez::*;
-use simdeez::scalar::*;
-use simdeez::sse2::*;
-use simdeez::sse41::*;
-use simdeez::avx2::*;
+    use simdeez::*;
+    use simdeez::scalar::*;
+    use simdeez::sse2::*;
+    use simdeez::sse41::*;
+    use simdeez::avx2::*;
 
-simd_runtime_generate!(
-// assumes that the input sizes are evenly divisible by VF32_WIDTH
-pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
-  let len = a.len();
-  let mut result: Vec<f32> = Vec::with_capacity(len);
-  result.set_len(len);
-  for i in (0..len).step_by(S::VF32_WIDTH) {
-    let a0 = S::loadu_ps(&a[i]);
-    let b0 = S::loadu_ps(&b[i]);
-    S::storeu_ps(&mut result[0], S::add_ps(a0, b0));
-  }
-  result
-});
+    simd_runtime_generate!(
+    // assumes that the input sizes are evenly divisible by VF32_WIDTH
+    pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
+      let len = a.len();
+      let mut result: Vec<f32> = Vec::with_capacity(len);
+      result.set_len(len);
+      for i in (0..len).step_by(S::VF32_WIDTH) {
+        let a0 = S::loadu_ps(&a[i]);
+        let b0 = S::loadu_ps(&b[i]);
+        S::storeu_ps(&mut result[0], S::add_ps(a0, b0));
+      }
+      result
+    });
 
-fn main() {
-  let a : [f32; 4] = [1.0, 2.0, 3.0, 4.0];
-  let b : [f32; 4] = [5.0, 6.0, 7.0, 8.0];
+    fn main() {
+      let a : [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+      let b : [f32; 4] = [5.0, 6.0, 7.0, 8.0];
 
-  unsafe {
-    println!("{:?}", add_sse2(&a, &b))
-  }
-}
+      unsafe {
+        println!("{:?}", add_sse2(&a, &b))
+      }
+    }
 \end{lstlisting}
 What this does is generate an \texttt{add\_*} function for each of \texttt{scalar},
 \texttt{sse2}, \texttt{sse41}, and \texttt{avx}. Then \texttt{main}
@@ -178,6 +179,7 @@ calls the \texttt{loadu\_ps} and \texttt{storeu\_ps} calls to load and store
 packed single-precision numbers, and \texttt{add\_ps} to add them. Operator overloading
 works too.
 
+\newpage
 \section*{Case Study on SIMD: Stream VByte }
 
 \hfill ``Can you run faster just by trying harder?''
