@@ -31,7 +31,8 @@ They just generate \emph{better} code.
 
 Often, what happens is that the program you literally wrote is too slow. The
 contract of the compiler (working with the architecture) is to actually execute
-a program with the same behaviour as yours, but which runs faster.
+a program with the same behaviour as yours, but which runs faster. The contract of the compiler
+does not include any obligations if there is any undefined behaviour.
 
 I looked at \texttt{rustc} to confirm that apart from some vectorization, most of Rust's optimization takes place at the backend LLVM level; the \texttt{-C opt-level} option mostly sets inline limits and passes the requested optimization level to the backend. Here's what the optimization levels mean:
 
@@ -109,6 +110,8 @@ propagation together, we get {\tt z = 3 + x}.
 
 In C, these scalar optimizations are more complicated in the presence
 of pointers, e.g. {\tt z = *w + y}. Fortunately, we're not talking about C here.
+Unfortunately, probably the LLVM backend that does these optimizations does not know about
+the guarantees provided by uniqueness.
 
 %\paragraph{Scalar Replacement of Aggregates.} Censored. Too many people misunderstood it last year.
 
@@ -218,6 +221,7 @@ pub fn mul(a: &mut [[i32; 8]; 4], c: i32) {
 
 Strangely enough, sometimes you want to do things the column-major way even though it's ``wrong''. If your two dimensional array is of an appropriate size then by intentionally hitting things in the ``wrong'' order, you'll trigger all your page faults up front and load all your pages into cache and then you can go wild. This was suggested as a way to make matrix multiplication faster for a sufficiently large matrix: {\scriptsize \url{https://www.intel.com/content/www/us/en/developer/articles/technical/loop-optimizations-where-blocks-are-required.html?wapkw=loop%20optimization}}\ldots
 
+\newpage
 \paragraph{Loop fusion.} Here, we transform
 \begin{center}
 \vspace*{-1em}
@@ -316,7 +320,8 @@ When we know that two pointers don't alias, then we know that their
 effects are independent, so it's correct to move things around.
 This also helps in reasoning about side effects and enabling reordering.
 
-We've talked about automatic parallelization previously in this course.
+Automatic parallelization is a thing. In general, it's hard. Rayon does it a bit
+(brief mentions to it in Appendix C).
 In Rust, controlled aliasing makes automatic parallelization much more tractable.
 Shape analysis
 builds on pointer analysis to determine that data structures are indeed
@@ -477,14 +482,15 @@ pub fn fibonacci(n: u64) -> u64 {
 
 Here, \texttt{fibonacci\_lr} doesn't need to return control to its caller
 (because the recursive call is in tail position, i.e. the last thing that happens
-in the function). This avoids
+in the function). Doing the tail recursion elimination avoids
 function call overhead and reduces call stack use.
 
 \section*{Link-Time Optimizations}
 Next up: mechanics of interprocedural optimizations in modern open-source
 compilers. Conceptually, interprocedural optimizations have been well-understood
 for a while. But practical implementations in open-source compilers are still
-relatively new; Hubi\v{c}ka~\cite{hubicka14:_linkt_gcc} summarizes recent history.
+relatively new; Hubi\v{c}ka~\cite{hubicka14:_linkt_gcc} summarizes more recent history
+(compared to how long compilers have been around).
 In 2004, the only real interprocedural optimization in gcc was inlining, and it was
 quite ad-hoc.
 
@@ -536,7 +542,7 @@ avoiding unnecessary work.
 As far as I can tell, today's gcc, with {\tt -flto}, does work and includes
 optimizations including constant propagation and function
 specialization. LLVM and Rust's use of it also include various flavours of LTO.
-I couldn't find much information about happens specifically for Rust; I'd expect the
+I couldn't find much information about what happens specifically for Rust; I'd expect the
 LLVM details below to apply. LLVM LTO can, however,
 optimize across source languages, i.e. if your program contains both C and Rust,
 the compiler and linker can optimize both using the intermediate representation.
