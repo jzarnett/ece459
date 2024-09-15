@@ -7,7 +7,7 @@
 \section*{GPUs: Heterogeneous Programming}
 
 \section*{Host Code}
-We've learned about how a kernel works and a bit about how to write one. The next part is the host code. Now, fortunately, we don't have to write the whole program in \CPP~ or C, even though the kernel has to be written in the CUDA variant. We're going to use the Rustacuda library from \url{https://github.com/bheisler/RustaCUDA}. That allows us to write code in Rust that interfaces with the GPU, and we can limit the interactions with unsafe code as much as possible.
+We've learned about how a kernel works and a bit about how to write one. The next part is the host code. Now, fortunately, we don't have to write the whole program in \CPP{} or C, even though the kernel has to be written in the CUDA variant. We're going to use the Rustacuda library from \url{https://github.com/bheisler/RustaCUDA}. That allows us to write code in Rust that interfaces with the GPU, and we can limit the interactions with unsafe code as much as possible.
  
 We'll look at a quick example of launching a very simple kernel from the Rustacuda examples\footnote{\url{https://github.com/bheisler/RustaCUDA/blob/master/examples/launch.rs}}: 
 \begin{lstlisting}[language=Rust]
@@ -77,7 +77,7 @@ explain the terms. For a more detailed explanation of all the steps, see~\cite{c
 
 One thing that we won't see is any explicit call to initialize the runtime. The CUDA runtime is automatically initialized when there's the first call into it. Thus, the first call might report errors that you wouldn't expect from that call, because they are really a setup problem on your system.
 
-Right, in the example, we need to include the prelude for Rustacuda, just as we've seen previously for Rayon. This imports a bunch of commonly used types to save on having a lot of imports. 
+Right, in the example, we need to include the prelude for Rustacuda, just as we've seen previously for Rayon (though we moved Rayon to the appendix of the course notes). The prelude imports a bunch of commonly used types to save on having a lot of imports. 
 
 First thing we have to do is initialize the API. This has to happen at the start of the program, so no sense in delaying it! At present, there are no flags defined so the call with \texttt{CudaFlags::empty()} is the only valid argument to the initialization function. 
 
@@ -92,7 +92,7 @@ Once we have created a module, we then create a \textit{stream}. The stream is w
 There's one more step before launching the kernel; in step 5, we
 create some \emph{data buffers}, which are used for moving data to and from the GPU. Remember, CUDA requires explicit communication, so whatever data want to provide as input has to be put into a buffer and then the buffer is transferred to the kernel. Whatever data comes as output will be transferred by the GPU into the output buffers we specify.
 
-After all this setup, we can finally launch the kernel. This has to be done in an \texttt{unsafe} block, because the launch macro is unsafe (unfortunately). The good news is that the unsafe block is only the launch, limiting the area of extra scrutiny to something small. When we launch, we specify the kernel that's supposed to run as well as the arguments. Each buffer is converted using the \texttt{as\_device\_ptr()} so that the contents of the device buffer are provided. For scalar types like the count, no such conversion is necessary and we can just provide the value. Here, we specify the grid size and block size (1 each). We'll be returning to that subject a bit.
+After all this setup, we can finally launch the kernel. This has to be done in an \texttt{unsafe} block, because the launch macro has to be unsafe (unfortunately)---the GPU interfacing code might do things that don't respect Rust's safety requirements. The good news is that the unsafe block is only the launch, limiting the area of extra scrutiny to something small. When we launch, we specify the kernel that's supposed to run as well as the arguments. Each buffer is converted using \texttt{as\_device\_ptr()} so that the contents of the device buffer are provided. For scalar types like the count, no such conversion is necessary and we can just provide the value. Here, we specify the grid size and block size (1 each). We'll be returning to that subject a bit.
 
 Great! We launched the kernel and sent it over to the GPU. This is an asynchronous process, so we could do more stuff here if we need. There's nothing else to do at the moment, so we'll wait for the items in the queue to complete by calling \texttt{stream.synchronize()}. Straightforward!
 
@@ -116,9 +116,9 @@ use rand::Rng;
 use rustacuda_core::DeviceCopy;
 use std::ops::Deref;
 
-/* A Rustification by Jeff Zarnett of a past ECE 459 N-Body assignment that was
-originally from GPU Gems, Chapter 31 and modified by Patrick Lam.
-Then CUDA-fied by Jeff Zarnett using the Rustacuda library example code
+/* A Rustification by Jeff Zarnett of a past ECE 459 N-Body assignment.
+Originally from GPU Gems, Chapter 31, modified by Patrick Lam,
+then CUDA-fied by Jeff Zarnett using the Rustacuda library example code.
  */
 
 const NUM_POINTS: u32 = 100000;
@@ -219,7 +219,7 @@ fn initialize_accelerations() -> Vec<CudaFloat3> {
 }
 \end{lstlisting}
 
-We mentioned last time that in the kernel we can use vector types like \texttt{float4}. If we want to use those in Rust, we have to import them from a library (here cuda-sys) that isn't the same as the Rustacuda library\footnote{So at the time that I wrote this, I actually submitted an issue in the Rustacuda library to bring in support for this. Maybe by the time you are reading this, support has been added. I might even have found time to do it myself, should I finish all the course content and have time.}. This gives us the \texttt{float4} but there's a requirement of the Rustacuda library that any type that we want to send over to the kernel must have the trait \texttt{DeviceCopy}. Implementing the trait is promising that the type you have does not contain any pointers to host memory (so if you had a struct that contained a pointer to a buffer, this is not okay). That's because the pointer will be bogus when it is on the GPU device (they don't share memory). I also added the \texttt{Deref} trait which makes it so that the array of this type \texttt{CudaFloat4} will be easily converted to the type it contains \texttt{float4} when we operate on it. And the same for the \texttt{float3} type.
+We mentioned last time that in the kernel we can use vector types like \texttt{float4}. If we want to use those in Rust, we have to import them from a library (here cuda-sys) that isn't the same as the Rustacuda library\footnote{So at the time that I wrote this, I actually submitted an issue in the Rustacuda library to bring in support for this. Maybe by the time you are reading this, support has been added. I might even have found time to do it myself, should I finish all the course content and have time.}. This gives us the \texttt{float4} but there's a requirement of the Rustacuda library that any type that we want to send over to the kernel must have the trait \texttt{DeviceCopy}. Implementing the trait is promising that the type you have does not contain any pointers to host memory (so if you had a struct that contained a pointer to a buffer, this is not okay). That's because the pointer will be bogus when it is on the GPU device (they don't share memory). I also added the \texttt{Deref} trait which makes it so that elements of the array of this type \texttt{CudaFloat4} will be easily converted to the type it contains (\texttt{float4}) when we operate on it. And the same for the \texttt{float3} type.
 
 
 The other thing worth noting is that the calculation of forces kernel is invoked with a grid size of \texttt{NUM\_POINTS} and one thread per block. That is to say, there are \texttt{NUM\_POINTS} (100~000) chunks of work, and each chunk has one thread. If you get this wrong, the code doesn't work as expected: if you put in 1 and 1 for both of these values, then only the first acceleration will be calculated, because we said there's one chunk of work and it's one thread. But what we actually have asked for is to have \texttt{NUM\_POINTS} chunks and that will get it done.
@@ -273,9 +273,9 @@ extern "C" __global__ void calculate_forces(const float4* positions, float3* acc
 The full version of the improved code is in the course repository as \texttt{nbody-cuda-grid}. But what you want to know is, did these changes work? Yes! It sped up the calculation to about 1.65 seconds (still with 100~000 points, still on the same server). Now that's a lot better! We are finally putting the parallel compute power of the GPU to good use and it results in an excellent speedup.
 
 \paragraph{Trading Accuracy for Performance?}
-Thanks to previous ECE 459 student Tony Tascioglu who contributed this section. We've covered on numerous occasions that trading accuracy for performance is often a worthwhile endeavour. You might even say it's a crowd favourite. It's an instructor favourite, at lea1st.
+Thanks to previous ECE 459 student Tony Tascioglu who contributed this section. We've covered on numerous occasions that trading accuracy for performance is often a worthwhile endeavour. You might even say it's a crowd favourite. It's an instructor favourite, at least.
 
-Most of the gaming-oriented NVIDIA GeForce GPUs don't natively support FP64 (double-precision floating point numbers). Native support for that requires expensive datacentre GPUs; it used to be locked in software and is missing in the hardware in more modern cards. Instead of running in hardware, the 64-bit operations are emulated in software and that is significantly slower.  How much slower? Using 32-bit floats rather than 64-bit doubles is typically a 16, 32 or even 64x speedup depending on the GPU! We can even push that a bit farther because using a 16-bit float might typically be another 2x faster. For many applications (gaming?) this level of precision isn't necessary. 
+Most of the gaming-oriented NVIDIA GeForce GPUs don't natively support FP64 (double-precision floating point numbers). Native support for that requires expensive datacentre GPUs; it used to be locked in software and is missing in the hardware in more modern cards. Instead of running in hardware, the 64-bit operations are emulated in software and that is significantly slower.  How much slower? Using 32-bit floats rather than 64-bit doubles is typically a 16, 32 or even 64× speedup depending on the GPU! We can even push that a bit farther because using a 16-bit float might typically be another 2× faster. For many applications (gaming?) this level of precision isn't necessary. 
 
 How dramatic is the difference? See this table from\cite{fp3264}, which although its date says 2014, has clearly been updated since then since the GeForce RTX 3080 did not come out until September of 2020:
 
