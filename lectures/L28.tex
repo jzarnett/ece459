@@ -5,7 +5,7 @@
 \lecture{28 --- Causal and Memory Profiling}{\term}{Jeff Zarnett}
 
 \section*{Causal Profiling}
-At this point we've got some experience in identifying areas of the program that we think are slow or are limiting the maximum performance of our program. If we are presented with more than one thing, how do we know which of those would yield the most benefit? Is it possible that optimizing something would actually have no or a negative effect? The scientific approach would be to do an experiment and find out. That is, change the code, see the impact, re-evaluate. What causal profiling offers us is a way to run those experiments without changing any code. That could be a significant savings of time and effort. 
+At this point we've got some experience in identifying areas of the program that we think are slow or are limiting the maximum performance of our program. If we are presented with more than one thing, how do we know which of those would yield the most benefit? Is it possible that optimizing something would actually have no effect or even a negative effect? The scientific approach would be to do an experiment and find out. That is, change the code, see the impact, re-evaluate. What causal profiling offers us is a way to run those experiments without changing any code. That could be a significant savings of time and effort. 
 
 One such causal profiler is called Coz (pronounced like ``cause'')~\cite{coz}. It does a what-if analysis that says: what would be the impact of speeding up this particular part of the code? 
 
@@ -14,7 +14,7 @@ A very simple approach would just look at the time of the program and just calcu
 The key observation of the Coz profiler authors is the idea that speeding up some area of code is fundamentally the same as slowing down every other part of the code. It's all relative! This is what we would call a virtual speedup. How is the other code slowed down? Adding some pauses to (stopping the execution of) the other threads. That certainly makes them run slower. Maybe you're not convinced that slowing down everything else is equivalent?
 
 
-Shown below is the argument from~\cite{coz} in visual form. The original runtime is shown as (a). Hypothetically, if we make function \texttt{f} faster by some factor $d = 40\%$ that gives us (b). And if instead of actually making function \texttt{f} faster we instead paused other threads for $0.4 \times t(f)$ where $t(f)$ is the original execution time of \texttt{f}, we get an equivalent effect to that of of optimizing \texttt{f} by $d$.
+Shown below is the argument from~\cite{coz} in visual form. The original runtime is shown as (a). Hypothetically, say we make function \texttt{f} faster by some factor $d = 40\%$ that gives us (b). But, if instead of actually making function \texttt{f} faster, let's pause other threads for $0.4 \times t(f)$ where $t(f)$ is the original execution time of \texttt{f}. Then we get an equivalent effect to that of optimizing \texttt{f} by $d$.
 \begin{center}
 	\includegraphics[width=0.4\textwidth]{images/virtual-speedup.jpg}
 \end{center}
@@ -48,14 +48,14 @@ If you'd like to see some more details of the tool, you can see the author prese
 
 Thus far we have focused on CPU profiling. Other kinds of profiling got some mention, but they're not the only kind of profiling we can do. Memory profiling is also a thing, and specifically we're going to focus on heap profiling.
 
-During Rustification, we dropped a bunch of valgrind content. Valgrind is a memory error and leak detection toolset that is invaluable when programming in \CPP. (In brief: valgrind is a just-in-time engine that reinterprets machine code and instruments it to find sketchy things.) In particular, the memory leaks that valgrind's memcheck tool detects are, for the most part, not possible in Rust unless you try pretty hard\footnote{You can still create cycles in refcounted objects or call \texttt{std::mem::forget} or etc.}---the friendly compiler protects you against them by automatically dropping things.
+During Rustification of this course, we dropped a bunch of valgrind content. Valgrind is a memory error and leak detection toolset that is invaluable when programming in \CPP. (In brief: valgrind is a just-in-time engine that reinterprets machine code and instruments it to find sketchy things.) In particular, the memory leaks that valgrind's memcheck tool detects are, for the most part, not possible in Rust unless you try pretty hard\footnote{You can still create cycles in refcounted objects or call \texttt{std::mem::forget} or use unsafe code or etc.}---the friendly compiler protects you against them by automatically dropping things.
 
 We're going to look at two kinds of memory profiling here, both part of valgrind. They can both occur in Rust, but it looks like the more common kind is when a lot of memory is allocated and then freed. More completely: ``places that cause excessive numbers of allocations; leaks; unused and under-used allocations; short-lived allocations; and allocations with inefficient data layouts''. valgrind's DHAT tool~\cite[Chapter~10]{valgrind} detects these.
 
 The second kind of memory profiling addresses memory that memcheck reports as ``Still Reachable''. That is, things that remained allocated and still had pointers to them, but were not properly deallocated. Right, we care about them too, and for that we also want to do heap profiling. If we don't look after those things, we're just using more and more memory over time. That likely means more paging and the potential for running out of heap space altogether. Again, the memory isn't really lost, because we could free it.
 
 \subsection*{DHAT}
-DHAT tracks allocation points and what happens to them over a program's execution. An allocation point is a point in the program which allocates memory; in C that would be \texttt{malloc}. In Rust there are a bunch of ways to allocate memory, one being \texttt{Box::new}. It aggregates allocation points according to the program stack. Let's first look at a leaf node from the documentation.
+DHAT tracks allocation points and what happens to them over a program's execution. An allocation point is a point in the program which allocates memory; in C that would be \texttt{malloc}. In Rust there are a bunch of ways to allocate memory, one being \texttt{Box::new}. DHAT aggregates allocation points according to the program stack. Let's first look at a leaf node from the documentation.
 
 \begin{verbatim}
 AP 1.1.1.1/2 {
@@ -184,7 +184,7 @@ If we look at the output there (hint: pipe the output to \texttt{less} or someth
 \end{verbatim}
 }
 
-Now wait a minute. This bar graph might be user friendly but it's not exactly what I'd call\ldots useful, is it? For a long time, nothing happens, then\ldots kaboom! According to the docs, what actually happened here is, we gave in a trivial program where most of the CPU time was spent doing the setup and loading and everything, and the trivial program ran for only a short period of time, right at the end. So for a relatively short program we should tell Massif to care more about the bytes than the CPU cycles, with the \verb+--time-unit=B+ option. Let's try that.
+Now wait a minute. This bar graph might be user friendly but it's not exactly what I'd call\ldots useful, is it? For a long time, nothing happens, then\ldots kaboom! According to the docs, what actually happened here is, we gave it a trivial program where most of the CPU time was spent doing the setup and loading and everything, and the trivial program ran for only a short period of time, right at the end. So for a relatively short program we should tell Massif to care more about the bytes than the CPU cycles, with the \verb+--time-unit=B+ option. Let's try that.
 
 {\scriptsize
 \begin{verbatim}
