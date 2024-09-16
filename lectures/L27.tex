@@ -133,7 +133,7 @@ Webpage: \url{https://perf.wiki.kernel.org/index.php/Tutorial}
 
 \noindent
 Here's a usage example on some old assignment code from a previous offering of the course:
-\begin{lstlisting}[basicstyle=\scriptsize]
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
 [plam@lynch nm-morph]$ perf stat ./test_harness
 
  Performance counter stats for './test_harness':
@@ -170,21 +170,21 @@ The basic plan is to run the program using \texttt{perf record}, which will samp
 
 \section*{Profiler Guided Optimization (POGO)}
 
-In 2015 we were fortunate enough to have a guest lecture from someone at Microsoft actually in the room to give the guest lecture on the subject of Profile Guided Optimization (or POGO). In subsequent years, I was not able to convince him to fly in just for the lecture. Anyway, let's talk about the subject, which is by no means restricted to Rust.
+A few years ago, we were fortunate enough to have a guest lecture from someone at Microsoft actually in the room to give the guest lecture on the subject of Profile Guided Optimization (or POGO). In subsequent years, I was not able to convince him to fly in just for the lecture. Anyway, let's talk about the subject, which is by no means restricted to Rust.
 
 The compiler does static analysis of the code you've written and makes its best guesses about what is likely to happen. The canonical example for this is branch prediction: there is an if-else block and the compiler will then guess about which is more likely and optimize for that version. Consider three examples, originally from~\cite{pogo} but replaced with some Rust equivalents:
 
 \begin{lstlisting}[language=Rust]
-fn which_branch(a: i32, b: i32) {
-    if a < b {
-        println!("Case one.");
-    } else {
-        println!("Case two.");
+    fn which_branch(a: i32, b: i32) {
+        if a < b {
+            println!("Case one.");
+        } else {
+            println!("Case two.");
+        }
     }
-}
 \end{lstlisting}
 
-Just looking at this, which is more likely, \texttt{a < b} or \texttt{a >= b}? Assuming there's no other information in the system the compiler can believe that one is more likely than the other, or having no real information, use a fallback rule. This works, but what if we are wrong? Suppose the compiler decides it is likely that \texttt{a} is the larger value and it optimizes for that version. However, it is only the case 5\% of the time, so most of the time the prediction is wrong. That's unpleasant. But the only way to know is to actually run the program.
+Just looking at this, which is more likely, \texttt{a < b} or \texttt{a >= b}? Assuming there's no other information in the system, the compiler can believe that one is more likely than the other, or having no real information, use a fallback rule. This works, but what if we are wrong? Suppose the compiler decides it is likely that \texttt{a} is the larger value and it optimizes for that version. However, it is only the case 5\% of the time, so most of the time the prediction is wrong. That's unpleasant. But the only way to know is to actually run the program.
 
 \begin{multicols}{2}
 \begin{lstlisting}[language=Rust]
@@ -224,13 +224,13 @@ fn devirtualization(thing: &Polite) {
 There are similar questions raised for the other two examples. What is the ``normal'' type for some reference \texttt{thing}? It could be of either type \texttt{Kenobi} or \texttt{Grievous}. If we do not know, the compiler cannot do devirtualization (replace this virtual call with a real one). If there was exactly one type that implements the \texttt{Polite} trait we wouldn't have to guess. But are we much more likely to see \texttt{Kenobi} than \texttt{Grievous}?
 
 \begin{lstlisting}[language=Rust]
-fn match_thing(x: i32) -> i32 {
-    match x {
-        0..10 => 1,
-        11..100 => 2,
-        _ => 0
+    fn match_thing(x: i32) -> i32 {
+        match x {
+            0..10 => 1,
+            11..100 => 2,
+            _ => 0
+        }
     }
-}
 \end{lstlisting}
 
  Same thing with \texttt{x}: what is its typical value? If we know that, it is our prediction. Actually, in a match block with many options, could we rank them in descending order of likelihood?
@@ -241,7 +241,7 @@ Solving this problem is the goal of POGO. It is taking the data from some actual
 
 Step one is to generate an executable with instrumentation. Ask to compile with instrumentation enabled, which also says what directory to put it in: \texttt{-Cprofile-generate=/tmp/pgo-data}. The compiler inserts a bunch of probes into the generated code that are used to record data. Three types of probe are inserted: function entry probes, edge probes, and value probes.  A function entry probe, obviously, counts how many times a particular function is called. An edge probe is used to count the transitions (which tells us whether an if branch is taken or the else condition). Value probes are interesting; they are used to collect a histogram of values. Thus, we can have a small table that tells us the frequency of what is given in to a \texttt{match} statement. When this phase is complete, there is an instrumented executable and an empty database file where the training data goes~\cite{pogo}. 
 
-Step two is training day: run the instrumented executable through real-world scenarios. Ideally you will spend the training time on the performance-critical sections. It does not have to be a single training run, of course, data can be collected from as many runs as desired. Keep in mind that the program will run a lot slower when there's the instrumentation present. 
+Step two is training day: run the instrumented executable through real-world scenarios. Ideally you will spend the training time on the performance-critical sections. It does not have to be a single training run, of course. Data can be collected from as many runs as desired. Keep in mind that the program will run a lot slower when there's the instrumentation present. 
 
 Still, it is important to note that you are not trying to exercise every part of the program (this is not unit testing); instead it should be as close to real-world-usage as can be accomplished. In fact, trying to use every bell and whistle of the program is counterproductive; if the usage data does not match real world scenarios then  the compiler has been given the wrong information about what is important. Or you might end up teaching it that almost nothing is important... 
 
@@ -285,11 +285,11 @@ rustc -Cprofile-use=./merged.profdata -O ./main.rs
 
 What does it mean for the executable to be better? We have already looked at an example about how to predict branches. Predicting it correctly will be faster than predicting it incorrectly, but this is not the only thing.  The algorithms will aim for speed in the areas that are ``hot'' (performance critical and/or common scenarios). The algorithms will alternatively aim to minimize the size of code of areas that are ``cold'' (not heavily used). It is recommended in~\cite{pogo} that less than 5\% of methods should be compiled for speed.
 
-It is possible that we can combine multiple training runs and we can manually give some suggestions of what scenarios are important. Obviously the more a scenario runs in the training data, the more important it will be, as far as the POGO optimization routine is concerned, but multiple runs can be merged with user assigned weightings.
+It is possible that we can combine multiple training runs and we can manually give some suggestions of what scenarios are important. The more a scenario runs in the training data, the more important it will be, as far as the POGO optimization routine is concerned, but also, multiple runs can be merged with user assigned weightings.
 
 \subsection*{Behind the Scenes}
 
-In the optimize phase, the training data is used to do the following optimizations( which I will point out are based on C and \CPP~ programs and not necessarily Rust, but the principles should work because the Rust compiler's approach to this is based on that of LLVM/Clang)~\cite{pogo2}:
+In the optimize phase, the training data is used to do the following optimizations (which I will point out are based on C and \CPP~ programs and not necessarily Rust, but the principles should work because the Rust compiler's approach to this is based on that of LLVM/Clang)~\cite{pogo2}:
 
 \begin{multicols}{2}
 \begin{enumerate}
@@ -343,7 +343,7 @@ So, to sum up, the training data is used to identify what branches are likely to
 
 \subsection*{Benchmark Results}
 
-This table, condensed from~\cite{pogo2} summarizes the gains to be made. The application under test is a standard benchmark suite (Spec2K) (admittedly, C rather than Rust, but the goal is to see if the principle of POGO works and not just a specific implementation):
+This table, condensed from~\cite{pogo2}, summarizes the gains achieved. The application under test is a standard benchmark suite (Spec2K) (admittedly, C rather than Rust, but the goal is to see if the principle of POGO works and not just a specific implementation):
 
 \begin{center}
 \begin{tabular}{l|l|l|l|l|l}
