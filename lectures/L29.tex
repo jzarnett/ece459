@@ -31,21 +31,18 @@ are useful tools, but they can mislead you.  If you understand how
 profilers work -- and some common pitfalls -- you won't draw the wrong conclusions. Sampling-based profiler can miss things, while an instrumentation-based profiler distorts the system under observation. The main assumptions underlying sampling are that samples are ``random'' and that the sample distribution approximates the actual time-spent distribution\footnote{Lifted from ``Profilers are Lying Hobbitses'', \url{https://www.infoq.com/presentations/profilers-hotspots-bottlenecks/}, which talks about profiling for JVMs.}.
 
 \section*{Lies from Metrics}
-While app-specific metrics can lie too, mostly we'll talk about CPU
-perf counters today.
-In particular, we're going to look at two types of sampling-based lies.
+The helicopter video example introduced the first type of lie that we might get from metrics: what are we \textit{not} seeing? Periodic sampling misses any events that take place only between the samples. So if a particular function is a periodic interrupt handler code and the frequency of that just so happens to make it run between samples, as far as your profiler is concerned that code didn't run at all -- even though we could observe from external signs (e.g., the interrupt actually being handled!) that this is not correct.
 
-The reference for the first type of lie is a blog post by Paul Khuong~\cite{metrics}.
+Let's talk about CPU perf counters. Remember that these are things that the CPU tracks automatically at all times -- no need to change the program or interrupt it to get this data. In particular, we're going to look at two types of sampling-based lies. The reference for the first type of lie is a blog post by Paul Khuong~\cite{metrics}.
 
 This goes back to {\tt mfence}, which we've seen before. It is used, for instance, in
 spinlock implementations. Khuong found that his profiles said that spinlocking didn't take much time.
-But empirically: eliminating spinlocks = better than expected! Hmm.
+But empirically: eliminating spinlocks produced better results than expected! Why?
 
-The next step is (as we do in this course) to create microbenchmarks to better understand what's
+The next step is to create microbenchmarks to better understand what's
 going on. The microbenchmark contained memory accesses to uncached locations, or computations,
-surrounded by store pairs/mfence/locks. He used perf to evaluate the impact of mfence vs lock.
-You'll recall that perf is sampling-based and records how often the CPU is found executing each
-instruction.
+surrounded by store pairs/\texttt{mfence}/locks. He used perf to evaluate the impact of \texttt{mfence} vs lock.
+You'll recall that perf is sampling-based and records how often the CPU is found executing each instruction. The leftmost column in the table below shows the percentage of time that instruction took. They don't sum to 100 because of rounding and also other instructions not shown to keep the size of the example reasonable.
 
 {\scriptsize
 \begin{lstlisting}
@@ -77,8 +74,8 @@ $ perf annotate -s cache_misses
 \end{lstlisting}
 }
 
-We can see that in the lock situation, reads take 30 + 22 = 52\% of runtime,
-while locks take 19 + 21 = 40\% of runtime.
+In the lock situation, reads take $30 + 22 = 52\%$ of runtime,
+while locks take $19 + 21 = 40\%$ of runtime.
 
 {\scriptsize
 \begin{lstlisting}
@@ -108,33 +105,43 @@ $ perf annotate -s cache_misses
 \end{lstlisting}
 }
 Looks like the reads take 85\% of runtime,
-while the mfence takes 15\% of runtime.
+while the \texttt{mfence} takes 15\% of runtime.
 
-Metrics lie, though, and when you focus on the metrics as opposed to what you
-actually care about, it's easy to be led astray.
+That makes it seem like the \texttt{mfence} approach is clearly better: a significantly lower percentage of time is going towards the overhead of concurrency control. But empirically, the observed behaviour says this is worse. Why the mismatch?
 
-In this case, what we actually care about is the total \# of cycles.
+There are two things going on here. The first is that while the \textit{percentage} of time going to the concurrency control might be lower (more on this in a second), the total execution time is much higher. Compare the total \# of cycles:
 
     \begin{tabular}{lr}
     No atomic/fence:& 2.81e9 cycles\\
     lock inc/dec: & 3.66e9 cycles\\
-    mfence: & 19.60e9 cycles
+    \texttt{mfence}: & 19.60e9 cycles
     \end{tabular}
 
 That 15\% number is a total lie.
-Profilers, even using CPU counts, drastically underestimate the impact of mfence,
-and overestimate the impact of locks.
+Profilers, even using CPU counts, drastically underestimate the impact of \texttt{mfence}, and overestimate the impact of locks. This is because \texttt{mfence} causes a pipeline flush, and the resulting 
+costs get attributed to instructions being flushed, not to the \texttt{mfence} itself. In other words, \texttt{mfence} makes other instructions run more slowly, which camouflages its own effect on the overall performance.
 
-This is because mfence causes a pipeline flush, and the resulting 
-costs get attributed to instructions being flushed, not to the mfence itself. In other
-words, mfence makes other instructions run more slowly, which camouflages its own effect
-on the overall performance.
+Even if \texttt{mfence} actually were better by percentage, it's not a win to have a lower percentage of a larger total time.
 
+\paragraph{Skid.}
+Another cause for the attributions of which instructions are expensive being wrong is something called \textit{skid}. The perf wiki describes it as follows: ``Interrupt-based sampling introduces skids on modern processors. That means that the instruction pointer stored in each sample designates the place where the program was interrupted to process the PMU interrupt, not the place where the counter actually overflows...''; the counter overflowing is the trigger to take the next sample.
+
+A made-up example of what that might look like:
+\begin{verbatim}
+  ld r1,0x12341234     0.1%
+  add r2,r3            1.0%
+  sub r3,r4            1.0%
+  NOP                 27.0%
+\end{verbatim}
+The NOP is obviously not the cause here; it's the load instruction that really is the expensive one.
+
+
+Modern Intel and AMD x86\_64 CPUs introduce the ability to have more precise (low- or no-skid) sampling take place with some hardware support. Why would we not use this all the time? It's only a guess, but there's a possibility it slows down execution, can't be used all the time, or might give even more distorted results in particular scenarios.
 
 \section*{The Long Tail}
 
 The other type of lie that sampling can hide is the one where infrequent long tails are hidden in averages.
-Our source here is the blog post by Dan Luu~\cite{perf-tracing}. Suppose we have a task that's going to get distributed over multiple computers (like a search). If we look at the latency distribution, the problem is mostly that we see a long tail of events and when we are doing a computation or search where we need all the results, we can only go as the slowest step. Let's take a look at a histogram of disk read latencies, where we are performing a 64 kB read, also from that source:
+Our source here is the blog post by Dan Luu~\cite{perf-tracing}. Suppose we have a task that's going to get distributed over multiple computers (like a search). If we look at the latency distribution, the problem is mostly that we see a long tail of events and when we are doing a computation or search where we need all the results, we can only go as the slowest step. Let's take a look at a histogram of disk read latencies, where we are performing a 64 kB read, also from that source\footnote{The image is cropped in the original source too -- I've not been able to find one that shows the full text correctly}:
 
 \begin{center}
 	\includegraphics[width=0.5\textwidth]{images/disk_tail.png}
@@ -182,12 +189,10 @@ want around to protect you against future things in that vein that someone might
 \end{center}
 
 \section*{Lies about Calling Context}
-This part is somewhat outdated now, as it's a pretty specific technical problem that especially arises under the {\tt gprof} tool. It's still a good example of lying tools, though,
-so I'll include a condensed version. Yossi Kreinin~\cite{lies} writes about it in more detail.
+This part is somewhat outdated now, as it's a pretty specific technical problem that especially arises under the {\tt gprof} tool. It's still a good example of lying tools, though, so we'll cover a condensed version. Yossi Kreinin~\cite{lies} writes about it in more detail.
 
-gprof uses two C standard-library functions: {\bf profil()} and {\bf mcount()}.
-
-\vspace*{-1em}
+\texttt{gprof} uses two C standard-library functions:
+\vspace{-1em}
 \begin{itemize}[noitemsep]
 \item {\bf profil()}: asks glibc to record which instruction 
   is currently executing (100$\times$/second).
@@ -196,35 +201,11 @@ gprof uses two C standard-library functions: {\bf profil()} and {\bf mcount()}.
 \vspace*{-1em}
 
 Hence, {\bf profil} information is statistical, while {\bf mcount}
-information is exact.  gprof can draw unreliable inferences. If you have a method \texttt{easy} and a method \texttt{hard}, each of which is called once, and \texttt{hard} takes up almost all the CPU time,
-gprof might divide total time by 2 and report bogus results.
+information is exact.  \texttt{gprof} can draw unreliable inferences by combining these pieces of data. That happens in other domains too -- apportionment of fault in the law sometimes has the problem where the judge can't figure out whose story is more likely and they just decide to assign fault 50-50, even if that's not sensible. The profiler doesn't have to choose between competing narratives, but it does have to come to a conclusion based on incomplete information and sometimes that conclusion is wrong.
 
-The following results from gprof are suspect (among others):
-\vspace*{-1em}
-\begin{itemize}[noitemsep]
-  \item contribution of children to parents;
-  \item total runtime spent in self+children;
-\end{itemize}
-\vspace*{-1em}
+Suppose you have a method \texttt{easy} and a method \texttt{hard}, each of which is called once, and \texttt{hard} takes up almost all the CPU time. \texttt{gprof} might divide total time by 2 and report bogus results where it says both methods take an equal amount of time.
 
-\paragraph{When are call graph edges right?}
-Two cases:
-\vspace*{-1em}
-    \begin{itemize}[noitemsep]
-    \item functions with only one caller
-      (e.g. {\tt f()} only called by {\tt g()}); or,
-    \item functions which always take the same time to complete
-      (e.g. {\tt rand()}).
-    \end{itemize}
-\vspace*{-1em}
-
-On the other hand, results for any function whose running time depends on its inputs,
-and which is called from multiple contexts, are sketchy.
-
-
-Next, we'll talk about callgrind/KCacheGrind. Like our old friends memcheck, helgrind, and cachegrind, callgrind is part of valgrind, and runs the program under an x86 JIT.  KCacheGrind is a frontend to callgrind. callgrind gives better information, but imposes
-more overhead.
-KCacheGrind works properly on the earlier running example, but we can still deceive it with more complicated examples.
+Some examples of \texttt{gprof} results that are suspect are contribution of children to parents and the total runtime spent in self+children. Call graph edges are correct when considering functions with only one caller (e.g. {\tt f()} only called by {\tt g()}) or functions which always take the same time to complete (e.g. {\tt rand()}). On the other hand, results for any function whose running time depends on its inputs, and is called from multiple contexts, are sketchy.
 
 %% \paragraph{Summary.} We've seen that some profiler results are exact;
 %% some results are sampled; and some results are interpolated. If you understand the tool, you understand where it can go
@@ -233,10 +214,8 @@ KCacheGrind works properly on the earlier running example, but we can still dece
 %% Understand your tools!
 
 
-\paragraph{Overall summary.} We saw a bunch of lies today: calling-context lies and perf attribution
-lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
-and understand how your tools work.
-
+\paragraph{Overall summary.} We saw a bunch of lies that our tools can return: calling-context lies and perf attribution lies. To avoid being bitten by lies, remember to focus on the metric you actually care about,
+and understand how your tools work. If a result doesn't make sense, dig into it and validate if that really is the case.
 
 \input{bibliography.tex}
 
