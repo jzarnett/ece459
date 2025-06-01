@@ -2,427 +2,243 @@
 
 \begin{document}
 
-\lecture{12 --- Dependencies and Speculation }{\term}{Patrick Lam and Jeff Zarnett}
+\lecture{11 --- Lock Convoys, Atomics, Lock-Freedom}{\term}{Patrick Lam and Jeff Zarnett}
 
-\section*{Dependencies}
-Some computations appear to be ``inherently sequential''. There are plenty of real-life analogies:
+\section*{Lock Convoys}
 
-\begin{itemize}
-\item must extract bicycle from garage before closing garage door
- 
-\item must close washing machine door before starting the cycle
- 
-\item must be called on before answering questions? (sort of, some people shout out...)
- 
-\item students must submit assignment before course staff can mark the assignment (also sort of... I can assign you a grade of zero if you didn't submit an assignment!)
-\end{itemize}
+We'd like to avoid, if at all possible, a situation called a \textit{lock convoy}. This happens when we have at least two threads that are contending for a lock of some sort. And it's sort of like a lock traffic jam. A more full and complex description from~\cite{lockconvoys}:
 
-There are some prerequisite steps that need to be taken before a given step can take place. The problem is that we need some result or state from an earlier step before we can go on to the next step. Interestingly, in many of the analogies, sometimes if you fail to respect the dependency, nothing physically stops the next step from taking place, but the outcome might not be what you want (\ldots you don't want zero on your assignment, right?).
+\begin{quote}
+A lock convoy is a situation which occurs when two or more threads at the same priority frequently (several times per quantum) acquire a synchronization object, even if they only hold that object for a very short amount of time.  It happens most often with critical sections, but can occur with mutexes, etc as well.  For a while the threads may go along happily without contending over the object.  But eventually some thread's quantum will expire while it holds the object, and then the problem begins.  The expired thread (let's call it Thread A) stops running, and the next thread at that priority level begins.  Soon that thread (let's call it Thread B) gets to a point where it needs to acquire the object.  It blocks on the object.  The kernel chooses the next thread in the priority-queue.  If there are more threads at that priority which end up trying to acquire the object, they block on the object too.  This continues until the kernel returns to Thread A which owns the object.  That thread begins running again, and soon releases the object.  Here are the two important points.  First, once Thread A releases the object, the kernel chooses a thread that's blocked waiting for the object (probably Thread B), makes that thread the next owner of the object, and marks it as ``runnable.''  Second, Thread A hasn't expired its quantum yet, so it continues running rather than switching to Thread B.  Since the threads in this scenario acquire the synchronization object frequently, Thread A soon comes back to a point where it needs to acquire the object again.  This time, however, Thread B owns it.  So Thread A blocks on the object, and the kernel again chooses the next thread in the priority-queue to run.  It eventually gets to Thread B, who does its work while owning the object, then releases the object.  The next thread blocked on the object receives ownership, and this cycle continues endlessly until eventually the threads stop acquiring so often.
+\end{quote}
 
-The same with dependencies in computation. If you need the result of the last step you will have to wait for it to be available before you can go on to the next. And if you jump the gun and try to do it early, you will get the wrong result (if any at all). 
+Why is it called a convoy? A convoy is when a grouping of vehicles, usually trucks or ships, travels all closely together. A freighter convoy, for example, might carry freight from one sea port to another. In this case, it means that the threads are all moving in a tight group. This is also sometimes called the ``boxcar'' problem: imagine that you have a train that is moving a bunch of boxcars along some railroad tracks. When the engine starts to pull, it moves the first car forward a tiny bit before it stops suddenly because of the car behind. Then the second car moves a bit, removing the slack between it and the next car. And so on and so on. The problem resembles this motion because each thread takes a small step forward before it stops and some other car then gets a turn during which it also moves forward a tiny bit before stopping. The same thing is happening to the threads and we spend all the CPU time on context switches rather than executing the actual code~\cite{boxcar}.
 
-Note that, in this lecture, we are going to assume that we don't have data races. This reasoning is not guaranteed to work in the presence of undefined behaviour, which exists when you have data races.
+This has a couple of side effects. Threads acquire the lock frequently and they are running for very short periods of time before blocking. But more than that, other, unrelated threads of the same priority get to run for an unusually large percentage of the (wall-clock) time. This can lead you to thinking that some other process is the real offender, taking up a large percentage of the CPU time. In reality, though, that's not the culprit. So it would not solve the problem if you terminate (or rewrite) what looks like offending process. 
 
-\paragraph{Main Idea.} A \emph{dependency} prevents parallelization
-when the computation $XY$ produces a different result from the
-computation $YX$. That is to say, there is a correct order for doing these two steps and getting the order wrong means we get the wrong outcome. If you want to bake a cake, you have to mix all the ingredients before you bake them; if you bake all ingredients and then mix them, whatever you get isn't a cake.
+\paragraph{Unfair Locks.} With that in mind, in Windows Vista and later versions, the problem is solved because locks are unfair. Unfair sounds bad but it is actually better to be unfair. Why? The Windows XP and earlier implementation of locks, which is fair, is a good explanation of why can go wrong. In XP, if $A$ unlocks a lock $\ell$, and there is a thread $B$ waiting, then $B$ gets the lock, it is no longer blocked, and when it wakes up, $B$ already owns the lock. This is fair in the sense that there was no period during which the lock was available; therefore it could not be ``stolen'' by some other thread that happened to come along at the right (or perhaps wrong) time~\cite{anticonvoy}. (Specifically, if the OS chooses who gets the lock among all the waiting threads randomly, then that's fair.)
 
-Remember, of course, that there are lots of things that don't have dependencies and can be done in arbitrary order (or even concurrently). If your household chores are to vacuum the floor and do the laundry, you get a valid outcome no matter what order you do them in, as long as you do both correctly. The outcome is the same!
+Fairness is good, right? But this means there is a period of time where the lock is held by $B$, but $B$ is not running. In the best-case scenario, after $A$ releases the lock, then there is a thread switch (the scheduler runs) and the context switch time is (in Windows, anyway, according to~\cite{anticonvoy}) on the order of 4~000-10~000 cycles. That is a fairly long time but probably somewhat unavoidable. If, however, the system is busy and $B$ has to go to the back of the line it means that it might be a long time before $B$ gets to run. That whole time, it is holding onto the lock. No one else can acquire $\ell$. Worse yet, a thread $C$ might start processing, request $\ell$, and then we have to context switch again. That is a lock convoy.
 
-There are two kinds of dependency that we'll cover and they are \emph{loop-carried} and \emph{memory-carried} dependencies.
+Unfair locks help with lock convoys by not giving the lock to $B$ when $A$ releases the lock. Instead, the lock is simply unowned. The scheduler chooses another thread to switch to after $A$. If it's $B$, then it gets the lock and continues. If it's instead some thread $C$ which didn't want the lock initially, then $C$ gets to run. If it doesn't request $\ell$, then it just computes as normal. If $C$ does request $\ell$, it gets it. Maybe it'll release it before $B$ gets its turn, thus enabling more throughput than the fair lock.
 
-\paragraph{Loop-Carried Dependencies.} Let's start with the loop-carried version. In this kind of dependency, executing an iteration of the loop depends on the result of the previous iteration. Initially, {\tt vec[0]} and {\tt vec[1]} are 1. Can we run these lines in parallel?
+One of the ways in which one can then diagnose a lock convoy is to see a lock that has some nonzero number of waiting threads but nobody appears to own it. It just so happens that we're in the middle of a handover; some thread has signalled but the other thread has not yet woken up to run yet.
 
-\begin{lstlisting}[language=Rust]
-let mut vec = vec![1; 32];
-    /* ... */
-vec[4] = vec[0] + 1;
-vec[5] = vec[0] + 2;
-\end{lstlisting}
+Changing the locks to be unfair does risk starvation, although one can imagine that it is fairly unlikely given that a particular thread would have to be very low priority and very unlucky. Windows does give a thread priority boost, temporarily, after it gets unblocked, to see to it that the unblocked thread does actually get a chance to run.
 
+\paragraph{Mitigating Lock Convoys Ourselves.} Although it can be nice to be able to give away such a problem to the OS developers and say ``please solve this, thanks'', that might not be realistic and we might have to find a way to work around it. We'll consider four solutions from~\cite{lockconvoys}: Sleep, Share, Cache, and Trylock.
 
-It turns out that there are no dependencies between the two lines. But this is
-an atypical use of arrays. Let's look at more typical uses.
+We could make the threads that are NOT in the lock convoy call a sleep() system call fairly regularly to give other threads a chance to run. This solution is lame, though, because we're changing the threads that are not the offenders and it just band-aids the situation so the convoy does not totally trash performance. Still, we are doing a lot of thread switches, which themselves are expensive as outlined above.
 
-What about this? (Again, all elements initially 1.)
+The next idea is sharing: can we use a reader-writer lock to allow much more concurrency than we would get if everything used exclusive locking? If there will be a lot of writes then there's limited benefit to this speedup, but if reads are the majority of operations then it is worth doing. We can also try to find a way to break a critical section into two or more smaller ones, if that can be done without any undesirable side effects or race conditions.
+
+The next idea has to do with changing when (and how) you need the data. If you shrink the critical section to just pull a copy of the shared data and operate on the shared data, then it reduces the amount of time that the lock is held and therefore speeds up operations. But you saw the earlier discussion about critical section sizes, right? So you did that already...?
+
+The last solution suggested is to use try-lock primitives: try to acquire the lock, and if you fail, yield the CPU to some other thread and try again. It requires a concept of yielding, of course, and it is fairly straightforward. The \texttt{yield\_now} function just tells the OS scheduler that we are not able to do anything useful right now and we'd prefer to let another thread run instead. The Rust documentation points out that channels do this in the implementation of sending and receiving to and from channels. But, see the code below for a quick example.
 
 \begin{lstlisting}[language=Rust]
-for i in 1 .. vec.len() {
-    vec[i] = vec[i-1] + 1;
-}
-\end{lstlisting}
+    let mut retries = 0;
+    let retries_limit = 10;
+    let counter = Mutex::new(0);
 
-Nope! We can unroll the first two iterations:
-\begin{lstlisting}[language=Rust]
-vec[1] = vec[0] + 1;
-vec[2] = vec[1] + 1;
-\end{lstlisting}
-
-Depending on the execution order, either {\tt vec[2] = 3} or {\tt vec[2] =
-  2}.  In fact, no out-of-order execution here is safe---statements depend
-on previous loop iterations, which exemplifies the notion of a
-\emph{loop-carried dependency}. 
-
-Okay, that's perhaps a silly example. 
-Let's try a real problem. Consider this code to compute whether a complex number $x_0 + iy_0$ belongs to the Mandelbrot set.
-
-\begin{lstlisting}[language=Rust]
-// Repeatedly square input, return number of iterations before
-// absolute value exceeds 4, or 1000, whichever is smaller.
-fn mandelbrot(x0: f64, y0: f64) -> i32 {
-    let mut iterations = 0;
-    let mut x = x0;
-    let mut y = y0;
-    let mut x_squared = x * x;
-    let mut y_squared = y * y;
-    while (x_squared + y_squared < 4f64) && (iterations < 1000) {
-        y = 2f64 * x * y + y0;
-        x = x_squared - y_squared + x0;
-        x_squared = x * x;
-        y_squared = y * y;
-        iterations += 1;
-    }
-    return iterations;
-}
-\end{lstlisting}
-In this case, it's impossible to parallelize loop iterations, because
-each iteration \emph{depends} on the $(x, y)$ values calculated in the
-previous iteration. For any particular $x_0 + iy_0$, you have to run the
-loop iterations sequentially.
-
-That doesn't mean that the problem cannot be parallelized at all, however.
-You can parallelize the Mandelbrot set calculation
-by computing the result simultaneously over many points at
-once, even if each point's calculation needs to be done sequentially.
-Indeed, that is a classic ``embarassingly parallel'' problem,
-because the you can compute the result for all of the points
-simultaneously, with no need to communicate.
-
- Now consider this example---is it parallelizable? (Again, all elements initially 1.)
-
-\begin{lstlisting}[language=C]
-for i in 4 .. vec.len() {
-    vec[i] = vec[i-4] + 1;
-}
-\end{lstlisting}
-
-Yes, to a degree. We can execute 4 statements in parallel at a time:
-\begin{itemize}
-  \item \texttt{vec[4] = vec[0] + 1, vec[8] = vec[4] + 1}
-  \item \texttt{vec[5] = vec[1] + 1, vec[9] = vec[5] + 1}
-  \item \texttt{vec[6] = vec[2] + 1, vec[10] = vec[6] + 1}
-  \item \texttt{vec[7] = vec[3] + 1, vec[11] = vec[7] + 1}
-\end{itemize}  
-We can say that the array accesses have stride 4 --- there are no
-dependencies between adjacent array elements. In general, consider
-dependencies between iterations.
-
-
-\paragraph{Memory-Carried Dependencies.} On the other hand, a memory-carried dependency is one where the result
-of a computation \emph{depends} on the order in which two memory accesses
-occur. For instance:
-
-{\small \begin{lstlisting}[language=Rust]
-let mut acct: Account = Account {
-    balance: 0.0f32
-};
-f(&mut acct);
-g(&mut acct);
-
-/* ... */
-
-fn f (a: &mut Account) {
-    a.balance += 50.0f32;
-}
-fn g (a: &mut Account) {
-    a.balance *= 1.01f32;
-}
-\end{lstlisting} }
-
-{\sf What are the possible outcomes after executing {\tt g()} and {\tt f()}
-in parallel threads? Obviously, assuming they are properly wrapped in Atomic reference counted types to allow the code to compile.} \\[1em]
-
-
-\section*{Critical Paths}
-You should be familiar with the concept of a critical path from other courses (e.g., capstone design project) or just from project management you've experienced on coop terms. 
-It is the minimum amount of time to complete the task, taking dependencies into account.
-Consider the following diagram, which illustrates dependencies between
-tasks (shown on the arrows). 
-Note that B depends on A, and D depends on B and C, but C does
-not depend on anything, so it could be done in parallel with
-everything else. You can also compute expected execution times
-for different strategies.
-\begin{center}
-\begin{tikzpicture}[->,shorten >=1pt,auto,column sep=2.2cm,
-                    semithick,initial text=]
-  \node[initial,block] (s0) {Start};
-  \node[block] (s1) [right=of s0] {S1};
-  \node[block] (s2) [right=of s1] {S2};
-  \node[bw] (s3) [right=of s2] {Finish};
-
-  \path (s0) edge node {A} (s1)
-        (s1) edge node {B} (s2)
-        (s2) edge node {D} (s3)
-        (s0) edge[bend left=30] node {C} (s2);
-\end{tikzpicture}
-\end{center}
-
- Having a diagram like this makes it easy to see what can run in parallel and what steps need to happen in what order.  You might not need such a thing, but they are super useful for explaining to nontechnical coworkers or senior management what is happening and how it's going.
-
-
-\section*{Breaking Dependencies with Speculation}
-Let's go back to a real life analogy of speculation. Under normal circumstances, the coffee shop staff waits for you to place your order (``medium double double'') before they start making your order. Sensible. If you go to a certain coffee shop enough, then the staff start to know you and know your typical order and they might speculate about your order and start preparing it in advance, even before you get up to the counter. If they're right, time is saved: your order is ready sooner. If they're wrong, the staff did some unnecessary work and they'll throw away that result and start again with what you did order. If they can predict with high accuracy what you will order, then this is a net savings of time on average.
-
-You can even put some numbers on it! If successfully predicting your order saves 30 seconds per day, and if they're wrong, remaking it takes 3 minutes longer than normal, then if your order is unpredictable one out of every 10 days, how much time is saved? 9 days are correct for a savings of 4.5 minutes, from which we subtract the 3 minute penalty for being wrong, and we've saved 1.5 minutes in the 10 day period (or about 15 seconds per day on average). Not huge, but imagine if the coffee shop can do that for every regular customer. If there are 100 regular customers that's 25 minutes of waiting saved per day! It all adds up.
-
-Mind you, the idea of speculation isn't new in this course.
-Recall that computer architects often use speculation to predict branch
-targets: the direction of the branch depends on the condition codes
-when executing the branch code. To get around having to wait, the processor
-speculatively executes one of the branch targets, and cleans up if it
-has to.
-
-We can also use speculation at a coarser-grained level and
-speculatively parallelize code. We discuss two ways of doing so: one
-which we'll call speculative execution, the other value speculation.
-
-\paragraph{Speculative Execution for Threads.} The idea here is to
-start up a thread to compute a result that you may or may not need.
-Consider the following code:
-
-\begin{lstlisting}[language=Rust]
-fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
-    let val = long_calculation(x, y);
-    if val > threshold {
-        return val + second_long_calculation(x, y);
-    }
-    return val;
-}
-\end{lstlisting}
-Without more information, you don't know whether you'll have to execute
-{\tt second\_long\_calculation()} or not; it depends on the return value of
-{\tt long\_calculation()}.  Fortunately, the arguments to {\tt second\_long\_calculation()} do not
-depend on {\tt long\_calculation()}, so we can call it at any point. 
-Here's one way to speculatively thread the work:
-
-\begin{lstlisting}[language=Rust]
-fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
-    let t1 = thread::spawn(move || {
-        return long_calculation(x, y);
-    });
-    let t2 = thread::spawn(move || {
-        return second_long_calculation(x, y);
-    });
-    let val = t1.join().unwrap();
-    let v2 = t2.join().unwrap();
-    if val > threshold {
-        return val + v2;
-    }
-    return val;
-}
-\end{lstlisting}
-We now execute both of the calculations in parallel and return the same
-result as before. Is this the only way to do it? No. The current thread is a valid thread for doing work and we don't have to create two threads and join two threads: we can create one and maybe have less overhead. There may be design reasons for running the work on a separate thread versus the main thread, depending on the situation; for instance, if it's not 2 but 2000 calculations, you probably want the uniformity of running them all on separate threads.
-
-\begin{lstlisting}[language=Rust]
-fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
-    let t1 = thread::spawn(move || {
-        return second_long_calculation(x, y);
-    });
-    let val = long_calculation(x, y);
-    let v2 = t1.join().unwrap();
-    if val > threshold {
-        return val + v2;
-    }
-    return val;
-}
-\end{lstlisting}
-
-{\sf Intuitively: when is this code faster? When is it slower? How
-  could you improve the use of threads?}\\[4em]
-
-We can model the above code by estimating the probability $p$ that
-the second calculation needs to run, the time $T_1$ that it takes
-to run {\tt long\_calculation}, the time $T_2$ that it takes to run
-{\tt second\_long\_calculation}, and synchronization overhead $S$.
-Then the original code takes time
-\[ T = T_1 + p T_2, \]
-while the speculative code takes time
-\[ T_s = \max(T_1, T_2) + S.\]
-
-\paragraph{Exercise.} Symbolically compute when it's profitable to do the
-speculation as shown above. There are two cases: $T_1 > T_2$ and $T_1
-< T_2$. (You can ignore $T_1 = T_2$.)
-
-Also, if you have more cores than you need, maybe wasted work only costs you a bit of extra power.
-
-\paragraph{Value Speculation.}
-The other kind of speculation is value speculation. In this case,
-there is a (true) dependency between the result of a computation 
-and its successor:
-% note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
-
-\begin{lstlisting}[language=Rust]
-fn do_other_work(x: i32, y: i32) -> i32 {
-    let val = long_calculation(x, y);
-    return second_long_calculation(val);
-}
-\end{lstlisting}
-
-If the result of {\tt value} is predictable, then we can speculatively
-execute {\tt second\_long\_calculation} based on the predicted value.
-(Most values in programs are indeed predictable, just like how most branches are predictable). If 90\% of customers are using the standard billing plan, you might assume that that's correct in your calculations, and then change that later if it turns out you are wrong. Or you might have a software cache where you keep the latest state so you don't have to go to the database to check a value that changes rarely. 
-
-\begin{lstlisting}[language=Rust]
-fn do_other_work(x: i32, y: i32, last_value: i32) -> i32 {
-    let t = thread::spawn(move || {
-        return second_long_calculation(last_value);
-    });
-    let val = long_calculation(x, y);
-    let v2 = t.join().unwrap();
-    if val == last_value {
-        return v2;
-    }
-    return second_long_calculation(val);
-}
-\end{lstlisting}
-
-Note that this is somewhat similar to memoization, except with 
-parallelization thrown in. In this case, the original running time is
-\[ T = T_1 + T_2, \]
-while the speculatively parallelized code takes time
-\[ T_s = \max(T_1, T_2) + S + pT_2,\]
-where $S$ is still the synchronization overhead, and $p$ is the probability that
-\verb+val != last_value+.
-
-\paragraph{Exercise.} Do the same computation as for speculative execution.
-
-\subsection*{When can we speculate?}
-Speculation isn't always safe. We need the following conditions:
-  \begin{itemize}
-    \item {\tt long\_calculation} and {\tt second\_long\_calculation} must not call
-      each other.
-    \item {\tt second\_long\_calculation} must not depend on
-      any values set or modified by {\tt long\_calculation}.
-    \item The return value of {\tt long\_calculation} must be deterministic.
-  \end{itemize}
-
-As a general warning: Consider the \emph{side effects} of function calls. Oh, let's talk about side effects. Why not. They have a big impact on parallelism. Side effects are problematic, but why? For one thing they're kind of unpredictable (why does calling this function result in unexpected changes elsewhere?!). Side effects are changes in state that do not depend on the function input. Calling a function or expression has a side effect if it has some visible effect on the outside world. Some things necessarily have side effects, like printing to the console. Others are side effects which may be avoidable if we can help it, like modifying a global variable. As we've seen, Rust discourages those kinds of problems but doesn't forbid them: we can still have atomic types shared that would represent some sort of global state.
-
-
-\section*{Software Transactional Memory}
-Somewhat related to the idea of speculation is the idea of software transactional memory. In this case, a group of changes are carried out on a speculative basis, assuming that they will succeed, and we'll check afterwards if everything is okay and retry if necessary~\cite{stm}. 
-
-There is a library for this in Rust\footnote{\url{https://github.com/Marthog/rust-stm}} although we can't vouch for its quality or usefulness. Developers use software transactions by writing {\tt atomic} blocks:
-\begin{lstlisting}[language=Rust]
-let x = atomically(|trans| {
-    var.write(trans, 42)?; // Pass failure to parent.
-    var.read(trans) // Return the value saved in var.
-});
-\end{lstlisting}
-The idea resembles database transactions, which most likely you know about.
-The {\tt atomic} construct means that either the code in
-the atomic block executes completely, or aborts/rolls back in the
-event of a conflict with another transaction (which triggers a retry
-later on, and repeated retries if necessary to get it applied).
-
-\paragraph{Benefit.} The big win from transactional memory is the simple
-programming model. It is far easier to program with transactions than with
-locks. Just stick everything in an atomic block and hope the compiler does the
-right thing with respect to optimizing the code.
-
-\paragraph{Motivating Example.} We'll illustrate STM with the usual bank account example\footnote{It turns out that bank account transactions aren't actually atomic, but they still make a good example.}.
-\begin{lstlisting}[language=Rust]
-struct Account {
-    balance: TVar<f32>,
-}
-
-fn transfer_funds(sender: &mut Account, receiver: &mut Account, amount: f32) {
-    atomically(|tx| {
-        let sender_balance = sender.balance.read(tx)?;
-        let receiver_balance = receiver.balance.read(tx)?;
-        sender.balance.write(tx, sender_balance - amount)?;
-        receiver.balance.write(tx, receiver_balance + amount)?;
-        Ok(0)
-    });
-}
-\end{lstlisting}
-
-Using locks, we have two main options:
-      \begin{itemize}
-        \item Big Global Lock: Lock everything to do with modifying accounts. This is slow and serializes your program.
-        \item Use a different lock for every account. Prone to deadlocks; high overhead.
-      \end{itemize}
-With STM, we do not have to worry about remembering to acquire locks,
-or about deadlocks.
-
-\paragraph{Drawbacks.} As I understand it, three of the problems with 
-transactions are as follows:
-
-\begin{itemize}
-\item I/O: Rollback is key. The problem with transactions and I/O is
-  not really possible to rollback. (How do you rollback a write to the
-  screen, or to the network?)
-
-\item Nested transactions: The concept of nesting transactions is easy
-  to understand. The problem is: what do you do when you commit the
-  inner transaction but abort the nested transaction? The clean
-  transactional fa\c{c}ade doesn't work anymore in the presence of
-  nested transactions. (The Rust library will panic at runtime if you try to nest transactions)
-
-\item Transaction size: Some transaction implementations (like
-  all-hardware implementations) have size limits for their
-  transactions.
-\end{itemize}
-
-\paragraph{Implementations.} Transaction implementations are typically 
-optimistic; they assume that the transaction is going to succeed,
-buffering the changes that they are carrying out, and rolling back the
-changes if necessary.
-
-One way of implementing transactions is by using hardware support,
-especially the cache hardware. Briefly, you use the caches to store
-changes that haven't yet been committed. Hardware-only transaction
-implementations often have maximum-transaction-size limits, which are
-bad for programmability, and combining hardware and software approaches
-can help avoid that.
-
-\paragraph{Implementation issues.} Since atomic sections don't protect
-against data races, but just rollback to recover, a datarace may still
-trigger problems in your program.
-
-\begin{tabular}{r|l}
-\begin{minipage}{.46\textwidth}
-\begin{lstlisting}[language=Rust]
-fn what_could_go_wrong(x: TVar<i32>, y: TVar<i32>) {
-    atomically(|t| {
-        let old_x = x.read(t)?;
-        let old_y = y.read(t)?;
-        x.write(t, old_x + 1);
-        y.write(t, old_y + 1);
-        Ok(0)
-    });
-}
-\end{lstlisting}
-\end{minipage}
-&
-\begin{minipage}{.52\textwidth}
-\begin{lstlisting}[language=Rust]
-fn oh_no(x: TVar<i32>, y: TVar<i32>) {
-    atomically(|transaction| {
-        if x.read(transaction)? != y.read(transaction)? {
-            loop { /* Cursed Thread */}
+    loop {
+        if retries < retries_limit {
+            let mut l = counter.try_lock();
+            if l.is_ok() {
+                *l.unwrap() = 1;
+                break;
+            } else {
+                retries = retries + 1;
+                thread::yield_now();
+            }
+        } else {
+            *counter.lock().unwrap() = 1;
+            break;
         }
-        Ok(0)
-    });
+    }
+\end{lstlisting}
+
+In short, we try to lock the mutex some number of times (up to a maximum of \texttt{retries\_limit}), releasing the CPU each time if we don't get it, and if we do get it then we can continue. If we reach the limit then we just give up and enter the queue (regular lock statement) so we will wait at that point. You can perhaps think of this as being like waiting for the coffee machine at the office in the early morning. If you go to the coffee machine and find there is a line, you will maybe decide to do something else, and try again in a couple minutes. If you've already tried the come-back-later approach and there is still a line for the coffee machine you might as well get in line.
+
+Why does this work? It looks like polling for the critical section. The limit on the number of tries helps in case the critical section belongs to a low priority thread and we need the current thread to be blocked so the low priority thread can run. Under this scheme, if $A$ is going to release the critical section, $B$ does not immediately become the owner and $A$ may keep running and $A$ might even get the critical section again before $B$ tries again to acquire the lock (and may succeed). Even if the spin limit is as low as 2, this means two threads can recover from contention without creating a convoy~\cite{lockconvoys}. 
+
+\paragraph{The Thundering Herd Problem.} The lock convoy has some similarities with a different problem called the \textit{thundering herd problem}. In the thundering herd problem, some condition is fulfilled (e.g., broadcast on a condition variable) and it triggers a large number of threads to wake up and try to take some action. It is likely they can't all proceed, so some will get blocked and then awoken again all at once in the future. In this case it would be better to wake up one thread at a time instead of all of them.
+
+You may have learned about condition variables earlier. Rust has them as well, the \texttt{std::sync::Condvar} type.
+
+\paragraph{The Lost Wakeup Problem.} However! Waking up only one thread at a time has its own problems~\footnote{\url{https://stackoverflow.com/questions/37026/java-notify-vs-notifyall-all-over-again}}. For instance, on a condition variable you can choose to wake up one waiting thread with either \texttt{notify\_one()} or all waiting threads with \texttt{notify\_all()}. If you use \texttt{notify\_one()}, then you can encounter the \textit{lost wakeup} problem.
+
+The general recommendation of the internet is to use \texttt{notify\_all} in all situations. Counting on each thread to aways unconditionally wake up the next when it runs is slightly dangerous...
+
+\section*{Atomics}
+What if we could find a way to get rid of locks and waiting altogether? That would avoid the lock convoy problem as well as any potential for deadlock, starvation, et cetera. In previous courses, you have learned about test-and-set operations and possibly compare-and-swap and those are atomic operations supported through hardware. They are uninterruptible and therefore will either completely succeed or not run at all. Is there a way that we could use those sorts of indivisible operations? Yes!
+
+Atomics are a lower-overhead alternative to
+locks as long as you're doing suitable operations. Remember that what we wanted sometimes with locks and mutexes and all that is that operations are indivisible: an update to a variable doesn't get interfered with by another update. Remember the key idea is: an \textit{atomic operation} is indivisible. Other threads see state before or after the operation; nothing in between.
+
+We are only going to talk about atomics with sequential consistency. That means when you are asked about ordering in a method on an atomic type, it means \texttt{Ordering::SeqCst}. Later in the course we will revisit the idea of memory consistency and the different possible reorderings, but for now, just use sequential consistency and you won't get surprises.
+
+So there are atomic types for integer types (signed and unsigned), boolean, size (signed and unsigned), and pointers. It's important to note that when interacting with the type, you cannot just assign or read the value; you're forced to use the \texttt{load} and \texttt{store} methods to be sure there's no confusion. Such types are safe to be passed between threads as well as being shared between them. 
+
+\begin{lstlisting}[language=Rust]
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn main() {
+       let b = AtomicBool::new(false);
+        b.store(true, Ordering::SeqCst);
+        println!("{}", b.load(Ordering::SeqCst));
+    }
+\end{lstlisting}
+
+In addition, there are a few other methods to allow you to atomically complete the operations you normally need. For example, \texttt{fetch\_add} is what you would use to atomically increase the variable's value. In C, \texttt{count++} is not atomic; in Rust we would use \texttt{count.fetch\_add(1, Ordering::SeqCst)}.
+
+The other atomic operations that we can breeze past are \texttt{fetch\_sub} (fetch and subtract), \texttt{fetch\_max} (fetch and return the max of the stored value and the provided argument), \texttt{fetch\_min} (same as max but minimum), and the bitwise operations \texttt{and}, \texttt{nand}, \texttt{or}, \texttt{xor}.
+
+
+\paragraph{Compare and Swap.} This operation is also called {\bf compare and exchange} (implemented by the {\tt cmpxchg} instruction on x86). This is one of the more important atomic operations, because it combines the read, comparison, and write into a single operation. You'll see {\bf cmpxchg} quite frequently in the Linux kernel code.
+
+Here's a description of how a compare-and-swap operation works using C. This is obviously not how it is implemented, but explaining it using program code is more precise (and compact) than a lengthy English-language explanation. It is really implemented as an atomic hardware instruction and this all takes place uninterruptibly. 
+
+  \begin{lstlisting}[language=C]
+    int compare_and_swap (int* reg, int oldval, int newval) {
+      int old_reg_val = *reg;
+      if (old_reg_val == oldval) 
+         *reg = newval;
+      return old_reg_val;
+    }
+  \end{lstlisting}
+
+Afterwards, you can check if the CAS returned {\tt oldval}. If it did, you know you changed it. If not, you should try again (maybe with some delay). If multiple threads are trying to do the compare-and-swap operation at the same time, only one will succeed. 
+
+The Rust equivalent for this is called \texttt{compare\_and\_swap} and it takes as parameters the expected old value, the desired new value, and the ordering. We'll see an example in just a moment. Rust does offer a simple \texttt{swap} on atomic types that doesn't do the comparison and just returns the old value, as well as two more advanced versions called \texttt{compare\_exchange} and \texttt{compare\_exchange\_weak} that we won't talk about today.
+
+\paragraph{Implementing a Spinlock.}
+You can use compare-and-swap to implement a spinlock. Remember that a spinlock is constantly trying to acquire the lock (here, represented by an atomic boolean) and only makes sense if the expected waiting time to acquire the lock is less than the time it would take for two thread switches.
+
+\begin{lstlisting}[language=Rust]
+    use std::sync::atomic::{AtomicBool, Ordering, spin_loop_hint};
+
+    fn main() {
+        let my_lock = AtomicBool::new(false);
+        // ... Other stuff happens
+
+        while my_lock.compare_and_swap(false, true, Ordering::SeqCst) == true {
+            // The lock was `true`, someone else has the lock, so try again
+            spin_loop_hint();
+        }
+        // Inside critical section
+        my_lock.store(false, Ordering::SeqCst);
+    }
+  \end{lstlisting}
+
+The call inside the loop to \texttt{spin\_loop\_hint} is just a nicety we can use to tell the CPU that it's okay to either switch to another thread in hyperthreading or to run in a lower-power mode if we are spinning\footnote{\url{https://doc.rust-lang.org/std/sync/atomic/fn.spin_loop_hint.html}}. Full CPU effort isn't needed for this, and it's nice if we can let the CPU know that. 
+
+\paragraph{ABA Problem}
+Sometimes you'll read a location twice. If the value is the same both times, nothing has changed, right? \emph{No.} This is an {\bf ABA problem}.
+
+The ABA problem is not any sort of acronym nor a reference to this~\cite{abba}. It's a value that is A, then changed to B, then changed back to A. The ABA problem is a big mess for the designer of lock-free Compare-And-Swap routines. This sequence will give some example of how this might happen~\cite{abaproblem}:
+
+\begin{enumerate}
+	\item $P_{1}$ reads $A_{i}$ from location $L_{i}$.
+	\item $P_{k}$ interrupts $P_{1}$; $P_{k}$ stores the value $B$ into $L_{i}$.
+	\item $P_{j}$ stores the value $A_{i}$ into $L_{i}$.
+	\item $P_{1}$ resumes; it executes a false positive CAS.
+\end{enumerate} 
+
+It's a ``false positive'' because $P_{1}$'s compare-and-swap operation succeeds even though the value at $L_{i}$ has been modified in the meantime. If this doesn't seem like a bad thing, consider this. If you have a data structure that will be accessed by multiple threads, you might be controlling access to it by the compare-and-swap routine. What should happen is the algorithm should keep trying until the data structure in question has not been modified by any other thread in the meantime. But with a false positive we get the impression that things didn't change, even though they really did.
+
+You can combat this by ``tagging'': modify value with a nonce upon each
+write.  You can also keep the value separately from the nonce; double
+compare and swap atomically swaps both value and nonce. Java collections do something resembling this. A collection has a modification count and every time the collection is modified in some way (element added, for example) the counter is increased. When an iterator is created to iterate over this collection, the iterator notes down the current value of the modification count. As it iterates over the collection, if the iterator sees that the collection's modification count is no longer the same as the value it has remembered, it will throw a \texttt{ConcurrentModificationException}. 
+
+
+\paragraph{Caveats.}
+Obviously, the use of atomic types just ensures that a write or read (or read-modify-write operation) happens atomically; race conditions can still happen if threads are not properly coordinated.
+
+
+Unfortunately, not every atomic operation is portable. Rust will try its best to give you the atomic types that you ask for. Sometimes emulation is required to make it happen, and an atomic type might be implemented with a larger type (e.g.,, \texttt{AtomicI8} will be implemented using a 4-byte type). Some platforms don't have it at all. So code that is focused on portability might have to be a bit careful.
+
+\section*{Lock-Freedom}
+
+Let's suppose that we want to take this sort of thing up a level: we'd like to operate in a world in which there are no locks. Research has gone into the idea of lock-free data structures. If you have a map, like a HashMap, and it will be shared between threads, the normal thing would be to protect access to the map with a mutex (lock). But what if the data structure was written in such a way that we didn't have to do that? That would be a lock-free data structure.
+
+It's unlikely that you want to use these sorts of things everywhere in your program. For a great many situations, the normal locking and unlocking behaviour is sufficient, provided one avoids the possibility of deadlock by, for example, enforcing lock ordering. We likely want to use it when we need to guarantee that progress is made, or when we really can't use locks (e.g., signal handler), or where a thread dying while holding a lock results in the whole system hanging.
+
+Before we get too much farther though we should take a moment to review some definitions. I assume you know what blocking functions are (locking a mutex is one) and that you also have a pretty good idea by now of what is not (spinlock or trylock behaviour). 
+
+The definition of a non-blocking data structure is one where none of the operations can result in being blocked. In a language like Java there might be some concurrency-controlled data structures in which locking and unlocking is handled for you, but those can still be blocking. Lock-free data structures are always inherently non-blocking, but that does not go the other way: a spin lock or busy-waiting approach is not lock free, because if the thread holding the lock is suspended then everyone else is stuck~\cite{nblfwf}.
+
+A lock-free data structure doesn't use any locks (duh) but there's also some implication that this is also thread-safe; concurrent access must still result in the correct behaviour, so you can't make all your data structures lock-free ones by just deleting all the mutex code. Lock-free also doesn't mean it's a free-for-all; there can be restrictions, like, for example, a queue that allows one thread to append to the end while another removes from the front, although two removals at the same time might cause a problem.
+
+The actual definition of lock-free is that if any thread performing an operation gets suspended during the operation, then other threads accessing the data structure are still able to complete their tasks. This is distinct from the idea of waiting, though; an operation might still have to wait its turn or might get restarted if it was suspended and when it resumes things have somehow changed. Since we just talked about compare-and-swap, you might have some idea about this already: you try to do the compare-and-swap operation and if you find that someone changed it out from under you, you have to go back and try again. Unfortunately, going back to try again might mean that threads are frequently interrupting each other...
+
+For this you might need wait-free data structures. This does not mean that nothing ever has to wait, but it does mean that each thread trying to perform some operation will complete it within a bounded number of steps regardless of what any other threads do~\cite{nblfwf}. This means that a compare-and-swap routine as above with infinite retries is not wait free, because a very unlucky thread could potentially take infinite tries before it completes its operations. The wait free data structures tend to be very complicated...
+
+Let's consider some example from~\cite{lockfreedom}, with some modifications. We'll start with a lock-free stack.
+\begin{lstlisting}[language=Rust]
+use std::ptr::{self, null_mut};
+use std::sync::atomic::{AtomicPtr, Ordering};
+
+pub struct Stack<T> {
+    head: AtomicPtr<Node<T>>,
+}
+
+struct Node<T> {
+    data: T,
+    next: *mut Node<T>,
+}
+
+impl<T> Stack<T> {
+    pub fn new() -> Stack<T> {
+        Stack {
+            head: AtomicPtr::new(null_mut()),
+        }
+    }
+}
+
+impl<T> Stack<T> {
+    pub fn push(&self, t: T) {
+        // allocate the node, and immediately turn it into a *mut pointer
+        let n = Box::into_raw(Box::new(Node {
+            data: t,
+            next: null_mut(),
+        }));
+        loop {
+            // snapshot current head
+            let head = self.head.load(Ordering::SeqCst);
+
+            // update `next` pointer with snapshot
+            unsafe { (*n).next = head; }
+
+            // if snapshot is still good, link in new node
+            if self.head.compare_and_swap(head, n, Ordering::SeqCst) == head {
+                break
+            }
+        }
+    }
 }
 \end{lstlisting}
-\end{minipage}
-\end{tabular}
 
-In this silly example, assume initially {\tt x = y}. You may think the
-code will not go into an infinite loop, but it can. That's because intermediate states can still become visible! Although the block is atomic, that just means the changes succeed or are rolled back as a group; it does not mean that another thread cannot read \texttt{x} and \texttt{y} and see them at some partial-completion state of the transaction. (Maybe this doesn't happen in the Rust implementation, but it certainly can in C/\CPP~versions of STM.)
+A particularly unlucky thread might spend literally forever spinning around the loop as above, but that's okay because that thread's bad luck is someone else's good luck. At least some thread, somewhere, has succeeded in pushing to the stack, so the system is making progress (stuff is happening). 
 
+And here is a small wait-free algorithm:
+
+\begin{lstlisting}[language=Rust]
+fn increment_counter(ctr: &AtomicI32) {
+    ctr.fetch_add(1, Ordering::SeqCst);
+}
+
+fn decrement_counter(ctr: &AtomicI32) {
+    let old = ctr.fetch_sub(1, Ordering::SeqCst);
+    if old == 1 { // We just decremented from 1 to 0
+        println!{ "All done." }
+    }
+}
+\end{lstlisting}
+
+Obviously, the print statement in the decrement counter is just a placeholder for something more useful. Both operations will complete in a bounded number of steps and therefore there is no possibility that anything gets stuck or is forced to repeat itself forever. 
+
+The big question is: are lock-free programming techniques somehow better for performance? Well, they can be but they might not be either. Lock-free algorithms are about ensuring there is forward progress in the system and not really specifically about speed. A particular algorithm implementation might be faster under lock-free algorithms. For example, if the compare and swap operation to replace a list head is faster than the mutex lock and unlock, you prefer the lock-free algorithm. But often they are not. In fact, the lock-free algorithms could be slower, in which case you use them because you must, not because it is particularly speedy.
 
 \input{bibliography.tex}
 

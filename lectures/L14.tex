@@ -2,173 +2,184 @@
 
 \begin{document}
 
-\lecture{14 --- Memory Consistency}{\term}{Patrick Lam and Jeff Zarnett}
+\lecture{13--- Early Termination, Reduced-Resource Computation}{\term}{Jeff Zarnett \& Patrick Lam}
 
-\section*{Memory Consistency, Memory Barriers, and Reordering}
-Previously, when atomics were introduced, we said to use sequential consistency without much detail and without discussing the other options. Now it's time to learn about it. We'll cover both instruction reordering by
-the CPU and reordering initiated by the compiler.  
+\section*{Trading Accuracy for Time}
 
-\paragraph{Compiler Reordering.} When asked to compile code, the compiler does not take every statement that you provide and translate it into a (set of) machine language instruction(s). The compiler can change the order of certain events. The compiler will be aware of things like load-delay slots and can swap the order of instructions to make use of those slots more effectively. In the (silly) example on the left there might be a stall while we wait for \texttt{x} to be available before we can send it in to the \texttt{println!} macro; on the right we moved two unrelated instructions into the delay slots. So that feels like free performance! 
+Knowing when to quit is wise. In some cases, we can speed up our program by not waiting for the slowest steps to be done. This is somewhat related to speculation, but the big distinction is that in speculation we do extra work ``just in case'' and with early phase termination, we skip doing some work even though we're supposed to do on the basis of ``close enough is good enough''.  There are two basic ideas: the first way is to skip some parts of work and the second is to intentionally reduce accuracy to speed things up. 
 
-\begin{multicols}{2}
-\begin{lstlisting}[language=Rust]
-let x = thing.y;
-println!("x = {}", x);
-z = z + 1;
-a = b + c;
-\end{lstlisting}
-\columnbreak
-\begin{lstlisting}[language=Rust]
-let x = thing.y;
-z = z + 1;
-a = b + c;
-println!("x = {}", x);
-\end{lstlisting}
-\end{multicols}
+You may implement these strategies when you're writing an exam: time is limited and you might choose not to do a certain question because the benefit is small and you can use your time better doing a different question. In which case you might leave question 3.2 blank in favour of working on question 4.1. That's where you skip some work. Alternatively, you could choose to skip error handling in question 4.1, knowing that you will lose some marks in that question but freeing up some more time to do question 3.2. Exams are nice (or nasty) in that we can do both things, but your program might support only one.
 
-By the way, if you have any undefined behaviour in your program, the compiler is allowed to do anything it wants when it reorders or otherwise optimizes it; maybe you can see why that makes sense. We'll talk about other compiler optimizations soon, but we don't want to get away from the topic of reordering. 
+\subsection*{Early Phase Termination}
 
-\paragraph{Hardware Reordering.} In addition to the compiler reordering, the hardware can do some reordering of its own. A sequence of instructions is provided to the CPU, and it can decide it would rather do them in an order it finds more convenient. That is fairly straightforward.
-
-There is another possibility we have to consider, and it is updates from other threads. When a thread is doing a check on a variable, such as a quit condition (exit the loop if \texttt{quit} is now true), how do we know if we have the most up-to-date value for \texttt{quit}? We know from the discussion of cache coherence that the cache will be updated via snooping, but we need a bit more reassurance that the value we're seeing is the latest one. How could we get the wrong order? If the read by thread $A$ is reordered by the hardware so that it's after the write by thread $B$, then we'll see the ``wrong'' answer. 
-
-Different hardware provides different guarantees about what reorderings it won't do. Old 386 CPUs didn't do any; modern x86 usually won't (except where there are some specific violations of that); ARM has weak ordering except where there are data dependencies~\cite{weakvsstrong}. ARM is getting pretty popular, so we do have to care about hardware reorderings, unfortunately.
-
-\paragraph{I have a plan, but it's a bad one.}
-
-There are some reorderings where we are easily able to conclude that it is okay and safe to do, but not every reordering is. In an obvious case, if the lines of code are \texttt{ z *= 2 } and \texttt {z += 1} then neither the compiler nor hardware will reorder those because it knows that it would change the outcome and produce the wrong answer. There's a clear data dependency there, so the reordering won't happen. There are a couple of hardware architectures where that isn't respected, but we'll ignore them for now.
-
-\newpage
-But what if there's no such clear dependency? Consider something like this pseudocode:
-
-\begin{multicols}{2}
-\begin{verbatim}
-lock mutex for point
-point.x = 42;
-point.y = -42;
-point.z = 0;
-unlock mutex for point
-\end{verbatim}
-\columnbreak
-\begin{verbatim}
-lock mutex for point
-point.x = 42;
-point.y = -42;
-unlock mutex for point
-point.z = 0;
-\end{verbatim}
-\end{multicols}
-
-Wait a minute---that's not an okay reordering, because now an element of the point is being accessed outside of the critical section and we don't want that. (Not undefined behaviour!) It's a reordering, alright, in that the store of \texttt{point.z} has been moved to after the store of state of the mutex (unlock does, after all, change its state). What we need is a way to tell the compiler (and hardware) that this is not okay.
-
-
-\paragraph{Sequential Consistency.} In a sequential program, you expect
-things to happen in the order that you wrote them. So, consider this code,
-where variables are initialized to 0:
+A formal name for the first idea, quitting early, is early phase
+termination~\cite{Rinard:2007:EarlyPhaseTermination}. So, to apply it to a concrete idea: we've talked about barriers quite a bit. Recall that the idea is that
+no thread may proceed past a barrier until all of the threads
+reach the barrier. Waiting for other threads causes delays. 
+Killing slow threads obviously speeds up the program. Well, that's easy.
 
 \begin{center}
-\begin{lstlisting}
-    T1: x = 1; r1 = y;
-    T2: y = 1; r2 = x;
-\end{lstlisting}
+``Oh no, that's going to change the meaning of the program!''
 \end{center}
-We would expect that we would always query the memory and get a state
-where some subset of these partially-ordered statements would have executed.
-This is the \emph{sequentially consistent} memory model. A simple description: (1) each thread induces an \emph{execution trace}; and (2) always, the program has executed some prefix of each thread's trace. Or, alternatively:
 
-\begin{quote}
-``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
-\end{quote}
+Let's consider some arguments about when it may be acceptable to just
+kill (discard) tasks. Since we're not completely crazy, we can develop
+a statistical model of the program behaviour, and make sure that the
+tasks we kill don't introduce unacceptable distortions. Then when we
+run the program, we get an output and a confidence interval.
 
+If you wanted a game-relevant example, pretend you're really bad at Mario Kart. If you're in last place when the second-last player (or AI) drives across the finish line, the race is over at that point because we already know you finished last (``Oh nooo!''). There's no benefit to waiting while you have to drive the rest of the lap to the finish. In that case, ending the race while one driver has not yet finished is perfectly safe because the outcome is already known: I'm really bad at Mario Kart.
 
-It turns out that sequential consistency is expensive to implement.
-Think how much coordination is needed to get a few people to agree on where to go for lunch; now try to get a group of people to agree on what order things happened in. Right. Now imagine it's a disagreement between threads so they don't have the ability to negotiate. So most systems actually implement weaker memory models, such that both {\tt r1} and {\tt r2} might end up unchanged.
+\paragraph{Should Have Made A Left Turn At Albuquerque.} 
+Many problems are mathematically hard in nature: to find the optimal solution you have to consider every possibility. Well, what this strategy presupposes is: don't. Imagine the travelling salesperson problem, just for the sake of an example. There are $n$ points to visit and you want to minimize the amount of travel time. The only way to know if a solution is best is to consider every possible route.
 
-Allowing some reorderings could potentially significantly speed up the program! If left to its own devices, the compiler could reorder anything, but we need to tell it what is allowed and what is disallowed. 
+One way we can know if we're wasting time is to remember previous outcomes. The solution we're evaluating will have some travel cost in units (maybe kms). If the currently-accumulated cost in kms is larger than the total of the thus-far best solution, give up. To be specific, if we have a route that has 400 km of driving and we are partway through building a solution and we have already got 412 km of driving, we can give up on this option (and not evaluate the rest of it) because we already know it won't be the best.
 
-\subsection*{Memory Consistency Models}
+Another approach is to stop as soon as you have a solution that's reasonable. If our target is to get total travel under 500 km then we can stop searching as soon as we find one that satisfies this constraint. Yes, we might stop at 499 km and the optimal solution might be 400 (25\% more driving for the poor peon)---but it does not have to be perfect; it just has to be acceptable. And if traffic in the hypothetical region is anything like that of the GTA, the route that is shortest in kilometres may not be the shortest in terms of time anyway.
 
-Rust uses the same memory consistency models as \CPP. The Rustonomicon (book of names of Rust\footnote{Not to be confused with the Necronomicon...}) says pretty directly that this is not because the model is easy to understand, but because it's the best attempt we have at modelling atomics because it is a very difficult subject. The idea behind the memory model is to have a good way of talking about the \textit{causality} of the program. While causality definitely sounds like something Commander La Forge would talk about on the \textit{Enterprise}, in this case it means establishing relationships between events such as ``event A happens before event B''. 
+You can also choose to reduce the amount of effort by trying, say, five or ten different possibilities and seeing which of those is the best. There's no guarantee you'll get an optimal solution: you might have randomly chosen the ten worst options you could choose. 
 
-You will recall from the introduction to the subject of concurrency that we frequently sought the same thing in our program at a higher level, when we'd say that we can use a semaphore to ensure that one thing happens before another. The idea is the same, but our toolkit is a little bit different: it's the \emph{memory barrier} or
-\emph{fence}. 
-
-This type of barrier prevents reordering, or,
-equivalently, ensures that memory operations become visible in the
-right order. A memory barrier ensures that no access occurring after
-the barrier becomes visible to the system, or takes effect, until
-after all accesses before the barrier become visible.
+Interesting to think about: what does Google Maps do? For some problems there are relatively few solutions; if you plan to drive in the Yukon territory there are a finite set of roads to travel. But suppose you're driving around Toronto; the grid system means there are lots and lots of options, right? Maybe some heuristic is used to generate some possibilities and the best ones of those are chosen.
 
 
-The x86 architecture defines the following types of memory 
-barriers:
+\paragraph{This Point is Too Hard.} Monte Carlo simulations
+are a good candidate; you're already picking points randomly.
+Raytracers can work as well. Both of these examples could spawn a lot
+of threads and wait for all threads to complete. For mathematical functions that are ``not nice'', different points might take longer to evaluate than others. 
+In either case, you
+can compensate for missing data points, assuming that they look similar to
+the ones that you did compute. If you have a function where some graph is being
+computed, you can probably guess that a missing point is somewhere in between the two (or $n$) nearest points. So just average them.
 
-\begin{itemize}
-\item {\tt mfence.} All loads and stores before the barrier become
-visible before any loads and stores after the barrier become visible.
-\item {\tt sfence.} All stores before the barrier become visible before
-all stores after the barrier become visible.
-\item {\tt lfence.} All loads before the barrier become visible before
-all loads after the barrier become visible.
-\end{itemize}
+The same is true for graphics, of course: if rendering a particular pixel did
+not go well for some reason, you can just average the adjacent ones and probably
+people would not notice the difference. Not bad!
 
-Note, however, that while an {\tt sfence} makes the stores visible,
-another CPU will have to execute an {\tt lfence} or {\tt mfence} to
-read the stores in the right order.
+In other cases, some threads simply take too long, but we don't need all of them to produce a result. If we are evaluating some protocol where the majority wins, we can stop as soon as sufficient results have been returned; either an outright majority for an option or that the remaining votes couldn't change the outcome. This happens to some extent with election projections: even if not all polling stations are reporting a result, news channels will declare a winner if the remaining votes would not be enough to change the outcome. Actually, news channels probably take it a bit too far in that they will declare a winner even if the outstanding votes exceed the margin, on a theory that it probably won't be the case that they are 100\% for the candidate who is in second place. But they can be wrong.
 
-Consider the example again:
-  \begin{lstlisting}[language=C]
-                         f = 0
+\paragraph{Slow Road...}
+For some categories of problem, we know not only that a solution will exist, but also how many steps it takes to solve (optimally). Consider the Rubik's Cube---it's much easier to explain if you have seen one. It'll appear in the slides, but if you're just reading the note(book/s) then I suggest you google it\footnote{If you've waited for the exam to read this and you can't google... whoops!}.
 
-/* thread 1 */                     /* thread 2 */
-while (f == 0) /* spin */;         x = 42;
-// memory fence                    // memory fence
-printf("%d", x);                   f = 1;
-  \end{lstlisting}
-This now prevents reordering, and we get the expected result.
+This is a problem with a huge number of possible permutations and brute force isn't going to work. However, research has proven that no matter what the state of the cube is, it can be transitioned to a solved state in 20 moves or fewer. This number is called God's Number, presumably because it is the maximum number of moves it would take an all-knowing deity to solve the puzzle. So if you have a solver for a Rubik's cube, and if you don't find a solution in (fewer than) 20 moves, you should cancel this solution attempt and try another one.
 
-Memory fences are costly in performance. It makes sense when we think about it, since it (1) prevents re-orderings that would otherwise speed up the program; and (2) can force a thread to wait for another one. Sequential consistency will necessarily result in memory fences being generated to produce the correct results. 
+Okay, that's fun to talk about, but it's always better if we see it in action? Let's play around with \url{https://rubiks-cube-solver.com/}, which implements this very behaviour. It says in their description of how it works that it runs an open source algorithm; it looks for a solution in 20 steps or fewer. This implementation does both kinds of tradeoff: if the solution being evaluated takes too long it's killed. And if no under-20-move solution has been found within a certain time limit, it will return a solution that takes 24 steps and give you a less optimal solution. That's actually an example of reducing accuracy (quality of solution) for speed, which leads us into our next approach.
 
-\subsection*{Other Orderings}
-The \CPP~standard includes a few other orderings that don't appear in this section because they aren't in Rust. But we'll cover Acquire-Release and Relaxed briefly. Neither comes with a recommendation to use it, but if you can prove that your use of it is correct, then you can do it. It may give a slight performance edge.
+\subsection*{Reduced-Resource Computation}
 
-Acquire means that accesses (reads or writes) after the acquire operation can't move to be before the acquire. Release means accesses before the release operation can't move to be after the release. They make a good team: by placing acquire at the start of a section and release after, anything in there is ``trapped'' and can't get out.
+The formal name for the second idea is ``reduced resource computation''---that is to say, we do more with less! Austerity programs for our computer programs. Well, you can use \texttt{float} instead of \texttt{double}. Indeed, Google's Tensor Processing Units appear to use perhaps even fewer than 8 bits to represent a floating-point number. Or, you can also work with integers to represent floating point numbers (e.g., representing money in an integer number of cents). But let's really  think about when this is appropriate.
 
-That makes them the perfect combination for a critical section: acquire prevents things from moving from inside the critical section to before the critical section; release prevents things from inside from moving to after the critical section. Nice! 
+\paragraph{Circuit... Analysis!} Recall that, in scientific computations, you're entering points that were measured (with some error) and that you're computing using machine numbers (also with some error). Computers are only providing simulations, not the ground truth; the question is whether the simulation is good enough.
 
-Here's an example of acquire and release, as taken from the Rustonomicon's page about atomics ( \url{https://doc.rust-lang.org/nomicon/atomics.html}. It's implementing a spinlock: 
+Imagine that the simulation is deciding on what resistors are going to be put in your circuit board: is there any point in calculating it down to five decimal places when the resistors you buy have a tolerance of $\pm$5\%? No, and if you took a circuits course with Prof. Barby he would be very disappointed if you said yes.
 
-\begin{lstlisting}[language=Rust]
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
 
-fn main() {
-    let lock = Arc::new(AtomicBool::new(false)); // value answers "am I locked?"
+\paragraph{iddqd.} Perhaps my favourite example of trading accuracy for time is a function in Quake III, contributed by John Carmack known as ``fast inverse square root''. For graphics processing, sometimes you want to calculate $1/\sqrt{x}$. This is important because you use it in calculating lighting and reflections (because you normalize vectors). Normalizing is mostly a straightforward exercise: square some numbers, add them up, and then... oh no, you have to use square root... That one isn't so simple.
 
-    // ... distribute lock to threads somehow ...
+Square root (or similar) is usually calculated by some interpolation or root-finding method (if you took a numerical methods course, you know several techniques for calculating this). But instead there's this~\cite{fisqrt}. 
 
-    // Try to acquire the lock by setting it to true
-    while lock.compare_and_swap(false, true, Ordering::Acquire) { }
-    // broke out of the loop, so we successfully acquired the lock!
-
-    // ... scary data accesses ...
-
-    // ok we're done, release the lock
-    lock.store(false, Ordering::Release);
+\begin{lstlisting}[language=C]
+float FastInvSqrt(float x) {
+  float xhalf = 0.5f * x;
+  int i = *(int*)&x;         // evil floating point bit level hacking
+  i = 0x5f3759df - (i >> 1);  // what the fuck?
+  x = *(float*)&i;
+  x = x*(1.5f-(xhalf*x*x));
+  return x;
 }
 \end{lstlisting}
 
-The acquire and release semantics keep all the things that should be in the critical section inside it.
+The first line of the function is straightforward - take half the value of \texttt{x}. The second one says to interpret the value of \texttt{x} as an \texttt{int}. Now this probably seems like dark magic, and it is. Pretend this floating point number is an integer. I mean, you can, but why does this make sense? 
 
-And then there is relaxed. Relaxed really does mean the compiler will take it easy, and all reorderings are possible. Even ones that you might not want! The Rustonomicon suggests one possible valid use for that scenario is a counter that simply adds and you aren't using the counter to synchronize any action. Something like atomically counting the requests to each resource might be suitable. You can report the counters as metrics and it's not super important that request 9591's increment of the counter occurs before that of request 9598. It's all the same in the end...
+There's a lot of explanation and a lot of math in the source material but it comes down to how the float is stored. The float starts with a sign bit, then the exponent, and then the mantissa (math reminder: in $1.95 \times 10^{3}$, the exponent is 3 and the mantissa is 1.95).
 
-\subsection*{Matters, Order Does}
-There have been a few reminders to use sequential consistency because atomics are hard to reason about and it's easy to get it wrong. But does this happen in reality? Yes, and here's an example of it in Rust~\cite{weakbug}.
+The clever hack is somewhat obsoleted now by the fact that CPU instructions now exist to give you fast inverse square root. This was obviously not something you could rely on in 1999 (and is pretty CISC-y), but we're going to revisit the idea of using clever CPU instructions to speed things along in the next lecture. So if we say pretend this float is an integer we end up with this~\cite{fisqrt2}:
 
-The observed behaviour was an inconsistent state being reported by an assertion; when looking at the registers the registers contained garbage even though it was just after a read that should have loaded it in. That's hard to notice and difficult to debug as well, because running in debug mode might prevent the reordering in the first place.
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/float-to-int.png}
+\end{center}
 
-You can actually look at the fix applied to the lock-free queue at \url{https://github.com/crossbeam-rs/crossbeam/pull/98/files}. But the short summary is that the load of the \texttt{ready} property needs to have at least Acquire semantics and the store of it should have release.  If we don't do that, we might attempt to park the thread early. 
+If it's not obvious, this plot rather resembles the plot of $-1/\sqrt{x}$. So we are pretty close to getting where we need to go. All we need is to invert it and then do a little bit of an offset. The seemingly magic number of \texttt{0x5f3759df} is not a bit pattern, but just a calculated offset to make the approximation a little bit better. Then we turn it back into a float.
+
+The last step is then to do one quick iteration of Newton's method to refine the calculation a little bit and we have a great solution: it is a fast, constant-time calculation for something that normally would be difficult, and it's very accurate, something like 0.175\% error at the most. And in a 3D game a tiny inaccuracy is not a big deal! Especially in one from 1999. It wasn't exactly photorealistic to begin with, now was it\ldots?
+
+This is the best case scenario: the accuracy that we trade for speed is both very small and its application is one in which a small difference is not noticeable. This is beyond ``close enough is good enough'', this is hardly any tradeoff at all.
+
+
+\paragraph{N-Body Problem}
+A common physics problem that programmers are asked to simulate is the N-Body problem: you have some number of bodies (N, obviously) and they interact via gravitational forces. The program needs to compute the movements of the bodies over time. This is a typical example of a program that is well suited to parallelization: you can compute the forces on each body $n$ from all other bodies in parallel. This was even at one time an OpenCL assignment in this course, although now there are too many good solutions on the internet so it was replaced. Bummer.
+
+What can you do here if you want to speed it up even more? You could look for optimizations that trade off accuracy for performance. As you might imagine, using \texttt{float} instead of \texttt{double} can save half the space which should make things quite a bit faster. But you want more\ldots
+
+Then we need some domain knowledge. That is, we need to think about what we know about the problem and we can make a decision about what is important and what is not. If we thought about what's important for determining the forces, what would we consider to be the most important? 
+
+Hint: consider the formula: $F = \dfrac{Gm_{1}m_{2}}{r^{2}}$. 
+
+Force is a function of how close the objects are. Thus, points that are far away contribute only small forces. So you can estimate them (crudely). A first approximation might say that forces that are far enough away are zero. In principle, Jupiter has a gravitational influence on the rate of descent if I drop a whiteboard marker (whether positive, negative, or zero depends on its relative position at the time of my clumsiness), but the effect is so incredibly small as to be worth ignoring. But what about objects that are not exactly close by, but also not so far away as to be irrelevant?
+
+The idea is to divide the points into a number of ``bins'' which are cubes representing a locale of some sort. Then, compute the centre of mass for each bin. When calculating the forces on a given point, add the force exerted by the centre of mass for faraway bins to the force exerted by individual particles for nearby particles.
+
+A more concrete explanation with an example: suppose the space  is divided into $[0, 1000]^3$, so we can take bins which are cubes of length 100. This gives 1000 bins. If you want to increase the accuracy, increase the number of bins. If you want to increase the speed, decrease the number of bins: either make bins larger, or change your definition of what is too far away to care about.
+
+The program should have a 3-dimensional array {\tt cm} of a point structure to store centres-of-mass. The {\tt x}, {\tt y} and {\tt z}
+components contain the average position of the centres of mass of a
+bin, while the {\tt mass} component stores the total mass. Compute all of
+the masses in parallel: create one thread per bin, and add a point's
+position if it belongs to the bin, e.g.
+
+\begin{lstlisting}[language=Rust]
+struct Point {
+    x: f32,
+    y: f32,
+    z: f32,
+    mass: f32,
+}
+\end{lstlisting}
+
+Let's start there. We are going to improve this by adding a \texttt{bin} property to each point, so that we know what bin it is in. Later, we can use the bin to know if another point is considered close by. In my example, I calculate the bin at the same time as the point is randomly generated, because why iterate over the collection a second time?
+
+Once all points are generated, we can calculate the centre of mass for each bin. This is, of course, just a weighted average of all the points in that bin and is straightforward to calculate.
+
+The payoff from all these calculations is to save time while
+calculating forces. In this example, we'll compute exact
+forces for the points in the same bin and the directly-adjacent bins
+in each direction (think of a Rubik's Cube; that makes 27 bins in all,
+with 6 bins sharing a square, 12 bins sharing an edge, and 8 bins
+sharing a vertex with the centre bin). If there is no adjacent bin 
+(i.e., this is an edge), just act as if there are no points 
+in the place where the nonexistent bin would be. 
+
+This does mean there is overhead for each step, meaning the total amount of overhead goes up. We had to (1) calculate what bin this is, (2) calculate the centre of mass for each bin, and (3) decide when we should use the centre-of-mass calculation or the exact calculation.
+
+Here's some data calculated with 100~000 points (using \texttt{hyperfine -m 5 "cargo run --release"}). The unmodified version takes about 162 seconds; the modified version takes about 147. With smaller numbers of points, the difference is not as noticeable, but still consistent. With 50~000 the original \texttt{nbody} program takes about 39 seconds on average and the optimized about 37, so a slight speedup! The amount of benefit increases with more points, but doesn't keep up with the computational complexity of the increase in the number of points.
+
+Also, this is before any parallelization (no threads are spawned). We can calculate forces on each point pretty effectively in parallel; we can also parallelize the calculations of the centre of mass quite easily. Both would speed up the program quite a lot! 
+
+If I just parallelize the version without approximations (using the rayon parallel iterator), it takes about 25 seconds to run, and parallelizing the version with bins (using the same in a very naive parallelization) gets the execution time for 100~000 points down to about the same 25 seconds. It is clear that parallelizing the problem has a much greater effect than the tradeoff of accuracy for time (at least in this implementation), but on a sufficiently large problem, everything counts.
+
+
+\subsection*{Loop perforation} 
+You can also apply the same idea to sequential programs. Instead
+of discarding tasks, the idea here is to discard loop iterations~\cite{hoffmann09:_using_code_perfor_improv_perfor}.
+Here's a simple example: instead of the loop,
+\begin{center}
+\verb|for i in 0 .. n { sum += numbers.get(i).unwrap(); }|
+\end{center} \vspace*{-1em}
+simply write,
+\vspace*{-1em}\begin{center}
+\verb|for i in (0 .. n).step_by(2) { sum += numbers.get(i).unwrap(); }|
+\end{center}
+and multiply the end result by a factor of 2. This only works 
+if the inputs are appropriately distributed, but it does give a
+factor 2 speedup.
+
+\paragraph{Example domains.} In~\cite{Rinard:2010:PSA:1932682.1869525},
+we can read that loop perforation works for evaluating forces on water
+molecules (in particular, summing numbers); Monte-Carlo simulation for
+swaption pricing; and video encoding. In that example, changing loop
+increments from 4 to 8 gives a speedup of 1.67, a signal to noise ratio
+decrease of $0.87\%$, and a bitrate increase of $18.47\%$, producing
+visually indistinguishable results. 
+
 
 \input{bibliography.tex}
 

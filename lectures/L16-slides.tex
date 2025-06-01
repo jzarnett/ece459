@@ -1,8 +1,9 @@
+
 \input{configuration}
 
-\title{Lecture 16 --- Mostly Data Parallelism }
+\title{Lecture 15 --- Rate Limits}
 
-\author{Patrick Lam \\ \small \texttt{patrick.lam@uwaterloo.ca}}
+\author{Jeff Zarnett\\ \small \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -12,604 +13,433 @@
 
 \begin{frame}
   \titlepage
-
  \end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
 \begin{frame}
-  \frametitle{Data and Task Parallelism}
-
-  
-     \structure{Data parallelism} is performing \emph{the same} operations on
-      different input.\\
-
-     {\bf Example:} doubling all elements of an array.\vfill
-
-     \structure{Task parallelism} is performing \emph{different} operations
-      on different input.\\
-
-    {\bf Example:} playing a video file: one thread decompresses
-      frames, another renders.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{You're Not Using Those Bytes, Are You?}
-
-Consider the size of an \texttt{i32}... 4 bytes? At least 2...
-
-Array of capacity $N$? That uses $N \times 4$ bytes.
-
-Can we limit the size of the integer? Is 65,535 enough?
+\frametitle{It's Not Me, It's You}
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/havetoshare.png}
+  \includegraphics[width=0.7\textwidth]{images/its-me.jpg}
 \end{center}
 
 \end{frame}
 
-
 \begin{frame}
-\frametitle{This used to be easier...}
-
-The other hidden cost is that of course things that were simple,\\
-\qquad like \texttt{array[i] += 1}, are now more complicated. 
+\frametitle{Speed Limit}
 
 \begin{center}
-	\includegraphics[width=0.6\textwidth]{images/hex.jpg}
+  \includegraphics[width=0.4\textwidth]{images/speedlimit.jpg}
 \end{center}
 
-What do we do now?
+Sometimes the limiting factor in an app is not under our control.
 
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Math is Math}
-
-Instead of just \texttt{+=1} we need to calculate the new number to add. 
-
-The interesting part is about how to represent the upper portion of the number.
-
-We can manually break out our calculators or draw a bit vector or think in hexadecimal about how to convert a number if it's more difficult.
-
+A rate limit is exactly what it sounds like.
 
 \end{frame}
 
 \begin{frame}
-\frametitle{Don't You Forget About Me}
+\frametitle{More Complex}
 
-Maybe you think this example is silly because of  Rust's \texttt{i8}/C's \texttt{short}.
+Rate limits can be more complicated than just requests per unit time. 
 
-You can use this to reduce the size of the array.
+Multiple thresholds (e.g., A requests per hour or B requests per day)?
+
+Max C requests to change your user data per day, and a max of D requests of any type per day in total?
+
+Slow down vs just reject? We'll just talk about rejection for now.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Rejection Hurts}
+
+Rejected requests can be a huge problem for your application or service.
+
+Obvious example: using ChatGPT in your app?
+
+Other example: validating webhooks that the service itself sent in...
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Why Are Limits?}
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/arrayforants.jpg}
+  \includegraphics[width=0.5\textwidth]{images/its-the-law.jpg}
 \end{center}
 
-But then modifying each \texttt{short} in a different instruction defeats the purpose.
+Rate limits exist because every request has a certain cost associated with it.
+
+The cost may or may not be measured in currency.
+
+Consider opportunity cost.
 
 \end{frame}
 
-
 \begin{frame}
-\frametitle{Bigger!}
-
-If it's a 64-bit processor there's no reason why you couldn't modify 8 bytes in a single instruction. 
-
-The principle is the same, even if the math is a little more complex.
-
-What we've got here is a poor-person version of Single Instruction Multiple Data (SIMD)...
-
-\end{frame}
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data Parallelism: Single Instruction, Multiple Data}
-
-  
-   SIMD, an overview:
-    \begin{itemize}
-    \item You can load a bunch of data and perform 
-      arithmetic.
-    \item Intructions process multiple data items simultaneously.
-      (Exact number is hardware-dependent).
-    \end{itemize}
-    For x86-class CPUs, MMX and SSE extensions provide SIMD instructions.
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{One Command}
-
-SIMD provides an advantage by using a single control unit to command multiple processing units.
-
+\frametitle{DoS and DDoS}
+\alert{Denial of Service (DoS)} attack: negatively impact some service by submitting many invalid requests to overwhelm it.
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/simd.png}
+  \includegraphics[width=0.5\textwidth]{images/bombardment.jpg}
 \end{center}
 
-Example: consider I ask people to erase boards in class...
+If using numerous clients: \alert{Distributed Denial of Service (DDoS)} attack. 
 
-Only works if we are all erasing!
+\end{frame}
+
+\begin{frame}
+\frametitle{Rate Limit Example}
+
+Using a system that allowed Ontarians to write letters to the Minister of the Environment about allowing rock climbing in provincial parks. 
+
+We were encouraging people at climbing gyms to send letters (well, emails).
+
+The climbing gym IP address got rate limited because people were sending letters from the gym's wifi.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Request Consume Resources}
+
+Consider the Unity Engine's proposed (retracted) changes in 2023.
+
+Charge per installation? What if I write an install bomb?
+
+\begin{center}
+  \includegraphics[width=0.5\textwidth]{images/unityengine.jpg}
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Scraping All Data}
+
+Rate limits can also prevent scraping all your data.
+
+This really happened to the openly-political social media site ``Parler''.
+
+Two bad decisions: sequential post IDs and no rate limits.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{For Whose Benefit?}
+
+Concern: if others can scrape all your content for their own benefit at your cost.
+
+Even if it's intended as non-malicious training some machine learning model. 
+
+\begin{center}
+  \includegraphics[width=0.3\textwidth]{images/openaitraining.jpg}
+\end{center}
+
+Yes, OpenAI did scan the internet to train ChatGPT.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Dealing with Rate Limits}
+
+Assume we have a system with a rate limit and we need to address that.
+
+If the rate limit is super high compared to usage, no problem.
+
+Hitting the rate limit regularly? Frustrating, or could get us banned!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{What's the Limit?}
+If we get rejected requests we know there's a problem, but what's the limit?
+
+\begin{itemize}
+	\item Does the documentation tell us?
+	\item Is there an API to query it?
+	\item Does it come in the responses?
+	\item None of the above?
+\end{itemize}
+
+Why not tell us?
 
 \end{frame}
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+\frametitle{Atlassian Makes No Promises}
+
+\textit{``REST API rate limits are not published because the computation logic is evolving continuously to maximize reliability and performance for customers'' }
+
+It does give them more freedom?
+
+Testing for the limit here might work but information is out-of-date quickly.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{What Can We Do?}
+
+Giving up: not the right answer... especially in an interview.
+
+Can we do less work? Might help, but how much redundancy will we find?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Caching}
+
+Remember answers previously received. 
+
+Remember what we discussed about write-through and write-back caches.
+
+It can be difficult to know if the data is changed remotely.\\
+\quad Use domain knowledge here! e.g., exchange rate quotes valid 20 minutes.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Group Up}
+
+Can we group up requests into a larger one?
+
+\begin{center}
+  \includegraphics[width=0.6\textwidth]{images/assemble.jpg}
+\end{center}
+
+There do need to be things to group with...
+
+And the remote API has to support it.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Bigger Requests, Bigger Parsing}
+
+Grouping requests may also make it hard to handle if there's a problem with one of the elements in it. 
+
+If we asked to update five employees and one of the requests is invalid, is the whole group rejected or just the one employee update? (Is it a transaction?)
+
+Consider the risks of more complex logic.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Patience}
+
+\begin{center}
+  \includegraphics[width=0.4\textwidth]{images/patience.jpg}
+\end{center}
+
+If the problem is that too many requests are happening in a short period of time, maybe our best solution is to distribute the requests over more time.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Patience}
+When there is a more demand for something than capacity, what do we do?
+
+\begin{center}
+  \includegraphics[width=0.7\textwidth]{images/lineup.jpg}
+\end{center}
+
+Simply controlling the rate at which requests leave the queue is sufficient to ensure that the rate limit is not exceeded. 
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Rust Crates}
+
+Unsurprisingly, multiple Rust crates do what we want. 
+
+Below are some examples from the documentation of the \texttt{ratelimit} crate.
+
+This is not especially fancy, but is sufficient for an example.
+
+\end{frame}
+
 \begin{frame}[fragile]
-  \frametitle{SIMD Example}
-
-  
-  Consider the following code:
-
+\frametitle{Rust Rate Limit}
 \begin{lstlisting}[language=Rust]
-pub fn foo(a: &[f64], b: &[f64], c: &mut [f64]) {
-    for ((a, b), c) in a.iter().zip(b).zip(c) {
-        *c = *a + *b;
+use ratelimit::Ratelimiter;
+use std::time::Duration;
+
+// Constructs a ratelimiter that generates 1 tokens/s with no burst. This
+// can be used to produce a steady rate of requests. The ratelimiter starts
+// with no tokens available, which means across application restarts, we
+// cannot exceed the configured ratelimit.
+let ratelimiter = Ratelimiter::builder(1, Duration::from_secs(1))
+    .build()
+    .unwrap();
+
+// Another use case might be admission control, where we start with some
+// initial budget and replenish it periodically. In this example, our
+// ratelimiter allows 1000 tokens/hour. For every hour long sliding window,
+// no more than 1000 tokens can be acquired. But all tokens can be used in
+// a single burst. Additional calls to `try_wait()` will return an error
+// until the next token addition.
+//
+// This is popular approach with public API ratelimits.
+let ratelimiter = Ratelimiter::builder(1000, Duration::from_secs(3600))
+    .max_tokens(1000)
+    .initial_available(1000)
+    .build()
+    .unwrap();
+\end{lstlisting}
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Rust Rate Limit}
+\begin{lstlisting}[language=Rust]
+// For very high rates, we should avoid using too short of an interval due
+// to limits of system clock resolution. Instead, it's better to allow some
+// burst and add multiple tokens per interval. The resulting ratelimiter
+// here generates 50 million tokens/s and allows no more than 50 tokens to
+// be acquired in any 1 microsecond long window.
+let ratelimiter = Ratelimiter::builder(50, Duration::from_micros(1))
+    .max_tokens(50)
+    .build()
+    .unwrap();
+
+// constructs a ratelimiter that generates 100 tokens/s with no burst
+let ratelimiter = Ratelimiter::builder(1, Duration::from_millis(10))
+    .build()
+    .unwrap();
+
+for _ in 0..10 {
+    // a simple sleep-wait
+    if let Err(sleep) = ratelimiter.try_wait() {
+           std::thread::sleep(sleep);
+           continue;
     }
-}\end{lstlisting}
-
-    In this scenario, we have a regular operation over block data.\\[1em]
-
-    We could use threads, but we'll use SIMD.
-
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly}
-
-We can compile with \texttt{rustc} defaults
-and get something like this as core loop contents:
-\begin{verbatim}
-  movsd   xmm0, qword ptr [rcx]
-  addsd   xmm0, qword ptr [rdx]
-  movsd   qword ptr [rax], xmm0
-\end{verbatim}
-
-This uses the SSE and SSE2 instructions
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}[fragile]
-  \frametitle{SIMD Example---Assembly}
-
-  If you additionally specify \texttt{-O}, the compiler generates a number of variants, including this middle one:
-\begin{verbatim}
-  movupd  xmm0, xmmword ptr [rdi + 8*rcx]
-  movupd  xmm1, xmmword ptr [rdi + 8*rcx + 16]
-  movupd  xmm2, xmmword ptr [rdx + 8*rcx]
-  addpd   xmm2, xmm0
-  movupd  xmm0, xmmword ptr [rdx + 8*rcx + 16]
-  addpd   xmm0, xmm1
-  movupd  xmmword ptr [r8 + 8*rcx], xmm2
-  movupd  xmmword ptr [r8 + 8*rcx + 16], xmm0
-\end{verbatim}
-
-The \emph{packed} operations ({\tt p}) operate on multiple data
-elements at a time.
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{SIMD}
-
-The compiler uses SIMD instructions if the target architecture supports it.
-
-We can explicitly invoke the instructions, or use libraries
-
-It is complementary to using threads, and good for cases where loops operate over vectors of data.
-
-SIMD instructions also work well on small data sets, where thread startup
-cost is too high.
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{SIMD Pros and Cons}
-
-(+) A more efficient (= less CPU resources) way to parallelize code than threads.
-
-(-) Data must be 16-byte aligned when loading to/storing from 128-bit registers.\\
-\qquad Not required in SSE4.2\ldots if your CPU supports it (all modern x86s do, \\
-\qquad \qquad but maybe not ARM Cortex).
-  
-
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Alignment}
-
-\begin{center}
-	\includegraphics[width=0.8\textwidth]{images/superhero-alignment.png}
-\end{center}
-
-Oh. Not this kind of alignment.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Forcing Alignment}
-
-Rust will generally align primitives to their sizes. 
-
-Under the default representation, Rust promises nothing else about alignment.
-
-You can use the \texttt{repr(packed(N))} or \texttt{repr(align(N))} directives to express constraints on alignment.
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Worked SIMD Example}
-
-\begin{lstlisting}[language=Rust]
-use simdeez::*;
-use simdeez::scalar::*;
-use simdeez::sse2::*;
-use simdeez::sse41::*;
-use simdeez::avx2::*;
-simd_runtime_generate!(
-// assumes that the input sizes are evenly divisible by VF32_WIDTH
-pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
-  let len = a.len();
-  let mut result: Vec<f32> = Vec::with_capacity(len);
-  result.set_len(len);
-  for i in (0..len).step_by(S::VF32_WIDTH) {
-    let a0 = S::loadu_ps(&a[i]);
-    let b0 = S::loadu_ps(&b[i]);
-    S::storeu_ps(&mut result[0], S::add_ps(a0, b0));
-  }
-  result
-});
-
-fn main() {
-  let a : [f32; 4] = [1.0, 2.0, 3.0, 4.0];
-  let b : [f32; 4] = [5.0, 6.0, 7.0, 8.0];
-  unsafe {
-    println!("{:?}", add_sse2(&a, &b))
-  }
+    // do some ratelimited action here    
 }
 \end{lstlisting}
+\end{frame}
 
+\begin{frame}
+\frametitle{Users Are Impatient}
 
+Enqueueing a request is not always suitable if the user is sitting at the screen and awaiting a response to their request.
+
+It takes a synchronous flow and makes it asynchronous.
+
+Rearchitecting it can be a long-term goal, or just something we do with requests that don't have to be synchronous to make room.
 
 \end{frame}
 
-
-
 \begin{frame}
-\frametitle{Single-Thread Performance}
+\frametitle{Schedule Later}
 
-``Can you run faster just by trying harder?''
+For requests that are not urgent, then another option is to schedule the requests for a not-busy time.
+(Conversely, CPUs have burst mode, which makes them go faster when busy).
 
 \begin{center}
-\includegraphics[width=0.7\textwidth]{images/theflash.jpg}
+  \includegraphics[width=0.7\textwidth]{images/popular-times.png}
 \end{center}
 
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Single-Thread Performance}
-
-
-Performance improvements to date have \\
-used parallelism
-to improve throughput. 
-
-Decreasing latency is trickier---often requires domain-specific
-tweaks. 
-
-Today: one example of decreasing latency: \\
-\hspace*{2em} Stream VByte.
-
+Overnight might be a great time to do things that count against the limit.
 
 \end{frame}
 
-
 \begin{frame}
-\frametitle{I have a cunning plan...}
+\frametitle{Billing Examples}
 
+Imagine that you have a billing system where the monthly invoicing procedure uses the majority of the rate limit. 
 
+If that happens during the day, then there's no capacity for adding new customers, updating them, paying invoices, etc. 
 
-Even Stream VByte uses parallelism:\\
-\hspace*{2em}vector instructions. 
-
-But there
-are sequential improvements, \\
-e.g. Stream VByte takes care to be predictable
-for the branch predictor.
-
+The solution then is to run the invoicing procedure overnight instead.
 
 \end{frame}
+
 \begin{frame}
-\frametitle{Inverted Indexes (like it's CS 137 again!)}
+\frametitle{Billing Examples}
+
+Maybe you can even convince management to make it so not all users are billed on the first of the month, but that might require some charisma.
 
 
-
-\vspace*{-1em}
-Abstractly: store a sequence of small integers.
-
-
-Why Inverted indexes?
-
-\hspace*{1cm}allow fast lookups by term;\\
-\hspace*{1cm}support boolean queries combining terms.
-
-
+Which leads us to the next idea\ldots
 
 \end{frame}
+
 \begin{frame}
-\frametitle{Dogs, cats, cows, goats. In ur documents.}
+\frametitle{Roll Persuasion}
+
+Convince the other side to raise the limit?
+
+\begin{center}
+  \includegraphics[width=0.4\textwidth]{images/certainly-try.jpg}
+\end{center}
+
+Sometimes it's negotiated, sometimes you need to pay more money, sometimes it's just not possible.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{It Happened Anyway}
+
+We might still encounter the occasional rate limit. 
+
+That's not a disaster, as long as we handle it the right way. 
+
+The right way is not try harder or try more; if we are being rate limited, then we need to try again later. But how much later?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{The Answer is Right There}
+
+Sometimes the answer for how long to wait is in the API response.
+
+\begin{center}
+  \includegraphics[width=0.4\textwidth]{images/khaby.png}
+\end{center}
+
+... if we read it.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Exponential Backoff}
 
 
 \begin{center}
-\begin{tabular}{r|l}
-docid & terms \\ \hline
-1 & dog, cat, cow\\
-2 & cat\\
-3 & dog, goat\\
-4 & cow, cat, goat\\
-\end{tabular}
+	\includegraphics[width=0.7\textwidth]{images/reverse.png}
 \end{center}
 
+Resources might not be available right now; retry later?
 
-\end{frame}
+It's unhelpful to have a tight loop that simply retries as fast as possible. 
 
-
-\begin{frame}
-\frametitle{Inverting the Index}
-
-
-Here's the index and the inverted index:
-\begin{center}
-\begin{tabular}{r|l}
-docid & terms \\ \hline
-1 & dog, cat, cow\\
-2 & cat\\
-3 & dog, goat\\
-4 & cow, cat, goat\\
-\end{tabular} \hspace*{2em}
-\begin{tabular}{r|l}
-term & docs \\ \hline
-dog & 1, 3 \\
-cat & 1, 2, 4 \\
-cow & 1, 4 \\
-goat & 3, 4
-\end{tabular}
-\end{center}
-
-Inverted indexes contain many small integers.
-
-Deltas typically small if doc ids are sorted.
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Storing inverted index lists: VByte}
-
-
-\vspace*{-2em}
-VByte uses a variable number of bytes
-to store integers.  
-
-Why? Most integers are
-small,\\
-\qquad especially on today's 64-bit processors.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{How VByte Works}
-
-
-VByte works like this:
-
-\begin{itemize}
-\item $x$ between 0 and $2^7-1$ (e.g. $17 = 0b10001$):\\
-\hspace*{1em}$0xxx xxxx$, e.g. $0001 0001$;
-\item $x$ between $2^7$ and $2^{14}-1$ (e.g. $1729 = 0b110 11000001$):\\
-\hspace*{1em}                   $1xxx xxxx/0xxx xxxx$ (e.g. $1100 0001/0000 1101$);\\
-\item $x$ between $2^{14}$ and $2^{21}-1$: \\
-\hspace*{1em}$1xxx xxxx/1xxx xxxx/0xxx xxxx$;
-\item etc.
-\end{itemize}
-
-Control bit, or high-order bit, is:\\
-\hspace*{2em}0 once done representing the int,\\
-\hspace*{2em}1 if more bits remain.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Why VByte Helps}
-
-
-Isn't dealing with variable-byte integers harder?\\
-\hspace*{2em} $\bullet$~ Yup!
-
-But perf improves: \\
-\hspace*{2em} $\bullet$~  We are using fewer bits! 
-
-We fit more information into RAM and
-cache, and can get higher throughput. \\
-\qquad (think inlining)
-
-Storing and reading 0s isn't good use of resources. 
-
-However, a naive algorithm to decode VByte
-gives branch mispredicts.
+Wait a little bit and try again; if the error occurs, next time wait a little longer.
 
 \end{frame}
 
 \begin{frame}
-\frametitle{Stream VByte}
-\vspace*{-2em}
+\frametitle{Press F5 Until the Website Loads!}
 
-Stream VByte: a variant of VByte using SIMD.
+Repeatedly retrying doesn't help. 
 
+If it's down for maintenance, it could be quite a while before it's back.
 
-Science is incremental. \\
-Stream VByte builds on earlier work---\\
-\hspace*{2em}masked VByte, {\sc varint}-GB, {\sc varint}-G8IU. 
-
-Innovation in Stream VByte:\\
-\hspace*{2em}\emph{store the control and data streams separately}.
+Or, if the resource is overloaded right now, the reaction of requesting it more will make it even more overloaded and makes the problem worse! 
 
 
 \end{frame}
 
 \begin{frame}
-\frametitle{Control Stream}
-\vspace*{-4em}
-
-Stream VByte's control stream uses two bits per integer to represent the size of the integer:
-\begin{center}
-\vspace*{-3em}
-\begin{tabular}{ll@{~~~~~~~~}ll}
-00 & 1 byte & 10 & 3 bytes\\
-01 & 2 bytes & 11 & 4 bytes
-\end{tabular}
-\end{center}
+\frametitle{Jitter}
 
 
-\end{frame}
+The exponential backoff with jitter strategy is good for a scenario where you have lots of independent clients accessing the same resource.
 
-
-\begin{frame}
-\frametitle{Decoding Stream VByte}
-
-
-Per decode iteration:\\
-\hspace*{2em} reads 1 byte from the control stream,\\
-\hspace*{2em} and 16 bytes of data.
-
-
-Lookup table on control stream byte: decide how many
-bytes it needs out of the 16 bytes it has read.
-
-SIMD instructions: \\
-\hspace*{2em}shuffle the bits each into their own integers. 
-
-Unlike VByte, \\
-Stream VByte uses all 8 bits
-of data bytes as data.
-
+If you have one client, maybe you want something like TCP congestion control.
 
 \end{frame}
 
 
 
-\begin{frame}
-\frametitle{Stream VByte Example}
-
-
-Say control stream contains $0b1000~1100$. \\
-Then the data stream
-contains the following sequence of integer sizes: $3, 1, 4, 1$. 
-
-Out of the 16 bytes read,
-this iteration uses 9 bytes; \\
-\hspace*{2em} $\Rightarrow$ it advances the data pointer by 9. 
-
-The SIMD
-``shuffle'' instruction puts decoded integers from data stream at known positions in the
-128-bit SIMD register.
-
-Pad the first 3-byte integer with 1 byte, then
-the next 1-byte integer with 3 bytes, etc. 
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Stream VByte: Shuffling the Bits}
-\vspace*{-1em}
-
-Say the data input is:\\
-{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. 
-
-The 128-bit output is:\\
-{\tt 0x00f8~23e1/0000~0027/2524 9748/0000~001b}\\
-/s denote separation
-between outputs. 
-
-Shuffle mask is precomputed and
-read from an array.
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{SIMD Instructions}
-
-\vspace*{-1em}
-
-The core of the implementation uses\\
-three SIMD instructions:
-\begin{lstlisting}[language=C]
-  uint8_t C = lengthTable[control];
-  __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
-  __m128i Shuf = _mm_loadu_si128(shuffleTable[control]);
-  Data = _mm_shuffle_epi8(Data, Shuf);
-  databytes += C; control++;
-\end{lstlisting}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{But Does It Work?!}
-
-\vspace*{-1em}
-
-Stream VByte performs better than previous techniques on a realistic input.
-
-
-Why?
-
-\begin{itemize}
-\item control bytes are sequential:\\
-\hspace*{1em} CPU can always prefetch the next control byte, \\
-\hspace*{1em} because
-its location is predictable;
-\item data bytes are sequential \\
-\hspace*{1em}and loaded at high throughput;
-\item shuffling exploits the instruction set: \\
-\hspace*{1em}takes 1 cycle;
-\item control-flow is regular \\
-\hspace*{1em}(tight loop which retrieves/decodes control
-\& data;\\
-\hspace*{1em}no conditional jumps).
-\end{itemize}
-\end{frame}
 
 
 \end{document}

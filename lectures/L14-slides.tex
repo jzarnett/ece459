@@ -1,9 +1,9 @@
-
 \input{configuration}
 
-\title{Lecture 14 --- Memory Consistency}
 
-\author{Patrick Lam \& Jeff Zarnett\\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\title{Lecture 13 --- Early Termination, Reduced-Resource Computation }
+
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -13,354 +13,560 @@
 
 \begin{frame}
   \titlepage
+
  \end{frame}
- 
- 
-\begin{frame}
-\frametitle{Previously...}
 
-When we introduced atomics, we said to always use sequential consistency.
+
+\begin{frame}
+\frametitle{Quitting Time}
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/robocop.jpg}\\
-	\hfill ``Stay out of trouble.'' - Robocop, 2043.
+	\includegraphics[width=0.7\textwidth]{images/quitting-time.jpg}
 \end{center}
 
-There are other options, but we need to discuss reordering.
-
-\end{frame}
-
-
-
-\begin{frame}[fragile]
-\frametitle{Compiler Reordering}
-The compiler can change the order of certain events. 
-
-The compiler will be aware of things like load-delay slots and can swap the order of instructions to make use of those slots more effectively.
-
-\begin{multicols}{2}
-\begin{lstlisting}[language=Rust]
-let x = thing.y;
-println!("x = {}", x);
-z = z + 1;
-a = b + c;
-\end{lstlisting}
-\columnbreak
-\begin{lstlisting}[language=Rust]
-let x = thing.y;
-z = z + 1;
-a = b + c;
-println!("x = {}", x);
-\end{lstlisting}
-\end{multicols}
-
-We'll talk about other compiler optimizations soon, but we don't want to get away from the topic of reordering. 
+Knowing when to quit is wise.
 
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Hardware Reordering}
-
-In addition to the compiler reordering, the hardware can do some reordering of its own.
-
-There is another possibility we have to consider, and it is updates from other threads.
-
-We need a bit more reassurance that the value we're seeing is the latest one...
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{It's a Feature}
-
-Different hardware provides different guarantees about what reorderings it won't do.
-
- ARM is getting pretty popular, so we do have to care about hardware reorderings, unfortunately.
- 
- \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/apple-m1.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{I have a cunning plan...}
-
-In an obvious case, if the lines of code are \texttt{ z *= 2 } and \texttt {z += 1} then neither the compiler nor hardware will reorder those.
-
-It knows that it would change the outcome and produce the wrong answer. 
-
-There's a clear data dependency there, so the reordering won't happen. 
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Reordering Gone Wrong}
-
-But what if there's no such clear dependency? Consider something like this pseudocode:
-
-\begin{multicols}{2}
-\begin{verbatim}
-lock mutex for point
-point.x = 42;
-point.y = -42;
-point.z = 0;
-unlock mutex for point
-\end{verbatim}
-\columnbreak
-\begin{verbatim}
-lock mutex for point
-point.x = 42;
-point.y = -42;
-unlock mutex for point
-point.z = 0;
-\end{verbatim}
-\end{multicols}
-
-What we need is a way to tell the compiler (and hardware) that this is not okay.
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Sequential Consistency}
-
- 
-  Sequential program: statements execute in order.
-
-  Your expectation for concurrency: sequential consistency.
-  
-\begin{center}
-\begin{lstlisting}
-    T1: x = 1; r1 = y;
-    T2: y = 1; r2 = x;
-\end{lstlisting}
-\end{center}
-
-
-    \begin{itemize}
-      \item each thread induces an \emph{execution trace}.
-      \item always: program has executed some prefix of each thread's
-        trace.
-    \end{itemize}
-  
-\end{frame}
-  
-\begin{frame}
-\frametitle{Sequential Consistency}
-
-
-\begin{quote}
-``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
-\end{quote}
-  In brief:
-  \begin{enumerate}
-  \item for each thread: in-order execution;
-  \item interleave the threads' executions.
-  \end{enumerate}~\\
-
-
-\end{frame}
-
-
-
-
-
-\begin{frame}
-\frametitle{The Blind Men and Elephant}
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/Blind_men_and_elephant.jpg}
-\end{center}
-
-But unfortunately, threads have their own view of the world.
-
-\end{frame}
-
-\begin{frame}
-  \frametitle{Reordering}
-
-  
-     Compilers and processors may reorder non-interfering memory
-     operations.
-
-      \[ T1: x = 1; r1 = y; \]
-
-     If two statements are independent:
-     \begin{itemize}
-        \item OK to execute them in either order.
-        \item (equivalently: publish their results to other threads).
-     \end{itemize}
-
-     Reordering is a major compiler tactic to produce speedup.
-  
-\end{frame}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Memory Consistency Models}
-
-Rust uses the same memory consistency models as \CPP.
-
-It's the best attempt we have at modelling atomics because it is a very difficult subject
-
-We need way of talking about the \alert{causality} of the program...
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Causality?}
-
-\begin{center}
-	\includegraphics[width=0.7\textwidth]{images/causality-loop.png}
-\end{center}
-
-
-
-Establishing relationships between events such as ``event A happens before event B''. 
-  
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Our new Toolkit}
-
-We can use a semaphore to ensure that one thing happens before another. 
-
-The idea is the same, but our toolkit is a little bit different: it's the \alert{memory barrier} or
-\alert{fence}. 
-
-This type of barrier prevents reordering, or,
-equivalently, ensures that memory operations become visible in the
-right order.
-
-\end{frame}
-
-
-
-
-\begin{frame}
-\frametitle{What have we got?}
-
-The x86 architecture defines the following types of memory 
-barriers:
+\frametitle{Two Strategies}
+There are two basic ideas. 
 
 \begin{itemize}
-\item {\tt mfence}
-\item {\tt sfence}
-\item {\tt lfence}
+\item Skip some parts of work
+\item Intentionally reduce accuracy to speed things up. 
 \end{itemize}
 
-\end{frame}
+You may implement these strategies when you're writing an exam.
 
-
-\begin{frame}[fragile]
-\frametitle{Build Fences in the Right Place}
-
-Consider the example again:
-  \begin{lstlisting}[language=C]
-                         f = 0
-
-/* thread 1 */                     /* thread 2 */
-while (f == 0) /* spin */;         x = 42;
-// memory fence                    // memory fence
-printf("%d", x);                   f = 1;
-  \end{lstlisting}
-This now prevents reordering, and we get the expected result.
-
-Memory fences are costly in performance.
+Your program might support only one.
 
 \end{frame}
 
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Here Be Dragons}
-The \CPP~standard includes a few other orderings that don't appear in this section because they aren't in Rust. 
+  \frametitle{Early Phase Termination}
 
-But we'll cover Acquire-Release and Relaxed briefly. 
 
-Neither comes with a recommendation to use it, but if you can prove that your use of it is correct, then you can do it. 
 
-It may give a slight performance edge.
+  We've seen barriers before.
+
+  No thread may proceed past a barrier until all of the threads
+reach the barrier.
+
+  This may slow down the program: maybe one of the threads is horribly
+  slow.
+
+  Solution: kill the slowest thread.
 
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Acquire and Release}
-
-Acquire and Release make a good team! 
+  \frametitle{Early Phase Termination: Objection}
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/acqrel.jpg}
+	\includegraphics[width=0.5\textwidth]{images/ohno.jpg}
 \end{center}
 
-By placing acquire at the start of a section and release after, anything in there is ``trapped'' and can't get out.
+\begin{center}
+``Oh no, that's going to change the meaning of the program!''
+\end{center}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-That makes them the perfect combination for a critical section.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: When is it OK anyway?}
+
+
+OK, so we don't want to be completely crazy.\\[1em]
+
+Instead: 
+\begin{itemize}
+\item develop a statistical model of the program behaviour.
+\item only kill tasks that don't introduce unacceptable distortions.
+\end{itemize}
+
+~\\[1em]
+
+When we run the program: \\ \qquad get the output, plus a confidence interval.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Oh noooo!}
+
+Example:
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/mariokart.jpg}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Remember, Remember...}
+
+Many problems are mathematically hard in nature: to find the optimal solution you have to consider every possibility. 
+
+Well, what this strategy presupposes is: don't.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Route Sucks}
+
+Imagine the travelling salesperson problem, just for the sake of an example. 
+
+There are $n$ points to visit and you want to minimize the amount of travel time. 
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/bugsbunny.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Route Sucks}
+
+The only way to know if a solution is best is to consider every possible route.
+
+One way we can know if we're wasting time is to remember previous outcomes.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{This Route Sucks}
+
+The solution we're evaluating will have some travel cost in units (maybe kms). 
+
+If the currently-accumulated cost in kms is larger than the total of the thus-far best solution, give up. 
+
+Another idea?
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Close Enough is Good Enough}
+
+Another approach is to stop as soon as you have a solution that's reasonable. 
+
+If our target is to get total travel under 500 km then we can stop searching as soon as we find one that satisfies this constraint.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{You Have Ten Chances}
+
+You can also choose to reduce the amount of effort by trying, say, five or ten different possibilities and seeing which of those is the best.
+
+There's no guarantee you'll get an optimal solution.
+
+Interesting to think about: what does Google Maps do?
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Trading Accuracy for Performance}
+
+
+    Consider Monte Carlo integration.\\
+    It illustrates a general tradeoff: accuracy vs performance.\\
+  
+    Martin Rinard generalized the accuracy vs performance tradeoff with:
+      \begin{itemize}
+        \item early phase termination [OOPSLA07]
+        \item loop perforation [CSAIL TR 2009]
+      \end{itemize}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Early Phase Termination: Two Examples}
+
+
+
+Monte Carlo simulators: \\
+Raytracers:
+\begin{itemize}
+\item already picking points randomly.
+\end{itemize}
+
+In both cases: spawn a lot of threads.\\[1em]
+Could wait for all threads to complete;\\
+or just compensate for missing data points,\\
+assuming they look like points you did compute.
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{frame}
+\frametitle{Calling the Election}
+
+In other cases, some threads simply take too long, but we don't need all of them to produce a result. 
+
+If we are evaluating some protocol where the majority wins, we can stop as soon as sufficient results have been returned.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/dewey.jpg}
+\end{center}
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{A Solution Exists!}
+
+For some categories of problem, we know not only that a solution will exist, but also how many steps it takes to solve (optimally). 
+
+Consider the Rubik's Cube:
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/rubikscube.jpg}
+\end{center}
+
+Brute force?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Rubik's Cube}
+
+Okay, that's fun to talk about, but it's always better if we see it in action? 
+
+Let's play around with \url{https://rubiks-cube-solver.com/}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Austerity Programs for Computer Programs}
+
+We do more with less! 
+
+Well, you can use \texttt{float/f32} instead of \texttt{double/f64} (or smaller, on TPUs). 
+
+But you can also work with integers to represent floating point numbers.
+
+But when is it appropriate?
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Circuit Analysis}
+
+You're entering points that were measured (with some error) and you're computing using machine numbers (also with some error).
+
+The question is whether the simulation is good enough.
+
+What resistors are going to be put in your circuit board?
+
+is there any point in calculating it down to five decimal places when the resistors you buy have a tolerance of $\pm$5\%? 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Circuit Analysis}
+
+
+No, and if you took a circuits course with Prof. Barby he would be very disappointed if you said yes.
+
+\begin{center}
+	\includegraphics[width=0.5\textwidth]{images/barby.png}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{\texttt{iddqd}}
+
+Quake III: ``fast inverse square root''. 
+
+For graphics processing, sometimes you want to calculate $1/\sqrt{x}$.
+.
+Square root (or similar) is usually calculated by some interpolation or root-finding method
 
 \end{frame}
 
 
 \begin{frame}[fragile]
-\frametitle{Acquire/Release Spinlock}
+\frametitle{Fast Inverse Square Root}
+
+\begin{lstlisting}[language=C]
+float FastInvSqrt(float x) {
+  float xhalf = 0.5f * x;
+  int i = *(int*)&x;         // evil floating point bit level hacking
+  i = 0x5f3759df - (i >> 1);  // what the fuck?
+  x = *(float*)&i;
+  x = x*(1.5f-(xhalf*x*x));
+  return x;
+}
+\end{lstlisting}
+
+ Now this probably seems like dark magic, and it is. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Float to Int?}
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/float-to-int.png}
+\end{center}
+
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Oh, never mind...}
+
+
+The clever hack is somewhat obsoleted now by the fact that CPU instructions now exist to give you fast inverse square root (CISC-y!)
+
+This was obviously not something you could rely on in 1999.
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{The N-Body Simulation}
+
+A common physics problem that programmers are asked to simulate is the N-Body problem.
+
+\begin{center}
+\includegraphics[width=0.8\textwidth]{images/Galaxy_Cluster_sim.png}
+\end{center}
+\hfill Image Credit: Michael L. Umbricht 
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Trade Accuracy for Performance}
+
+You could look for optimizations that trade off accuracy for performance. 
+
+As you might imagine, using \texttt{float} instead of \texttt{double}.
+
+
+More? Then we need some domain knowledge. 
+
+Hint: consider the formula: $F = \dfrac{Gm_{1}m_{2}}{r^{2}}$. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The N-Body Simulation}
+
+Let's assume it's OpenCL converted and is optimized.
+
+Can we use \texttt{float} instead of \texttt{double}?
+
+What if we want more?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Estimation is Okay}
+
+Points that are far away contribute only very small forces. 
+
+So you can estimate them (crudely). 
+
+The idea is to divide the points into a number of ``bins'' which are cubes representing a locale of some sort. 
+
+Then, compute the centre of mass for each bin. 
+
+When calculating the forces: centre of mass for faraway bins; individual particles for nearby particles.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{This used to be an assignment... }
+
+A more concrete explanation with an example: suppose the space  is divided into $[0, 1000]^3$, so we can take bins which are cubes of length 100. 
+
+This gives 1000 bins. 
+
+To increase the accuracy, what should we do?
+
+To increase the speed, what should we do?
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Define Your Types}
 
 \begin{lstlisting}[language=Rust]
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-
-fn main() {
-    let lock = Arc::new(AtomicBool::new(false));
-         // value answers "am I locked?"
-
-    // ... distribute lock to threads somehow ...
-
-    // Try to acquire the lock by setting it to true
-    while lock.compare_and_swap(false, true, Ordering::Acquire) { }
-    // broke out of the loop, so we successfully acquired the lock!
-
-    // ... scary data accesses ...
-
-    // ok we're done, release the lock
-    lock.store(false, Ordering::Release);
+struct Point {
+    x: f32,
+    y: f32,
+    z: f32,
+    mass: f32,
 }
 \end{lstlisting}
 
 
+We are going to improve this by adding a \texttt{bin} property to each point.
+
+This tells us if something is close by.
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Compute Centre of Mass}
+
+Compute all of the masses in parallel: create one thread per bin, and add a point's
+position if it belongs to the bin.
+
+
+Note that this parallelizes with the number of bins.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Save Time}
+
+The payoff from all these calculations is to save time while calculating forces. 
+
+In this example, we'll compute exact forces for the points in the same bin and the directly-adjacent bins in each direction
+
+That makes 27 bins in all, with 6 bins sharing a square, 12 bins sharing an edge, and 8 bins sharing a point with the centre bin). 
+
+If there is no adjacent bin 
+(i.e., this is an edge), just act as if there are no points 
+in the place where the nonexistent bin would be. 
+
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Relaxed?}
+\frametitle{More Overhead}
 
-Relaxed really does mean the compiler will take it easy, and all reorderings are possible.
+This does mean there is overhead in calculating bins, meaning the total amount of overhead goes up. 
 
-Example: a counter that simply adds; and you aren't using the counter to synchronize any action.
+Is it worth it? 
+
+With 50~000 points:
+\begin{itemize}
+\item    No approximations: 39 seconds
+\item    With approximations: 37 seconds.
+\end{itemize}
+
+With 100~000 points:
+\begin{itemize}
+\item    No approximations: 162 seconds
+\item    With approximations: 147 seconds.
+\end{itemize}
+
+Of course, parallelizing this helps even more\ldots (but, why not both?)
 
 \end{frame}
 
 
+
+
+%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{Loop Perforation}
+
+
+  Like early-phase termination, but for sequential programs:\\
+  \qquad throw away data that's not actually useful.
+
+  \begin{lstlisting}
+for i in 0 .. n { sum += numbers.get(i).unwrap(); }
+  \end{lstlisting}
+
+  \begin{center}
+    $\Downarrow$
+  \end{center}
+
+  \begin{lstlisting}
+for i in (0 .. n).step_by(2) { sum += numbers.get(i).unwrap(); }
+sum *= 2;
+  \end{lstlisting}
+
+  This gives a speedup of $\sim$ 2 if {\tt numbers[]} is nice.\\[1em]
+
+  Works for video encoding: can't observe difference.
+
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Matter, Order Does}
+  \frametitle{Applications of Reduced Resource Computation}
 
-There have been a few reminders to use sequential consistency because atomics are hard to reason about and it's easy to get it wrong.
 
-Consider an inconsistent state in a lock-free-queue structure...
+  Loop perforation works for:
+  \begin{itemize}
+   \item evaluating forces on water molecules (summing numbers);
+   \item Monte-Carlo simulation of swaption pricing;
+   \item video encoding.
+  \end{itemize}
 
-We can actually look at the fix applied in the code.
+  More on the video encoding example:\\
+  Changing loop increments from 4 to 8 gives:
+\begin{itemize}
+ \item speedup of 1.67;
+ \item signal-to-noise ratio decrease of 0.87\%;
+ \item bitrate increase of 18.47\%;
+ \item visually indistinguishable results.
+\end{itemize}
 
 \end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 \end{document}

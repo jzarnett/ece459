@@ -1,9 +1,9 @@
 
 \input{configuration}
 
-\title{Lecture 15 --- Rate Limits}
+\title{Lecture 14 --- Memory Consistency}
 
-\author{Jeff Zarnett\\ \small \texttt{jzarnett@uwaterloo.ca}}
+\author{Patrick Lam \& Jeff Zarnett\\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -15,431 +15,352 @@
   \titlepage
  \end{frame}
  
+ 
 \begin{frame}
-\frametitle{It's Not Me, It's You}
+\frametitle{Previously...}
+
+When we introduced atomics, we said to always use sequential consistency.
 
 \begin{center}
-  \includegraphics[width=0.7\textwidth]{images/its-me.jpg}
+	\includegraphics[width=0.4\textwidth]{images/robocop.jpg}\\
+	\hfill ``Stay out of trouble.'' - Robocop, 2043.
+\end{center}
+
+There are other options, but we need to discuss reordering.
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Compiler Reordering}
+The compiler can change the order of certain events. 
+
+The compiler will be aware of things like load-delay slots and can swap the order of instructions to make use of those slots more effectively.
+
+\begin{multicols}{2}
+\begin{lstlisting}[language=Rust]
+let x = thing.y;
+println!("x = {}", x);
+z = z + 1;
+a = b + c;
+\end{lstlisting}
+\columnbreak
+\begin{lstlisting}[language=Rust]
+let x = thing.y;
+z = z + 1;
+a = b + c;
+println!("x = {}", x);
+\end{lstlisting}
+\end{multicols}
+
+We'll talk about other compiler optimizations soon, but we don't want to get away from the topic of reordering. 
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Hardware Reordering}
+
+In addition to the compiler reordering, the hardware can do some reordering of its own.
+
+There is another possibility we have to consider, and it is updates from other threads.
+
+We need a bit more reassurance that the value we're seeing is the latest one...
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{It's a Feature}
+
+Different hardware provides different guarantees about what reorderings it won't do.
+
+ ARM is getting pretty popular, so we do have to care about hardware reorderings, unfortunately.
+ 
+ \begin{center}
+	\includegraphics[width=0.4\textwidth]{images/apple-m1.jpg}
 \end{center}
 
 \end{frame}
 
-\begin{frame}
-\frametitle{Speed Limit}
 
+\begin{frame}
+\frametitle{I have a cunning plan...}
+
+In an obvious case, if the lines of code are \texttt{ z *= 2 } and \texttt {z += 1} then neither the compiler nor hardware will reorder those.
+
+It knows that it would change the outcome and produce the wrong answer. 
+
+There's a clear data dependency there, so the reordering won't happen. 
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Reordering Gone Wrong}
+
+But what if there's no such clear dependency? Consider something like this pseudocode:
+
+\begin{multicols}{2}
+\begin{verbatim}
+lock mutex for point
+point.x = 42;
+point.y = -42;
+point.z = 0;
+unlock mutex for point
+\end{verbatim}
+\columnbreak
+\begin{verbatim}
+lock mutex for point
+point.x = 42;
+point.y = -42;
+unlock mutex for point
+point.z = 0;
+\end{verbatim}
+\end{multicols}
+
+What we need is a way to tell the compiler (and hardware) that this is not okay.
+
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Sequential Consistency}
+
+ 
+  Sequential program: statements execute in order.
+
+  Your expectation for concurrency: sequential consistency.
+  
 \begin{center}
-  \includegraphics[width=0.4\textwidth]{images/speedlimit.jpg}
+\begin{lstlisting}
+    T1: x = 1; r1 = y;
+    T2: y = 1; r2 = x;
+\end{lstlisting}
 \end{center}
 
-Sometimes the limiting factor in an app is not under our control.
 
-A rate limit is exactly what it sounds like.
+    \begin{itemize}
+      \item each thread induces an \emph{execution trace}.
+      \item always: program has executed some prefix of each thread's
+        trace.
+    \end{itemize}
+  
+\end{frame}
+  
+\begin{frame}
+\frametitle{Sequential Consistency}
+
+
+\begin{quote}
+``... the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program.'' --- Leslie Lamport
+\end{quote}
+  In brief:
+  \begin{enumerate}
+  \item for each thread: in-order execution;
+  \item interleave the threads' executions.
+  \end{enumerate}~\\
+
 
 \end{frame}
 
-\begin{frame}
-\frametitle{More Complex}
 
-Rate limits can be more complicated than just requests per unit time. 
 
-Multiple thresholds (e.g., A requests per hour or B requests per day)?
 
-Max C requests to change your user data per day, and a max of D requests of any type per day in total?
-
-Slow down vs just reject? We'll just talk about rejection for now.
-
-\end{frame}
 
 \begin{frame}
-\frametitle{Rejection Hurts}
-
-Rejected requests can be a huge problem for your application or service.
-
-Obvious example: using ChatGPT in your app?
-
-Other example: validating webhooks that the service itself sent in...
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Why Are Limits?}
+\frametitle{The Blind Men and Elephant}
 
 \begin{center}
-  \includegraphics[width=0.5\textwidth]{images/its-the-law.jpg}
+	\includegraphics[width=0.4\textwidth]{images/Blind_men_and_elephant.jpg}
 \end{center}
 
-Rate limits exist because every request has a certain cost associated with it.
-
-The cost may or may not be measured in currency.
-
-Consider opportunity cost.
+But unfortunately, threads have their own view of the world.
 
 \end{frame}
 
 \begin{frame}
-\frametitle{DoS and DDoS}
-\alert{Denial of Service (DoS)} attack: negatively impact some service by submitting many invalid requests to overwhelm it.
+  \frametitle{Reordering}
+
+  
+     Compilers and processors may reorder non-interfering memory
+     operations.
+
+      \[ T1: x = 1; r1 = y; \]
+
+     If two statements are independent:
+     \begin{itemize}
+        \item OK to execute them in either order.
+        \item (equivalently: publish their results to other threads).
+     \end{itemize}
+
+     Reordering is a major compiler tactic to produce speedup.
+  
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Memory Consistency Models}
+
+Rust uses the same memory consistency models as \CPP.
+
+It's the best attempt we have at modelling atomics because it is a very difficult subject
+
+We need way of talking about the \alert{causality} of the program...
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Causality?}
 
 \begin{center}
-  \includegraphics[width=0.5\textwidth]{images/bombardment.jpg}
+	\includegraphics[width=0.7\textwidth]{images/causality-loop.png}
 \end{center}
 
-If using numerous clients: \alert{Distributed Denial of Service (DDoS)} attack. 
+
+
+Establishing relationships between events such as ``event A happens before event B''. 
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Our new Toolkit}
+
+We can use a semaphore to ensure that one thing happens before another. 
+
+The idea is the same, but our toolkit is a little bit different: it's the \alert{memory barrier} or
+\alert{fence}. 
+
+This type of barrier prevents reordering, or,
+equivalently, ensures that memory operations become visible in the
+right order.
 
 \end{frame}
 
-\begin{frame}
-\frametitle{Rate Limit Example}
 
-Using a system that allowed Ontarians to write letters to the Minister of the Environment about allowing rock climbing in provincial parks. 
 
-We were encouraging people at climbing gyms to send letters (well, emails).
-
-The climbing gym IP address got rate limited because people were sending letters from the gym's wifi.
-
-\end{frame}
 
 \begin{frame}
-\frametitle{Request Consume Resources}
+\frametitle{What have we got?}
 
-Consider the Unity Engine's proposed (retracted) changes in 2023.
-
-Charge per installation? What if I write an install bomb?
-
-\begin{center}
-  \includegraphics[width=0.5\textwidth]{images/unityengine.jpg}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Scraping All Data}
-
-Rate limits can also prevent scraping all your data.
-
-This really happened to the openly-political social media site ``Parler''.
-
-Two bad decisions: sequential post IDs and no rate limits.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{For Whose Benefit?}
-
-Concern: if others can scrape all your content for their own benefit at your cost.
-
-Even if it's intended as non-malicious training some machine learning model. 
-
-\begin{center}
-  \includegraphics[width=0.3\textwidth]{images/openaitraining.jpg}
-\end{center}
-
-Yes, OpenAI did scan the internet to train ChatGPT.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Dealing with Rate Limits}
-
-Assume we have a system with a rate limit and we need to address that.
-
-If the rate limit is super high compared to usage, no problem.
-
-Hitting the rate limit regularly? Frustrating, or could get us banned!
-
-\end{frame}
-
-\begin{frame}
-\frametitle{What's the Limit?}
-If we get rejected requests we know there's a problem, but what's the limit?
+The x86 architecture defines the following types of memory 
+barriers:
 
 \begin{itemize}
-	\item Does the documentation tell us?
-	\item Is there an API to query it?
-	\item Does it come in the responses?
-	\item None of the above?
+\item {\tt mfence}
+\item {\tt sfence}
+\item {\tt lfence}
 \end{itemize}
 
-Why not tell us?
-
 \end{frame}
 
-
-\begin{frame}
-\frametitle{Atlassian Makes No Promises}
-
-\textit{``REST API rate limits are not published because the computation logic is evolving continuously to maximize reliability and performance for customers'' }
-
-It does give them more freedom?
-
-Testing for the limit here might work but information is out-of-date quickly.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{What Can We Do?}
-
-Giving up: not the right answer... especially in an interview.
-
-Can we do less work? Might help, but how much redundancy will we find?
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Caching}
-
-Remember answers previously received. 
-
-Remember what we discussed about write-through and write-back caches.
-
-It can be difficult to know if the data is changed remotely.\\
-\quad Use domain knowledge here! e.g., exchange rate quotes valid 20 minutes.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Group Up}
-
-Can we group up requests into a larger one?
-
-\begin{center}
-  \includegraphics[width=0.6\textwidth]{images/assemble.jpg}
-\end{center}
-
-There do need to be things to group with...
-
-And the remote API has to support it.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Bigger Requests, Bigger Parsing}
-
-Grouping requests may also make it hard to handle if there's a problem with one of the elements in it. 
-
-If we asked to update five employees and one of the requests is invalid, is the whole group rejected or just the one employee update? (Is it a transaction?)
-
-Consider the risks of more complex logic.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Patience}
-
-\begin{center}
-  \includegraphics[width=0.4\textwidth]{images/patience.jpg}
-\end{center}
-
-If the problem is that too many requests are happening in a short period of time, maybe our best solution is to distribute the requests over more time.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Patience}
-When there is a more demand for something than capacity, what do we do?
-
-\begin{center}
-  \includegraphics[width=0.7\textwidth]{images/lineup.jpg}
-\end{center}
-
-Simply controlling the rate at which requests leave the queue is sufficient to ensure that the rate limit is not exceeded. 
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Rust Crates}
-
-Unsurprisingly, multiple Rust crates do what we want. 
-
-Below are some examples from the documentation of the \texttt{ratelimit} crate.
-
-This is not especially fancy, but is sufficient for an example.
-
-\end{frame}
 
 \begin{frame}[fragile]
-\frametitle{Rust Rate Limit}
-\begin{lstlisting}[language=Rust]
-use ratelimit::Ratelimiter;
-use std::time::Duration;
+\frametitle{Build Fences in the Right Place}
 
-// Constructs a ratelimiter that generates 1 tokens/s with no burst. This
-// can be used to produce a steady rate of requests. The ratelimiter starts
-// with no tokens available, which means across application restarts, we
-// cannot exceed the configured ratelimit.
-let ratelimiter = Ratelimiter::builder(1, Duration::from_secs(1))
-    .build()
-    .unwrap();
+Consider the example again:
+  \begin{lstlisting}[language=C]
+                         f = 0
 
-// Another use case might be admission control, where we start with some
-// initial budget and replenish it periodically. In this example, our
-// ratelimiter allows 1000 tokens/hour. For every hour long sliding window,
-// no more than 1000 tokens can be acquired. But all tokens can be used in
-// a single burst. Additional calls to `try_wait()` will return an error
-// until the next token addition.
-//
-// This is popular approach with public API ratelimits.
-let ratelimiter = Ratelimiter::builder(1000, Duration::from_secs(3600))
-    .max_tokens(1000)
-    .initial_available(1000)
-    .build()
-    .unwrap();
-\end{lstlisting}
+/* thread 1 */                     /* thread 2 */
+while (f == 0) /* spin */;         x = 42;
+// memory fence                    // memory fence
+printf("%d", x);                   f = 1;
+  \end{lstlisting}
+This now prevents reordering, and we get the expected result.
+
+Memory fences are costly in performance.
 
 \end{frame}
 
+
+\begin{frame}
+\frametitle{Here Be Dragons}
+The \CPP~standard includes a few other orderings that don't appear in this section because they aren't in Rust. 
+
+But we'll cover Acquire-Release and Relaxed briefly. 
+
+Neither comes with a recommendation to use it, but if you can prove that your use of it is correct, then you can do it. 
+
+It may give a slight performance edge.
+
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Acquire and Release}
+
+Acquire and Release make a good team! 
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/acqrel.jpg}
+\end{center}
+
+By placing acquire at the start of a section and release after, anything in there is ``trapped'' and can't get out.
+
+That makes them the perfect combination for a critical section.
+
+\end{frame}
+
+
 \begin{frame}[fragile]
-\frametitle{Rust Rate Limit}
+\frametitle{Acquire/Release Spinlock}
+
 \begin{lstlisting}[language=Rust]
-// For very high rates, we should avoid using too short of an interval due
-// to limits of system clock resolution. Instead, it's better to allow some
-// burst and add multiple tokens per interval. The resulting ratelimiter
-// here generates 50 million tokens/s and allows no more than 50 tokens to
-// be acquired in any 1 microsecond long window.
-let ratelimiter = Ratelimiter::builder(50, Duration::from_micros(1))
-    .max_tokens(50)
-    .build()
-    .unwrap();
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 
-// constructs a ratelimiter that generates 100 tokens/s with no burst
-let ratelimiter = Ratelimiter::builder(1, Duration::from_millis(10))
-    .build()
-    .unwrap();
+fn main() {
+    let lock = Arc::new(AtomicBool::new(false));
+         // value answers "am I locked?"
 
-for _ in 0..10 {
-    // a simple sleep-wait
-    if let Err(sleep) = ratelimiter.try_wait() {
-           std::thread::sleep(sleep);
-           continue;
-    }
-    // do some ratelimited action here    
+    // ... distribute lock to threads somehow ...
+
+    // Try to acquire the lock by setting it to true
+    while lock.compare_and_swap(false, true, Ordering::Acquire) { }
+    // broke out of the loop, so we successfully acquired the lock!
+
+    // ... scary data accesses ...
+
+    // ok we're done, release the lock
+    lock.store(false, Ordering::Release);
 }
 \end{lstlisting}
+
+
 \end{frame}
+
 
 \begin{frame}
-\frametitle{Users Are Impatient}
+\frametitle{Relaxed?}
 
-Enqueueing a request is not always suitable if the user is sitting at the screen and awaiting a response to their request.
+Relaxed really does mean the compiler will take it easy, and all reorderings are possible.
 
-It takes a synchronous flow and makes it asynchronous.
-
-Rearchitecting it can be a long-term goal, or just something we do with requests that don't have to be synchronous to make room.
+Example: a counter that simply adds; and you aren't using the counter to synchronize any action.
 
 \end{frame}
+
 
 \begin{frame}
-\frametitle{Schedule Later}
+\frametitle{Matter, Order Does}
 
-For requests that are not urgent, then another option is to schedule the requests for a not-busy time.
-(Conversely, CPUs have burst mode, which makes them go faster when busy).
+There have been a few reminders to use sequential consistency because atomics are hard to reason about and it's easy to get it wrong.
 
-\begin{center}
-  \includegraphics[width=0.7\textwidth]{images/popular-times.png}
-\end{center}
+Consider an inconsistent state in a lock-free-queue structure...
 
-Overnight might be a great time to do things that count against the limit.
+We can actually look at the fix applied in the code.
 
 \end{frame}
-
-\begin{frame}
-\frametitle{Billing Examples}
-
-Imagine that you have a billing system where the monthly invoicing procedure uses the majority of the rate limit. 
-
-If that happens during the day, then there's no capacity for adding new customers, updating them, paying invoices, etc. 
-
-The solution then is to run the invoicing procedure overnight instead.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Billing Examples}
-
-Maybe you can even convince management to make it so not all users are billed on the first of the month, but that might require some charisma.
-
-
-Which leads us to the next idea\ldots
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Roll Persuasion}
-
-Convince the other side to raise the limit?
-
-\begin{center}
-  \includegraphics[width=0.4\textwidth]{images/certainly-try.jpg}
-\end{center}
-
-Sometimes it's negotiated, sometimes you need to pay more money, sometimes it's just not possible.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{It Happened Anyway}
-
-We might still encounter the occasional rate limit. 
-
-That's not a disaster, as long as we handle it the right way. 
-
-The right way is not try harder or try more; if we are being rate limited, then we need to try again later. But how much later?
-
-\end{frame}
-
-\begin{frame}
-\frametitle{The Answer is Right There}
-
-Sometimes the answer for how long to wait is in the API response.
-
-\begin{center}
-  \includegraphics[width=0.4\textwidth]{images/khaby.png}
-\end{center}
-
-... if we read it.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Exponential Backoff}
-
-
-\begin{center}
-	\includegraphics[width=0.7\textwidth]{images/reverse.png}
-\end{center}
-
-Resources might not be available right now; retry later?
-
-It's unhelpful to have a tight loop that simply retries as fast as possible. 
-
-Wait a little bit and try again; if the error occurs, next time wait a little longer.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Press F5 Until the Website Loads!}
-
-Repeatedly retrying doesn't help. 
-
-If it's down for maintenance, it could be quite a while before it's back.
-
-Or, if the resource is overloaded right now, the reaction of requesting it more will make it even more overloaded and makes the problem worse! 
-
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Jitter}
-
-
-The exponential backoff with jitter strategy is good for a scenario where you have lots of independent clients accessing the same resource.
-
-If you have one client, maybe you want something like TCP congestion control.
-
-\end{frame}
-
-
-
 
 
 \end{document}

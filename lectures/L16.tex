@@ -2,323 +2,150 @@
 
 \begin{document}
 
-\lecture{16 --- Mostly Data Parallelism}{\term}{Patrick Lam}
+\lecture{15 --- Rate Limits }{\term}{Jeff Zarnett}
+
+\section*{It's Not Me, It's You}
+
+Sometimes the limiting factor in our application is something that's not under our control. Whenever your application connects to some other application (whether external or not), we may run up against a rate limit.
+
+A \emph{rate limit} represents the maximum rate at which a requester can make requests of the service---it is exactly what it sounds like. In other words, how many requests can be submitted in a given unit of time? Requests above the limit are rejected. If we are making HTTP requests, we are supposed to get a response code of 429 for a request rejected due to a rate limit.
+
+Rate limits can be more complicated than just a simple measurement of requests per unit time. For example, there can be multiple thresholds (e.g., A requests per hour or B requests per day), and it may be segmented by request type/responses (e.g., max C requests to change your user data per day, and a max of D requests of any type per day in total). Responses can be more complicated than just rejection also---the service could intentionally delay or deprioritize requests that exceed a threshold---but for our discussion we'll just stick with simple rejection.
+
+Rejected requests can be a huge problem for your application or service. An obvious example here is something like ChatGPT: if you're using that as a service in your application and you run up against the rate limit for that, some aspect of your application (maybe the critical one?) is unavailable or not working as well as expected. I [JZ] have even got a fun story about getting rate limited by a payment processing platform because they would (1) generate an invoice and notify a service via a webhook, (2) our service would then validate the webhook notification is valid by calling the platform, and (3) our service would then get rate limit errors saying it is calling the validation endpoint too often in a short period of time. Wait, they're calling us and we're just checking that the call is valid---but unfortunately, they don't care, HTTP 429---Too Many Requests! 
+
+\paragraph{Why is this happening to me?} Rate limits exist because every request has a certain cost associated with it. It takes work, however small or large this might be, to respond to the request. The cost may or may not be measured in a currency---if you are paying for CPU time at a cloud provider, then it literally is measured in monetary units---but it can also be measured in opportunity cost. What do I mean? If the system is busy, responding to one request may mean a delay in responding to other requests. If some of those requests are fraudulent or otherwise invalid, it's taking away time or resources from other, legitimate requests. If the system is overprovisioned, rate limits aren't necessary, but here we're talking about systems that are running closer to the edge.
+
+Denial-of-Service (DoS) attacks are ways that attackers can negatively impact the functioning of a service by simply sending in many invalid requests. The regular DoS attack becomes a Distributed Denial of Service (DDoS) attack when the attacker sends in those requests from numerous clients. This not only allows the attacker much more capacity to send in requests, but also prevents simple solutions like blocking the IP of the offending system. Given enough invalid requests, it can overwhelm the service, which will either cause it to crash, exhaust its resources (e.g., network handles), or be so slow as to be unusable.
+
+An example of a rate limit that I [PL] encountered was in using a system that allowed Ontarians to write letters to the Minister of the Environment about allowing rock climbing in provincial parks. We were encouraging people at climbing gyms to send letters (well, emails), but then the climbing gym IP address got rate limited because people were sending letters from the gym's wifi. We never did get a satisfactory resolution from the letter writing service. (I'd claim this is also an example of knowing the local context: we think that Canadians have lower data limits\footnote{It seems like the federal government has recently fixed this! But it was true at time of writing.} than Americans, and thus more likely to be on public wifi rather than just sending from their own connections; the letter writing service didn't consider that local context.)
+
+In another illustration of how requests can take up resources, we can also consider a proposed, and later retracted, approach that the Unity engine wanted to take in 2023~\cite{unity}. Unity makes a game engine that people use to make fun games. The company's licensing model didn't really take into account the Live-Service kind of game (think Fortnite or Diablo 4 or similar) where the game is ``free to play'' but the company that makes it gets the money though selling cosmetic items, power boosts, or just generally preying on people with gambling addictions (via lootboxes which are legally considered gambling in some countries). Unity doesn't get a cut of that, so they wanted money and they wanted to charge per installation. It sounds reasonable, but of course people immediately realized that if you don't like the company who made a game, you could bankrupt them by just repeatedly installing and uninstalling the game. Even if it's only one cent at a time, automate it and do this enough times and you are a major line item on the balance sheet. Unity walked it back and said they want it to be first-install but per device, but a clever enough person would have no trouble making each install seem like it's a different machine (just lie to the application about hardware IDs or something). Suffice it to say, game developers using the engine revolted and some of them decided they might like to switch to a different engine. So if every request to your service is costing you, there's got to be a way to control that cost.
 
 
-\section*{Data and Task Parallelism}
-There are two broad categories of paralellism: data parallelism and
-task parallelism. An analogy to data parallelism is hiring a call
-center to (incompetently) handle large volumes of support calls,
-\emph{all in the same way}. Assembly lines are an analogy to task
-parallelism: each worker does a \emph{different} thing.
+Even if it's not about preventing a DoS attack or monetary costs, rate limits also prevent someone from scraping all your data. This really happened in early 2021 to the openly-political social media site ``Parler''. I would certainly forgive you for not being familiar with the site since it was only popular amongst conservative Americans and mostly in the year 2020 before all major companies refused to do business with them. But in any case, according to~\cite{parler} it was trivially easy for people to download all the content from the site because of two very bad decisions. The first was that all posts had sequential identifiers, so it is trivial to just enumerate all posts (don't do this!). The second is that there was no rate limiting so a single person could then get all the data with a simple script. Okay, you might not be so worried about URLs being completely predictable because that is a very silly thing to implement. Still, it is concerning if others can scrape all your content for their own benefit at your cost, even if it's intended as non-malicious training some machine learning model. 
 
-More precisely, in data parallelism, multiple threads perform the
-\emph{same} operation on separate data items. For instance, you have a
-big array and want to double all of the elements. Assign part of the
-array to each thread. Each thread does the same thing: double array
-elements.
+The reference to training the machine learning model is an oblique reference to ChatGPT and how it got its data set. Yes, OpenAI did scan the internet to train ChatGPT, although probably not as invasively as how people were pulling the data out of Parler. We can discuss whether it's fair or reasonable for OpenAI to request large amounts of data from others (getting each site to serve up their data at their own execution costs) for OpenAI to then monetize in their model, but that's for another course. Ethics around AI is a big topic indeed---one that you will likely have to wrestle with in your careers.
 
-In task parallelism, multiple threads perform \emph{different}
-operations on separate data items. So you might have a thread that
-renders frames and a thread that compresses frames and combines them
-into a single movie file.
 
-%We'll continue by looking at a number of parallelization patterns,
-%examples of how to apply them, and situations where they might apply.
+\subsection*{Dealing With Limits}
 
-\subsection*{You're not using those bytes, are you?}
-So as a first idea we might think of saving some space by considering the range of, for example, an integer. An \texttt{i32} is 4 bytes. (In C, \texttt{int} is usually 4, though only guaranteed to be at least 2). If we have an integer array of capacity $N$ that uses $N \times 4$ bytes and if we want to do something like increment each element, we iterate over the array and increment it, which is a read of 4 and write of 4. Now, if we could live with limiting our maximum value from 2,147,483,647 (signed, or 4,294,967,295 unsigned) to 32,767  (signed, or 65,535 unsigned), we could reduce in half the amount of space needed for this array and make operations like incrementing take half as much time!
+%It's possible that some other system that you rely on does not have a rate limit (that sounds like an oversight).
+OK, let's assume that some system you're dealing with has a rate limit, and that we need to address this limitation if we want to increase the performance of the code that is under our control. If the rate limit is super high as compared to our usage of it (e.g., you can do 1000 requests per hour and you are sending 10) then there's no problem right now, but maybe there will be in the future. Probably that is a problem best handled by Future You. Hitting the rate limit regularly, however, is not only frustrating for normal workflows we're trying to run, but could also get us banned as a customer, if it happens too often. 
 
-Aside from the obvious tradeoff of limiting the maximum value, the other hidden cost is that of course things that were simple like \texttt{array[i] += 1} is more complicated. What do we do now?
+If we start seeing requests rejected with an error that says the rate limit is exceeded, then we are certain it's a problem. It's not always obvious what the limit is, though.
 
-Instead of \texttt{+=1} we need to calculate the new number to add. The interesting part is about how to represent the upper portion of the number. For just adding 1 it might be simple, and we can manually break out our calculators or draw a bit vector or think in hexadecimal about how to convert a number if it's more difficult. But you wouldn't---you would probably just use bit shift to calculate it. But one must be careful with that as well: the bit shift does sign extension which sometimes you don't want (or does unexpected things), and if we have to bit shift on every iteration of the loop, it's not clear that this is better than two assignment statements\ldots
+In some scenarios, the documentation tells you the limit, or perhaps there's an API to query it, or API responses for other requests include information about the remaining capacity available to you. 
 
-Maybe you think this example is silly because of Rust's \texttt{i8}/C's \texttt{short} types. Which you could certainly use to reduce the size of the array. But then modifying each \texttt{short} in a different instruction defeats the purpose.
+Sometimes, though, the other service does not publish or give information about the rate limit, fearing that it might be exploited or encourage bad behaviour, or because they don't want to commit to anything. Atlassian (they make JIRA, if you're familiar with that) says ``REST API rate limits are not published because the computation logic is evolving continuously to maximize reliability and performance for customers'' which feels a little bit like they don't want to commit to specific numbers because then someone might be mad if those numbers aren't met. There is an argument that it does allow more freedom to change the API if there's no commitment to a specific rate. (Unpublished rate limits were in place for the letter-writing campaign service). Testing for the limit (spam until we get rejections) might work, but it might also get you banned and, given the above, may give you a number that quickly becomes out of date.
 
-Aha! We can also take it a step farther: if it's a 64-bit processor there's no reason why you couldn't modify 8 bytes in a single instruction. The principle is the same, even if the math is a little more complex.
 
-What we've got here is a poor person's version of Single Instruction Multiple Data (SIMD) (in NZ-speak, using No. 8 wire to implement SIMD), because we have to do our own math in advance and/or do a lot of bit shifting every time we want to use a value\ldots This is a pain. Fortunately, we don't have to\ldots
+This section would be short indeed if the answer is to shrug our shoulders and say there's nothing we can do. Of course there is! And yet, when I [JZ] was conducting a system design interview for a candidate in 2022, I presented with a scenario with a rate limit. I got the answer that there was nothing that we could do to solve it. That's defeatist and false, as evidenced by the remainder of this section. As you may imagine, we did not make an offer to that candidate. One or more of the things below would have been a much better answer.
 
-\subsection*{Data Parallelism with SIMD}
-The ``typical'' boring standard uniprocessor is Single Instruction Single Data (SISD) but since the mid-1980s we've had more options than that. We'll talk about single-instruction multiple-data (SIMD) later on in
-this course, but here's a quick look. Each SIMD
-instruction operates on an entire vector of data. These instructions
-originated with supercomputers in the 70s. More recently, GPUs; the
-x86 SSE instructions; the SPARC VIS instructions; and the
-Power/PowerPC AltiVec instructions all implement SIMD.
 
-% #updateAfterCOVID
-SIMD provides an advantage by using a single control unit to command multiple processing units and therefore the amount of overhead in the instruction stream. This is something that we do quite frequently in the everyday: if I asked someone to erase the board\footnote{Classrooms. How 2019.}, it's more efficient if I say ``erase these segments of the board'' (and clearly indicate which segments) than if I say ``erase this one'' and when that's done, then say ``erase that one''\ldots and so on. So we can probably get some performance benefit out of this!
 
-There is the downside, though, that because there's only the one control unit, all the processing units are told to do the same thing. That might not be what you want, so SIMD is not something we can use in every situation. There are also diminishing returns: the more processing units you have, the less likely it is that you can use all of that power effectively (because it will be less likely to have enough identical operations)~\cite{sse}.
+\paragraph{Do Less Work.}
+Not the first time you've heard this answer! Clearly we endorse doing less work. The first strategy we can imagine is that we should simply reduce the number of our API calls. If the service is pay-per-request, then this also has the benefit of saving money. While I do not imagine that you are intentionally calling the service more than you need, it's possible that there are some redundant calls you could discover through a review. If that's the case, just eliminate them, avoid the rate limit, and reduce latency in your application by avoiding network calls. As said, though, this is likely to be limited in benefit since there's only so much redundancy you are likely to find. Unless we find that a significant number of calls are redundant, we almost certainly need one of the other solutions in this section. 
 
-\paragraph{Compilation.} Let's look at an example of SIMD instructions when they are compiled.
+\paragraph{Caching.}
+An easy way to reduce the number of calls to a remote system is to remember the answers that we've previously received. Again, we've covered caching on more than one occasion in the past, so we do not need to discuss the concept, just where it is applicable and the limitations. The simplest caching strategy would just be used for requests for data and not updates, but we've learned previously about write-through and write-back caches to handle updates. It's possible to make the caching invisible from the point of view of the calling system with something like Redis---a cache that sits outside of the service and can handle requests/responses. 
 
-By default your compiler will assume a particular target architecture; which one exactly is dependent on what the Rust team decided some time in the past. Choosing a too-new architecture will cause your code to fail on older machines. The choice of architecture can be overridden in your compile-time options with the \texttt{target} parameter. Let's look at some SSE code to add two slices and put the result in a third slice:
+If we do not control the remote system, it may be more difficult to identify when a particular piece of data has changed and a fresh response is needed rather than the cached one. Domain-specific knowledge is helpful here, like with exchange rates. Exchange rates are a price, to some extent: if I'm going to Frankfurt then I need to buy some Euro with my Canadian Dollars. So to buy 100 Euro, the purchase price for me might be \$143. Exchange rates vary throughout the day, but perhaps if you request a rate, you get a quote that is valid for 20 minutes. If that's the case, you can add the item to the cache with an expiry of 20 minutes and you can use this value during the validity period without needing to query it again. Other items are harder to manage, of course.
 
-\begin{lstlisting}[language=Rust]
-    pub fn foo(a: &[f64], b: &[f64], c: &mut [f64]) {
-        for ((a, b), c) in a.iter().zip(b).zip(c) {
-            *c = *a + *b;
-        }
-    }\end{lstlisting}
 
-%% Compiling this without SIMD on a 32-bit x86 ({\tt --target=i586-unknown-linux-gnu}, decidedly not the default) might give this core loop contents:
-%% \begin{verbatim}
-%%   fld     qword ptr [ecx]
-%%   fld     qword ptr [edx]
-%%   faddp   st(1), st
-%%   fstp    qword ptr [eax]
-%% \end{verbatim}
+\paragraph{Group Up.}
+The next strategy to consider is whether we can group up requests into one larger request. So instead of, say, five separate requests to update each employee, use one request that updates five employees. The remote API has to allow this; if there is no mass-update API then we're stuck doing them one at a time. The benefit of this may also be limited by how users use the application; if they usually only edit one employee at a time then it does not help because there is nothing else to group the request with. Waiting for other requests might be okay if it's a relatively short wait, but the latency increase does become noticeable for users eventually.
 
-We can compile with \texttt{rustc} defaults
-and get something like this as core loop contents:
-\begin{verbatim}
-  movsd   xmm0, qword ptr [rcx]
-  addsd   xmm0, qword ptr [rdx]
-  movsd   qword ptr [rax], xmm0
-\end{verbatim}
-This uses the SSE\footnote{You can also compile without SIMD using \texttt{--target=i586-unknown-linux-gnu} and see the stack-based x87 instructions.} register \texttt{xmm0} and SSE2 instructions \texttt{movsd} and
-\texttt{addsd}; the \texttt{sd} suffix denotes scalar double instructions, applying
-only to the first 64 bits of the 128-bit \texttt{xmm0} register---this is a literal
-translation of the code. If you additionally specify \texttt{-O}, the compiler generates a number of variants, including this middle one:
-\begin{verbatim}
-  movupd  xmm0, xmmword ptr [rdi + 8*rcx]
-  movupd  xmm1, xmmword ptr [rdi + 8*rcx + 16]
-  movupd  xmm2, xmmword ptr [rdx + 8*rcx]
-  addpd   xmm2, xmm0
-  movupd  xmm0, xmmword ptr [rdx + 8*rcx + 16]
-  addpd   xmm0, xmm1
-  movupd  xmmword ptr [r8 + 8*rcx], xmm2
-  movupd  xmmword ptr [r8 + 8*rcx + 16], xmm0
-\end{verbatim}
-The \emph{packed} operations ({\tt p}) operate on multiple data
-elements at a time (what kind of parallelism is this?)  The
-implication is that the loop only needs to loop half as many times.
-The compiler includes more variants, not shown, to handle cases where
-there are odd numbers of elements in the slices.
+We aren't limited to only grouping related requests. The remote API may let us combine unrelated requests. If that's the case, then we can keep a buffer of requests. When we have enough requests ready to go, we can just send them out together. A typical REST-like API does not necessarily give you the ability to do this sort of thing.    And again, it also requires something else to group a given request with; if there's nothing else going on, then how long are we willing to wait?
 
-So this is a piece of good news, for once: there's automatic use of the SSE instructions if your compiler knows the target machine architecture supports them. However, we can also explicitly invoke these instructions, or use libraries\footnote{A discussion of libraries available as of May 2020: \url{https://www.mdeditor.tw/pl/pdnr}; your choices are \texttt{packed\_simd} (nightly Rust only), \texttt{faster} (unmaintained), or \texttt{simdeez} (must use unsafe Rust).}, although we won't do that much. Instead, we'll learn more about how they work and then do some measurement as to whether they really do.
+Grouping requests also overlaps with caching if you choose a write-back style cache or another strategy that allows multiple modifications before the eventual call to update the remote system. 
 
-SIMD is different from the other types of parallelization we're
-looking at, since there aren't multiple threads working at once.
-It is complementary to using threads, and good for cases
-where loops operate over vectors of data. These loops could also be
-parallelized; multicore chips can do both, achieving high throughput.
-SIMD instructions also work well on small data sets, where thread startup
-cost is too high, while registers are just there.
+Grouping requests may also make it hard to handle what happens if there's a problem with one of the elements in it. If we asked to update five employees and one of the requests is invalid, is the whole group rejected or just the one employee update? (Is it a transaction?) It also makes it more likely that such an error occurs, since the logic to build a larger request is almost certainly significantly more complex than the logic to build a small request. Similarly, the logic to unpack and interpret a larger response is more complex and more prone to bugs. Misunderstanding a response can easily cause inconsistent data or repeated requests.
 
-In~\cite{lemire18:_multic_simd}, Daniel Lemire argues that vector
-instructions are, in general, a more efficient way to parallelize code
-than threads. That is, when applicable, they use less overall CPU
-resources (cores and power) and run faster.
+These strategies, as with a lot of programming for performance, involve adding implementation complexity in exchange for improved performance. Don't use them when not needed! Simpler implementations are easier to maintain.
 
-%% Data alignment, however, can be an issue with SIMD. According to~\cite{sse}: ``Data must be 16-byte aligned when loading to and storing from the 128-bit XMM registers used by SSE/SSE2/SSE3/SSSE3. This must be done to avoid severe performance penalties.''. That's a pretty harsh restriction. SSE4.2 lifts it, and was released in 2008, so you're almost surely good now.
 
-%But in any case,
-Rust will generally align primitives to their sizes. On some architectures, this may have performance implications (ARM Cortex), but perhaps not on x86 since you were in elementary school. Under the default representation, Rust promises nothing else about alignment. You can use the \texttt{repr(packed(N)} or \texttt{repr(align(N)} directives to express constraints on alignment, and you can specify the C representation, which allows you more control over data layout.
+\paragraph{Patience.}
+If the problem is that too many requests are happening in a short period of time, maybe our best solution is to distribute the requests over more time. Assuming time travel hasn't been invented yet and we aren't travelling at relativistic speeds or anything weird like that, the only way for there to be more time is to simply wait. This ultimately means delaying requests to stay under the rate limit. That sounds like the opposite of what we want when we want to go faster, but if we get rate-limit responses the requests are not getting serviced, so we could say that delayed is better than denied.
 
-%% This is not all quite true for Rust.
-%% If you've heard me talk about the dangers of unaligned data before, I usually give you something that looks like this as an example.
-%% \begin{lstlisting}[language=Rust]
-%% #[repr(C)]
-%% struct Position {
-%%   marked: bool,
-%%   w: i32,
-%%   x: i32,
-%%   y: i32,
-%%   z: i32
-%% }
-%% \end{lstlisting}
-%% First of all, if you use the default representation (i.e. omit \texttt{repr}), then Rust makes no guarantees about the representation except for meeting any \texttt{align} or \texttt{packed} modifiers.
+Outside of the computer context, when there is a more demand for something than capacity, what do we do? That's right, we queue (line up) for it. Here, this means that requests should be added to a queue and a request gets processed when it gets to the front of the queue. Simply controlling the rate at which requests leave the queue is sufficient to ensure that the rate limit is not exceeded. If all requests go through this queue, then it is also a central place to adjust the rate of outgoing requests if the limit changes. 
 
-%% Now, if you use the \texttt{C} representation, Rust publishes an algorithm for determining the layout, again respecting modifiers. This algorithm potentially results in the integer values being unaligned if the boolean type is of size 1. You might be in trouble even if you deleted that boolean type out of the structure because your \texttt{w} parameter might not be 16-byte aligned even if it's 4-byte aligned.
-%% %% Rust aligns primitives to their sizes, except for \texttt{u64} and \texttt{f64} on x86, which are only aligned to 4 bytes. However, you can also specify a \texttt{repr} of \texttt{C, packed(N)} or \texttt{C, align(N)} to align to N bytes.
-
-%% Alignment headaches can be reduced by using the SSE specific types (and there are some) as the compiler will automatically see to it that the memory is allocated in accordance with this requirement. But then we're sort of back to packing our larger types ourselves, or at least writing them as a smaller type array and telling the compiler to pretend it's now a 128-bit type.
-
-\paragraph{Worked Example.} So let's say that you actually wanted to try it out. Let's consider a \texttt{simdeez} example, which I've put in the repo's live coding subdir under \texttt{lectures/live-coding/L16}.
+Unsurprisingly, multiple Rust crates do what we want. Below are some examples from the documentation of the \texttt{ratelimit} crate\footnote{\url{https://docs.rs/ratelimit/latest/ratelimit/}} version 0.7.1. This is not especially fancy and we could certainly have considered other ones, but it's sufficient for our purposes. The documentation examples cover some implementation details worth talking about. But onward.
 
 \begin{lstlisting}[language=Rust]
-    use simdeez::*;
-    use simdeez::scalar::*;
-    use simdeez::sse2::*;
-    use simdeez::sse41::*;
-    use simdeez::avx2::*;
+use ratelimit::Ratelimiter;
+use std::time::Duration;
 
-    simd_runtime_generate!(
-    // assumes that the input sizes are evenly divisible by VF32_WIDTH
-    pub fn add(a:&[f32], b: &[f32]) -> Vec<f32> {
-      let len = a.len();
-      let mut result: Vec<f32> = Vec::with_capacity(len);
-      result.set_len(len);
-      for i in (0..len).step_by(S::VF32_WIDTH) {
-        let a0 = S::loadu_ps(&a[i]);
-        let b0 = S::loadu_ps(&b[i]);
-        S::storeu_ps(&mut result[0], S::add_ps(a0, b0));
-      }
-      result
-    });
+// Constructs a ratelimiter that generates 1 tokens/s with no burst. This
+// can be used to produce a steady rate of requests. The ratelimiter starts
+// with no tokens available, which means across application restarts, we
+// cannot exceed the configured ratelimit.
+let ratelimiter = Ratelimiter::builder(1, Duration::from_secs(1))
+    .build()
+    .unwrap();
 
-    fn main() {
-      let a : [f32; 4] = [1.0, 2.0, 3.0, 4.0];
-      let b : [f32; 4] = [5.0, 6.0, 7.0, 8.0];
+// Another use case might be admission control, where we start with some
+// initial budget and replenish it periodically. In this example, our
+// ratelimiter allows 1000 tokens/hour. For every hour long sliding window,
+// no more than 1000 tokens can be acquired. But all tokens can be used in
+// a single burst. Additional calls to `try_wait()` will return an error
+// until the next token addition.
+//
+// This is popular approach with public API ratelimits.
+let ratelimiter = Ratelimiter::builder(1000, Duration::from_secs(3600))
+    .max_tokens(1000)
+    .initial_available(1000)
+    .build()
+    .unwrap();
 
-      unsafe {
-        println!("{:?}", add_sse2(&a, &b))
-      }
+// For very high rates, we should avoid using too short of an interval due
+// to limits of system clock resolution. Instead, it's better to allow some
+// burst and add multiple tokens per interval. The resulting ratelimiter
+// here generates 50 million tokens/s and allows no more than 50 tokens to
+// be acquired in any 1 microsecond long window.
+let ratelimiter = Ratelimiter::builder(50, Duration::from_micros(1))
+    .max_tokens(50)
+    .build()
+    .unwrap();
+
+// constructs a ratelimiter that generates 100 tokens/s with no burst
+let ratelimiter = Ratelimiter::builder(1, Duration::from_millis(10))
+    .build()
+    .unwrap();
+
+for _ in 0..10 {
+    // a simple sleep-wait
+    if let Err(sleep) = ratelimiter.try_wait() {
+           std::thread::sleep(sleep);
+           continue;
     }
-\end{lstlisting}
-What this does is generate an \texttt{add\_*} function for each of \texttt{scalar},
-\texttt{sse2}, \texttt{sse41}, and \texttt{avx}. Then \texttt{main}
-unsafely calls \texttt{add\_sse2} with two length-4 arrays of \texttt{f32}s and
-gets a \texttt{Vec<f32>} back.
-
-\texttt{simdeez} is a fairly lightweight wrapper around SIMD instructions and just
-calls the \texttt{loadu\_ps} and \texttt{storeu\_ps} calls to load and store
-packed single-precision numbers, and \texttt{add\_ps} to add them. Operator overloading
-works too.
-
-\newpage
-\section*{Case Study on SIMD: Stream VByte }
-
-\hfill ``Can you run faster just by trying harder?''
-
-The performance improvements we've seen to date have been leveraging parallelism
-to improve throughput. Decreasing latency is trickier---it often requires domain-specific
-tweaks.
-
-Sometimes it's classic computer science: Quantum Flow found a place
-where they could cache the last element of a list to reduce time
-complexity for insertion from $O(n^2)$ to $O(n \log n)$.
-
-\begin{center}
-\url{https://bugzilla.mozilla.org/show_bug.cgi?id=1350770}
-\end{center}
-
-We'll also look at a more involved example of decreasing latency today, Stream VByte~\cite{LEMIRE20181}, and briefly at parts of its \CPP~implementation.
-Even this example leverages parallelism---it uses vector instructions. But there
-are some sequential improvements, e.g. Stream VByte takes care to be predictable
-for the branch predictor.
-
-\paragraph{Context.} We can abstract the problem to that of storing a sequence of small integers.
-Such sequences are important, for instance, in the context of inverted indexes, which allow
-fast lookups by term, and support boolean queries which combine terms.
-
-Here is a list of documents and some terms that they contain:
-\begin{center}
-\begin{tabular}{r|l}
-docid & terms \\ \hline
-1 & dog, cat, cow\\
-2 & cat\\
-3 & dog, goat\\
-4 & cow, cat, goat\\
-\end{tabular}
-\end{center}
-
-The inverted index looks like this:
-\begin{center}
-\begin{tabular}{r|l}
-term & docs \\ \hline
-dog & 1, 3 \\
-cat & 1, 2, 4 \\
-cow & 1, 4 \\
-goat & 3, 4
-\end{tabular}
-\end{center}
-
-Inverted indexes contain many small integers in their lists: it is
-sufficient to store the delta between a doc id and its successor, and
-the deltas are typically small if the list of doc ids is sorted.
-(Going from deltas to original integers takes time logarithmic
-in the number of integers).
-
-VByte is one of a number of schemes that use a variable number of
-bytes to store integers.  This makes sense when most integers are
-small, and especially on today's 64-bit processors.
-
-VByte works like this:
-\vspace*{-1em}
-\begin{itemize}[noitemsep]
-\item $x$ between 0 and $2^7-1$, e.g. $17 = 0b10001$: $0xxx xxxx$, e.g. $0001 0001$;
-\item $x$ between $2^7$ and $2^{14}-1$, e.g. $1729 = 0b110 11000001$:
-                   $1xxx xxxx/0xxx xxxx$, e.g. $1100 0001/0000 1101$;
-\item $x$ between $2^{14}$ and $2^{21}-1$: $1xxx xxxx/1xxx xxxx/0xxx xxxx$;
-\item etc.
-\end{itemize}
-That is, the control bit, or high-order bit, is 0 if you have finished representing the integer,
-and 1 if more bits remain. (UTF-8 encodes the length, from 1 to 4, in high-order bits of the first byte.)
-
-It might seem that dealing with variable-byte integers might be
-harder than dealing fixed-byte integers, and it is. But there are performance benefits: because we are
-using fewer bits, we can fit more information into our limited RAM and
-cache, and even get higher throughput. Storing and reading 0s isn't an effective
-use of resources. However, a naive algorithm to decode VByte also gives
-lots of branch mispredictions.
-
-Stream VByte is a variant of VByte which works using SIMD instructions.
-Science is incremental, and Stream VByte builds on earlier work---masked VByte
-as well as {\sc varint}-GB and {\sc varint}-G8IU. The innovation in
-Stream VByte is to store the control and data streams separately.
-
-Stream VByte's control stream uses two bits per integer to represent the size of the integer:
-\begin{center}
-\vspace*{-1em}
-\begin{tabular}{ll@{~~~~~~~~}ll}
-00 & 1 byte & 10 & 3 bytes\\
-01 & 2 bytes & 11 & 4 bytes
-\end{tabular}
-\end{center}
-
-Each decode iteration reads a byte from the control stream and 16 bytes of data from memory.
-It uses a lookup table over the possible values of the control stream to decide how many
-bytes it needs out of the 16 bytes it has read, and then uses SIMD instructions to shuffle
-the bits each into their own integers. Note that, unlike VByte, Stream VByte uses all 8 bits
-of each data byte as data.
-
-For instance, if the control stream contains $0b1000~1100$, then the data stream
-contains the following sequence of integer sizes: $3, 1, 4, 1$. Out of the 16 bytes read,
-this iteration will use 9 bytes; it advances the data pointer by 9. It then uses the SIMD
-``shuffle'' instruction to put the decoded integers from the data stream at known positions in the
-128-bit SIMD register; in this case, it pads the first 3-byte integer with 1 byte, then
-the next 1-byte integer with 3 bytes, etc. Let's say that the input is
-{\tt 0xf823~e127~2524~9748~1b..~....~....~....}. The 128-bit output is
-{\tt 0x00f8~23e1/0000~0027/2524 9748/0000~001b}, with the /s denoting separation
-between outputs. The shuffle mask is precomputed and, at
-execution time, read from an array.
-
-The core of the (\CPP) implementation uses three SIMD instructions (also available in \texttt{simdeez}):
-\begin{lstlisting}[language=C]
-  uint8_t C = lengthTable[control];
-  __m128i Data = _mm_loadu_si128 ((__m128i *) databytes);
-  __m128i Shuf = _mm_loadu_si128(shuffleTable[control]);
-  Data = _mm_shuffle_epi8(Data, Shuf);
-  databytes += C; control++;
+    // do some ratelimited action here    
+}
 \end{lstlisting}
 
-\paragraph{Discussion.} The paper~\cite{LEMIRE20181} includes a number of benchmark results
-showing how Stream VByte performs better than previous techniques on a realistic input.
-Let's discuss how it achieves this performance.
+Enqueueing a request is not always suitable if the user is sitting at the screen and awaiting a response to their request, because it takes a synchronous flow and makes it asynchronous. Rearchitecting the workflows of a user-interactive application may be a larger undertaking than we're willing to do right now in this topic, but it could be a long-term goal for reducing pressure on systems. And even if we can't move all requests to asynchronous, every request that we do make asynchronous takes the pressure off for the ones that need to be synchronous.
 
-\begin{itemize}[noitemsep]
-\item control bytes are sequential: the processor can always prefetch the next control byte, because
-its location is predictable;
-\item data bytes are sequential and loaded at high throughput;
-\item shuffling exploits the instruction set so that it takes 1 cycle;
-\item control-flow is regular (executing only the tight loop which retrieves/decodes control
-and data; there are no conditional jumps).
-\end{itemize}
-We're exploiting SIMD, so this isn't quite strictly single-threaded performance.
-Considering branch prediction and caching issues, though,
-certainly improves single-threaded performance.
+For requests that are not urgent, then another option is to schedule the requests for a not-busy time. Applications usually have usage patterns that have busier and less-busy times. So if you know that your application is not used very much overnight, that's a great time to do things that count against your rate limit.
 
-\section*{SIMD and Planetary Motion}
+Conversely, CPUs being able to burst their clock speed when they're busy is the opposite of this in some sense. They try to be extra responsive when things are busy, so that the user gets answers more quickly. But the CPU can only keep up the increased tempo for a limited time, until things get too hot.
 
-At the moment, I'm not planning to cover this, but you can read more about SIMD
-in Rust here:
-\begin{center}
-\url{https://medium.com/@Razican/learning-simd-with-rust-by-finding-planets-b85ccfb724c3}
-\end{center}
+Imagine that you have a billing system where the monthly invoicing procedure uses the majority of the rate limit. If that happens during the day, then there's no capacity for adding new customers, updating them, paying invoices, etc. The solution then is to run the invoicing procedure overnight instead. Or maybe you can even convince management to make it so not all users are billed on the first of the month, but that might require some charisma. Which leads us to the next idea\ldots
+
+\paragraph{Roll Persuasion.}
+A final option that you may consider is how to get the other side to raise your limit. Sometimes this just means upgrading to a higher billing tier and you get the higher limit immediately. Sometimes it's something you can simply pay for on top of your existing subscription or agreement. You may also be able to negotiate it with the other side if they're open to that, although you might have to be a sufficiently-important customer to even get in the (Zoom) room for that conversation. Throwing money at the problem can actually work so it's worth considering, but it isn't always a realistic option or is maybe just too expensive. (But don't forget: engineer time is expensive too.)
+
+\subsection*{It Happened Anyway?}
+
+Despite our best efforts to reduce it, we might still encounter the occasional rate limit. That's not a disaster, as long as we handle it the right way. The right way is not try harder or try more; if we are being rate limited, then we need to try again later. But how much later?
+
+It's possible the API provides the answer in the rate-limit response where it says you may try again after a specific period of time. Waiting that long is then the correct thing to do. If we don't know, though, it makes sense to try an exponential backoff strategy. This strategy is to wait a little bit and try again, and if the error occurs, next time wait a little longer than last time (though exponential implies a multiplicative factor longer), and repeat this procedure until it succeeds.
+
+Exponential backoff is also applicable to unsuccessful requests even if it's not due to rate limiting. If the resource is not available, repeatedly retrying doesn't help. If it's down for maintenance, it could be quite a while before it's back and calling the endpoint 10 times every second doesn't make it come back faster and just wastes effort. Or, if the resource is overloaded right now, the reaction of requesting it more will make it even more overloaded and makes the problem worse! And the more failures have occurred, the longer the wait, which gives the service a chance to recover. Eventually, though, you may have to conclude that there's no point in further retries. At that point you can block the thread or return an error, but setting a cap on the maximum retry attempts is reasonable.
+
+Having read a little bit of the source code of the Crossbeam (see Appendix C) implementation of backoff,  they don't seem to have any jitter in the request. Jitter is an improvement on the algorithm, which prevents all threads or callers from retrying at the exact same time. Let me explain with an example: I once wrote a little program that tried synchronizing its threads via the database and had an exponential backoff if the thread in question did not successfully lock the item it wanted. I got a lot of warnings in the log about failing to lock, until I added a little randomness to the delay. It makes sense; if two threads fail at time $X$ and they will both retry at time $X+5$ then they will just fight over the same row. If one thread retries at $X+9$ and another $X+7$, they won't conflict. % Appendix C of what?
+
+The exponential backoff with jitter strategy is good for a scenario where you have lots of independent clients accessing the same resource. If you have one client accessing the resource lots of times, you might want something else; something resembling TCP congestion control. See~\cite{expbackoff} for details. 
+
 
 \input{bibliography.tex}
 

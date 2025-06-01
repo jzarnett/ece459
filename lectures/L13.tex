@@ -2,183 +2,426 @@
 
 \begin{document}
 
-\lecture{13--- Early Termination, Reduced-Resource Computation}{\term}{Jeff Zarnett \& Patrick Lam}
+\lecture{12 --- Dependencies and Speculation }{\term}{Patrick Lam and Jeff Zarnett}
 
-\section*{Trading Accuracy for Time}
+\section*{Dependencies}
+Some computations appear to be ``inherently sequential''. There are plenty of real-life analogies:
 
-Knowing when to quit is wise. In some cases, we can speed up our program by not waiting for the slowest steps to be done. This is somewhat related to speculation, but the big distinction is that in speculation we do extra work ``just in case'' and with early phase termination, we skip doing some work even though we're supposed to do on the basis of ``close enough is good enough''.  There are two basic ideas: the first way is to skip some parts of work and the second is to intentionally reduce accuracy to speed things up. 
+\begin{itemize}
+\item must extract bicycle from garage before closing garage door
+ 
+\item must close washing machine door before starting the cycle
+ 
+\item must be called on before answering questions? (sort of, some people shout out...)
+ 
+\item students must submit assignment before course staff can mark the assignment (also sort of... I can assign you a grade of zero if you didn't submit an assignment!)
+\end{itemize}
 
-You may implement these strategies when you're writing an exam: time is limited and you might choose not to do a certain question because the benefit is small and you can use your time better doing a different question. In which case you might leave question 3.2 blank in favour of working on question 4.1. That's where you skip some work. Alternatively, you could choose to skip error handling in question 4.1, knowing that you will lose some marks in that question but freeing up some more time to do question 3.2. Exams are nice (or nasty) in that we can do both things, but your program might support only one.
+There are some prerequisite steps that need to be taken before a given step can take place. The problem is that we need some result or state from an earlier step before we can go on to the next step. Interestingly, in many of the analogies, sometimes if you fail to respect the dependency, nothing physically stops the next step from taking place, but the outcome might not be what you want (\ldots you don't want zero on your assignment, right?).
 
-\subsection*{Early Phase Termination}
+The same with dependencies in computation. If you need the result of the last step you will have to wait for it to be available before you can go on to the next. And if you jump the gun and try to do it early, you will get the wrong result (if any at all). 
 
-A formal name for the first idea, quitting early, is early phase
-termination~\cite{Rinard:2007:EarlyPhaseTermination}. So, to apply it to a concrete idea: we've talked about barriers quite a bit. Recall that the idea is that
-no thread may proceed past a barrier until all of the threads
-reach the barrier. Waiting for other threads causes delays. 
-Killing slow threads obviously speeds up the program. Well, that's easy.
+Note that, in this lecture, we are going to assume that we don't have data races. This reasoning is not guaranteed to work in the presence of undefined behaviour, which exists when you have data races.
 
-\begin{center}
-``Oh no, that's going to change the meaning of the program!''
-\end{center}
+\paragraph{Main Idea.} A \emph{dependency} prevents parallelization
+when the computation $XY$ produces a different result from the
+computation $YX$. That is to say, there is a correct order for doing these two steps and getting the order wrong means we get the wrong outcome. If you want to bake a cake, you have to mix all the ingredients before you bake them; if you bake all ingredients and then mix them, whatever you get isn't a cake.
 
-Let's consider some arguments about when it may be acceptable to just
-kill (discard) tasks. Since we're not completely crazy, we can develop
-a statistical model of the program behaviour, and make sure that the
-tasks we kill don't introduce unacceptable distortions. Then when we
-run the program, we get an output and a confidence interval.
+Remember, of course, that there are lots of things that don't have dependencies and can be done in arbitrary order (or even concurrently). If your household chores are to vacuum the floor and do the laundry, you get a valid outcome no matter what order you do them in, as long as you do both correctly. The outcome is the same!
 
-If you wanted a game-relevant example, pretend you're really bad at Mario Kart. If you're in last place when the second-last player (or AI) drives across the finish line, the race is over at that point because we already know you finished last (``Oh nooo!''). There's no benefit to waiting while you have to drive the rest of the lap to the finish. In that case, ending the race while one driver has not yet finished is perfectly safe because the outcome is already known: I'm really bad at Mario Kart.
+There are two kinds of dependency that we'll cover and they are \emph{loop-carried} and \emph{memory-carried} dependencies.
 
-\paragraph{Should Have Made A Left Turn At Albuquerque.} 
-Many problems are mathematically hard in nature: to find the optimal solution you have to consider every possibility. Well, what this strategy presupposes is: don't. Imagine the travelling salesperson problem, just for the sake of an example. There are $n$ points to visit and you want to minimize the amount of travel time. The only way to know if a solution is best is to consider every possible route.
-
-One way we can know if we're wasting time is to remember previous outcomes. The solution we're evaluating will have some travel cost in units (maybe kms). If the currently-accumulated cost in kms is larger than the total of the thus-far best solution, give up. To be specific, if we have a route that has 400 km of driving and we are partway through building a solution and we have already got 412 km of driving, we can give up on this option (and not evaluate the rest of it) because we already know it won't be the best.
-
-Another approach is to stop as soon as you have a solution that's reasonable. If our target is to get total travel under 500 km then we can stop searching as soon as we find one that satisfies this constraint. Yes, we might stop at 499 km and the optimal solution might be 400 (25\% more driving for the poor peon)---but it does not have to be perfect; it just has to be acceptable. And if traffic in the hypothetical region is anything like that of the GTA, the route that is shortest in kilometres may not be the shortest in terms of time anyway.
-
-You can also choose to reduce the amount of effort by trying, say, five or ten different possibilities and seeing which of those is the best. There's no guarantee you'll get an optimal solution: you might have randomly chosen the ten worst options you could choose. 
-
-Interesting to think about: what does Google Maps do? For some problems there are relatively few solutions; if you plan to drive in the Yukon territory there are a finite set of roads to travel. But suppose you're driving around Toronto; the grid system means there are lots and lots of options, right? Maybe some heuristic is used to generate some possibilities and the best ones of those are chosen.
-
-
-\paragraph{This Point is Too Hard.} Monte Carlo simulations
-are a good candidate; you're already picking points randomly.
-Raytracers can work as well. Both of these examples could spawn a lot
-of threads and wait for all threads to complete. For mathematical functions that are ``not nice'', different points might take longer to evaluate than others. 
-In either case, you
-can compensate for missing data points, assuming that they look similar to
-the ones that you did compute. If you have a function where some graph is being
-computed, you can probably guess that a missing point is somewhere in between the two (or $n$) nearest points. So just average them.
-
-The same is true for graphics, of course: if rendering a particular pixel did
-not go well for some reason, you can just average the adjacent ones and probably
-people would not notice the difference. Not bad!
-
-In other cases, some threads simply take too long, but we don't need all of them to produce a result. If we are evaluating some protocol where the majority wins, we can stop as soon as sufficient results have been returned; either an outright majority for an option or that the remaining votes couldn't change the outcome. This happens to some extent with election projections: even if not all polling stations are reporting a result, news channels will declare a winner if the remaining votes would not be enough to change the outcome. Actually, news channels probably take it a bit too far in that they will declare a winner even if the outstanding votes exceed the margin, on a theory that it probably won't be the case that they are 100\% for the candidate who is in second place. But they can be wrong.
-
-\paragraph{Slow Road...}
-For some categories of problem, we know not only that a solution will exist, but also how many steps it takes to solve (optimally). Consider the Rubik's Cube---it's much easier to explain if you have seen one. It'll appear in the slides, but if you're just reading the note(book/s) then I suggest you google it\footnote{If you've waited for the exam to read this and you can't google... whoops!}.
-
-This is a problem with a huge number of possible permutations and brute force isn't going to work. However, research has proven that no matter what the state of the cube is, it can be transitioned to a solved state in 20 moves or fewer. This number is called God's Number, presumably because it is the maximum number of moves it would take an all-knowing deity to solve the puzzle. So if you have a solver for a Rubik's cube, and if you don't find a solution in (fewer than) 20 moves, you should cancel this solution attempt and try another one.
-
-Okay, that's fun to talk about, but it's always better if we see it in action? Let's play around with \url{https://rubiks-cube-solver.com/}, which implements this very behaviour. It says in their description of how it works that it runs an open source algorithm; it looks for a solution in 20 steps or fewer. This implementation does both kinds of tradeoff: if the solution being evaluated takes too long it's killed. And if no under-20-move solution has been found within a certain time limit, it will return a solution that takes 24 steps and give you a less optimal solution. That's actually an example of reducing accuracy (quality of solution) for speed, which leads us into our next approach.
-
-\subsection*{Reduced-Resource Computation}
-
-The formal name for the second idea is ``reduced resource computation''---that is to say, we do more with less! Austerity programs for our computer programs. Well, you can use \texttt{float} instead of \texttt{double}. Indeed, Google's Tensor Processing Units appear to use perhaps even fewer than 8 bits to represent a floating-point number. Or, you can also work with integers to represent floating point numbers (e.g., representing money in an integer number of cents). But let's really  think about when this is appropriate.
-
-\paragraph{Circuit... Analysis!} Recall that, in scientific computations, you're entering points that were measured (with some error) and that you're computing using machine numbers (also with some error). Computers are only providing simulations, not the ground truth; the question is whether the simulation is good enough.
-
-Imagine that the simulation is deciding on what resistors are going to be put in your circuit board: is there any point in calculating it down to five decimal places when the resistors you buy have a tolerance of $\pm$5\%? No, and if you took a circuits course with Prof. Barby he would be very disappointed if you said yes.
-
-
-\paragraph{iddqd.} Perhaps my favourite example of trading accuracy for time is a function in Quake III, contributed by John Carmack known as ``fast inverse square root''. For graphics processing, sometimes you want to calculate $1/\sqrt{x}$. This is important because you use it in calculating lighting and reflections (because you normalize vectors). Normalizing is mostly a straightforward exercise: square some numbers, add them up, and then... oh no, you have to use square root... That one isn't so simple.
-
-Square root (or similar) is usually calculated by some interpolation or root-finding method (if you took a numerical methods course, you know several techniques for calculating this). But instead there's this~\cite{fisqrt}. 
-
-\begin{lstlisting}[language=C]
-float FastInvSqrt(float x) {
-  float xhalf = 0.5f * x;
-  int i = *(int*)&x;         // evil floating point bit level hacking
-  i = 0x5f3759df - (i >> 1);  // what the fuck?
-  x = *(float*)&i;
-  x = x*(1.5f-(xhalf*x*x));
-  return x;
-}
-\end{lstlisting}
-
-The first line of the function is straightforward - take half the value of \texttt{x}. The second one says to interpret the value of \texttt{x} as an \texttt{int}. Now this probably seems like dark magic, and it is. Pretend this floating point number is an integer. I mean, you can, but why does this make sense? 
-
-There's a lot of explanation and a lot of math in the source material but it comes down to how the float is stored. The float starts with a sign bit, then the exponent, and then the mantissa (math reminder: in $1.95 \times 10^{3}$, the exponent is 3 and the mantissa is 1.95).
-
-The clever hack is somewhat obsoleted now by the fact that CPU instructions now exist to give you fast inverse square root. This was obviously not something you could rely on in 1999 (and is pretty CISC-y), but we're going to revisit the idea of using clever CPU instructions to speed things along in the next lecture. So if we say pretend this float is an integer we end up with this~\cite{fisqrt2}:
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/float-to-int.png}
-\end{center}
-
-If it's not obvious, this plot rather resembles the plot of $-1/\sqrt{x}$. So we are pretty close to getting where we need to go. All we need is to invert it and then do a little bit of an offset. The seemingly magic number of \texttt{0x5f3759df} is not a bit pattern, but just a calculated offset to make the approximation a little bit better. Then we turn it back into a float.
-
-The last step is then to do one quick iteration of Newton's method to refine the calculation a little bit and we have a great solution: it is a fast, constant-time calculation for something that normally would be difficult, and it's very accurate, something like 0.175\% error at the most. And in a 3D game a tiny inaccuracy is not a big deal! Especially in one from 1999. It wasn't exactly photorealistic to begin with, now was it\ldots?
-
-This is the best case scenario: the accuracy that we trade for speed is both very small and its application is one in which a small difference is not noticeable. This is beyond ``close enough is good enough'', this is hardly any tradeoff at all.
-
-
-\paragraph{N-Body Problem}
-A common physics problem that programmers are asked to simulate is the N-Body problem: you have some number of bodies (N, obviously) and they interact via gravitational forces. The program needs to compute the movements of the bodies over time. This is a typical example of a program that is well suited to parallelization: you can compute the forces on each body $n$ from all other bodies in parallel. This was even at one time an OpenCL assignment in this course, although now there are too many good solutions on the internet so it was replaced. Bummer.
-
-What can you do here if you want to speed it up even more? You could look for optimizations that trade off accuracy for performance. As you might imagine, using \texttt{float} instead of \texttt{double} can save half the space which should make things quite a bit faster. But you want more\ldots
-
-Then we need some domain knowledge. That is, we need to think about what we know about the problem and we can make a decision about what is important and what is not. If we thought about what's important for determining the forces, what would we consider to be the most important? 
-
-Hint: consider the formula: $F = \dfrac{Gm_{1}m_{2}}{r^{2}}$. 
-
-Force is a function of how close the objects are. Thus, points that are far away contribute only small forces. So you can estimate them (crudely). A first approximation might say that forces that are far enough away are zero. In principle, Jupiter has a gravitational influence on the rate of descent if I drop a whiteboard marker (whether positive, negative, or zero depends on its relative position at the time of my clumsiness), but the effect is so incredibly small as to be worth ignoring. But what about objects that are not exactly close by, but also not so far away as to be irrelevant?
-
-The idea is to divide the points into a number of ``bins'' which are cubes representing a locale of some sort. Then, compute the centre of mass for each bin. When calculating the forces on a given point, add the force exerted by the centre of mass for faraway bins to the force exerted by individual particles for nearby particles.
-
-A more concrete explanation with an example: suppose the space  is divided into $[0, 1000]^3$, so we can take bins which are cubes of length 100. This gives 1000 bins. If you want to increase the accuracy, increase the number of bins. If you want to increase the speed, decrease the number of bins: either make bins larger, or change your definition of what is too far away to care about.
-
-The program should have a 3-dimensional array {\tt cm} of a point structure to store centres-of-mass. The {\tt x}, {\tt y} and {\tt z}
-components contain the average position of the centres of mass of a
-bin, while the {\tt mass} component stores the total mass. Compute all of
-the masses in parallel: create one thread per bin, and add a point's
-position if it belongs to the bin, e.g.
+\paragraph{Loop-Carried Dependencies.} Let's start with the loop-carried version. In this kind of dependency, executing an iteration of the loop depends on the result of the previous iteration. Initially, {\tt vec[0]} and {\tt vec[1]} are 1. Can we run these lines in parallel?
 
 \begin{lstlisting}[language=Rust]
-struct Point {
-    x: f32,
-    y: f32,
-    z: f32,
-    mass: f32,
+let mut vec = vec![1; 32];
+    /* ... */
+vec[4] = vec[0] + 1;
+vec[5] = vec[0] + 2;
+\end{lstlisting}
+
+
+It turns out that there are no dependencies between the two lines. But this is
+an atypical use of arrays. Let's look at more typical uses.
+
+What about this? (Again, all elements initially 1.)
+
+\begin{lstlisting}[language=Rust]
+for i in 1 .. vec.len() {
+    vec[i] = vec[i-1] + 1;
 }
 \end{lstlisting}
 
-Let's start there. We are going to improve this by adding a \texttt{bin} property to each point, so that we know what bin it is in. Later, we can use the bin to know if another point is considered close by. In my example, I calculate the bin at the same time as the point is randomly generated, because why iterate over the collection a second time?
+Nope! We can unroll the first two iterations:
+\begin{lstlisting}[language=Rust]
+vec[1] = vec[0] + 1;
+vec[2] = vec[1] + 1;
+\end{lstlisting}
 
-Once all points are generated, we can calculate the centre of mass for each bin. This is, of course, just a weighted average of all the points in that bin and is straightforward to calculate.
+Depending on the execution order, either {\tt vec[2] = 3} or {\tt vec[2] =
+  2}.  In fact, no out-of-order execution here is safe---statements depend
+on previous loop iterations, which exemplifies the notion of a
+\emph{loop-carried dependency}. 
 
-The payoff from all these calculations is to save time while
-calculating forces. In this example, we'll compute exact
-forces for the points in the same bin and the directly-adjacent bins
-in each direction (think of a Rubik's Cube; that makes 27 bins in all,
-with 6 bins sharing a square, 12 bins sharing an edge, and 8 bins
-sharing a vertex with the centre bin). If there is no adjacent bin 
-(i.e., this is an edge), just act as if there are no points 
-in the place where the nonexistent bin would be. 
+Okay, that's perhaps a silly example. 
+Let's try a real problem. Consider this code to compute whether a complex number $x_0 + iy_0$ belongs to the Mandelbrot set.
 
-This does mean there is overhead for each step, meaning the total amount of overhead goes up. We had to (1) calculate what bin this is, (2) calculate the centre of mass for each bin, and (3) decide when we should use the centre-of-mass calculation or the exact calculation.
+\begin{lstlisting}[language=Rust]
+// Repeatedly square input, return number of iterations before
+// absolute value exceeds 4, or 1000, whichever is smaller.
+fn mandelbrot(x0: f64, y0: f64) -> i32 {
+    let mut iterations = 0;
+    let mut x = x0;
+    let mut y = y0;
+    let mut x_squared = x * x;
+    let mut y_squared = y * y;
+    while (x_squared + y_squared < 4f64) && (iterations < 1000) {
+        y = 2f64 * x * y + y0;
+        x = x_squared - y_squared + x0;
+        x_squared = x * x;
+        y_squared = y * y;
+        iterations += 1;
+    }
+    return iterations;
+}
+\end{lstlisting}
+In this case, it's impossible to parallelize loop iterations, because
+each iteration \emph{depends} on the $(x, y)$ values calculated in the
+previous iteration. For any particular $x_0 + iy_0$, you have to run the
+loop iterations sequentially.
 
-Here's some data calculated with 100~000 points (using \texttt{hyperfine -m 5 "cargo run --release"}). The unmodified version takes about 162 seconds; the modified version takes about 147. With smaller numbers of points, the difference is not as noticeable, but still consistent. With 50~000 the original \texttt{nbody} program takes about 39 seconds on average and the optimized about 37, so a slight speedup! The amount of benefit increases with more points, but doesn't keep up with the computational complexity of the increase in the number of points.
+That doesn't mean that the problem cannot be parallelized at all, however.
+You can parallelize the Mandelbrot set calculation
+by computing the result simultaneously over many points at
+once, even if each point's calculation needs to be done sequentially.
+Indeed, that is a classic ``embarassingly parallel'' problem,
+because the you can compute the result for all of the points
+simultaneously, with no need to communicate.
 
-Also, this is before any parallelization (no threads are spawned). We can calculate forces on each point pretty effectively in parallel; we can also parallelize the calculations of the centre of mass quite easily. Both would speed up the program quite a lot! 
+ Now consider this example---is it parallelizable? (Again, all elements initially 1.)
 
-If I just parallelize the version without approximations (using the rayon parallel iterator), it takes about 25 seconds to run, and parallelizing the version with bins (using the same in a very naive parallelization) gets the execution time for 100~000 points down to about the same 25 seconds. It is clear that parallelizing the problem has a much greater effect than the tradeoff of accuracy for time (at least in this implementation), but on a sufficiently large problem, everything counts.
+\begin{lstlisting}[language=C]
+for i in 4 .. vec.len() {
+    vec[i] = vec[i-4] + 1;
+}
+\end{lstlisting}
+
+Yes, to a degree. We can execute 4 statements in parallel at a time:
+\begin{itemize}
+  \item \texttt{vec[4] = vec[0] + 1, vec[8] = vec[4] + 1}
+  \item \texttt{vec[5] = vec[1] + 1, vec[9] = vec[5] + 1}
+  \item \texttt{vec[6] = vec[2] + 1, vec[10] = vec[6] + 1}
+  \item \texttt{vec[7] = vec[3] + 1, vec[11] = vec[7] + 1}
+\end{itemize}  
+We can say that the array accesses have stride 4 --- there are no
+dependencies between adjacent array elements. In general, consider
+dependencies between iterations.
 
 
-\subsection*{Loop perforation} 
-You can also apply the same idea to sequential programs. Instead
-of discarding tasks, the idea here is to discard loop iterations~\cite{hoffmann09:_using_code_perfor_improv_perfor}.
-Here's a simple example: instead of the loop,
+\paragraph{Memory-Carried Dependencies.} On the other hand, a memory-carried dependency is one where the result
+of a computation \emph{depends} on the order in which two memory accesses
+occur. For instance:
+
+{\small \begin{lstlisting}[language=Rust]
+let mut acct: Account = Account {
+    balance: 0.0f32
+};
+f(&mut acct);
+g(&mut acct);
+
+/* ... */
+
+fn f (a: &mut Account) {
+    a.balance += 50.0f32;
+}
+fn g (a: &mut Account) {
+    a.balance *= 1.01f32;
+}
+\end{lstlisting} }
+
+{\sf What are the possible outcomes after executing {\tt g()} and {\tt f()}
+in parallel threads? Obviously, assuming they are properly wrapped in Atomic reference counted types to allow the code to compile.} \\[1em]
+
+
+\section*{Critical Paths}
+You should be familiar with the concept of a critical path from other courses (e.g., capstone design project) or just from project management you've experienced on coop terms. 
+It is the minimum amount of time to complete the task, taking dependencies into account.
+Consider the following diagram, which illustrates dependencies between
+tasks (shown on the arrows). 
+Note that B depends on A, and D depends on B and C, but C does
+not depend on anything, so it could be done in parallel with
+everything else. You can also compute expected execution times
+for different strategies.
 \begin{center}
-\verb|for i in 0 .. n { sum += numbers.get(i).unwrap(); }|
-\end{center} \vspace*{-1em}
-simply write,
-\vspace*{-1em}\begin{center}
-\verb|for i in (0 .. n).step_by(2) { sum += numbers.get(i).unwrap(); }|
-\end{center}
-and multiply the end result by a factor of 2. This only works 
-if the inputs are appropriately distributed, but it does give a
-factor 2 speedup.
+\begin{tikzpicture}[->,shorten >=1pt,auto,column sep=2.2cm,
+                    semithick,initial text=]
+  \node[initial,block] (s0) {Start};
+  \node[block] (s1) [right=of s0] {S1};
+  \node[block] (s2) [right=of s1] {S2};
+  \node[bw] (s3) [right=of s2] {Finish};
 
-\paragraph{Example domains.} In~\cite{Rinard:2010:PSA:1932682.1869525},
-we can read that loop perforation works for evaluating forces on water
-molecules (in particular, summing numbers); Monte-Carlo simulation for
-swaption pricing; and video encoding. In that example, changing loop
-increments from 4 to 8 gives a speedup of 1.67, a signal to noise ratio
-decrease of $0.87\%$, and a bitrate increase of $18.47\%$, producing
-visually indistinguishable results. 
+  \path (s0) edge node {A} (s1)
+        (s1) edge node {B} (s2)
+        (s2) edge node {D} (s3)
+        (s0) edge[bend left=30] node {C} (s2);
+\end{tikzpicture}
+\end{center}
+
+ Having a diagram like this makes it easy to see what can run in parallel and what steps need to happen in what order.  You might not need such a thing, but they are super useful for explaining to nontechnical coworkers or senior management what is happening and how it's going.
+
+
+\section*{Breaking Dependencies with Speculation}
+Let's go back to a real life analogy of speculation. Under normal circumstances, the coffee shop staff waits for you to place your order (``medium double double'') before they start making your order. Sensible. If you go to a certain coffee shop enough, then the staff start to know you and know your typical order and they might speculate about your order and start preparing it in advance, even before you get up to the counter. If they're right, time is saved: your order is ready sooner. If they're wrong, the staff did some unnecessary work and they'll throw away that result and start again with what you did order. If they can predict with high accuracy what you will order, then this is a net savings of time on average.
+
+You can even put some numbers on it! If successfully predicting your order saves 30 seconds per day, and if they're wrong, remaking it takes 3 minutes longer than normal, then if your order is unpredictable one out of every 10 days, how much time is saved? 9 days are correct for a savings of 4.5 minutes, from which we subtract the 3 minute penalty for being wrong, and we've saved 1.5 minutes in the 10 day period (or about 15 seconds per day on average). Not huge, but imagine if the coffee shop can do that for every regular customer. If there are 100 regular customers that's 25 minutes of waiting saved per day! It all adds up.
+
+Mind you, the idea of speculation isn't new in this course.
+Recall that computer architects often use speculation to predict branch
+targets: the direction of the branch depends on the condition codes
+when executing the branch code. To get around having to wait, the processor
+speculatively executes one of the branch targets, and cleans up if it
+has to.
+
+We can also use speculation at a coarser-grained level and
+speculatively parallelize code. We discuss two ways of doing so: one
+which we'll call speculative execution, the other value speculation.
+
+\paragraph{Speculative Execution for Threads.} The idea here is to
+start up a thread to compute a result that you may or may not need.
+Consider the following code:
+
+\begin{lstlisting}[language=Rust]
+fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
+    let val = long_calculation(x, y);
+    if val > threshold {
+        return val + second_long_calculation(x, y);
+    }
+    return val;
+}
+\end{lstlisting}
+Without more information, you don't know whether you'll have to execute
+{\tt second\_long\_calculation()} or not; it depends on the return value of
+{\tt long\_calculation()}.  Fortunately, the arguments to {\tt second\_long\_calculation()} do not
+depend on {\tt long\_calculation()}, so we can call it at any point. 
+Here's one way to speculatively thread the work:
+
+\begin{lstlisting}[language=Rust]
+fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
+    let t1 = thread::spawn(move || {
+        return long_calculation(x, y);
+    });
+    let t2 = thread::spawn(move || {
+        return second_long_calculation(x, y);
+    });
+    let val = t1.join().unwrap();
+    let v2 = t2.join().unwrap();
+    if val > threshold {
+        return val + v2;
+    }
+    return val;
+}
+\end{lstlisting}
+We now execute both of the calculations in parallel and return the same
+result as before. Is this the only way to do it? No. The current thread is a valid thread for doing work and we don't have to create two threads and join two threads: we can create one and maybe have less overhead. There may be design reasons for running the work on a separate thread versus the main thread, depending on the situation; for instance, if it's not 2 but 2000 calculations, you probably want the uniformity of running them all on separate threads.
+
+\begin{lstlisting}[language=Rust]
+fn do_work(x: i32, y: i32, threshold: i32) -> i32 {
+    let t1 = thread::spawn(move || {
+        return second_long_calculation(x, y);
+    });
+    let val = long_calculation(x, y);
+    let v2 = t1.join().unwrap();
+    if val > threshold {
+        return val + v2;
+    }
+    return val;
+}
+\end{lstlisting}
+
+{\sf Intuitively: when is this code faster? When is it slower? How
+  could you improve the use of threads?}\\[4em]
+
+We can model the above code by estimating the probability $p$ that
+the second calculation needs to run, the time $T_1$ that it takes
+to run {\tt long\_calculation}, the time $T_2$ that it takes to run
+{\tt second\_long\_calculation}, and synchronization overhead $S$.
+Then the original code takes time
+\[ T = T_1 + p T_2, \]
+while the speculative code takes time
+\[ T_s = \max(T_1, T_2) + S.\]
+
+\paragraph{Exercise.} Symbolically compute when it's profitable to do the
+speculation as shown above. There are two cases: $T_1 > T_2$ and $T_1
+< T_2$. (You can ignore $T_1 = T_2$.)
+
+Also, if you have more cores than you need, maybe wasted work only costs you a bit of extra power.
+
+\paragraph{Value Speculation.}
+The other kind of speculation is value speculation. In this case,
+there is a (true) dependency between the result of a computation 
+and its successor:
+% note: v1 is meant to be the result you get from longCalculation this time, while last_value is what you got last time. (The code doesn't show that). If you get the same result from longCalculation this time as you did last time, then secondLongCalculation is correct and you don't need to redo it.
+
+\begin{lstlisting}[language=Rust]
+fn do_other_work(x: i32, y: i32) -> i32 {
+    let val = long_calculation(x, y);
+    return second_long_calculation(val);
+}
+\end{lstlisting}
+
+If the result of {\tt value} is predictable, then we can speculatively
+execute {\tt second\_long\_calculation} based on the predicted value.
+(Most values in programs are indeed predictable, just like how most branches are predictable). If 90\% of customers are using the standard billing plan, you might assume that that's correct in your calculations, and then change that later if it turns out you are wrong. Or you might have a software cache where you keep the latest state so you don't have to go to the database to check a value that changes rarely. 
+
+\begin{lstlisting}[language=Rust]
+fn do_other_work(x: i32, y: i32, last_value: i32) -> i32 {
+    let t = thread::spawn(move || {
+        return second_long_calculation(last_value);
+    });
+    let val = long_calculation(x, y);
+    let v2 = t.join().unwrap();
+    if val == last_value {
+        return v2;
+    }
+    return second_long_calculation(val);
+}
+\end{lstlisting}
+
+Note that this is somewhat similar to memoization, except with 
+parallelization thrown in. In this case, the original running time is
+\[ T = T_1 + T_2, \]
+while the speculatively parallelized code takes time
+\[ T_s = \max(T_1, T_2) + S + pT_2,\]
+where $S$ is still the synchronization overhead, and $p$ is the probability that
+\verb+val != last_value+.
+
+\paragraph{Exercise.} Do the same computation as for speculative execution.
+
+\subsection*{When can we speculate?}
+Speculation isn't always safe. We need the following conditions:
+  \begin{itemize}
+    \item {\tt long\_calculation} and {\tt second\_long\_calculation} must not call
+      each other.
+    \item {\tt second\_long\_calculation} must not depend on
+      any values set or modified by {\tt long\_calculation}.
+    \item The return value of {\tt long\_calculation} must be deterministic.
+  \end{itemize}
+
+As a general warning: Consider the \emph{side effects} of function calls. Oh, let's talk about side effects. Why not. They have a big impact on parallelism. Side effects are problematic, but why? For one thing they're kind of unpredictable (why does calling this function result in unexpected changes elsewhere?!). Side effects are changes in state that do not depend on the function input. Calling a function or expression has a side effect if it has some visible effect on the outside world. Some things necessarily have side effects, like printing to the console. Others are side effects which may be avoidable if we can help it, like modifying a global variable. As we've seen, Rust discourages those kinds of problems but doesn't forbid them: we can still have atomic types shared that would represent some sort of global state.
+
+
+\section*{Software Transactional Memory}
+Somewhat related to the idea of speculation is the idea of software transactional memory. In this case, a group of changes are carried out on a speculative basis, assuming that they will succeed, and we'll check afterwards if everything is okay and retry if necessary~\cite{stm}. 
+
+There is a library for this in Rust\footnote{\url{https://github.com/Marthog/rust-stm}} although we can't vouch for its quality or usefulness. Developers use software transactions by writing {\tt atomic} blocks:
+\begin{lstlisting}[language=Rust]
+let x = atomically(|trans| {
+    var.write(trans, 42)?; // Pass failure to parent.
+    var.read(trans) // Return the value saved in var.
+});
+\end{lstlisting}
+The idea resembles database transactions, which most likely you know about.
+The {\tt atomic} construct means that either the code in
+the atomic block executes completely, or aborts/rolls back in the
+event of a conflict with another transaction (which triggers a retry
+later on, and repeated retries if necessary to get it applied).
+
+\paragraph{Benefit.} The big win from transactional memory is the simple
+programming model. It is far easier to program with transactions than with
+locks. Just stick everything in an atomic block and hope the compiler does the
+right thing with respect to optimizing the code.
+
+\paragraph{Motivating Example.} We'll illustrate STM with the usual bank account example\footnote{It turns out that bank account transactions aren't actually atomic, but they still make a good example.}.
+\begin{lstlisting}[language=Rust]
+struct Account {
+    balance: TVar<f32>,
+}
+
+fn transfer_funds(sender: &mut Account, receiver: &mut Account, amount: f32) {
+    atomically(|tx| {
+        let sender_balance = sender.balance.read(tx)?;
+        let receiver_balance = receiver.balance.read(tx)?;
+        sender.balance.write(tx, sender_balance - amount)?;
+        receiver.balance.write(tx, receiver_balance + amount)?;
+        Ok(0)
+    });
+}
+\end{lstlisting}
+
+Using locks, we have two main options:
+      \begin{itemize}
+        \item Big Global Lock: Lock everything to do with modifying accounts. This is slow and serializes your program.
+        \item Use a different lock for every account. Prone to deadlocks; high overhead.
+      \end{itemize}
+With STM, we do not have to worry about remembering to acquire locks,
+or about deadlocks.
+
+\paragraph{Drawbacks.} As I understand it, three of the problems with 
+transactions are as follows:
+
+\begin{itemize}
+\item I/O: Rollback is key. The problem with transactions and I/O is
+  not really possible to rollback. (How do you rollback a write to the
+  screen, or to the network?)
+
+\item Nested transactions: The concept of nesting transactions is easy
+  to understand. The problem is: what do you do when you commit the
+  inner transaction but abort the nested transaction? The clean
+  transactional fa\c{c}ade doesn't work anymore in the presence of
+  nested transactions. (The Rust library will panic at runtime if you try to nest transactions)
+
+\item Transaction size: Some transaction implementations (like
+  all-hardware implementations) have size limits for their
+  transactions.
+\end{itemize}
+
+\paragraph{Implementations.} Transaction implementations are typically 
+optimistic; they assume that the transaction is going to succeed,
+buffering the changes that they are carrying out, and rolling back the
+changes if necessary.
+
+One way of implementing transactions is by using hardware support,
+especially the cache hardware. Briefly, you use the caches to store
+changes that haven't yet been committed. Hardware-only transaction
+implementations often have maximum-transaction-size limits, which are
+bad for programmability, and combining hardware and software approaches
+can help avoid that.
+
+\paragraph{Implementation issues.} Since atomic sections don't protect
+against data races, but just rollback to recover, a datarace may still
+trigger problems in your program.
+
+\begin{tabular}{r|l}
+\begin{minipage}{.46\textwidth}
+\begin{lstlisting}[language=Rust]
+fn what_could_go_wrong(x: TVar<i32>, y: TVar<i32>) {
+    atomically(|t| {
+        let old_x = x.read(t)?;
+        let old_y = y.read(t)?;
+        x.write(t, old_x + 1);
+        y.write(t, old_y + 1);
+        Ok(0)
+    });
+}
+\end{lstlisting}
+\end{minipage}
+&
+\begin{minipage}{.52\textwidth}
+\begin{lstlisting}[language=Rust]
+fn oh_no(x: TVar<i32>, y: TVar<i32>) {
+    atomically(|transaction| {
+        if x.read(transaction)? != y.read(transaction)? {
+            loop { /* Cursed Thread */}
+        }
+        Ok(0)
+    });
+}
+\end{lstlisting}
+\end{minipage}
+\end{tabular}
+
+In this silly example, assume initially {\tt x = y}. You may think the
+code will not go into an infinite loop, but it can. That's because intermediate states can still become visible! Although the block is atomic, that just means the changes succeed or are rolled back as a group; it does not mean that another thread cannot read \texttt{x} and \texttt{y} and see them at some partial-completion state of the transaction. (Maybe this doesn't happen in the Rust implementation, but it certainly can in C/\CPP~versions of STM.)
 
 
 \input{bibliography.tex}
