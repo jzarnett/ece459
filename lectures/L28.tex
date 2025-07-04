@@ -59,7 +59,7 @@ The implementation involves one profiler thread for each core to manage its beha
 
 This extension does allow scoz to do more than coz, but it does require running within the kernel, which imposes certain limitations to where and how it can be applied. That's an interesting tradeoff!
 
-\section{Simulations}
+\section*{Simulations}
 Causal profiling is a really neat idea in terms of using a simulation to make decisions. Other ways of using simulation for performance analysis exist! Let's talk about a couple examples.
 
 \subsection*{Cachegrind}
@@ -163,7 +163,30 @@ Cachegrind also produces a more detailed output file, titled \texttt{cachegrind.
 \end{lstlisting}
 }
 
-Cachegrind is very... verbose... and it can be very hard to come up with useful changes based on what you see... It may be better suited to something like quantifying whether a change has helped on some performance-critical code and why. 
+Cachegrind is very... verbose... and it can be very hard to come up with useful changes based on what you see... It may be better suited to something like quantifying whether a change has helped on some performance-critical code and why. The why (as in, mechanism) aspect is helpful in justifying to a manager or executive that the change you made actually solved the problem and the improved results are not just luck or measurement variance.
+
+\subsection*{Simulation as Performance Debugging}
+Simulation also allows for something that might be described as performance debugging. Executing in a simulation allows for more than just counting of the number of times that there is a cache miss or a pipeline stall -- you can see how we got there. That's helpful, even if it's not always actionable.
+
+I got looking into some examples of this and came across some technical information for the TMS320C55x Digital Signal Processing platform by Texas Instruments.  I've never used it for anything and cannot honestly say anything about it. But the technical manual for its instruction set simulator\footnote{\url{https://www.ti.com/lit/ug/spru599d/spru599d.pdf}} has some interesting things to say about the value of simulation for profiling. Using a simulation approach, it's possible to get more exact values of how often something runs or count exactly how many cache misses, hits, and CPU stalls occur. Halting on an event trigger (e.g., pipeline stall) can give you lots of information about how to solve it without needing too much logging or tracing.
+
+\subsection*{Interpreted Rust: Miri}
+Despite sharing a name with an episode of the 1960s Star Trek where the \textit{Enterprise} comes across a planet that is an exact duplicate of earth, down to the continent layout and nobody seems to think that is an \textit{extremely big deal}, Miri is a profiling tool for Rust. It runs the Rust code in an interpreter which means it's slow, but helps in finding bugs. It shares a lot of similarities with Valgrind!
+
+From reading its project description at \url{https://github.com/rust-lang/miri}, I think the real intended use of Miri is to detect issues in \texttt{unsafe} code. It is likely that in this course you've had only one situation where you really needed to use \texttt{unsafe} and that's launching a GPU computation, so its utility at first glance seems limited. But more complex programs in other scenarios may require more use of it. Miri seems to catch the sort of thing that we normally would find with Valgrind in other scenarios: array bounds violations, reading uninitialized memory, and memory leaks.
+
+That's not all, though. Let's follow along an example of \cite{miri}, using Miri to generate some flamegraph-style results. To run, use the miri option and it will generate a \texttt{crox} directory with some file in it; process that file with the \texttt{crox} tool to generate a json file that can be read in chrome dev tools:
+
+\begin{lstlisting}
+MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-measureme=crox" cargo +nightly miri run
+\end{lstlisting}
+
+Great! This produces a neat little flamegraph-style graph that shows what calls what and the time taken. If you prefer this to a flamegraph, that's perfectly fine. Both give you the same information in a similar way. The graphs are a bit much to show in the notes but screenshots in the slides help and we can do a live demo, too.
+
+Much like Valgrind, it makes the program under observation run much, much slower. To make this work in a reasonable amount of time, I took the \texttt{producer-consumer-opt} code from earlier, but turned down the number of items per thread to 10 to try to not run out of patience before it produced the results. It gave some interesting graphs that you can poke around with. In the example run I have, you can see that for thread 1, initialization of the random number generator routine is quite slow and after that's happened, each subsequent use is quick. 
+
+
+To be fair, the profiling-with-Miri article got a lot of comments that said things along the lines of ``maybe it's helping you to optimize the debug version, but most of the improvements will be done by compiling a release version''. That's acknowledged in the article with a callout that says that optimizing for Miri can have a negative impact on the actual performance, but at the very least Miri gives an idea of what it might make sense to change as part of the change-run-evaluate loop.
 
 \input{bibliography.tex}
 
