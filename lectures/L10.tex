@@ -122,9 +122,9 @@ select * from users
 select * from countries where id in (?, ?, ?, ?)
 \end{lstlisting}
 
-That's what we would do in eager loading, but that's harder in GraphQL since it's not possible to predict in advance which queries that callers will actually choose. Alright, how does this library work? The core idea is changing how the data structures work to load information if needed but avoid it if it's not. Let's look at the default way you might create a struct for \texttt{User} based on the schema above:
+Sometimes we could solve this with eager loading, but that's harder in GraphQL since it's not possible to predict in advance which queries that callers will actually choose. Alright, how does this library work? The core idea is changing how the data structures work to load information if needed but avoid it if it's not. Let's look at the default way you might create a struct for \texttt{User} based on the schema above:
 
-\begin{lstlisting}
+\begin{lstlisting}[language=Rust]
 struct User {
     id: i32,
     country_id: i32
@@ -132,7 +132,7 @@ struct User {
 \end{lstlisting}
 That's good, but the only way to get the name for a given country associated with users is to load the country itself from the database because the user only has the country's ID and not the name. Let's look at the source's alternative approach that separates the GraphQL model from the actual Rust structures.
 
-\begin{lstlisting}
+\begin{lstlisting}[language=Rust]
 mod models {
     pub struct User {
         id: i32,
@@ -160,7 +160,7 @@ enum HasOne<T> {
 }
 \end{lstlisting}
 
-With that, we can respond to the query in a more efficient way. First, load the users, get a list of country IDs, then query the countries in that set of IDs, and match them up. That means replacing the \texttt{User.country} value of \texttt{HasOne::NotLoade} with \texttt{HasOne::Loaded(matching\_country)}. Then we can just return the set of names after the second query. A little bit of data modelling goes a long way here. This solution may not be the most optimal or the fewest lines of code, but it does demonstrate a big improvement over the naive version.
+With that, we can respond to the query in a more efficient way. First, load the users, get a list of country IDs, then query the countries in that set of IDs, and match them up. That means replacing the \texttt{User.country} value of \texttt{HasOne::NotLoaded} with \texttt{HasOne::Loaded(matching\_country)}. Then we can just return the set of names after the second query. A little bit of data modelling goes a long way here. This solution may not be the most optimal or the fewest lines of code, but it does demonstrate a big improvement over the naive version.
 
 
 Finally, another strategy that helps reduce the number of network calls is caching. We've discussed it at great length earlier in the course, so no need to repeat any of that.
