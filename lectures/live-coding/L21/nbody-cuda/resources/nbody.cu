@@ -30,12 +30,3 @@ extern "C" __global__ void calculate_forces(const float4* positions, float3* acc
     }
     accelerations[blockIdx.x] = acc;
 }
-
-extern "C" __global__ void sum_transactions(int2* accounts, int2* transactions, int transactions_len) {
-    int idx = threadIdx.x + blockIdx.x * blockDim.x;
-
-    for (int i = 0; i < 10000 && idx + i < transactions_len; i++) {
-        int2 t = transactions[idx + i];
-        atomicAdd(&accounts[t.x], t.y)
-    }
-}

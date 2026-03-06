@@ -48,11 +48,6 @@ impl Deref for CudaInt2 {
     }
 }
 
-
-fn save_output( accounts: Vec<CudaInt2> ) { /* Not Shown */ }
-fn load_accounts() -> Vec<CudaInt2> { vec![] }
-fn load_transactions() -> Vec<CudaInt2> { vec![] }
-
 fn main() -> Result<(), Box<dyn Error>> {
     // Set up the context, load the module, and create a stream to run kernels in.
     rustacuda::init(CudaFlags::empty())?;
@@ -70,15 +65,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let module = Module::load_from_string(&ptx)?;
     let stream = Stream::new(StreamFlags::DEFAULT, None)?;
 
-    let accounts: Vec<CudaInt2> = load_accounts();
-    let transactions: Vec<CudaInt2> = load_transactions();
-    
     // Create buffers for data
     let mut points = DeviceBuffer::from_slice(initial_positions.as_slice())?;
     let mut accel = DeviceBuffer::from_slice(accelerations.as_slice())?;
-    
-    let mut a = DeviceBuffer::from_slice(accounts.as_slice())?;
-    let mut t = DeviceBuffer::from_slice(transactions.as_slice())?;
 
     unsafe {
         // Launch the kernel with one block of one thread, no dynamic shared memory on `stream`.
@@ -86,13 +75,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             points.as_device_ptr(),
             accel.as_device_ptr(),
             points.len()
-        ));
-        result?;
-        
-        let result = launch!(module.sum_transactions<<<NUM_POINTS, 1, 0, stream>>>(
-            a.as_device_ptr(),
-            t.as_device_ptr(),
-            transactions.len()
         ));
         result?;
     }
