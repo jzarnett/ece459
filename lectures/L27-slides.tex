@@ -1,8 +1,9 @@
 \input{configuration}
+\usepackage{soul}
 
-\title{Lecture 27 --- Program Profiling and POGO }
+\title{Lecture 27 --- Causal and Simulation Profiling }
 
-\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca}, \texttt{jzarnett@uwaterloo.ca}}
+\author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
   University of Waterloo}
 \date{\today}
@@ -12,843 +13,421 @@
 
 \begin{frame}
   \titlepage
-
  \end{frame}
 
-
-
-\part{Profiling}
+\part{Causal Profiling}
 
 \begin{frame}
-\partpage
+	\partpage
 \end{frame}
 
-
-
-
-
 \begin{frame}
-\frametitle{Basic Overview}
+\frametitle{Causal Profiling}
 
+If we have more than one slow thing, which do we want to optimize?
 
-\begin{changemargin}{1.5cm}
-General idea:\\
-\qquad collect data on what parts of the code\\
-\qquad are taking up most of the time.
-
-\begin{itemize}
-\item What functions get called?
-\item How long do functions take?
-\item What's using memory?
-\end{itemize}
-\end{changemargin}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{\texttt{printf}}
-
-
-\begin{changemargin}{1.5cm}
-There is always the ``informal'' way: ``debug'' by print statements.
-
-On entry to \texttt{foo}, log ``entering function foo'', plus timestamp.
-
-On exit, log ``exiting foo'', also with timestamp.
-\end{changemargin}
+Scientific approach: do an experiment, see the impact, re-evaluate.
 
 \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/stringerbell.jpg}
+	\includegraphics[width=0.8\textwidth]{images/yeah_science.jpg}
 \end{center}
 
 \end{frame}
 
 
+\begin{frame}
+\frametitle{Causal Profiling}
+
+Causal profiling lets us do what-if without code changes!
+
+Example we'll discuss today: \alert{Coz}.
+
+
+\end{frame}
+
 
 \begin{frame}
-\frametitle{Console Profiling}
+\frametitle{Why Causal Profiling?}
+
+Simple approach: look at the time and calculate what happens if \texttt{work()} runtime is reduced by 10\%.
+
+This model is okay but it's not very realistic.
+
+We actually want a simulation!
 
 
-\begin{changemargin}{1cm}
-Kind of works, and [JZ] has used it... But this approach is not necessarily good.  
+\end{frame}
 
-This is ``invasive'' profiling---change the source code of the program to add instrumentation (log statements). 
 
-Plus we have to do a lot of manual accounting.
+\begin{frame}
+\frametitle{Key Idea: Make Others Worse}
 
-Doesn't really scale.
-\end{changemargin}
+Key observation: speeding up one part is the same as slowing all others down.
+
+How? Insert pauses.
+
+Is that really equivalent to speeding up the target?
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Slowdown is Speedup}
+
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/virtual-speedup.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Coz Graphs}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/coz-speedup-graph.png}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{That Would Be Nice}
+Just because hypothetically speeding up a particular part of the program would be beneficial, doesn't mean that it's possible to speed up that part.
+
+We still need to assess what we can do and how difficult it would be.
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Does it Work?}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/coz-speedup.jpg}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Limitations, Overhead}
+
+Only works on one machine where we have access to all threads.
+
+Estimated overhead is 17.6\% total:\\
+\quad 2.6\% startup debug information collection\\
+\quad 4.8\% sampling\\
+\quad 10.2\% inserted pauses
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{More Details}
+
+More details in the author presentation:
+
+\url{https://www.youtube.com/watch?v=jE0V-p1odPg}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Next Generation: \texttt{scoz}}
+The next extension \texttt{scoz} is meant to address some shortcomings:
+
+1. Inability to look at multi-process applications
+
+2. Cases where the OS is the bottleneck.
+
+
+(Reducing systems calls is a form of ``do less work'')
+
+\end{frame}
+
+\begin{frame}
+\frametitle{The Goal: Core-Based System}
+
+Instead of pausing threads, pause other cores.
+
+(There are details about how to charge delays to the ``right'' core)
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/scoz-delay.jpg}
+\end{center}
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Implementation}
+
+The implementation involves one profiler thread for each core to manage its behaviour. 
+
+The thread is pinned to the core, and its purpose is primarily to call the \texttt{ndelay} interface (with preemption temporarily disabled) to stop execution.
+
+\end{frame}
+
+\part{Simulation Profiling}
+
+\begin{frame}
+	\partpage
+\end{frame}
+
+\begin{frame}
+\frametitle{Simulations}
+
+Causal profiling lets us use a simulation to decide what to do.
+
+Let's apply this idea to some other things!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Cachegrind}
+
+This is much more performance oriented than the other two tools. 
+
+ It runs simulation of how your program interacts with cache and evaluates how your program does on branch prediction.
+ 
+ As we discussed earlier, cache misses and branch mispredicts have a huge impact on performance.
+ 
+ Recall that a miss from the fastest cache results in a small penalty (10 cycles).
+ 
+ A miss that requires going to memory requires about 200 cycles. 
+ 
+ A mispredicted branch costs somewhere between 10-30 cycles.
+
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Cachegrind Reporting}
+
+Cachegrind reports data about:
+\begin{itemize}
+	\item The First Level Instruction Cache (I1) [L1 Instruction Cache]
+	\item The First Level Data Cache (D1) [L1 Data Cache]
+	\item The Last Level Cache (LL) [L3 Cache].
+\end{itemize}
+
+Unlike normal Valgrind operation, you probably want to turn optimizations on.
 
 \end{frame}
 
 \begin{frame}[fragile]
-\frametitle{Profiling my Kernel}
+\frametitle{Sim-u-laaaaate!}
+{\scriptsize
 
-I ran the command \texttt{nvprof target/release/nbody-cuda}.
-
-{\tiny
 \begin{verbatim}
-==20734== Profiling application: target/release/nbody-cuda
-==20734== Profiling result:
-            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
- GPU activities:  100.00%  10.7599s         1  10.7599s  10.7599s  10.7599s  calculate_forces
-                    0.00%  234.72us         2  117.36us  100.80us  133.92us  [CUDA memcpy HtoD]
-                    0.00%  94.241us         1  94.241us  94.241us  94.241us  [CUDA memcpy DtoH]
-      API calls:   97.48%  10.7599s         1  10.7599s  10.7599s  10.7599s  cuStreamSynchronize
-                    1.92%  211.87ms         1  211.87ms  211.87ms  211.87ms  cuCtxCreate
-                    0.54%  59.648ms         1  59.648ms  59.648ms  59.648ms  cuCtxDestroy
-                    0.04%  4.8704ms         1  4.8704ms  4.8704ms  4.8704ms  cuModuleLoadData
-                    0.00%  404.72us         2  202.36us  194.51us  210.21us  cuMemAlloc
-                    0.00%  400.58us         2  200.29us  158.08us  242.50us  cuMemcpyHtoD
-                    0.00%  299.30us         2  149.65us  121.42us  177.88us  cuMemFree
-                    0.00%  243.86us         1  243.86us  243.86us  243.86us  cuMemcpyDtoH
-                    0.00%  85.000us         1  85.000us  85.000us  85.000us  cuModuleUnload
-                    0.00%  41.356us         1  41.356us  41.356us  41.356us  cuLaunchKernel
-                    0.00%  18.483us         1  18.483us  18.483us  18.483us  cuStreamCreateWithPriority
-                    0.00%  9.0780us         1  9.0780us  9.0780us  9.0780us  cuStreamDestroy
-                    0.00%  2.2080us         2  1.1040us     215ns  1.9930us  cuDeviceGetCount
-                    0.00%  1.4600us         1  1.4600us  1.4600us  1.4600us  cuModuleGetFunction
-                    0.00%  1.1810us         2     590ns     214ns     967ns  cuDeviceGet
-                    0.00%     929ns         3     309ns     230ns     469ns  cuDeviceGetAttribute
+jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
+
+--16559-- warning: L3 cache found, using its data for the LL simulation.
+Found at 11 by thread 1 
+Found at 22 by thread 3 
+==16559== 
+==16559== I   refs:      310,670
+==16559== I1  misses:      1,700
+==16559== LLi misses:      1,292
+==16559== I1  miss rate:    0.54%
+==16559== LLi miss rate:    0.41%
+==16559== 
+==16559== D   refs:      114,078  (77,789 rd   + 36,289 wr)
+==16559== D1  misses:      4,398  ( 3,360 rd   +  1,038 wr)
+==16559== LLd misses:      3,252  ( 2,337 rd   +    915 wr)
+==16559== D1  miss rate:     3.8% (   4.3%     +    2.8%  )
+==16559== LLd miss rate:     2.8% (   3.0%     +    2.5%  )
+==16559== 
+==16559== LL refs:         6,098  ( 5,060 rd   +  1,038 wr)
+==16559== LL misses:       4,544  ( 3,629 rd   +    915 wr)
+==16559== LL miss rate:      1.0% (   0.9%     +    2.5%  )
+==16559== 
+==16559== Branches:       66,622  (65,097 cond +  1,525 ind)
+==16559== Mispredicts:     7,202  ( 6,699 cond +    503 ind)
+==16559== Mispred rate:     10.8% (  10.2%     +   32.9%   )
+
 \end{verbatim}
 }
 
 \end{frame}
 
-
 \begin{frame}[fragile]
-\frametitle{And the better version...}
-
-
-Oh, and for comparison, here's the one where I make much better use of the GPU's capabilities (with better grid and block settings):
-
-{\tiny
-\begin{verbatim}
-=22619== Profiling result:
-            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
- GPU activities:   99.92%  417.53ms         1  417.53ms  417.53ms  417.53ms  calculate_forces
-                    0.06%  236.03us         2  118.02us  101.44us  134.59us  [CUDA memcpy HtoD]
-                    0.02%  93.057us         1  93.057us  93.057us  93.057us  [CUDA memcpy DtoH]
-      API calls:   52.09%  417.54ms         1  417.54ms  417.54ms  417.54ms  cuStreamSynchronize
-                   26.70%  214.00ms         1  214.00ms  214.00ms  214.00ms  cuCtxCreate
-                   13.63%  109.26ms         1  109.26ms  109.26ms  109.26ms  cuModuleLoadData
-                    7.42%  59.502ms         1  59.502ms  59.502ms  59.502ms  cuCtxDestroy
-                    0.05%  364.08us         2  182.04us  147.65us  216.42us  cuMemcpyHtoD
-                    0.04%  306.48us         2  153.24us  134.10us  172.37us  cuMemAlloc
-                    0.04%  285.73us         2  142.86us  122.90us  162.83us  cuMemFree
-                    0.03%  246.37us         1  246.37us  246.37us  246.37us  cuMemcpyDtoH
-                    0.01%  61.916us         1  61.916us  61.916us  61.916us  cuModuleUnload
-                    0.00%  26.218us         1  26.218us  26.218us  26.218us  cuLaunchKernel
-                    0.00%  15.902us         1  15.902us  15.902us  15.902us  cuStreamCreateWithPriority
-                    0.00%  9.0760us         1  9.0760us  9.0760us  9.0760us  cuStreamDestroy
-                    0.00%  1.6720us         2     836ns     203ns  1.4690us  cuDeviceGetCount
-                    0.00%  1.0950us         1  1.0950us  1.0950us  1.0950us  cuModuleGetFunction
-                    0.00%     888ns         3     296ns     222ns     442ns  cuDeviceGetAttribute
-                    0.00%     712ns         2     356ns     212ns     500ns  cuDeviceGet
-\end{verbatim}
-}
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Wizardry!}
-
-
-\begin{changemargin}{2cm}
-Like debugging: if you get to be a wizard you can maybe do it by code inspection.
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/miracle.jpeg}
-\end{center}
-
-But speculative execution inside your head is harder for perf than debugging.
-
-So: we want to use tools \\ 
-and do this in a methodical way.
-\end{changemargin}
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Introduction to Profiling}
-
-
-
-\begin{changemargin}{1.5cm}
-    So far we've been looking at small problems.\\[1em]
-    Must {\bf profile} to see what's slow in a
-      large program.\\[1em]
-    Two main outputs:
-      \begin{itemize}
-        \item flat;
-        \item call-graph.
-      \end{itemize}
-
-
-
-    Two main data gathering methods:
-      \begin{itemize}
-        \item statistical;
-        \item instrumentation.
-      \end{itemize}
-   \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Profiler Outputs}
-
-
-\begin{changemargin}{.5cm}
-  
-  {\bf Flat Profiler:}
-
-  \begin{itemize}
-    \item Only computes average time in a particular function.
-    \item Does not include other (useful) information (callees).
-  \end{itemize}
-
-~\\[1em]
-
-  {\bf Call-graph Profiler:}
-
-  \begin{itemize}
-    \item Computes call times.
-    \item Reports frequency of function calls.
-    \item Gives a call graph: who called what function?
-  \end{itemize}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Data Gathering Methods}
-
-
-\begin{changemargin}{1.5cm}
-  {\bf Statistical:}
-
-  Mostly, take samples of the system state, that is:
-  \begin{itemize}
-    \item every 100ms, check the system state.
-    \item will cause some slowdown, but not much.
-  \end{itemize}
-~\\[1em]
-
-  {\bf Instrumentation:}\\
-  Add instructions at specified program points:
-  \begin{itemize}
-    \item can do this at compile time or run time (expensive);
-    \item can instrument either manually or automatically;
-    \item like conditional breakpoints.
-  \end{itemize}
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Guide to Profiling}
-
-  
-
-\begin{changemargin}{1cm}
-  When writing large software projects:\\[1em]
-
-     $\bullet$ First, write clear and concise code. \\
-      \qquad Don't do premature optimizations---\\
-      \qquad focus on correctness.\\
-     $\bullet$ Profile to get a baseline of your performance:\\[0em]
-      \begin{itemize}
-        \item allows you to easily track any performance changes;
-        \item allows you to re-design your program before it's too late.
-      \end{itemize}
-  Focus your optimization efforts on the code that matters.
-  \end{changemargin}
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\begin{frame}
-  \frametitle{Things to Look For}
-
-
-\begin{changemargin}{1.5cm}
-  
-    Good signs:\\[0em]
-
-    \begin{itemize}
-      \item Time is spent in the right part of the system.
-      \item Most time should not be spent handling errors;\\
- in non-critical code; or in exceptional cases.
-      \item Time is not unnecessarily spent in OS.
-    \end{itemize}
-    \end{changemargin}
-    
-    \begin{center}
-	\includegraphics[width=0.5\textwidth]{images/tobermory.jpg}\\
-	\hfill Kitchener driver follows GPS directions right into Lake Huron...
- 	\end{center}
-    
-\end{frame}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-\begin{frame}
-\frametitle{Development vs Prod}
-
-You can always profile your systems in development, but that might not
-help with complexities in production. 
-
-The constraints on profiling 
-production systems are that the profiling must not affect the system's
-performance or reliability.
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Per-Process}
-
- We'll first talk about {\tt perf}, the profiler 
-recommended for use with Rust. This is Linux-specific, though.
-
-The \texttt{perf} tool is an interface to the Linux kernel's built-in
-sample-based profiling using CPU counters. 
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Previous Offering Profiling}
-
-\begin{lstlisting}[basicstyle=\ttfamily\tiny]
-[plam@lynch nm-morph]$ perf stat ./test_harness
-
- Performance counter stats for './test_harness':
-
-       6562.501429 task-clock                #    0.997 CPUs utilized          
-               666 context-switches          #    0.101 K/sec                  
-                 0 cpu-migrations            #    0.000 K/sec                  
-             3,791 page-faults               #    0.578 K/sec                  
-    24,874,267,078 cycles                    #    3.790 GHz                     [83.32%]
-    12,565,457,337 stalled-cycles-frontend   #   50.52% frontend cycles idle    [83.31%]
-     5,874,853,028 stalled-cycles-backend    #   23.62% backend  cycles idle    [66.63%]
-    33,787,408,650 instructions              #    1.36  insns per cycle        
-                                             #    0.37  stalled cycles per insn [83.32%]
-     5,271,501,213 branches                  #  803.276 M/sec                   [83.38%]
-       155,568,356 branch-misses             #    2.95% of all branches         [83.36%]
-
-       6.580225847 seconds time elapsed
-\end{lstlisting} %$
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Do it with Rust}
-
-The first thing to do is to compile with debugging info. Go to your \texttt{Cargo.toml} file and add:
-\begin{verbatim}
-[profile.release]
-debug = true
-\end{verbatim}
-
-This means that \verb+cargo build --release+ will now compile the version with debug info.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{I've got a Cunning Plan}
-
-Run the program using \texttt{perf record}, which will sample the execution of the program to produce a data set.
-
-
-Then there are three ways we can look at the code: \texttt{perf report}, \texttt{perf annotate}, and a flamegraph.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{CLion}
-
-During development of some of the code exercises, I used the CLion built-in profiler for this purpose. 
-
-It generates a flamegraph for you too, and I'll show that for how to create the flamegraph as well.
-
-
-\end{frame}
-
-\part{Profiler Guided Optimization}
-\begin{frame}
-\partpage
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Profiler Guided Optimization}
-
-
-Using static analysis, \\
-the compiler makes its best predictions about runtime behaviour.
-
-Example: branch prediction. 
-
-\begin{lstlisting}[language=Rust]
-    fn which_branch(a: i32, b: i32) {
-        if a < b {
-            println!("Case one.");
-        } else {
-            println!("Case two.");
-        }
-    }
-\end{lstlisting}
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{A Virtual Call to Devirtualize}
-
-\begin{multicols}{2}
-\begin{lstlisting}[language=Rust]
-trait Polite {
-    fn greet(&self) -> String;
-}
-
-struct Kenobi {
-    /* Stuff */
-}
-impl Polite for Kenobi {
-    fn greet(&self) -> String {
-        return String::from("Hello there!");
-    }
-}
-\end{lstlisting}
-\columnbreak
-\begin{lstlisting}[language=Rust]
-struct Grievous {
-    /* Things */
-}
-impl Polite for Grievous {
-    fn greet(&self) -> String {
-        return String::from("General Kenobi.");
-    }
-}
-
-fn devirtualization(thing: &Polite) {
-    println!("{}", thing.greet());
-}
-
-\end{lstlisting}
-\end{multicols}
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Match}
-
-\begin{lstlisting}[language=Rust]
-    fn match_thing(x: i32) -> i32 {
-        match x {
-            0..10 => 1,
-            11..100 => 2,
-            _ => 0
-        }
-    }
-\end{lstlisting}
-
-Same thing with \texttt{x}: what is its typical value? If we know that, it is our prediction. 
-
-Actually, in a match block with many options, could we rank them in descending order of likelihood?
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Adapting to an Uncertain World}
-
-
-How can we know where we go?
-\begin{itemize}
-\item could provide hints\ldots
-\end{itemize}
-
-Java HotSpot virtual machine: updates predictions on the fly. 
-
-So, just guess.\\
-If wrong, the Just-in-Time compiler adjusts \& recompiles.
-
-The compiler runs and it does its job and that's it; the program is never updated with newer predictions if more data becomes known.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Profiling Mitigates Uncertainty}
-
-
-
-Rust: usually no adaptive runtime system.
-
-POGO:
-\begin{itemize}
-\item observe actual runs;
-\item predict the future.
-\end{itemize}
-
-So, we need multi-step compilation:
-\begin{itemize}
-\item compile with profiling;
-\item run to collect data;
-\item recompile with profiling data to optimize.
-\end{itemize}
-
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Step One: Measure}
-
-
-
-First, generate an executable with instrumentation. 
-
-The compiler inserts a bunch of probes into the generated code to record data. 
-\begin{itemize}
-\item Function entry probes;
-\item Edge probes;
-\item Value probes.
-\end{itemize}
-
-Result: instrumented executable plus empty database file (for profiling data).
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Step Two: Training Day}
-
-\begin{center}
-	\includegraphics[width=0.6\textwidth]{images/training-day.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Step Two: Training Day}
-
-
-
-Second, run the instrumented executable.
-
-Real-world scenarios are best.
-
-Ideally, spend training time on perf-critical sections. 
-
-Use as many runs as you can stand.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Step Two: Training Day}
-
-
-
-Don't exercise every part of the program (not SE 465/ECE 453 here!)
-
-That would be counterproductive.
-
-Usage data must match real world scenarios,\\
-... or the compiler gets misinformed about what's important. 
-
-Or you might end up teaching it that almost nothing
-is important\ldots (``everything's on the exam!'')
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Step Three: Recompile}
-
-
-
-Finally, compile the program again.
-
-Inputs: source plus training data.
-
-Outputs: (you hope) a better output executable than from static analysis alone.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Summary Graphic}
-
-\begin{center}
-	\includegraphics[width=0.75\textwidth]{images/pogo-workflow.jpg}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Save Some Steps}
-
-
-
-Not necessary to do all three steps for every build. 
-
-Re-use training data while it's still valid.
-
-Recommended dev workflow:
-\begin{itemize}
-\item dev A performs these steps, checks the training data into source control
-\item whole team can use profiling information for their compiles.
-\end{itemize}
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Not fixing all the problems in the world}
-
-
-
-What does it mean for it to be better? 
-
-The algorithms will aim for speed in areas that are ``hot''. 
-
-The algorithms will aim for minimal code size in areas that are ``cold'' .
-
-Less than 5\% of methods compiled for speed.
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Combining Training Runs}
-
-
-
-Can combine multiple training runs and manually give suggestions about important scenarios.
-
-The more a scenario runs in the training data, \\
-the more important it will be, from POGO's point of view.
-
-Can merge multiple runs with user-assigned weightings.
-
-
-\end{frame}
-
-
-\begin{frame}[fragile]
-\frametitle{Full Test Scenario}
-
+\frametitle{Optimizations: Enabled!}
 {\scriptsize
 \begin{verbatim}
-# STEP 1: Compile the binary with instrumentation
-rustc -Cprofile-generate=/tmp/pgo-data -O ./main.rs
+jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
 
-# STEP 2: Run the binary a few times, maybe with common sets of args.
-#         Each run will create or update `.profraw` files in /tmp/pgo-data
-./main mydata1.csv
-./main mydata2.csv
-./main mydata3.csv
-
-# STEP 3: Merge and post-process all the `.profraw` files in /tmp/pgo-data
-llvm-profdata merge -o ./merged.profdata /tmp/pgo-data
-
-# STEP 4: Use the merged `.profdata` file during optimization. All `rustc`
-#         flags have to be the same.
-rustc -Cprofile-use=./merged.profdata -O ./main.rs
+--16618-- warning: L3 cache found, using its data for the LL simulation.
+Found at 11 by thread 1 
+Found at 22 by thread 3 
+==16618== 
+==16618== I   refs:      306,169
+==16618== I1  misses:      1,652
+==16618== LLi misses:      1,286
+==16618== I1  miss rate:    0.53%
+==16618== LLi miss rate:    0.42%
+==16618== 
+==16618== D   refs:      112,015  (76,522 rd   + 35,493 wr)
+==16618== D1  misses:      4,328  ( 3,353 rd   +    975 wr)
+==16618== LLd misses:      3,201  ( 2,337 rd   +    864 wr)
+==16618== D1  miss rate:     3.8% (   4.3%     +    2.7%  )
+==16618== LLd miss rate:     2.8% (   3.0%     +    2.4%  )
+==16618== 
+==16618== LL refs:         5,980  ( 5,005 rd   +    975 wr)
+==16618== LL misses:       4,487  ( 3,623 rd   +    864 wr)
+==16618== LL miss rate:      1.0% (   0.9%     +    2.4%  )
+==16618== 
+==16618== Branches:       65,827  (64,352 cond +  1,475 ind)
+==16618== Mispredicts:     7,109  ( 6,596 cond +    513 ind)
+==16618== Mispred rate:     10.7% (  10.2%     +   34.7%   )
 \end{verbatim}
 }
 
 \end{frame}
 
-
-
 \begin{frame}
-\frametitle{Behind the Scenes}
+\frametitle{Results Analysis}
 
 
+Interesting results: our data and instruction miss rates went down marginally but the branch mispredict rates went up!
 
-In the optimize phase, compiler uses the training data for:
+Well sort of - there were fewer branches and thus fewer we got wrong as well as fewer we got right. 
 
-\begin{enumerate}
-\item Full and partial inlining
-\item Function layout
-\item Speed and size decision
-\item Basic block layout 
-\item Code separation
-\item Virtual call speculation
-\item Switch expansion
-\item Data separation
-\item Loop unrolling
-\end{enumerate}
+So the total cycles lost to mispredicts went down. 
+
+Is this an overall win for the code? Yes. 
+
+
+\end{frame}
+\begin{frame}
+\frametitle{Do the Math}
+
+In some cases it's not so clear cut, and we could do a small calculation. 
+
+If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400; a decrease of 11~400 cycles.
+
+  Repeat for each of the measures and sum them up to determine if things got better overall and by how much.
+
+\end{frame}
+\begin{frame}
+\frametitle{Cachegrind Detailed Output}
+
+Cachegrind also produces a more detailed output file, titled cachegrind.out.<pid> (the PID in the example is 16618). 
+
+This file is not especially human-readable, but we can ask the associated tool \texttt{cg\_annotate} to break it down for us.
+
+The output is way too big for slides.
+
+\end{frame}
+\begin{frame}
+\frametitle{Advanced Cachegrind}
+
+Cachegrind is very... verbose... and it can be very hard to come up with useful changes based on what you see... 
+
+Assuming your eyes don't glaze over when you see the numbers. 
+
+Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). 
+
+You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints. 
+\end{frame}
+\begin{frame}
+\frametitle{Really Advanced Cachegrind}
+
+This is a good way to validate that your changes actually worked!
+
+Showing your manager (executive) WHY a change worked is more convincing...
 
 \end{frame}
 
-
-
 \begin{frame}
-\frametitle{Muh Gainz}
-
-
-
-Most performance gains from inlining.
-
-Decisions based on the call graph path profiling. 
-
-But: behaviour of function \texttt{foo} may be very different when called from \texttt{B} than when called from \texttt{D}. 
-
+\frametitle{Simulations as Perf Debugging}
 
 \begin{center}
-	\includegraphics[width=0.4\textwidth]{images/callpaths.png}
+	\includegraphics[width=0.4\textwidth]{images/endprogram.jpg}
+\end{center}
+
+Executing in a simulation allows for more than just counting the number of cache misses or a pipeline stalls -- you can see how we got there.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Simulation Example}
+
+Docs for TMS320C55x Digital Signal Processing platform by Texas Instruments.
+
+Get more exact values of counts, cache misses, CPU stalls...\\
+\quad And you can halt on events to look into them!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Miri}
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/miri.jpg}
+\end{center}
+
+Everyone was extremely cool about the duplicate Earth...
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Miri \& Valgrind}
+
+Miri has a lot of similarities with Valgrind!
+
+I think its real intended use is to detect issues in \texttt{unsafe} code.\\
+\quad Array bounds violations, reading uninitialized memory, memory leaks...
+
+\begin{center}
+	\includegraphics[width=0.3\textwidth]{images/dothathere.jpg}
+\end{center}
+
+... Well. Except for launching GPU code.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Let's Do an Example}
+
+To run, use the miri option and it will generate a \texttt{crox} directory with some file in it; process that file with the \texttt{crox} tool to generate a json file that can be read in chrome dev tools:
+
+\begin{lstlisting}
+MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-measureme=crox" cargo +nightly miri run
+\end{lstlisting}
+
+It produces a flamegraph-style graph!
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Miri Example}
+
+\begin{center}
+	\includegraphics[width=\textwidth]{images/miri-pco1.png}
 \end{center}
 
 \end{frame}
 
-
-
 \begin{frame}
-\frametitle{Another Call Graph}
-
-
-Example 2 of relationships between functions.\\
-Numbers on edges represent the number of invocations:
+\frametitle{Miri Example}
 
 \begin{center}
-	\includegraphics[width=\textwidth]{images/callpaths2.png}
+	\includegraphics[width=0.85\textwidth]{images/miri-pco2.png}
 \end{center}
 
 \end{frame}
 
-
-
 \begin{frame}
-\frametitle{The POGO View of the World}
+\frametitle{Miri Drawbacks}
 
-When considering what to do here, POGO takes the view like this:
+Like Valgrind, it makes the program run much, much slower.
 
-\begin{center}
-	\includegraphics[width=\textwidth]{images/callpaths3.png}
-\end{center}
+The article got a lot of comments about improving the debug version rather than the release one.
+
+That is true, but it's meant to be used in the change-run-evaluate loop!
 
 \end{frame}
-
-
-
-\begin{frame}
-\frametitle{The POGO View of the World}
-
-\begin{center}
-	\includegraphics[width=\textwidth]{images/callpaths4.png}
-\end{center}
-
-\end{frame}
-
-
-
-
-\begin{frame}
-\frametitle{Page Locality}
-
-
-
-Call graph profiling data also good for packing blocks.
-
-Put most common cases nearby.\\
-Put successors after their predecessors.
-
-Packing related code = fewer page faults (cache misses).
-
-Calling a function in same page as caller =  ``page locality''.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Block Layout}
-
-\begin{center}
-	\includegraphics[width=\textwidth]{images/blocklayout.png}
-\end{center}
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Dead Code?}
-
-
-
-According to the author, ``dead'' code goes in its own special block. 
-
-Probably not truly dead code (compile-time unreachable).
-
-Instead: code that never gets invoked in training.
-
-
-\end{frame}
-
-
-
-\begin{frame}
-\frametitle{Benchmark Results}
- 
-OK, how well does POGO work?
-
-The application under test is a standard benchmark suite (Spec2K):
-
-
-\begin{center}
-\begin{tabular}{l|l|l|l|l|l}
-	\textbf{Spec2k:} & \textbf{sjeng} & \textbf{gobmk} & \textbf{perl} & \textbf{povray} & \textbf{gcc}\\ \hline
-	\textbf{App Size:} &  {Small} & {Medium} & {Medium} & {Medium} & {Large} \\ \hline
-	\textbf{Inlined Edge Count} & 50\% & 53\% & 25\% & 79\% & 65\% \\ \hline
-	\textbf{Page Locality} & 97\% & 75\% & 85\% & 98\% & 80\% \\ \hline
-	\textbf{Speed Gain} & 8.5\% & 6.6\% & 14.9\% & 36.9\% & 7.9\% \\ 
-\end{tabular}
-\end{center}
-
- 
-We can speculate about how well synthetic benchmarks results translate to real-world application performance\ldots
-
-
-\end{frame}
-
-
-
 
 \end{document}
+
 

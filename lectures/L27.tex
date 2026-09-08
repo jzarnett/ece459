@@ -2,364 +2,191 @@
 
 \begin{document}
 
-\lecture{27 --- Program Profiling and POGO}{\term}{Jeff Zarnett \& Patrick Lam}
+\lecture{27 --- Causal and Simulation Profiling}{\term}{Jeff Zarnett}
 
-\section*{Profiling}
-We've spent some time talking about observing programs at a higher level, but now we should consider zooming in a little bit to using specific profiling tools to figure out where CPU time is going and how to make use of that.
+\section*{Causal Profiling}
+At this point we've got some experience in identifying areas of the program that we think are slow or are limiting the maximum performance of our program. If we are presented with more than one thing, how do we know which of those would yield the most benefit? Is it possible that optimizing something would actually have no effect or even a negative effect? The scientific approach would be to do an experiment and find out. That is, change the code, see the impact, re-evaluate. What causal profiling offers us is a way to run those experiments without changing any code. That could be a significant savings of time and effort. 
 
-I've used the logging-only approach myself to figure out what blocks of a single large function are taking a long time (such as a time when I found out that updating exchange rates was slow.). But this approach is not necessarily a good one.  It's an example of ``invasive'' profiling---we are going in and changing the source code of the program in question---to add (slow!) instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half-hour range and I could see that the save operation was taking twelve minutes. Not kidding.
+One such causal profiler is called Coz (pronounced like ``cause'')~\cite{coz}. It does a what-if analysis that says: what would be the impact of speeding up this particular part of the code? 
 
-I also mentioned earlier that I used the profiling tool for CUDA to find out what was wrong with my N-Body program. I ran the command \texttt{nvprof target/release/nbody-cuda}, and in addition to the regular program output I got the following, which showed that the time was going to the kernel and I wasn't losing a lot in overhead:
+A very simple approach would just look at the time of the program and just calculate what happens if the runtime of function \texttt{work()} is reduced by, say, 10\%. But that isn't a realistic approach, because speeding up that function might have no overall impact or change the execution time by increasing lock contention or some other mechanism. No, we actually need a simulation. 
+
+The key observation of the Coz profiler authors is the idea that speeding up some area of code is fundamentally the same as slowing down every other part of the code. It's all relative! This is what we would call a virtual speedup. How is the other code slowed down? Adding some pauses to (stopping the execution of) the other threads. That certainly makes them run slower. Maybe you're not convinced that slowing down everything else is equivalent?
+
+
+Shown below is the argument from~\cite{coz} in visual form. The original runtime is shown as (a). Hypothetically, say we make function \texttt{f} faster by some factor $d = 40\%$ that gives us (b). But, if instead of actually making function \texttt{f} faster, let's pause other threads for $0.4 \times t(f)$ where $t(f)$ is the original execution time of \texttt{f}. Then we get an equivalent effect to that of optimizing \texttt{f} by $d$.
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/virtual-speedup.jpg}
+\end{center}
+
+The tool provides some graphs of potential program speedup. From the recorded presentation, it might look something like the diagram below, where the boxes on the right correspond to different theoretical actions in the application being examined:
+
+\begin{center}
+	\includegraphics[width=0.4\textwidth]{images/coz-speedup-graph.png}
+\end{center}
+
+This pretend application shows all the possible outcomes, from continuous linear speedup, to speedup capped at some point, to no effect, and finally to where optimizing something makes the overall program runtime worse. 
+
+It's easy to imagine scenarios corresponding to each of those. If we're computing the n-body problem, anything that improves the calculation of forces will certainly make things better. And it's easy to imagine that sometimes optimizing a part of the program does not improve anything because that code is not on the critical path. We can also easily imagine that improving something works up to a point where it ceases to be the limiting factor. But making things worse? We already covered that idea: speeding up a thread may increase lock contention or add something to the critical path. At some point, things may recover and be a net benefit.
+
+It is important to remember that just because hypothetically speeding up a particular part of the program would be beneficial, doesn't mean that it's possible to speed up that part. And almost certainly not possible to do so to an arbitrary degree. We still have to make an assessment of what optimizations we can make and how difficult it would be to actually realize those improvements.
+
+Once we've made a change to the program, then it's time to run an experiment again with the new baseline to see what else we can do.
+
+The paper has a table summarizing the optimizations they applied to a few different programs, which seems to support the idea that the tool can be used effectively to get a meaningful speedup with relatively few lines of code~\cite{coz}:
+\begin{center}
+	\includegraphics[width=0.6\textwidth]{images/coz-speedup.jpg}
+\end{center}
+
+There are potentially some limitations to this, of course. Putting pauses in the execution of the code can work when the execution of the program is all on the same machine and we have control over all the threads; it would need some meaningful extension to work for a distributed system where coordinating things across many servers would be needed.
+
+Using some benchmarking workload, the authors estimate a 17.6\% overhead for this tool, which is broken down into 2.6\% for startup debug information collection, sampling at 4.8\%, and 10.2\% is the delay that's caused by slowing down other threads to create a virtual speedup~\cite{coz}.
+
+If you'd like to see some more details of the tool, you can see the author presentation at the ACM symposium here: \url{https://www.youtube.com/watch?v=jE0V-p1odPg}
+
+\subsection*{The Next Generation: SCOZ}
+A few years later, another group of researchers worked to extend the Coz profiler to account for some limitations: inability to look at multi-process applications (which we just talked about), but also cases where the OS itself becomes a bottleneck~\cite{scoz}. You may recall that looking into the kernel is not always permitted for a given profiling tool -- depending on permissions.  It is therefore obvious to imagine that if one cannot look, then one cannot touch. 
+
+If, indeed, the kernel is a bottleneck, it may or may not be possible to do very much about it. Avoiding system calls is one of the ``do less work'' strategies that you have likely already considered; oftentimes doing the system call is because we must. In an open-source OS or a kernel module we control, then we would have the ability to do something about it, if coz could give some recommendations.
+
+The approach of~\cite{scoz} is to move from a thread-based system to a core-based one. So where, previously, to simulate speedup of a particular section of code the tool would pause all other threads, now it pauses execution on all other cores. There are some details to consider about what to do when there are idle cores to make sure that the delay is charged to the ``right'' core when one is woken up by another. The diagram the authors provides helps to explain it well:
+
+\begin{center}
+	\includegraphics[width=0.8\textwidth]{images/scoz-delay.jpg}
+\end{center}
+
+The implementation involves one profiler thread for each core to manage its behaviour. The thread is pinned to the core, and its purpose is primarily to call the \texttt{ndelay} interface (with preemption temporarily disabled) to stop execution of code on that specific core~\cite{scoz}. 
+
+This extension does allow \texttt{scoz} to do more than coz, but it does require running within the kernel, which imposes certain limitations to where and how it can be applied. That's an interesting tradeoff!
+
+\section*{Simulations}
+Causal profiling is a really neat idea in terms of using a simulation to make decisions. Other ways of using simulation for performance analysis exist! Let's talk about a couple examples.
+
+\subsection*{Cachegrind}
+
+Cachegrind is another tool in the Valgrind package and this one is much more performance oriented than the other two tools. Yes, memcheck and Helgrind look for errors in your program that are likely to lead to slowdowns (memory leaks) or make it easier to parallelize (spawn threads) without introducing errors. Cachegrind, however, does a simulation of how your program interacts with cache and evaluates how your program does on branch prediction. As we discussed earlier, cache misses and branch mispredicts have a huge impact on performance.
+
+Recall that a miss from the fastest cache results in a small penalty (perhaps, 10 cycles); a miss that requires going to memory requires about 200 cycles. A mispredicted branch costs somewhere between 10-30 cycles. All figures \& estimates from the cachegrind manual~\cite{cachegrind}.
+
+Cachegrind reports data about the First Level Instruction Cache (I1) [L1 Instruction Cache], the First Level Data Cache (D1) [L1 Data Cache], and the Last Level Cache (LL) [L3 Cache].
+
+Unlike the normal Valgrind operation, you probably want to turn optimizations on (compile the release version). You still want debugging symbols, of course, but enabling optimizations will tell you more about what is going to happen in the released version of your program.
+
+If I instruct cachegrind to run on a simple ECE 252-type example using the \texttt{--branch-sim=yes} option (because by default it won't show it):
+
+\begin{lstlisting}
+jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
+==16559== Cachegrind, a cache and branch-prediction profiler
+==16559== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
+==16559== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
+==16559== Command: ./search
+==16559== 
+--16559-- warning: L3 cache found, using its data for the LL simulation.
+Found at 11 by thread 1 
+Found at 22 by thread 3 
+==16559== 
+==16559== I   refs:      310,670
+==16559== I1  misses:      1,700
+==16559== LLi misses:      1,292
+==16559== I1  miss rate:    0.54%
+==16559== LLi miss rate:    0.41%
+==16559== 
+==16559== D   refs:      114,078  (77,789 rd   + 36,289 wr)
+==16559== D1  misses:      4,398  ( 3,360 rd   +  1,038 wr)
+==16559== LLd misses:      3,252  ( 2,337 rd   +    915 wr)
+==16559== D1  miss rate:     3.8% (   4.3%     +    2.8%  )
+==16559== LLd miss rate:     2.8% (   3.0%     +    2.5%  )
+==16559== 
+==16559== LL refs:         6,098  ( 5,060 rd   +  1,038 wr)
+==16559== LL misses:       4,544  ( 3,629 rd   +    915 wr)
+==16559== LL miss rate:      1.0% (   0.9%     +    2.5%  )
+==16559== 
+==16559== Branches:       66,622  (65,097 cond +  1,525 ind)
+==16559== Mispredicts:     7,202  ( 6,699 cond +    503 ind)
+==16559== Mispred rate:     10.8% (  10.2%     +   32.9%   )
+\end{lstlisting}
+
+So we see a breakdown of the instruction accesses, data accesses, and how well the last level of cache (L3 here) does.  Why did I say enable optimization? Well, here's the output of the search program if I compile with the \texttt{-O2} option. Yes, this was a C program, but the idea is the same.
+
+\begin{lstlisting}
+jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
+==16618== Cachegrind, a cache and branch-prediction profiler
+==16618== Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.
+==16618== Using Valgrind-3.10.0.SVN and LibVEX; rerun with -h for copyright info
+==16618== Command: ./search
+==16618== 
+--16618-- warning: L3 cache found, using its data for the LL simulation.
+Found at 11 by thread 1 
+Found at 22 by thread 3 
+==16618== 
+==16618== I   refs:      306,169
+==16618== I1  misses:      1,652
+==16618== LLi misses:      1,286
+==16618== I1  miss rate:    0.53%
+==16618== LLi miss rate:    0.42%
+==16618== 
+==16618== D   refs:      112,015  (76,522 rd   + 35,493 wr)
+==16618== D1  misses:      4,328  ( 3,353 rd   +    975 wr)
+==16618== LLd misses:      3,201  ( 2,337 rd   +    864 wr)
+==16618== D1  miss rate:     3.8% (   4.3%     +    2.7%  )
+==16618== LLd miss rate:     2.8% (   3.0%     +    2.4%  )
+==16618== 
+==16618== LL refs:         5,980  ( 5,005 rd   +    975 wr)
+==16618== LL misses:       4,487  ( 3,623 rd   +    864 wr)
+==16618== LL miss rate:      1.0% (   0.9%     +    2.4%  )
+==16618== 
+==16618== Branches:       65,827  (64,352 cond +  1,475 ind)
+==16618== Mispredicts:     7,109  ( 6,596 cond +    513 ind)
+==16618== Mispred rate:     10.7% (  10.2%     +   34.7%   )
+\end{lstlisting}
+
+Interesting results: our data and instruction miss rates went down marginally but the branch mispredict rates went up! Well sort of -- there were fewer branches and thus fewer we got wrong as well as fewer we got right. So the total cycles lost to mispredicts went down. Is this an overall win for the code? Yes. 
+
+In some cases it's not so clear cut, and we could do a small calculation. If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400; a decrease of 11~400 cycles. Repeat for each of the measures and sum them up to determine if things got better overall and by how much.
+
+Cachegrind also produces a more detailed output file, titled \texttt{cachegrind.out.<pid>} (the PID in the example is 16618). This file is not especially human-readable, but we can ask the associated tool \texttt{cg\_annotate} to break it down for us, and if we have the source code available, so much the better, because it will give you line by line information. That's way too much to show even in the notes, so it's the sort of thing I can show in class (or you can create for yourself) but here's a small excerpt from the \texttt{search.c} example:
+
+
 
 {\scriptsize
-\begin{verbatim}
-==20734== Profiling application: target/release/nbody-cuda
-==20734== Profiling result:
-            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
- GPU activities:  100.00%  10.7599s         1  10.7599s  10.7599s  10.7599s  calculate_forces
-                    0.00%  234.72us         2  117.36us  100.80us  133.92us  [CUDA memcpy HtoD]
-                    0.00%  94.241us         1  94.241us  94.241us  94.241us  [CUDA memcpy DtoH]
-      API calls:   97.48%  10.7599s         1  10.7599s  10.7599s  10.7599s  cuStreamSynchronize
-                    1.92%  211.87ms         1  211.87ms  211.87ms  211.87ms  cuCtxCreate
-                    0.54%  59.648ms         1  59.648ms  59.648ms  59.648ms  cuCtxDestroy
-                    0.04%  4.8704ms         1  4.8704ms  4.8704ms  4.8704ms  cuModuleLoadData
-                    0.00%  404.72us         2  202.36us  194.51us  210.21us  cuMemAlloc
-                    0.00%  400.58us         2  200.29us  158.08us  242.50us  cuMemcpyHtoD
-                    0.00%  299.30us         2  149.65us  121.42us  177.88us  cuMemFree
-                    0.00%  243.86us         1  243.86us  243.86us  243.86us  cuMemcpyDtoH
-                    0.00%  85.000us         1  85.000us  85.000us  85.000us  cuModuleUnload
-                    0.00%  41.356us         1  41.356us  41.356us  41.356us  cuLaunchKernel
-                    0.00%  18.483us         1  18.483us  18.483us  18.483us  cuStreamCreateWithPriority
-                    0.00%  9.0780us         1  9.0780us  9.0780us  9.0780us  cuStreamDestroy
-                    0.00%  2.2080us         2  1.1040us     215ns  1.9930us  cuDeviceGetCount
-                    0.00%  1.4600us         1  1.4600us  1.4600us  1.4600us  cuModuleGetFunction
-                    0.00%  1.1810us         2     590ns     214ns     967ns  cuDeviceGet
-                    0.00%     929ns         3     309ns     230ns     469ns  cuDeviceGetAttribute
-\end{verbatim}
+\begin{lstlisting}
+--------------------------------------------------------------------------------
+-- Auto-annotated source: /home/jz/ece254/search.c
+--------------------------------------------------------------------------------
+ Ir I1mr ILmr Dr D1mr DLmr Dw D1mw DLmw Bc Bcm Bi Bim 
+127    1    1 96    3    0  4    0    0 23  11  0   0      for ( int i = arg->startIndex; i < arg->endIndex; ++i ) {
+147    0    0 84    3    2  0    0    0 21   9  0   0          if ( array[i] == arg->searchValue ) {
+  6    0    0  4    0    0  2    0    0  0   0  0   0              *result = i;
+  2    0    0  0    0    0  0    0    0  0   0  0   0              break;
+  .    .    .  .    .    .  .    .    .  .   .  .   .          }
+  .    .    .  .    .    .  .    .    .  .   .  .   .      }
+\end{lstlisting}
 }
 
-Oh, and for comparison, here's the one where I make much better use of the GPU's capabilities (with better grid and block settings):
+Cachegrind is very... verbose... and it can be very hard to come up with useful changes based on what you see... It may be better suited to something like quantifying whether a change has helped on some performance-critical code and why. The why (as in, mechanism) aspect is helpful in justifying to a manager or executive that the change you made actually solved the problem and the improved results are not just luck or measurement variance.
 
-{\scriptsize
-\begin{verbatim}
-=22619== Profiling result:
-            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
- GPU activities:   99.92%  417.53ms         1  417.53ms  417.53ms  417.53ms  calculate_forces
-                    0.06%  236.03us         2  118.02us  101.44us  134.59us  [CUDA memcpy HtoD]
-                    0.02%  93.057us         1  93.057us  93.057us  93.057us  [CUDA memcpy DtoH]
-      API calls:   52.09%  417.54ms         1  417.54ms  417.54ms  417.54ms  cuStreamSynchronize
-                   26.70%  214.00ms         1  214.00ms  214.00ms  214.00ms  cuCtxCreate
-                   13.63%  109.26ms         1  109.26ms  109.26ms  109.26ms  cuModuleLoadData
-                    7.42%  59.502ms         1  59.502ms  59.502ms  59.502ms  cuCtxDestroy
-                    0.05%  364.08us         2  182.04us  147.65us  216.42us  cuMemcpyHtoD
-                    0.04%  306.48us         2  153.24us  134.10us  172.37us  cuMemAlloc
-                    0.04%  285.73us         2  142.86us  122.90us  162.83us  cuMemFree
-                    0.03%  246.37us         1  246.37us  246.37us  246.37us  cuMemcpyDtoH
-                    0.01%  61.916us         1  61.916us  61.916us  61.916us  cuModuleUnload
-                    0.00%  26.218us         1  26.218us  26.218us  26.218us  cuLaunchKernel
-                    0.00%  15.902us         1  15.902us  15.902us  15.902us  cuStreamCreateWithPriority
-                    0.00%  9.0760us         1  9.0760us  9.0760us  9.0760us  cuStreamDestroy
-                    0.00%  1.6720us         2     836ns     203ns  1.4690us  cuDeviceGetCount
-                    0.00%  1.0950us         1  1.0950us  1.0950us  1.0950us  cuModuleGetFunction
-                    0.00%     888ns         3     296ns     222ns     442ns  cuDeviceGetAttribute
-                    0.00%     712ns         2     356ns     212ns     500ns  cuDeviceGet
-\end{verbatim}
-}
+\subsection*{Simulation as Performance Debugging}
+Simulation also allows for something that might be described as performance debugging. Executing in a simulation allows for more than just counting of the number of times that there is a cache miss or a pipeline stall -- you can see how we got there. That's helpful, even if it's not always actionable.
 
+I got looking into some examples of this and came across some technical information for the TMS320C55x Digital Signal Processing platform by Texas Instruments.  I've never used it for anything and cannot honestly say anything about it. But the technical manual for its instruction set simulator\footnote{\url{https://www.ti.com/lit/ug/spru599d/spru599d.pdf}} has some interesting things to say about the value of simulation for profiling. Using a simulation approach, it's possible to get more exact values of how often something runs or count exactly how many cache misses, hits, and CPU stalls occur. Halting on an event trigger (e.g., pipeline stall) can give you lots of information about how to solve it without needing too much logging or tracing.
 
-Nicholas Nethercote wrote the ``counts'' tool\footnote{\url{https://github.com/nnethercote/counts}} to process ad-hoc debug output and shows an example of using it to profile the size of heap allocations in Firefox. In the example in the README, he reports that while most allocations are small, most memory is allocated as part of a large allocation. He provides a number of other examples where ad-hoc profiling is useful: how often are certain paths executed? how many times does a loop iterate? how many elements are in a hash table at a given location? And more! It's hard to write a general-purpose tool for these ad-hoc queries.
+\subsection*{Interpreted Rust: Miri}
+Despite sharing a name with an episode of the 1960s Star Trek where the \textit{Enterprise} comes across a planet that is an exact duplicate of earth, down to the continent layout and nobody seems to think that is an \textit{extremely big deal}, Miri is a profiling tool for Rust. It runs the Rust code in an interpreter which means it's slow, but helps in finding bugs. It shares a lot of similarities with Valgrind!
 
-(Also like debugging, if you get to be a wizard you can maybe do it by code inspection, but that technique of speculative execution inside your head is a lot harder to apply to performance problems than it is to debugging. Trained professionals like Nicholas Nethercote use profilers, so you can too.)
+From reading its project description at \url{https://github.com/rust-lang/miri}, I think the real intended use of Miri is to detect issues in \texttt{unsafe} code. It is likely that in this course you've had only one situation where you really needed to use \texttt{unsafe} and that's launching a GPU computation, so its utility at first glance seems limited. But more complex programs in other scenarios may require more use of it. Miri seems to catch the sort of thing that we normally would find with Valgrind in other scenarios: array bounds violations, reading uninitialized memory, and memory leaks.
 
-So we should all agree, we want to use tools and do this in a methodical way.
+That's not all, though. Let's follow along an example of \cite{miri}, using Miri to generate some flamegraph-style results. To run, use the miri option and it will generate a \texttt{crox} directory with some file in it; process that file with the \texttt{crox} tool to generate a json file that can be read in chrome dev tools:
 
-Now that we agree on that, let's think about how profiling tools work\:
-
-\begin{itemize}[noitemsep]
-\item sampling-based (traditional): every so often (e.g. 100ms for gprof), stop the system and ask it what it's doing (query the system state); or,
-\item instrumentation-based, or probe-based/predicate-based
-  (sometimes, too expensive): query system state under certain
-  conditions; like conditional breakpoints.
-\end{itemize}
-We'll talk about both per-process profiling and system-wide profiling. You can read more about profiling in Chapter 5 (Profiling) of The Rust Performance Book~\cite{nethercote20:_rust_perfor_book}; it discusses heap profiling in much more detail than we do (or don't,
-more accurately).
-
-If you need your system to run fast, you need to start profiling
-and benchmarking as soon as you can run the system. Benefits:
-\begin{itemize}[noitemsep]
-\item establishes a baseline performance for the system;
-\item allows you to measure impacts of changes and further system development;
-\item allows you to re-design the system before it's too late;
-\item avoids the need for ``perf spray'' to make the system faster, since
-that spray is often made of ``unobtainium''\footnote{\url{http://en.wikipedia.org/wiki/Unobtainium}}.
-\end{itemize}
-
-\paragraph{Tips for Leveraging Profiling.}
-When writing large software projects:
-  \begin{itemize}[noitemsep]
-    \item First, write clear and concise code. Don't do any premature optimizations---focus on correctness. Still, there are choices you can make that support performance at this stage, like using an efficient search or sort algorithm, if you know it's better and won't take additional effort.
-    \item Once it's working, profile to get a baseline of your performance: it allows you to easily track any performance changes and to re-design your program before it's too late.
-  \end{itemize}
-Focus your optimization efforts on the code that matters.
-
-Look for abnormalities; in particular, you're looking for
-deviations from the following rules:
-\begin{itemize}[noitemsep]
-\item time is spent in the right part of the system/program;
-\item time is not spent in error-handling, noncritical code, or exceptional cases; and
-\item time is not unnecessarily spent in the operating system.
-\end{itemize}
-For instance, ``why is {\tt ps} taking up all my cycles?'';
-see page 34 of ~\cite{300ps}.
-
-\paragraph{Development vs. production.}
-You can always profile your systems in development, but that might not
-help with complexities in production. (You want separate dev and
-production systems, of course!) We'll talk a bit about DTrace, which
-is one way of profiling a production system. The constraints on profiling 
-production systems are that the profiling must not affect the system's
-performance or reliability.
-
-\section*{Userspace per-process profiling}
-Sometimes---or, in this course, often---you can get away with
-investigating just one process and get useful results about that
-process's behaviour.  We'll first talk about {\tt perf}, the profiler 
-recommended for use with Rust. This is Linux-specific, though.
-
-The \texttt{perf} tool is an interface to the Linux kernel's built-in
-sample-based profiling using CPU counters. It works per-process, per-CPU, or system-wide. It can report the cost of each line of code.
-
-Webpage: \url{https://perf.wiki.kernel.org/index.php/Tutorial}
-
-\noindent
-Here's a usage example on some old assignment code from a previous offering of the course:
-\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
-[plam@lynch nm-morph]$ perf stat ./test_harness
-
- Performance counter stats for './test_harness':
-
-       6562.501429 task-clock                #    0.997 CPUs utilized          
-               666 context-switches          #    0.101 K/sec                  
-                 0 cpu-migrations            #    0.000 K/sec                  
-             3,791 page-faults               #    0.578 K/sec                  
-    24,874,267,078 cycles                    #    3.790 GHz                     [83.32%]
-    12,565,457,337 stalled-cycles-frontend   #   50.52% frontend cycles idle    [83.31%]
-     5,874,853,028 stalled-cycles-backend    #   23.62% backend  cycles idle    [66.63%]
-    33,787,408,650 instructions              #    1.36  insns per cycle        
-                                             #    0.37  stalled cycles per insn [83.32%]
-     5,271,501,213 branches                  #  803.276 M/sec                   [83.38%]
-       155,568,356 branch-misses             #    2.95% of all branches         [83.36%]
-
-       6.580225847 seconds time elapsed
-\end{lstlisting} %$
-
-Right, let's get started. We're going to use the blog post~\cite{rustflamegraph} as a guide; that source tells a more complete story of an example of using the profiler to optimize, but for now we are just interested in the steps.
-
-Julia Evans has an excellent perf cheat sheet: \url{https://jvns.ca/perf-cheat-sheet.pdf}, which also references \url{https://www.brendangregg.com/perf.html}.
-
-The first thing to do is to compile with debugging info, go to your \texttt{Cargo.toml} file and add:
-\begin{verbatim}
-[profile.release]
-debug = true
-\end{verbatim}
-
-This means that \texttt{cargo build -{}-release} will now compile the version with debug info (you can tell because it will say \texttt{Finished release [optimized + debuginfo] target(s) in 0.55s}; without this, we wouldn't get the part that says debug info so we can tell if it's correct. And we want it to be the release version that we're instrumenting, because we want the compiler optimizations to be applied. Without those, we might be trying to optimize things where the compiler would do it for us anyway.
-
-The basic plan is to run the program using \texttt{perf record}, which will sample the execution of the program to produce a data set. Then there are three ways we can look at the code: \texttt{perf report}, \texttt{perf annotate}, and a flamegraph. We'll look at all of those, but in a live demo.
-
-
-\paragraph{CLion.} While we've seen how to use \texttt{perf}, it's not the only way. During development of some of the code exercises, I used the CLion built-in profiler for this purpose. It generates a flamegraph for you too, and I'll show that for how to create the flamegraph as well.
-
-\section*{Profiler Guided Optimization (POGO)}
-
-A few years ago, we were fortunate enough to have a guest lecture from someone at Microsoft actually in the room to give the guest lecture on the subject of Profile Guided Optimization (or POGO). In subsequent years, I was not able to convince him to fly in just for the lecture. Anyway, let's talk about the subject, which is by no means restricted to Rust.
-
-The compiler does static analysis of the code you've written and makes its best guesses about what is likely to happen. The canonical example for this is branch prediction: there is an if-else block and the compiler will then guess about which is more likely and optimize for that version. Consider three examples, originally from~\cite{pogo} but replaced with some Rust equivalents:
-
-\begin{lstlisting}[language=Rust]
-    fn which_branch(a: i32, b: i32) {
-        if a < b {
-            println!("Case one.");
-        } else {
-            println!("Case two.");
-        }
-    }
+\begin{lstlisting}
+MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-measureme=crox" cargo +nightly miri run
 \end{lstlisting}
 
-Just looking at this, which is more likely, \texttt{a < b} or \texttt{a >= b}? Assuming there's no other information in the system, the compiler can believe that one is more likely than the other, or having no real information, use a fallback rule. This works, but what if we are wrong? Suppose the compiler decides it is likely that \texttt{a} is the larger value and it optimizes for that version. However, it is only the case 5\% of the time, so most of the time the prediction is wrong. That's unpleasant. But the only way to know is to actually run the program.
+Great! This produces a neat little flamegraph-style graph that shows what calls what and the time taken. If you prefer this to a flamegraph, that's perfectly fine. Both give you the same information in a similar way. The graphs are a bit much to show in the notes but screenshots in the slides help and we can do a live demo, too.
 
-\begin{multicols}{2}
-\begin{lstlisting}[language=Rust]
-trait Polite {
-    fn greet(&self) -> String;
-}
-
-struct Kenobi {
-    /* Stuff */
-}
-impl Polite for Kenobi {
-    fn greet(&self) -> String {
-        return String::from("Hello there!");
-    }
-}
-\end{lstlisting}
-\columnbreak
-\begin{lstlisting}[language=Rust]
-struct Grievous {
-    /* Things */
-}
-impl Polite for Grievous {
-    fn greet(&self) -> String {
-        return String::from("General Kenobi.");
-    }
-}
-
-fn devirtualization(thing: &Polite) {
-    println!("{}", thing.greet());
-}
-
-\end{lstlisting}
-\end{multicols}
+Much like Valgrind, it makes the program under observation run much, much slower. To make this work in a reasonable amount of time, I took the \texttt{producer-consumer-opt} code from earlier, but turned down the number of items per thread to 10 to try to not run out of patience before it produced the results. It gave some interesting graphs that you can poke around with. In the example run I have, you can see that for thread 1, initialization of the random number generator routine is quite slow and after that's happened, each subsequent use is quick. 
 
 
-
-There are similar questions raised for the other two examples. What is the ``normal'' type for some reference \texttt{thing}? It could be of either type \texttt{Kenobi} or \texttt{Grievous}. If we do not know, the compiler cannot do devirtualization (replace this virtual call with a real one). If there was exactly one type that implements the \texttt{Polite} trait we wouldn't have to guess. But are we much more likely to see \texttt{Kenobi} than \texttt{Grievous}?
-
-\begin{lstlisting}[language=Rust]
-    fn match_thing(x: i32) -> i32 {
-        match x {
-            0..10 => 1,
-            11..100 => 2,
-            _ => 0
-        }
-    }
-\end{lstlisting}
-
- Same thing with \texttt{x}: what is its typical value? If we know that, it is our prediction. Actually, in a match block with many options, could we rank them in descending order of likelihood?
-
-There exists a solution to this, and it is that we can give hints to the compiler, but that's a manual process. Automation is a good thing and this lecture is about that. These sorts of things already exist for Java! The Java HotSpot virtual machine will update its predictions on the fly. There are some initial predictions and if they turn out to be wrong, the Just In Time compiler will replace it with the other version. That's neat! I don't know for certain but I suspect the .NET runtime will do the same for something like C\#. But this is Rust and we don't have the runtime to reduce the overhead: the compiler runs and it does its job and that's it; the program is never updated with newer predictions if more data becomes known.
-
-Solving this problem is the goal of POGO. It is taking the data from some actual runs of the program and using that to inform the predictions. This necessitates a multi-step compile: first compile the code, run it to collect data, then recompile the code using the data we collected. Let's expand on all three steps.
-
-Step one is to generate an executable with instrumentation. Ask to compile with instrumentation enabled, which also says what directory to put it in: \texttt{-Cprofile-generate=/tmp/pgo-data}. The compiler inserts a bunch of probes into the generated code that are used to record data. Three types of probe are inserted: function entry probes, edge probes, and value probes.  A function entry probe, obviously, counts how many times a particular function is called. An edge probe is used to count the transitions (which tells us whether an if branch is taken or the else condition). Value probes are interesting; they are used to collect a histogram of values. Thus, we can have a small table that tells us the frequency of what is given in to a \texttt{match} statement. When this phase is complete, there is an instrumented executable and an empty database file where the training data goes~\cite{pogo}. 
-
-Step two is training day: run the instrumented executable through real-world scenarios. Ideally you will spend the training time on the performance-critical sections. It does not have to be a single training run, of course. Data can be collected from as many runs as desired. Keep in mind that the program will run a lot slower when there's the instrumentation present. 
-
-Still, it is important to note that you are not trying to exercise every part of the program (this is not unit testing); instead it should be as close to real-world-usage as can be accomplished. In fact, trying to use every bell and whistle of the program is counterproductive; if the usage data does not match real world scenarios then  the compiler has been given the wrong information about what is important. Or you might end up teaching it that almost nothing is important... 
-
-According to the docs about it\footnote{\url{https://doc.rust-lang.org/rustc/profile-guided-optimization.html}}, the output \texttt{.profraw} files require a little bit of processing before they're ready to go. When the program is running, the recording of data is done as quickly as possible with little regard for making it neat. Think of it like taking notes furiously during a lecture and then later revisiting them to organize them a bit. The tool for doing this is \texttt{llvm-profdata} and it will organize the data into a \texttt{.profdata} file. We can merge multiple runs as needed into a single file that will be used for input. 
-
-Step three is a recompile. This time, in addition to the source files, the (merged) training data is fed into the compiler for a second compile, and this data is applied to (hypothetically) produce a better output executable than could be achieved by static analysis alone.
-
-
-It is not necessary to do all three steps for every build. Old training data can be re-used until the code base has diverged significantly enough from the instrumented version. According to~\cite{pogo}, the recommended workflow is for one developer to perform these steps and check the training data into source control so that other developers can make use of it in their builds.
-
-The Intel Developer Zone explains the process in a handy infographic\footnote{Source: \url{https://software.intel.com/en-us/node/522721}} :
-
-\begin{center}
-	\includegraphics[width=0.5\textwidth]{images/pogo-workflow.jpg}
-\end{center}
-
-
-
-Or, here, a complete set of steps for actually running it if our program is all in \texttt{main.rs}, from the docs\footnote{\url{https://doc.rust-lang.org/rustc/profile-guided-optimization.html}}:
-
-{\scriptsize
-\begin{verbatim}
-# STEP 1: Compile the binary with instrumentation
-rustc -Cprofile-generate=/tmp/pgo-data -O ./main.rs
-
-# STEP 2: Run the binary a few times, maybe with common sets of args.
-#         Each run will create or update `.profraw` files in /tmp/pgo-data
-./main mydata1.csv
-./main mydata2.csv
-./main mydata3.csv
-
-# STEP 3: Merge and post-process all the `.profraw` files in /tmp/pgo-data
-llvm-profdata merge -o ./merged.profdata /tmp/pgo-data
-
-# STEP 4: Use the merged `.profdata` file during optimization. All `rustc`
-#         flags have to be the same.
-rustc -Cprofile-use=./merged.profdata -O ./main.rs
-\end{verbatim}
-}
-(NB: Debian/Ubuntu's rustc doesn't seem to support PGO; I had to rustup it myself on my computer; I also used the Complete Cargo Workflow listed later.)
-
-What does it mean for the executable to be better? We have already looked at an example about how to predict branches. Predicting it correctly will be faster than predicting it incorrectly, but this is not the only thing.  The algorithms will aim for speed in the areas that are ``hot'' (performance critical and/or common scenarios). The algorithms will alternatively aim to minimize the size of code of areas that are ``cold'' (not heavily used). It is recommended in~\cite{pogo} that less than 5\% of methods should be compiled for speed.
-
-It is possible that we can combine multiple training runs and we can manually give some suggestions of what scenarios are important. The more a scenario runs in the training data, the more important it will be, as far as the POGO optimization routine is concerned, but also, multiple runs can be merged with user assigned weightings.
-
-\subsection*{Behind the Scenes}
-
-In the optimize phase, the training data is used to do the following optimizations (which I will point out are based on C and \CPP~ programs and not necessarily Rust, but the principles should work because the Rust compiler's approach to this is based on that of LLVM/Clang)~\cite{pogo2}:
-
-\begin{multicols}{2}
-\begin{enumerate}
-\item Full and partial inlining
-\item Function layout
-\item Speed and size decision
-\item Basic block layout 
-\item Code separation
-\item Virtual call speculation
-\item Switch expansion
-\item Data separation
-\item Loop unrolling
-\end{enumerate}
-\end{multicols}
-
-For the most part we should be familiar with the techniques that are listed as being other compiler optimizations we have previously discussed. The new ones are (3) speed and size decision, which we have just covered; and items (4) and (5) which relate to how to pack the generated code in the binary.
-
-According to~\cite{pogo2} the majority of the performance gains relate to the inlining decisions. These decisions are based on the call graph path profiling: the behaviour of function \texttt{foo} may be very different when calling it from \texttt{bar} than it is when calling it from function \texttt{baz}. Let's look at this call graph from~\cite{pogo2}:
-
-\begin{center}
-	\includegraphics[width=0.25\textwidth]{images/callpaths.png}
-\end{center}
-
-Quick analysis of this code would have us find all the ways in which the functions might call each other. In total, there are 14 paths in this code, seven of which get us to function \texttt{Foo}. Consider another diagram showing the relationships between functions, in which the numbers on the edges represent the number of invocations~\cite{pogo2}:
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/callpaths2.png}
-\end{center}
-
-When considering what to do here, POGO takes the view like this~\cite{pogo2}:
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/callpaths3.png}
-\end{center}
-
-Each part of the call path is considered separately, remembering that we want to inline where it makes sense for speed, but otherwise leave it alone because of code size increases. Inlining \texttt{bar} into \texttt{bat} makes sense, but not inlining \texttt{bar} into \texttt{goo} (because that increases the code size without significant performance benefits). It also makes sense for \texttt{baz} to get inlined into \texttt{bar}. This is illustrated below~\cite{pogo2}:
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/callpaths4.png}
-\end{center}
-
-Packing the blocks is also done based on this call graph profiling. The most common cases will be put next to each other, and, where possible, subsequent steps are put next to each other. The more we can pack related code together, the fewer page faults we get by jumping to some other section, causing a cache miss... If the function being called is in the same page as the call, it has achieved ``page locality'' (and that is the goal!). This is represented visually~\cite{pogo2}:
-
-\begin{center}
-	\includegraphics[width=0.6\textwidth]{images/blocklayout.png}
-\end{center}
-
-According to the author, the ``dead'' code goes in its own special block. I don't think they actually mean truly dead code, the kind that is compile-time determined to be unreachable, but instead they mean code that never gets invoked in any of the training runs.
-
-So, to sum up, the training data is used to identify what branches are likely to be taken, inlines code where that is a performance increase, and tries to pack the binary code in such a way as to reduce cache misses/page faults. How well does it work?
-
-\subsection*{Benchmark Results}
-
-This table, condensed from~\cite{pogo2}, summarizes the gains achieved. The application under test is a standard benchmark suite (Spec2K) (admittedly, C rather than Rust, but the goal is to see if the principle of POGO works and not just a specific implementation):
-
-\begin{center}
-\begin{tabular}{l|l|l|l|l|l}
-	\textbf{Spec2k:} & \textbf{sjeng} & \textbf{gobmk} & \textbf{perl} & \textbf{povray} & \textbf{gcc}\\ \hline
-	\textbf{App Size:} &  {Small} & {Medium} & {Medium} & {Medium} & {Large} \\ \hline
-	\textbf{Inlined Edge Count} & 50\% & 53\% & 25\% & 79\% & 65\% \\ \hline
-	\textbf{Page Locality} & 97\% & 75\% & 85\% & 98\% & 80\% \\ \hline
-	\textbf{Speed Gain} & 8.5\% & 6.6\% & 14.9\% & 36.9\% & 7.9\% \\ 
-\end{tabular}
-\end{center}
-
-There are more details in the source as to how many functions are used in a typical run and how many things were inlined and so on. But we get enough of an idea from the last row of how much we are speeding up the program, plus some information about why. We can speculate about how well the results in a synthetic benchmark translate to real-world application performance, but at least from this view it does seem to be a net gain.
-
-
+To be fair, the profiling-with-Miri article got a lot of comments that said things along the lines of ``maybe it's helping you to optimize the debug version, but most of the improvements will be done by compiling a release version''. That's acknowledged in the article with a callout that says that optimizing for Miri can have a negative impact on the actual performance, but at the very least Miri gives an idea of what it might make sense to change as part of the change-run-evaluate loop.
 
 \input{bibliography.tex}
 

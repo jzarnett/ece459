@@ -1,7 +1,7 @@
 \input{configuration}
 \usepackage{soul}
 
-\title{Lecture 28 --- Causal and Simulation Profiling }
+\title{Lecture 28 --- Liar, Liar }
 
 \author{Patrick Lam \& Jeff Zarnett \\ \small \texttt{patrick.lam@uwaterloo.ca jzarnett@uwaterloo.ca}}
 \institute{Department of Electrical and Computer Engineering \\
@@ -15,418 +15,522 @@
   \titlepage
  \end{frame}
 
-\part{Causal Profiling}
+
+\part{Liar, Liar}
 
 \begin{frame}
-	\partpage
-\end{frame}
-
-\begin{frame}
-\frametitle{Causal Profiling}
-
-If we have more than one slow thing, which do we want to optimize?
-
-Scientific approach: do an experiment, see the impact, re-evaluate.
+\frametitle{Liar, Liar}
 
 \begin{center}
-	\includegraphics[width=0.8\textwidth]{images/yeah_science.jpg}
+	\includegraphics[width=0.75\textwidth]{images/Liar-Liar.jpg}
 \end{center}
 
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Causal Profiling}
-
-Causal profiling lets us do what-if without code changes!
-
-Example we'll discuss today: \alert{Coz}.
-
 
 \end{frame}
 
-
 \begin{frame}
-\frametitle{Why Causal Profiling?}
+\frametitle{Sampling Based Profiling}
 
-Simple approach: look at the time and calculate what happens if \texttt{work()} runtime is reduced by 10\%.
-
-This model is okay but it's not very realistic.
-
-We actually want a simulation!
-
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Key Idea: Make Others Worse}
-
-Key observation: speeding up one part is the same as slowing all others down.
-
-How? Insert pauses.
-
-Is that really equivalent to speeding up the target?
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Slowdown is Speedup}
+Let's open with a video that illustrates one of the problems with sampling-based profiling:
 
 \begin{center}
-	\includegraphics[width=0.6\textwidth]{images/virtual-speedup.jpg}
+	\url{https://www.youtube.com/watch?v=jQDjJRYmeWg}
 \end{center}
 
+Is this fake?
+
 \end{frame}
 
 
 \begin{frame}
-\frametitle{Coz Graphs}
+  \frametitle{In the Criminal Justice System...}
+  
+  
+    Who can we trust?\\[1em]
+    
+    \begin{center}
+	\includegraphics[width=0.6\textwidth]{images/lawandorder.jpg}
+	\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Profiler as Prosecutor?}
+The analogy works well even if the profiler is a program and not a state agency.
+
+
+TV shows make it all very neat because the mystery needs to be solved within the time limit of the episode or season.
+
+In reality, there is nuance when a ``DNA match is found''.
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Case Closed?}
+
+The presence of the suspect's DNA is \textit{consistent} with the prosecution's theory of the crime, but does not conclusively prove anything on its own.
+
+
+Only the totality of the evidence, considered together, would lead to a conclusion about whether that narrative is true.
 
 \begin{center}
-	\includegraphics[width=\textwidth]{images/coz-speedup-graph.png}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{That Would Be Nice}
-Just because hypothetically speeding up a particular part of the program would be beneficial, doesn't mean that it's possible to speed up that part.
-
-We still need to assess what we can do and how difficult it would be.
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Does it Work?}
-
-\begin{center}
-	\includegraphics[width=\textwidth]{images/coz-speedup.jpg}
-\end{center}
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{Limitations, Overhead}
-
-Only works on one machine where we have access to all threads.
-
-Estimated overhead is 17.6\% total:\\
-\quad 2.6\% startup debug information collection\\
-\quad 4.8\% sampling\\
-\quad 10.2\% inserted pauses
-
-\end{frame}
-
-
-\begin{frame}
-\frametitle{More Details}
-
-More details in the author presentation:
-
-\url{https://www.youtube.com/watch?v=jE0V-p1odPg}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Next Generation: \texttt{scoz}}
-The next extension \texttt{scoz} is meant to address some shortcomings:
-
-1. Inability to look at multi-process applications
-
-2. Cases where the OS is the bottleneck.
-
-
-(Reducing systems calls is a form of ``do less work'')
-
-\end{frame}
-
-\begin{frame}
-\frametitle{The Goal: Core-Based System}
-
-Instead of pausing threads, pause other cores.
-
-(There are details about how to charge delays to the ``right'' core)
-
-\begin{center}
-	\includegraphics[width=0.8\textwidth]{images/scoz-delay.jpg}
+	\includegraphics[width=0.4\textwidth]{images/dredd2.jpg}
 \end{center}
 
 \end{frame}
 
 \begin{frame}
-\frametitle{Implementation}
+\frametitle{Both Things Can Be Wrong}
 
-The implementation involves one profiler thread for each core to manage its behaviour. 
+We'll consider some examples where the profiler gets it wrong on each part: either the data collection or the narrative that we get is incorrect.
 
-The thread is pinned to the core, and its purpose is primarily to call the \texttt{ndelay} interface (with preemption temporarily disabled) to stop execution.
+What's wrong in the helicopter example: data collection or narrative?
 
-\end{frame}
-
-\part{Simulation Profiling}
-
-\begin{frame}
-	\partpage
-\end{frame}
-
-\begin{frame}
-\frametitle{Simulations}
-
-Causal profiling lets us use a simulation to decide what to do.
-
-Let's apply this idea to some other things!
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Cachegrind}
-
-This is much more performance oriented than the other two tools. 
-
- It runs simulation of how your program interacts with cache and evaluates how your program does on branch prediction.
- 
- As we discussed earlier, cache misses and branch mispredicts have a huge impact on performance.
- 
- Recall that a miss from the fastest cache results in a small penalty (10 cycles).
- 
- A miss that requires going to memory requires about 200 cycles. 
- 
- A mispredicted branch costs somewhere between 10-30 cycles.
 
 
 \end{frame}
 
-\begin{frame}
-\frametitle{Cachegrind Reporting}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-Cachegrind reports data about:
+
+\part{Lies from Metrics}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \partpage
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Lying perf counters}
+  
+  
+    While app-specific metrics can lie too,\\
+    mostly we'll talk about CPU perf counters.
+  
+
+\vspace*{-6em}
+
+
+  \begin{center}
+    Reference: Paul Khuong,\\
+  \scriptsize
+  \url{http://www.pvk.ca/Blog/2014/10/19/performance-optimisation-~-writing-an-essay/}
+
+  \end{center}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{mfence}
+
+
+    We've talked about {\tt mfence}.\\
+    Used in spinlocks, for instance.\\[2em]
+    Profiles said: spinlocking didn't take much time.\\
+    Empirically: eliminating spinlocks = better than expected!
+    
+  
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Exploring the lie}
+
+  
+    Next step: create microbenchmarks.\\[1em]
+    Memory accesses to uncached locations,\\
+    or computations,\\[1em]
+    surrounded by store pairs/mfence/locks.\\[1em]
+    Use perf to evaluate impact of mfence vs lock.
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{perf for lock}
+
+    \begin{lstlisting}
+$ perf annotate -s cache_misses
+[...]
+    0.06 :        4006b0:       and    %rdx,%r10
+    0.00 :        4006b3:       add    $0x1,%r9
+    ;; random (out of last level cache) read
+    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
+   30.37 :        4006bb:       mov    %rcx,%r10
+    ;; foo is cached, to simulate our internal lock
+    0.12 :        4006be:       mov    %r9,0x200fbb(%rip)
+    0.00 :        4006c5:       shl    $0x17,%r10
+    [... Skipping arithmetic with < 1% weight in the profile]
+    ;; locked increment of an in-cache "lock" byte
+    1.00 :        4006e7:       lock incb 0x200d92(%rip)
+   21.57 :        4006ee:       add    $0x1,%rax
+    [...]
+    ;; random out of cache read
+    0.00 :        400704:       xor    (%rsi,%r10,8),%rbp
+   21.99 :        400708:       xor    %r9,%r8
+    [...]
+    ;; locked in-cache decrement
+    0.00 :        400729:       lock decb 0x200d50(%rip)
+   18.61 :        400730:       add    $0x1,%rax
+    [...]
+    0.92 :        400755:       jne    4006b0 <cache_misses+0x30>
+    \end{lstlisting}
+
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{lock's effects}
+
+  
+    Reads take 30 + 22 = 52\% of runtime\\
+    Locks take 19 + 21 = 40\%.
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}[fragile]
+  \frametitle{perf for mfence}
+
+  \begin{lstlisting}
+$ perf annotate -s cache_misses
+[...]
+    0.00 :        4006b0:       and    %rdx,%r10
+    0.00 :        4006b3:       add    $0x1,%r9
+    ;; random read
+    0.00 :        4006b7:       mov    (%rsi,%r10,8),%rbp
+   42.04 :        4006bb:       mov    %rcx,%r10
+    ;; store to cached memory (lock word)
+    0.00 :        4006be:       mov    %r9,0x200fbb(%rip)
+    [...]
+    0.20 :        4006e7:       mfence 
+    5.26 :        4006ea:       add    $0x1,%rax
+    [...]
+    ;; random read
+    0.19 :        400700:       xor    (%rsi,%r10,8),%rbp
+   43.13 :        400704:       xor    %r9,%r8
+    [...]
+    0.00 :        400725:       mfence 
+    4.96 :        400728:       add    $0x1,%rax
+    0.92 :        40072c:       add    $0x1,%rax
+    [...]
+    0.36 :        40074d:       jne    4006b0 <cache_misses+0x30>
+  \end{lstlisting}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{mfence's effects}
+
+  
+    Looks like the reads take 85\% of runtime,\\
+    while the mfence takes 15\% of runtime.
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Bigger picture}
+
+  
+    Must also look at total \# of cycles.\\[1em]
+    \begin{tabular}{lr}
+    No atomic/fence:& 2.81e9 cycles\\
+    lock inc/dec: & 3.66e9 cycles\\
+    mfence: & 19.60e9 cycles
+    \end{tabular}
+~\\[1em]
+    That 15\% number is a total lie.
+  
+  \begin{center}
+	\includegraphics[width=0.3\textwidth]{images/maury.jpg}
+\end{center}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Conclusions}
+
+  
+    \begin{itemize}
+    \item mfence underestimated;
+      \item lock overestimated.
+    \end{itemize}
+    ~\\
+    Why? \\[1em]
+    mfence = pipeline flush,\\
+    costs attributed to instructions being flushed.\\
+  
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+\frametitle{Skid}
+
+Another cause for the attributions of which instructions are expensive being wrong is something called \alert{skid}.
+
+Skid is the time between when the counter overflows (trigger the sample) and when the actual sample is taken.
+
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Made-Up Skid Example}
+
+A made-up example of what that might look like:
+\begin{verbatim}
+  ld r1,0x12341234     0.1%
+  add r2,r3            1.0%
+  sub r3,r4            1.0%
+  NOP                 27.0%
+\end{verbatim}
+The NOP is obviously not the cause here; it's the load instruction that really is the expensive one.
+
+\end{frame}
+
+
+\part{The Long Tail}
+
+\begin{frame}
+\partpage
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{The Long Tail}
+
+Suppose we have a task that's going to get distributed over multiple computers (like a search). 
+
+If we look at the latency distribution, the problem is mostly that we see a long tail of events. 
+
+When we are doing a computation or search where we need all the results, we can only go as the slowest step.
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Grab the Tiger by the Tail}
+
+\begin{center}
+	\includegraphics[width=0.85\textwidth]{images/disk_tail.png}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Explaining the Peaks}
+
+\begin{enumerate}
+	\item Found in RAM
+	\item Disk Cache
+	\item Disk
+	\item and above... very strange!
+\end{enumerate}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Why 250, 500, 750, 1000?}
+
+Answer: CPU throttling!
+
+This was happening on 25\% of disk servers at Google, for an average of half an hour a day!
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Faster than a Speeding Bullet}
+
+Another problem with sampling,
+this time from Lucene:
+
+\begin{center}
+	\includegraphics[width=0.7\textwidth]{images/perf-sample.png}
+\end{center}
+
+Why is perf limited to 100~KHz?
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Processing Interrupts}
+
+Answer: perf samples are done with interrupts (slow). 
+
+If you crank up the rate of interrupts, before long, you are spending all your time handling the interrupts rather than doing useful work.
+
+SHIM gets around this by being more invasive.
+
+This produces a bunch of data which can be dealt with later.
+
+\end{frame}
+
+\part{Lies from Counters}
+
+\begin{frame}
+\partpage
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Counter This}
+
+Rust compiler hackers were trying to include
+support for hardware performance counters (what perf reports).
+
+To make counters as deterministic as possible:
 \begin{itemize}
-	\item The First Level Instruction Cache (I1) [L1 Instruction Cache]
-	\item The First Level Data Cache (D1) [L1 Data Cache]
-	\item The Last Level Cache (LL) [L3 Cache].
+\item disable Address Space Layout Randomization (security mitigation; but, randomized pointer addresses affect hash layouts);
+\item subtract time spent processing interrupts (IRQs);
+\item profile one thread only (if you can, in your context).
 \end{itemize}
 
-Unlike normal Valgrind operation, you probably want to turn optimizations on.
 
 \end{frame}
 
+
+\begin{frame}
+\frametitle{Problem?}
+
+\begin{center}
+\includegraphics{images/L27-eb-tweet.png}
+\end{center}
+
+
+\end{frame}
+
+
+
+\part{Lies about Calling Context}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \partpage
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{frame}
+\frametitle{Profilers, Lying?}
+
+This part is somewhat outdated now, as it's a pretty specific technical problem that especially arises under the {\tt gprof} tool. 
+
+It's still a good example of lying tools, though.
+
+  \begin{center}
+    Reference: Yossi Kreinin,\\
+  \scriptsize
+  \url{http://www.yosefk.com/blog/how-profilers-lie-the-cases-of-gprof-and-kcachegrind.html}
+  \end{center}
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+\frametitle{gprof said what?}
+
+gprof uses two C standard-library functions: {\bf profil()} and {\bf mcount()}.
+
+\begin{itemize}
+\item {\bf profil()}: asks glibc to record which instruction 
+  is currently executing (100$\times$/second).
+\item {\bf mcount()}: records call graph edges; called by {\tt -pg} instrumentation.
+\end{itemize}
+
+
+  
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}
+  \frametitle{Getting it Wrong}
+
+Hence, {\bf profil} information is statistical, while {\bf mcount}
+information is exact.  
+
+gprof can draw unreliable inferences. 
+
+If you have a method \texttt{easy} and a method \texttt{hard}, each of which is called once, and \texttt{hard} takes up almost all the CPU time...
+
+
+gprof might divide total time by 2 and report bogus results.
+
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}[fragile]
-\frametitle{Sim-u-laaaaate!}
-{\scriptsize
+  \frametitle{What's Wrong?}
 
-\begin{verbatim}
-jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
+The following results from gprof are suspect (among others):
 
---16559-- warning: L3 cache found, using its data for the LL simulation.
-Found at 11 by thread 1 
-Found at 22 by thread 3 
-==16559== 
-==16559== I   refs:      310,670
-==16559== I1  misses:      1,700
-==16559== LLi misses:      1,292
-==16559== I1  miss rate:    0.54%
-==16559== LLi miss rate:    0.41%
-==16559== 
-==16559== D   refs:      114,078  (77,789 rd   + 36,289 wr)
-==16559== D1  misses:      4,398  ( 3,360 rd   +  1,038 wr)
-==16559== LLd misses:      3,252  ( 2,337 rd   +    915 wr)
-==16559== D1  miss rate:     3.8% (   4.3%     +    2.8%  )
-==16559== LLd miss rate:     2.8% (   3.0%     +    2.5%  )
-==16559== 
-==16559== LL refs:         6,098  ( 5,060 rd   +  1,038 wr)
-==16559== LL misses:       4,544  ( 3,629 rd   +    915 wr)
-==16559== LL miss rate:      1.0% (   0.9%     +    2.5%  )
-==16559== 
-==16559== Branches:       66,622  (65,097 cond +  1,525 ind)
-==16559== Mispredicts:     7,202  ( 6,699 cond +    503 ind)
-==16559== Mispred rate:     10.8% (  10.2%     +   32.9%   )
+\begin{itemize}
+  \item contribution of children to parents;
+  \item total runtime spent in self+children;
+\end{itemize}
 
-\end{verbatim}
-}
+
+When are call graph edges right?
+Two cases:
+
+    \begin{itemize}
+    \item functions with only one caller
+      (e.g. {\tt f()} only called by {\tt g()}); or,
+    \item functions which always take the same time to complete
+      (e.g. {\tt rand()}).
+    \end{itemize}
+
 
 \end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\begin{frame}[fragile]
-\frametitle{Optimizations: Enabled!}
-{\scriptsize
-\begin{verbatim}
-jz@Loki:~/ece254$ valgrind --tool=cachegrind --branch-sim=yes ./search
 
---16618-- warning: L3 cache found, using its data for the LL simulation.
-Found at 11 by thread 1 
-Found at 22 by thread 3 
-==16618== 
-==16618== I   refs:      306,169
-==16618== I1  misses:      1,652
-==16618== LLi misses:      1,286
-==16618== I1  miss rate:    0.53%
-==16618== LLi miss rate:    0.42%
-==16618== 
-==16618== D   refs:      112,015  (76,522 rd   + 35,493 wr)
-==16618== D1  misses:      4,328  ( 3,353 rd   +    975 wr)
-==16618== LLd misses:      3,201  ( 2,337 rd   +    864 wr)
-==16618== D1  miss rate:     3.8% (   4.3%     +    2.7%  )
-==16618== LLd miss rate:     2.8% (   3.0%     +    2.4%  )
-==16618== 
-==16618== LL refs:         5,980  ( 5,005 rd   +    975 wr)
-==16618== LL misses:       4,487  ( 3,623 rd   +    864 wr)
-==16618== LL miss rate:      1.0% (   0.9%     +    2.4%  )
-==16618== 
-==16618== Branches:       65,827  (64,352 cond +  1,475 ind)
-==16618== Mispredicts:     7,109  ( 6,596 cond +    513 ind)
-==16618== Mispred rate:     10.7% (  10.2%     +   34.7%   )
-\end{verbatim}
-}
 
-\end{frame}
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{frame}
-\frametitle{Results Analysis}
+  \frametitle{Lies  summary}
+  
+    Some results are exact;\\
+    some results are sampled;\\
+    some results are interpolated.\\[1em]
 
+    If you understand the tool, \\
+    you understand where it can go wrong.\\[1em]
 
-Interesting results: our data and instruction miss rates went down marginally but the branch mispredict rates went up!
-
-Well sort of - there were fewer branches and thus fewer we got wrong as well as fewer we got right. 
-
-So the total cycles lost to mispredicts went down. 
-
-Is this an overall win for the code? Yes. 
-
-
+    Understand your tools!
+  
 \end{frame}
-\begin{frame}
-\frametitle{Do the Math}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-In some cases it's not so clear cut, and we could do a small calculation. 
-
-If we just take a look at the LL misses (4~544 vs 4~487) and assume they take 200 cycles, and the branch miss penalty is 200 cycles, it went from 908~800 wasted cycles to 897~400; a decrease of 11~400 cycles.
-
-  Repeat for each of the measures and sum them up to determine if things got better overall and by how much.
-
-\end{frame}
-\begin{frame}
-\frametitle{Cachegrind Detailed Output}
-
-Cachegrind also produces a more detailed output file, titled cachegrind.out.<pid> (the PID in the example is 16618). 
-
-This file is not especially human-readable, but we can ask the associated tool \texttt{cg\_annotate} to break it down for us.
-
-The output is way too big for slides.
-
-\end{frame}
-\begin{frame}
-\frametitle{Advanced Cachegrind}
-
-Cachegrind is very... verbose... and it can be very hard to come up with useful changes based on what you see... 
-
-Assuming your eyes don't glaze over when you see the numbers. 
-
-Probably the biggest performance impact is last level cache misses (those appear as DLmr or DLmw). 
-
-You might also try to look at the Bcm and Bim (branch mispredictions) to see if you can give some better hints. 
-\end{frame}
-\begin{frame}
-\frametitle{Really Advanced Cachegrind}
-
-This is a good way to validate that your changes actually worked!
-
-Showing your manager (executive) WHY a change worked is more convincing...
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Simulations as Perf Debugging}
-
-\begin{center}
-	\includegraphics[width=0.4\textwidth]{images/endprogram.jpg}
-\end{center}
-
-Executing in a simulation allows for more than just counting the number of cache misses or a pipeline stalls -- you can see how we got there.
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Simulation Example}
-
-Docs for TMS320C55x Digital Signal Processing platform by Texas Instruments.
-
-Get more exact values of counts, cache misses, CPU stalls...\\
-\quad And you can halt on events to look into them!
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Miri}
-
-\begin{center}
-	\includegraphics[width=0.7\textwidth]{images/miri.jpg}
-\end{center}
-
-Everyone was extremely cool about the duplicate Earth...
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Miri \& Valgrind}
-
-Miri has a lot of similarities with Valgrind!
-
-I think its real intended use is to detect issues in \texttt{unsafe} code.\\
-\quad Array bounds violations, reading uninitialized memory, memory leaks...
-
-\begin{center}
-	\includegraphics[width=0.3\textwidth]{images/dothathere.jpg}
-\end{center}
-
-... Well. Except for launching GPU code.
-
-\end{frame}
-
-\begin{frame}[fragile]
-\frametitle{Let's Do an Example}
-
-To run, use the miri option and it will generate a \texttt{crox} directory with some file in it; process that file with the \texttt{crox} tool to generate a json file that can be read in chrome dev tools:
-
-\begin{lstlisting}
-MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-measureme=crox" cargo +nightly miri run
-\end{lstlisting}
-
-It produces a flamegraph-style graph!
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Miri Example}
-
-\begin{center}
-	\includegraphics[width=\textwidth]{images/miri-pco1.png}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Miri Example}
-
-\begin{center}
-	\includegraphics[width=0.85\textwidth]{images/miri-pco2.png}
-\end{center}
-
-\end{frame}
-
-\begin{frame}
-\frametitle{Miri Drawbacks}
-
-Like Valgrind, it makes the program run much, much slower.
-
-The article got a lot of comments about improving the debug version rather than the release one.
-
-That is true, but it's meant to be used in the change-run-evaluate loop!
-
-\end{frame}
 
 \end{document}
 
