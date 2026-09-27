@@ -47,7 +47,7 @@ If you don't believe me, here's an example in C of where this could go wrong:
     }
 \end{lstlisting}
 
-What happened? We checked if \texttt{my\_pointer} was null? And most of the time we would be fine. But if something (another thread, an interrupt/signal, etc) changed global variable \texttt{my\_pointer} out from under us we would have a segmentation fault at this line. And it would be difficult to guard against, because the usual mechanism of checking if it is \texttt{NULL}... does not work. This kind of thing has really happened to me in production Java code. Put all the if-not-null blocks you want, but if the thing you're looking at can change out from under you, this is a risk\footnote{OK, let's hedge a bit. Rust prevents data races on shared memory locations, but not all race conditions---for instance, you can still race on the filesystem. In this case, if \texttt{my\_pointer} was a global pointer, it would also have to be immutable (because not unique), and then why are we here at all; we wouldn't need to do the check. Aha! But it could be an \texttt{AtomicPtr}. Then you can modify it atomically but still get races between the first and second reads, which aren't atomic. More on that later.}
+What happened? We checked if \texttt{my\_pointer} was null? And most of the time we would be fine. But if something (another thread, an interrupt/signal, etc) changed global variable \texttt{my\_pointer} out from under us we would have a segmentation fault at this line. And it would be difficult to guard against, because the usual mechanism of checking if it is \texttt{NULL}... does not work. This kind of thing has really happened to me in production Java code. Put all the if-not-null blocks you want, but if the thing you're looking at can change out from under you, this is a risk\footnote{OK, let's hedge a bit. Rust prevents data races on shared memory locations, but not all race conditions -- for instance, you can still race on the filesystem. In this case, if \texttt{my\_pointer} was a global pointer, it would also have to be immutable (because not unique), and then why are we here at all; we wouldn't need to do the check. Aha! But it could be an \texttt{AtomicPtr}. Then you can modify it atomically but still get races between the first and second reads, which aren't atomic. More on that later.}
 
 Immutable in Rust is forever (ish). The compiler will not let you make changes to something via trickery. You can ignore a \texttt{const} declaration in C by taking a pointer to the thing, casting the pointer, and changing through the pointer. Rust grudgingly permits such dark magicks, but you have to brand your code with the \texttt{unsafe} keyword and are subject to undefined behaviour. This unsafe behaviour kinda defeats the point of Rust. (How often is unsafe used? See~\cite{astrauskas20:_how_progr_unsaf_rust}).
 
@@ -58,7 +58,7 @@ Then there are constants, which are different from global variables. Constants a
 On the other hand, Rust also has global variables, defined using \texttt{static}. Such variables are immutable, but they may point to things that mutate, e.g. an \texttt{Atomic*} or a \texttt{Mutex}. The standard warning about a global variable is that it can be accessed from everywhere, so beware.
 
 \paragraph{Shadowing.}
-Something that isn't really ``changing'' the variable---but looks a lot like it is---is \textit{shadowing}, which is intended to address the problem of ``What do I name this?'' In another language you might have a variable \texttt{transcript} which you then parse and the returned value is stored in another variable \texttt{transcript\_parsed}. You can skip that with shadowing, which lets you reuse the original name. An alternative example from the docs:
+Something that isn't really ``changing'' the variable -- but looks a lot like it is -- is \textit{shadowing}, which is intended to address the problem of ``What do I name this?'' In another language you might have a variable \texttt{transcript} which you then parse and the returned value is stored in another variable \texttt{transcript\_parsed}. You can skip that with shadowing, which lets you reuse the original name. An alternative example from the docs:
 
 \begin{lstlisting}[language=Rust]
     let mut guess = String::new();
@@ -73,9 +73,9 @@ Something that isn't really ``changing'' the variable---but looks a lot like it 
 In this example, the data is read in as a string and then turned into an unsigned integer. Conceptually, there are two variables, one of type \texttt{String} and the other of type \texttt{u32}. They just happen to have the same name. The first variable (the one that is shadowed, i.e. the \texttt{String} in the example) can no longer be used, which is good to know; i.e. Rust promises that you don't have any aliases to it hanging around.
 
 \subsection*{Memory management}
-In languages like C, memory management is manual: you allocate and deallocate memory using explicit calls. In other languages like Java, it's partly manual---you explicitly allocate memory but deallocation takes place through garbage collection. \CPP~supports memory management via RAII, and Rust does the same, but Rust does so at compile-time with guarantees, through ownership, which we'll discuss below.
+In languages like C, memory management is manual: you allocate and deallocate memory using explicit calls. In other languages like Java, it's partly manual -- you explicitly allocate memory but deallocation takes place through garbage collection. \CPP~supports memory management via RAII, and Rust does the same, but Rust does so at compile-time with guarantees, through ownership, which we'll discuss below.
 
-You might be thinking: what's wrong with garbage collection\footnote{Garbage collection also cleans up memory when it's sure that no one is using it anymore---it approximates that by cleaning memory that has no pointers to it. Rust's owned objects, on the other hand, can be cleaned up when the single owner has gone out of scope.} for this purpose? It is well-understood and lots of languages use it. Actually, the real answer is the magic word: performance. A language that is garbage-collected has to deal with two things: a runtime, and the actual costs of collecting the garbage.
+You might be thinking: what's wrong with garbage collection\footnote{Garbage collection also cleans up memory when it's sure that no one is using it anymore -- it approximates that by cleaning memory that has no pointers to it. Rust's owned objects, on the other hand, can be cleaned up when the single owner has gone out of scope.} for this purpose? It is well-understood and lots of languages use it. Actually, the real answer is the magic word: performance. A language that is garbage-collected has to deal with two things: a runtime, and the actual costs of collecting the garbage.
 
 The runtime thing will seem familiar to you if you've programmed in Java or similar; it is the system that, at run-time, must keep track of what memory has been allocated and when to run the garbage collector and such. There's much more to what the Java runtime (JRE) does, but whatever it does comes with some performance penalty (no matter how small) because its functionality does not come for free. 
 
@@ -105,7 +105,7 @@ See the following graphs that compare Rust (blue) to Go (purple):
 I do recommend reading the article because it goes into some more details and may answer some questions that you have. 
 
 \paragraph{The Rules.}
-That long introduction to the concept of ownership didn't explain very much about how it actually works; it just went into the \textit{why} and how it relates to the objectives of this course. But the rules are pretty simple---deceptively so---and they are as follows:
+That long introduction to the concept of ownership didn't explain very much about how it actually works; it just went into the \textit{why} and how it relates to the objectives of this course. But the rules are pretty simple -- deceptively so -- and they are as follows:
 
 \begin{enumerate}
 	\item Every value has a variable that is its owner.
@@ -146,7 +146,7 @@ That covers rules one and three\ldots But that second rule is interesting, becau
 In fact, everything we've said so far could also be true for much \CPP~code using RAII: there is an owner for each value, there is only one owner, and things are freed when they go out of scope. However, ``there is only one owner'' isn't actually enforced by the \CPP~compiler, so you can write code that breaks it, and then that code is prone to segfaults. 
 
 \paragraph{What's yours is mine.}
-Move semantics have to do with transferring ownership from one variable to another. But ownership is overkill for simple types\footnote{Specifically, types with the \texttt{Copy} trait have copy semantics by default; this trait is mutually exclusive with the \texttt{Drop} trait. \texttt{Copy} types have known size at compile time and can be stack-allocated.} (see the docs for a list---stuff like integers and booleans and floating point types), and such types don't need to follow move semantics; they follow copy semantics. Copy semantics are great when copies are cheap and moving would be cumbersome. So the following code creates two integers and they both have the same value (5).
+Move semantics have to do with transferring ownership from one variable to another. But ownership is overkill for simple types\footnote{Specifically, types with the \texttt{Copy} trait have copy semantics by default; this trait is mutually exclusive with the \texttt{Drop} trait. \texttt{Copy} types have known size at compile time and can be stack-allocated.} (see the docs for a list -- stuff like integers and booleans and floating point types), and such types don't need to follow move semantics; they follow copy semantics. Copy semantics are great when copies are cheap and moving would be cumbersome. So the following code creates two integers and they both have the same value (5).
 
 \begin{lstlisting}[language=Rust]
     fn main() {
@@ -243,14 +243,14 @@ This example is easy to fix because we can just add a return type to the functio
 \paragraph{Do the Rules Work?}
 With a stronger understanding of the rules and their practicalities, the obvious question is: do they work\textinterrobang~There's no point in having the rules if they don't accomplish the goal. We'll assume for the moment that there are no bugs in the compiler that violate the expected behaviour. And then let's consider this from the perspective of some things that can go wrong in a C program.
 
-(Okay, alright, before we get there---we'll eventually learn to break rules and to use reference counted objects where if we get it wrong we can leak. We briefly discuss \texttt{Rc} and \texttt{Arc} in Lecture 4.)
+(Okay, alright, before we get there -- we'll eventually learn to break rules and to use reference counted objects where if we get it wrong we can leak. We briefly discuss \texttt{Rc} and \texttt{Arc} in Lecture 4.)
 
 \begin{itemize}
-	\item Memory leak (fail to deallocate memory)---does not happen in Rust because the memory will always be deallocated when its owner goes out of scope.
-	\item Double-free---does not happen in Rust because deallocation happens when the owner goes out of scope and there can only be one owner.
-	\item Use-after-free---does not happen in Rust because a reference that is no longer valid results in a compile time error.
-	\item Accessing uninitialized memory---caught by the compiler.
-	\item Stack values going out of scope when a function ends---the compiler will require this be moved or copied before it goes out of scope if it is still needed.
+	\item Memory leak (fail to deallocate memory) -- does not happen in Rust because the memory will always be deallocated when its owner goes out of scope.
+	\item Double-free -- does not happen in Rust because deallocation happens when the owner goes out of scope and there can only be one owner.
+	\item Use-after-free -- does not happen in Rust because a reference that is no longer valid results in a compile time error.
+	\item Accessing uninitialized memory -- caught by the compiler.
+	\item Stack values going out of scope when a function ends -- the compiler will require this be moved or copied before it goes out of scope if it is still needed.
 \end{itemize}
 
 \subsection*{A free lunch?}

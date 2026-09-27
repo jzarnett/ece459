@@ -7,7 +7,7 @@
 \section*{Profiling}
 We've spent some time talking about observing programs at a higher level, but now we should consider zooming in a little bit to using specific profiling tools to figure out where CPU time is going and how to make use of that.
 
-I've used the logging-only approach myself to figure out what blocks of a single large function are taking a long time (such as a time when I found out that updating exchange rates was slow.). But this approach is not necessarily a good one.  It's an example of ``invasive'' profiling---we are going in and changing the source code of the program in question---to add (slow!) instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half-hour range and I could see that the save operation was taking twelve minutes. Not kidding.
+I've used the logging-only approach myself to figure out what blocks of a single large function are taking a long time (such as a time when I found out that updating exchange rates was slow). But this approach is not necessarily a good one. It's an example of ``invasive'' profiling -- we are going in and changing the source code of the program in question -- to add (slow!) instrumentation (log/debug statements). Plus we have to do a lot of manual accounting. Assuming your program is fast and goes through functions quickly and often, trying to put the pieces together manually is hopeless. It worked in that one example because the single function itself was running in the half-hour range and I could see that the save operation was taking twelve minutes. Not kidding.
 
 I also mentioned earlier that I used the profiling tool for CUDA to find out what was wrong with my N-Body program. I ran the command \texttt{nvprof target/release/nbody-cuda}, and in addition to the regular program output I got the following, which showed that the time was going to the kernel and I wasn't losing a lot in overhead:
 
@@ -73,7 +73,7 @@ Nicholas Nethercote wrote the ``counts'' tool\footnote{\url{https://github.com/n
 
 So we should all agree, we want to use tools and do this in a methodical way.
 
-Now that we agree on that, let's think about how profiling tools work\:
+Now that we agree on that, let's think about how profiling tools work:
 
 \begin{itemize}[noitemsep]
 \item sampling-based (traditional): every so often (e.g. 100ms for gprof), stop the system and ask it what it's doing (query the system state); or,
@@ -97,7 +97,7 @@ that spray is often made of ``unobtainium''\footnote{\url{http://en.wikipedia.or
 \paragraph{Tips for Leveraging Profiling.}
 When writing large software projects:
   \begin{itemize}[noitemsep]
-    \item First, write clear and concise code. Don't do any premature optimizations---focus on correctness. Still, there are choices you can make that support performance at this stage, like using an efficient search or sort algorithm, if you know it's better and won't take additional effort.
+    \item First, write clear and concise code. Don't do any premature optimizations -- focus on correctness. Still, there are choices you can make that support performance at this stage, like using an efficient search or sort algorithm, if you know it's better and won't take additional effort.
     \item Once it's working, profile to get a baseline of your performance: it allows you to easily track any performance changes and to re-design your program before it's too late.
   \end{itemize}
 Focus your optimization efforts on the code that matters.
@@ -110,7 +110,7 @@ deviations from the following rules:
 \item time is not unnecessarily spent in the operating system.
 \end{itemize}
 For instance, ``why is {\tt ps} taking up all my cycles?'';
-see page 34 of ~\cite{300ps}.
+see page 34 of~\cite{300ps}.
 
 \paragraph{Development vs. production.}
 You can always profile your systems in development, but that might not
@@ -121,7 +121,7 @@ production systems are that the profiling must not affect the system's
 performance or reliability.
 
 \section*{Userspace per-process profiling}
-Sometimes---or, in this course, often---you can get away with
+Sometimes -- or, in this course, often -- you can get away with
 investigating just one process and get useful results about that
 process's behaviour.  We'll first talk about {\tt perf}, the profiler 
 recommended for use with Rust. This is Linux-specific, though.
@@ -241,11 +241,11 @@ There exists a solution to this, and it is that we can give hints to the compile
 
 Solving this problem is the goal of POGO. It is taking the data from some actual runs of the program and using that to inform the predictions. This necessitates a multi-step compile: first compile the code, run it to collect data, then recompile the code using the data we collected. Let's expand on all three steps.
 
-Step one is to generate an executable with instrumentation. Ask to compile with instrumentation enabled, which also says what directory to put it in: \texttt{-Cprofile-generate=/tmp/pgo-data}. The compiler inserts a bunch of probes into the generated code that are used to record data. Three types of probe are inserted: function entry probes, edge probes, and value probes.  A function entry probe, obviously, counts how many times a particular function is called. An edge probe is used to count the transitions (which tells us whether an if branch is taken or the else condition). Value probes are interesting; they are used to collect a histogram of values. Thus, we can have a small table that tells us the frequency of what is given in to a \texttt{match} statement. When this phase is complete, there is an instrumented executable and an empty database file where the training data goes~\cite{pogo}. 
+Step one is to generate an executable with instrumentation. Ask to compile with instrumentation enabled, which also says what directory to put it in: \texttt{-Cprofile-generate=/tmp/pgo-data}. The compiler inserts a bunch of probes into the generated code that are used to record data. Three types of probe are inserted: function entry probes, edge probes, and value probes. A function entry probe, obviously, counts how many times a particular function is called. An edge probe is used to count the transitions (which tells us whether an if branch is taken or the else condition). Value probes are interesting; they are used to collect a histogram of values. Thus, we can have a small table that tells us the frequency of what is given in to a \texttt{match} statement. When this phase is complete, there is an instrumented executable and an empty database file where the training data goes~\cite{pogo}.
 
 Step two is training day: run the instrumented executable through real-world scenarios. Ideally you will spend the training time on the performance-critical sections. It does not have to be a single training run, of course. Data can be collected from as many runs as desired. Keep in mind that the program will run a lot slower when there's the instrumentation present. 
 
-Still, it is important to note that you are not trying to exercise every part of the program (this is not unit testing); instead it should be as close to real-world-usage as can be accomplished. In fact, trying to use every bell and whistle of the program is counterproductive; if the usage data does not match real world scenarios then  the compiler has been given the wrong information about what is important. Or you might end up teaching it that almost nothing is important... 
+Still, it is important to note that you are not trying to exercise every part of the program (this is not unit testing); instead it should be as close to real-world-usage as can be accomplished. In fact, trying to use every bell and whistle of the program is counterproductive; if the usage data does not match real world scenarios then the compiler has been given the wrong information about what is important. Or you might end up teaching it that almost nothing is important...
 
 According to the docs about it\footnote{\url{https://doc.rust-lang.org/rustc/profile-guided-optimization.html}}, the output \texttt{.profraw} files require a little bit of processing before they're ready to go. When the program is running, the recording of data is done as quickly as possible with little regard for making it neat. Think of it like taking notes furiously during a lecture and then later revisiting them to organize them a bit. The tool for doing this is \texttt{llvm-profdata} and it will organize the data into a \texttt{.profdata} file. We can merge multiple runs as needed into a single file that will be used for input. 
 
@@ -285,13 +285,13 @@ rustc -Cprofile-use=./merged.profdata -O ./main.rs
 }
 (NB: Debian/Ubuntu's rustc doesn't seem to support PGO; I had to rustup it myself on my computer; I also used the Complete Cargo Workflow listed later.)
 
-What does it mean for the executable to be better? We have already looked at an example about how to predict branches. Predicting it correctly will be faster than predicting it incorrectly, but this is not the only thing.  The algorithms will aim for speed in the areas that are ``hot'' (performance critical and/or common scenarios). The algorithms will alternatively aim to minimize the size of code of areas that are ``cold'' (not heavily used). It is recommended in~\cite{pogo} that less than 5\% of methods should be compiled for speed.
+What does it mean for the executable to be better? We have already looked at an example about how to predict branches. Predicting it correctly will be faster than predicting it incorrectly, but this is not the only thing. The algorithms will aim for speed in the areas that are ``hot'' (performance critical and/or common scenarios). The algorithms will alternatively aim to minimize the size of code of areas that are ``cold'' (not heavily used). It is recommended in~\cite{pogo} that less than 5\% of methods should be compiled for speed.
 
 It is possible that we can combine multiple training runs and we can manually give some suggestions of what scenarios are important. The more a scenario runs in the training data, the more important it will be, as far as the POGO optimization routine is concerned, but also, multiple runs can be merged with user assigned weightings.
 
 \subsection*{Behind the Scenes}
 
-In the optimize phase, the training data is used to do the following optimizations (which I will point out are based on C and \CPP~ programs and not necessarily Rust, but the principles should work because the Rust compiler's approach to this is based on that of LLVM/Clang)~\cite{pogo2}:
+In the optimize phase, the training data is used to do the following optimizations (which I will point out are based on C and \CPP~programs and not necessarily Rust, but the principles should work because the Rust compiler's approach to this is based on that of LLVM/Clang)~\cite{pogo2}:
 
 \begin{multicols}{2}
 \begin{enumerate}
