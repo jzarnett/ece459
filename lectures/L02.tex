@@ -47,7 +47,7 @@ If you don't believe me, here's an example in C of where this could go wrong:
     }
 \end{lstlisting}
 
-What happened? We checked if \texttt{my\_pointer} was null? And most of the time we would be fine. But if something (another thread, an interrupt/signal, etc.) changed global variable \texttt{my\_pointer} out from under us we would have a segmentation fault at this line. And it would be difficult to guard against, because the usual mechanism of checking if it is \texttt{NULL}... does not work. This kind of thing has really happened to me in production Java code. Put all the if-not-null blocks you want, but if the thing you're looking at can change out from under you, this is a risk\footnote{OK, let's hedge a bit. Rust prevents data races on shared memory locations, but not all race conditions -- for instance, you can still race on the filesystem. In this case, if \texttt{my\_pointer} was a global pointer, it would also have to be immutable (because not unique), and then why are we here at all; we wouldn't need to do the check. Aha! But it could be an \texttt{AtomicPtr}. Then you can modify it atomically but still get races between the first and second reads, which aren't atomic. More on that later.}
+What happened? We checked if \texttt{my\_pointer} was null? And most of the time we would be fine. But if something (another thread, an interrupt/signal, etc.) changed global variable \texttt{my\_pointer} out from under us we would have a segmentation fault at this line. And it would be difficult to guard against, because the usual mechanism of checking if it is \texttt{NULL}... does not work. This kind of thing has really happened to me in production Java code. Put all the if-not-null blocks you want, but if the thing you're looking at can change out from under you, this is a risk\footnote{OK, let's hedge a bit. Rust prevents data races on shared memory locations, but not all race conditions -- for instance, you can still race on the filesystem. In this case, if \texttt{my\_pointer} was a global pointer, it would also have to be immutable (because not unique), and then why are we here at all; we wouldn't need to do the check. Aha! But it could be an \texttt{AtomicPtr}. Then you can modify it atomically but still get races between the first and second reads, which aren't atomic. More on that later.}.
 
 Immutable in Rust is forever (ish). The compiler will not let you make changes to something via trickery. You can ignore a \texttt{const} declaration in C by taking a pointer to the thing, casting the pointer, and changing through the pointer. Rust grudgingly permits such dark magicks, but you have to brand your code with the \texttt{unsafe} keyword and are subject to undefined behaviour. This unsafe behaviour kinda defeats the point of Rust. (How often is unsafe used? See~\cite{astrauskas20:_how_progr_unsaf_rust}).
 
@@ -81,7 +81,7 @@ The runtime thing will seem familiar to you if you've programmed in Java or simi
 
 The other part is that the garbage collection process can be expensive. The newest Java garbage collector is G1\footnote{\url{https://www.oracle.com/technetwork/tutorials/tutorials-1876574.html}}. This collector has a concurrent phase which runs alongside your application and cleans up simple trash, along with a parallel phase, which runs in a different thread and may stop the world at times, with probabilistic guarantees on pause times. During such a GC, the garbage collector decides what to keep and what to dispose of, and maybe reorganizes memory. Also, the Garbage Collector can do this (1) whenever it wants, and (2) take as long as it feels like taking. Neither of which is great for performance, or for predictable performance.
 
-Think you're macho and can avoid garbage collection by using C/\CPP? As we discussed last time, your C/\CPP~code is probably wrong. Well, mine is anyway, I would really prefer to not judge yours. Aside from that, heap allocation and particularly deallocation is still not free even in C/\CPP. You don't pay garbage collection costs, but you do pay to manage memory-related data structures. Rust makes it easier to allocate some things on the stack rather than the heap, which can in principle improve performance. But, sure, in general \CPP~and Rust's memory management overhead should be comparable. It's just that you have to jump through hoops to write unsafe Rust code.
+Think you're macho and can avoid garbage collection by using C/\CPP? As we discussed last time, your C/\CPP~code is probably wrong. Well, mine is anyway; I would really prefer to not judge yours. Aside from that, heap allocation and particularly deallocation is still not free even in C/\CPP. You don't pay garbage collection costs, but you do pay to manage memory-related data structures. Rust makes it easier to allocate some things on the stack rather than the heap, which can in principle improve performance. But, sure, in general \CPP~and Rust's memory management overhead should be comparable. It's just that you have to jump through hoops to write unsafe Rust code.
 
 \subsection*{0wn3d} After that memory management discussion, the most important thing to tell you now about Rust is the concept of \textit{ownership}. This strongly distinguishes Rust from other programming languages. Ownership has a number of applications, and lies behind Rust's strategy for memory management and safe concurrency.
 
@@ -95,7 +95,7 @@ The advantage of ownership over RAII is precisely due to the compiler's meddling
 \includegraphics[width=0.8\textwidth]{images/golang-gc.png}
 \end{center}
 
-Quick recap: the Go garbage collector does its work and it adds a big latency spike. Rust would not have those spikes, because of ownership: when memory is no longer needed, it is trashed immediately and there's no waiting for the garbage collector to come by and decide if it can be cleaned up. To be fair, C++ also wouldn't have such spikes (because RAII). The article also adds that even with basic optimization, the Rust version performed better than the Go version. Not only in terms of there being no spikes, but in many dimensions: latency, CPU, and memory usage.
+Quick recap: the Go garbage collector does its work and it adds a big latency spike. Rust would not have those spikes, because of ownership: when memory is no longer needed, it is trashed immediately and there's no waiting for the garbage collector to come by and decide if it can be cleaned up. To be fair, \CPP~also wouldn't have such spikes (because RAII). The article also adds that even with basic optimization, the Rust version performed better than the Go version. Not only in terms of there being no spikes, but in many dimensions: latency, CPU, and memory usage.
 
 See the following graphs that compare Rust (blue) to Go (purple): 
 \begin{center}
@@ -126,7 +126,7 @@ When \texttt{x} goes out of scope, then the memory will be deallocated (``droppe
     }
 \end{lstlisting}
 
-The same principle applies in terms of heap allocated memory (yes, in Rust you cannot just pretend there's no difference between stack and heap, but ownership helps reduce the amount of mental energy you need to devote to this). Let's learn how to work with those! The example we will use is \texttt{String} which is the heap allocated type and not a string literal. We create it using the 
+The same principle applies in terms of heap allocated memory (yes, in Rust you cannot just pretend there's no difference between stack and heap, but ownership helps reduce the amount of mental energy you need to devote to this). Let's learn how to work with those! The example we will use is \texttt{String} which is the heap allocated type and not a string literal. We create it using \texttt{String::from}:
 \begin{lstlisting}[language=Rust]
     fn main() {
       let s1 = String::from("hello");
@@ -164,13 +164,13 @@ But simple types are the exception and not the rule. Let's look at what happens 
     }
 \end{lstlisting}
 
-Here, no copy is created. For performance reasons, Rust won't automatically create a copy if you don't ask explicitly. (You ask explicitly by calling \texttt{clone()}). Cloning an object can be very expensive since it involves an arbitrary amount of memory allocation and data copying. This point is a thing that students frequently get wrong in ECE~252: when doing a pointer assignment like \texttt{ thing* p = (thing*) ptr;}, no new heap memory was allocated, and we have \texttt{p} and \texttt{ptr} pointing to the same thing. But that's not what happens in Rust~\cite{rustdocs}:
+Here, no copy is created. For performance reasons, Rust won't automatically create a copy if you don't ask explicitly. (You ask explicitly by calling \texttt{clone()}). Cloning an object can be very expensive since it involves an arbitrary amount of memory allocation and data copying. This point is a thing that students frequently get wrong in ECE~252: when doing a pointer assignment like \texttt{thing* p = (thing*) ptr;}, no new heap memory was allocated, and we have \texttt{p} and \texttt{ptr} pointing to the same thing. But that's not what happens in Rust~\cite{rustdocs}:
 
 \begin{center}
 \includegraphics[width=0.3\textwidth]{images/string-rust.png}
 \end{center}
 
-If both \texttt{s1} and \texttt{s2} were pointing to the same heap memory, it would violate the second rule of ownership: there can be only one! So when the assignment statement happens of \texttt{let s2 = s1;} that transfers ownership of the heap memory to \texttt{s2} and then \texttt{s1} is no longer valid. There's no error yet, but an attempt to use \texttt{s1} will result in a compile-time error. Let's see what happens.
+If both \texttt{s1} and \texttt{s2} were pointing to the same heap memory, it would violate the second rule of ownership: there can be only one! So when the assignment statement \texttt{let s2 = s1;} happens, that transfers ownership of the heap memory to \texttt{s2} and then \texttt{s1} is no longer valid. There's no error yet, but an attempt to use \texttt{s1} will result in a compile-time error. Let's see what happens.
 
 \begin{lstlisting}[language=Rust]
     fn main() {

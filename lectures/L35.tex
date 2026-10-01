@@ -22,7 +22,7 @@ A simple health check that verifies that the app can respond or reach its databa
 	\item Disk I/O
 	\item Network Traffic
 	\item Clock Skew
-	\item Queue lengths
+	\item Queue Lengths
 	\item Application Response Times
 \end{itemize}
 \end{multicols}
@@ -74,7 +74,7 @@ Another important aspect of responding to an incident is an incident report, or 
 
 The first thing that an incident report should contain is a breakdown of what happened, preferably with a clear timeline of events. The purpose of this is to understand when the problem started, when it was noticed, what actions were taken, and when the incident was resolved. Strictly the facts here, please. More on this later, but reports should not apportion blame. And it's not useful to blame someone when anyone else would have been likely to do the same thing.
 
-The most important part is analysis of why the incident happened. There are two kinds of causes, root causes and proximate causes. Proximate causes are the things that happen just before the problem or are the trigger that makes it happen. If you remember talking about deadlock, a deadlock can occur because thread A acquires lock X then waits for lock Y, while thread B locks Y and then waits for X. The proximate cause is the lock acquisitions of threads A and B, such as because User 1 tried to update a record while User 2 was trying to run a report. That's not the root cause, though. The root cause is actually we don't always acquire locks in a consistent order.
+The most important part is analysis of why the incident happened. There are two kinds of causes, root causes and proximate causes. Proximate causes are the things that happen just before the problem or are the trigger that makes it happen. If you remember talking about deadlock, a deadlock can occur because thread A acquires lock X then waits for lock Y, while thread B locks Y and then waits for X. The proximate cause is the lock acquisitions of threads A and B, for example, because User 1 tried to update a record while User 2 was trying to run a report. That's not the root cause, though. The root cause is actually that we don't always acquire locks in a consistent order.
 
 It's key to focus on finding the root cause rather than stop at a superficial level. If we say the root cause is just ``I wrote a bug'' the solutions to that are just... don't do that, or write more tests. Those are part of the solution but they aren't going far enough, because we also need to think about the root causes. Perhaps the test environment is unrepresentative of the production environment, so it's hard to assess the actual impact of a change before it goes live. Or the root cause could be a lack of knowledge about a particular subject (e.g., concurrency). 
 
@@ -82,7 +82,7 @@ Toyota (yes, the car company) uses a model of ``Five Whys'', which is to say you
 
 Then there are action items: what will we do in the short and long term to solve the problem and keep it from happening again? Things might be as simple as fixing the bug, but maybe monitoring/alerting need to be improved? Ideally we can even think of something that would prevent this kind of problem from happening again in the first place, such as introducing a testbench deployment stage that would catch performance problems before they go to production. 
 
-Action items, obviously, only help if you do them, so they have to be realistic. While you could say that you could prevent the race condition problem by rewriting all the company code in Rust at once, and that might even be factually correct, but it's also unlikely to happen.
+Action items, obviously, only help if you do them, so they have to be realistic. You could say that you could prevent the race condition problem by rewriting all the company code in Rust at once, and that might even be factually correct, but it's also unlikely to happen.
 
 And the final things are about what lessons we learned. This can be relatively straightforward -- not every incident report results in head-exploding revelations -- but there should be at least a few takeaways. Things we learned don't have to be negative learnings: perhaps we make a conclusion that the monitoring system is effective and catches the problem quickly. 
 
@@ -111,16 +111,16 @@ Of course, if someone looked at running jobs and saw a container called \texttt{
 Something like crypto mining may be easier to spot than other malicious activity, because it is CPU-intensive, so if we see some containers using a lot of CPU without an explanation or without knowing what the service does, we will likely feel compelled to investigate. But a container that's just sitting there quietly, observing things and sending your company's secrets to the competition or extortion rings? That's harder to find and could also be very costly.
 
 \paragraph{Information Exposure.}
-Information exposure is not only terrible for your company's reputation, but also against privacy laws and data protection regulations. A breach of the EU GDPR can get very expensive. See \url{https://www.enforcementtracker.com/} to find out which companies have recently gotten their wrists slapped or a huge fine. At the time of writing, the record holder is Amazon Europe (based in Luxembourg) with a fine of 746,000,000 EUR which is just over a billion CAD (using exchange rates from October 2022). Not exactly pocket change. Other big offenders are whom you might expect: Facebook (Meta), Google, but also H\&M -- yes, the clothing store -- is a top 10 in this category.
+Information exposure is not only terrible for your company's reputation, but also against privacy laws and data protection regulations. A breach of the EU GDPR can get very expensive. See \url{https://www.enforcementtracker.com/} to find out which companies have recently gotten their wrists slapped or a huge fine. At the time of writing, the record holder is Amazon Europe (based in Luxembourg) with a fine of 746~000~000 EUR which is just over a billion CAD (using exchange rates from October 2022). Not exactly pocket change. Other big offenders are who you might expect: Facebook (Meta), Google, but also H\&M -- yes, the clothing store -- is in the top 10 in this category.
 
 You will notice that a lot of companies get fined for things like insufficient technical measures. That is to say, they don't do enough to avoid the data getting into the hands of the wrong people.
 
-One situation I've seen that is a potential nightmare in the making is when personally-identifiable-information (PII) is put into the logs. As long as the logs themselves remain secure, then there's no problem... but if an attacker can view the logs, they've got a one-stop-shop for everything they should not be able to see.
+One situation I've seen that is a potential nightmare in the making is when personally identifiable information (PII) is put into the logs. As long as the logs themselves remain secure, then there's no problem... but if an attacker can view the logs, they've got a one-stop-shop for everything they should not be able to see.
 
 Why log these things in the first place? The security policies forbade the developers from accessing -- even in read-only mode -- the databases, so to debug and trace the code, excessive data was being put into the logs. So developers could see what they needed then. That's actually a fun example of what happens when security policies backfire, like when password policies are so restrictive that it just leads to users writing the password on sticky notes.
 
 
-\paragraph{Defending against Vulnerabilities}
+\paragraph{Defending against Vulnerabilities.}
 There are some companies out there that will check your code for libraries with versions having known security vulnerabilities. This is transitive, so if your app depends on some library that depends on a parsing library with a vulnerability, the vulnerability is noticed and reported. Each vulnerability is usually assigned a severity and the service may even suggest that updating from version X to Y will solve the problem. They can say this because they observe that a vulnerability reported in version X of a library is reported as fixed in version Y. Note, however, that just because there is an alert about a potential vulnerability does not mean that you actually use the vulnerable API. One of my (PL) students, along with a collaborator, showed that modularization improves the performance of these alerting tools; see~\cite{abdollahpour24:_enhan_secur_modul}.
 
 Sadly, when there is an updated version of a library, there may be breaking changes in it, so an upgrade might be more painful than just changing a version number and rebuilding. It may also take time for library authors to correct the vulnerability and release a fixed version of the library. In the meantime, you may need to implement some mitigation of your own, or just keep an eye open for when the patch is released. To support your wait for upstream, the vulnerability checks give you the ability to ignore or snooze the alert. Tempting as it is to do that and get on with other work, it's leaving the vulnerability in your code. Good practice would be for reviewers to discourage ignoring if it can be avoided.
@@ -132,7 +132,7 @@ As with the other parts of managing your application, like build and deployment,
 
 The term comes from the logistical supply chain. Supply chains for physical products are often complicated; if you want to build a gaming PC you need a large number of different components and you only get the end product when you've got all the pieces at hand. The problem is recursive, though: how many different components and pieces did, for example, NVIDIA require to make your graphics card? If one of the components -- however small or seemingly-insignificant -- is unavailable for whatever reason, the device (or computer) can't be built. 
 
-Similarly, almost any modern piece of software that isn't a toy or academic assignment is built in a compositional way (app $A$ uses libraries $B, C, D$ each of which has dependencies $E, F, G, H...$), compromising any one of the dependencies $F$ could result in a vulnerability in $A$. But if $A$ is \texttt{openssh}, you know, the \textit{secure} shell daemon, being able to exploit that means being able to have root access on the vulnerable server and execute arbitrary code. 
+Similarly, almost any modern piece of software that isn't a toy or academic assignment is built in a compositional way (app $A$ uses libraries $B, C, D$ each of which has dependencies $E, F, G, H, \ldots$); compromising any one of the dependencies, such as $F$, could result in a vulnerability in $A$. But if $A$ is \texttt{openssh}, you know, the \textit{secure} shell daemon, being able to exploit that means being able to have root access on the vulnerable server and execute arbitrary code. 
 
 Part of what makes this example so relevant for this course is that the problem was discovered via performance profiling! The backdoor makes the \texttt{openssh} server run much slower due to the injected code that is running before the authentication actually takes place; see the example from~\cite{xzlib}:
 

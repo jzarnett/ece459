@@ -10,7 +10,7 @@ In previous courses, such as a concurrency course, there was a lot of expectatio
 
 \subsection*{Concurrency with Crossbeam} 
 
-You'll recall from earlier when we introduced threads, that this doesn't work:
+You'll recall from earlier, when we introduced threads, that this doesn't work:
 \begin{lstlisting}[language=Rust]
 use std::thread;
 
@@ -82,7 +82,7 @@ There are still rules, of course, and you cannot borrow the vector mutably into 
 
 \paragraph{Producer-Consumer with channels.} One of the guidelines that Rust gives is that it's preferable to do message passing as compared to shared memory. Unfortunately, for something like the producer-consumer scenario, the standard multiple-producer-single-consumer channel we are provided won't do; we need a multiple-producer-multiple-consumer channel. And sure enough, Crossbeam gives us one. 
 
-Recall the multi-producer multi-consumer example from earlier. We had to define a shared buffer structure and use semaphores and a mutex to coordinate access, and we saw it's possible to get it wrong in when we drop the mutex. Here's the excerpts from the Crossbeam version. First, a little setup to create a bounded channel with capacity the same as the bounded buffer (100): 
+Recall the multi-producer multi-consumer example from earlier. We had to define a shared buffer structure and use semaphores and a mutex to coordinate access, and we saw it's possible to get it wrong when we drop the mutex. Here are the excerpts from the Crossbeam version. First, a little setup to create a bounded channel with capacity the same as the bounded buffer (100): 
 
 \begin{lstlisting}[language=Rust]
 let (send_end, receive_end) = bounded(CHANNEL_CAPACITY);
@@ -107,7 +107,7 @@ And look how much simpler the consumer is:
     }
 \end{lstlisting}
 
-Certainly that's a lot simpler and cleaner, but is it faster? Testing says yes! Hyperfine says the original producer-consumer-opt version takes 372 ms to run for 10~000 items consumed per thread, and the version with the channel takes 232~ms. 
+Certainly that's a lot simpler and cleaner, but is it faster? Testing says yes! Hyperfine says the original producer-consumer-opt version takes 372~ms to run for 10~000 items consumed per thread, and the version with the channel takes 232~ms. 
 
 \paragraph{Try Again Later.}
 Another small thing that Crossbeam enables is an exponential backoff. When attempting to access some resource, we acknowledge that it might not be available right now. If that's the case, an error is not necessarily fatal and the client might want to retry. However, it's very unhelpful to have a tight loop that simply retries as fast as possible. What you should do instead is an exponential backoff: wait a little bit and try again, and if the error occurs, next time wait a little longer.
@@ -118,7 +118,7 @@ Eventually, though, you may have to conclude that there's no point in further re
 
 The \texttt{Backoff} util from Crossbeam gives you this functionality. Each step of the backoff takes about double the amount of time of the previous, up to a certain maximum.
 
-Here's an example from the Crossbeam docs of using the backoff in a lock-free loop. Here, the \texttt{spin()} function is used because we can try again immediately. We can do so because if the compare-and-swap operation failed, it's because another did the compare-and-swap and got a chance to run.
+Here's an example from the Crossbeam docs of using the backoff in a lock-free loop. Here, the \texttt{spin()} function is used because we can try again immediately. We can do so because if the compare-and-swap operation failed, it's because another thread did the compare-and-swap and got a chance to run.
 \begin{lstlisting}[language=Rust]
 use crossbeam_utils::Backoff;
 use std::sync::atomic::AtomicUsize;
@@ -170,7 +170,7 @@ The line in question where we apply the Rayon library is:
 accelerations.par_iter_mut().enumerate().for_each(|(i, current_accel)| {
 \end{lstlisting}
 
-A lot happens in this one line, so we need to take a look at it. Normally, we iterate over a collection (here, the accelerations) using an iterator (and it's preferable to the \texttt{for} construction). That's normally a sequential iterator, and the convenient thing about Rayon is that we can drop it in pretty easily. We need to include the ``prelude''. The prelude brings into scope a bunch of traits that are needed for the parallel iterators. Then instead of iterating over the collection sequentially, we use a parallel iterator that produces mutable reference. We effectively ask to have the slices cut up into slices of size 1. I also ask for the enumerate option because I'm going to use the index \texttt{i}, and then I provide the operation that I want to perform: a for-each (where I specify the index name and the name of the variable I want to use for each element in the collection). 
+A lot happens in this one line, so we need to take a look at it. Normally, we iterate over a collection (here, the accelerations) using an iterator (and it's preferable to the \texttt{for} construction). That's normally a sequential iterator, and the convenient thing about Rayon is that we can drop it in pretty easily. We need to include the ``prelude''. The prelude brings into scope a bunch of traits that are needed for the parallel iterators. Then instead of iterating over the collection sequentially, we use a parallel iterator that produces mutable references. We effectively ask to have the slices cut up into slices of size 1. I also ask for the enumerate option because I'm going to use the index \texttt{i}, and then I provide the operation that I want to perform: a for-each (where I specify the index name and the name of the variable I want to use for each element in the collection). 
 
 \paragraph{Doing the work.} The description we just saw of dividing up the work is how work units are specified, but doesn't cover what actually happens on execution. After all, if we just divide up the work without having more workers to do it, we're not getting anywhere.
 
