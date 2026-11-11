@@ -56,10 +56,74 @@ If the parent element's data is needed, push this into the backend. Let the serv
 If it's the parent rendering that matters, then the strategy is \textit{mise en place}: read the whole data tree (recipe) first to find out exactly what to ask for; then start the rendering. Waiting for the parent rendering is not a true dependency, because the content of the parent is not actually needed to render the child elements -- but the request to get the data for the child elements waits for the parent. Don't wait.
 
 \subsection*{Rendering Pipeline}
-Once the data is loaded, the next part we need to be concerned about is how to actually render this efficiently. If we assume that the user's display refreshes 60 times per second, a frame render needs to take place in about 10~ms, otherwise the page contents move around unexpectedly on screen (and this is sometimes referred to as ``jank'')~\cite{renderingperf}.
+Once the data is loaded, the next part we need to be concerned about is how to actually render this efficiently. If we assume that the user's display refreshes 60 times per second, a frame render needs to take place in about 10~ms, otherwise the page stutters (and this is sometimes referred to as ``jank'')~\cite{renderingperf}.
 
+An important limiting factor is the browser itself: it uses one thread for parsing, JavaScript/CSS evaluation, and rendering~\cite{wprof}. So, parallelism does not help much here, though compositing can be done in a different thread and sends the results to the GPU. Producing a frame goes through five discrete steps: JavaScript, Style, Layout, Paint, Composite. Let's look at each of those~\cite{renderingperf}:
+
+\begin{enumerate}
+	\item JavaScript is code, obviously, that results in changes to the visual layout.
+	\item Style calculations figure out what CSS rules apply to what elements.
+	\item Layout is figuring out the size of elements and placing them on the screen.
+	\item Paint is the process of filling in the pixels: text, colours, images, etc.
+	\item Composite is the step of putting all the layers of the page together, making sure that overlapping elements go in the correct front-to-back order.
+\end{enumerate}
+
+Whenever there is a change, the browser starts at the latest stage possible to execute that change. So if the colour of some element changes, the next frame starts from the Style step of the process and skips layout. But if a button's width changes, then the Layout step is done as well as Paint and Composite. If we want to reduce the rendering time to avoid jank, the goal is to make it so changes affect the fewest steps possible. 
+
+Consider a concrete example about a text shimmer animation\footnote{ \url{https://x.com/devongovett/status/2092991811157463500}}. If the code changes background-position, this forces a repaint on every frame, so it requires more CPU time. If instead the approach is a CSS mask that animates a transform, the text is painted one time and the work is just composition: slide the overlay over a bit and stack the elements again. That's not for free, though, because the overlay needs to have its own layer, which takes up more memory.
+
+Something that sounds the same, but is actually different, is \textit{cumulative layout shift}. Perhaps you've had the negative experience on a webpage where you go to click on something and the page moves or shifts and you end up clicking the wrong thing? You probably hate that. Sometimes things moving around cannot be avoided, but it's still unpleasant. Your code can and should change the layout of the page, sometimes, to adapt to the information shown (e.g., a big image arriving late), but ideally space is reserved for it so that doesn't happen. In this section, we're focusing on preventing unnecessary re-rendering work rather than stopping things from moving on the page.
+
+If big changes are not necessary, don't do them. We can think of the previous frame not only as the initial state, but also as cached results. If there are no changes, we can just use that. If there are minor changes (e.g., composition), we invalidate the parts of the cache that have changed but no more than that. If there are major changes (e.g., layout changes), we invalidate the whole cache and it forces a more expensive operation.
+
+\textit{Layout thrashing} is the term for many forced layouts in quick succession. The most efficient way for the browser to do the work it needs is to wait for all the changes to take place, then do the layout once. If we don't do that, we end up repeating a lot of work unnecessarily. Consider this (inefficient) code and its improved version below~\cite{layoutthrashing}.
+
+\begin{lstlisting}
+function resizeAllParagraphsToMatchBlockWidth () {
+  // Puts the browser into a read-write-read-write cycle.
+  for (let i = 0; i < paragraphs.length; i++) {
+    paragraphs[i].style.width = `${box.offsetWidth}px`;
+  }
+}
+\end{lstlisting}
+
+This is inefficient because every iteration of the loop assigns the width of a paragraph, which forces a new layout on the next iteration of the loop, because the read of the \texttt{box.offsetWidth} value can only be accurate after previous layout changes have taken place. The size of the paragraph may affect the size of the box, and the browser does not know that for sure until it re-runs the layout process. You as the developer might know that the paragraph size should not change the box width, so you can fix that by reading the value once, outside the loop:
+
+\begin{lstlisting}
+// Read.
+const width = box.offsetWidth;
+
+function resizeAllParagraphsToMatchBlockWidth () {
+  for (let i = 0; i < paragraphs.length; i++) {
+    // Now write.
+    paragraphs[i].style.width = `${width}px`;
+  }
+}
+\end{lstlisting}
+
+This version looks a lot better. We read the value once, so at worst there is one forced layout there. Then that value is used in making all the changes before we go on. If I send a document to a colleague to review, it is, after all, more efficient if they give me all the changes I should make and I make them in one round, rather than back-and-forth on every individual comment in the document.
+
+All of this describes the work required to render one frame! A modern page that has a lot of data may have hundreds or thousands of elements and the data behind them is changing. We need a strategy for managing that.
 
 \subsection*{Modelling}
+A webpage has a \textit{Document Object Model (DOM)} that represents the structure of the page. A more complex page has a more complex model, with more elements in it. We will consider three ideas around improving the page speed: simplifying, reducing the rendering cost, and reducing the cost of changes. Google's Lighthouse performance tool considers the DOM to be a warning-level of complex at 800 nodes and an error-level of complex at 1400.
+
+It seems only sensible that it then takes more work to draw the page if it's more complex. Thus, simplifying the DOM is an obvious strategy: if there's less loaded on the page, there's less to do. This may also result in less data being required from the backend, which then improves the data loading time. Two for one. But if you need all the data on the page, it's hard to cut this down.
+
+If we can't reduce the data, but want to speed up rendering, the plan is \textit{virtualization}, a term that is, sadly, overloaded with a bunch of other meanings in computing. In this context, it means only creating elements for things that are visible on screen. If the page is a calendar for the month and there are hundreds of appointments but only five fit on any given day, only make elements for  five per day, and if there are more, let the user scroll and the elements get added as they scroll. Otherwise, lots of effort is wasted on boxes that do not appear on the screen. The tradeoff, though, is that elements that are virtualized are not in the DOM so we can't find them with a search. 
+
+If we want to render those elements, we could split that off so it happens after the LCP so the user thinks all is rendered that much sooner. There exists the \texttt{content-visibility} property in CSS that lets things be rendered on demand; it reduces the work done on an initial page render and skips re-rendering for things that aren't visible~\cite{domsize}.
+
+If one data element is updated, there is a risk that it forces a very large re-load and re-render. If the element is part of a collection of a thousand entries, it would be wasteful to re-draw all entries if only one of them has changed. If this is a calendar, a change in one appointment from 9:00 to 9:30 should result in only updating that appointment (and the day it's on) rather than all appointments. If subscribed to the entire collection, the frontend sees that the whole collection has changed and must either re-draw everything, or go through the entire collection to see which ones have changed. React's docs say that the general tree comparison has $O(n^{3})$ runtime behaviour so it does something that's ``only'' $O(n)$, but that's still expensive for a large collection.
+
+Subscribing to the entire collection results in something that resembles false-sharing: something is re-rendered because something near it has changed, rather than the thing itself. 
+
+If instead, appointments are in a lookup table by ID and there's a separate list of IDs, the calendar component needs to look at the list of IDs and create one component per ID; that component gets its data from the table. So moving one appointment changes one entry in the table and everything else remains unchanged. It does add complexity of subscribing to more things and getting multiple change notifications, but if relatively few items change at a time, this is worth it.
+
+What makes for good IDs? If the data element itself has a unique ID (e.g., account number), that is a good choice because it is straightforward to know which account to update when a change notification is received. If we go by position in the list, that might be frustrating because it makes re-ordering a pain. Random or unstable IDs are the worst choice because we could end up with a lot of unnecessary re-creation of elements~\cite{reactreconciliation}.
+
+\subsection*{Frontend is Not So Different}
+While the idea of trying to get the LCP done earlier and then call that ``done'' is a little bit unusual, everything else about frontend performance relates nicely to other things we've covered in the course: move things off the critical path, do less work, and trade space for time. 
 
 \input{bibliography.tex}
 
